@@ -111,7 +111,63 @@ namespace H5.Translator
                     GenerateHtmlIfNeeded(outputPath);
                 }
 
+                _cancellationToken.ThrowIfCancellationRequested();
+                CreateDependencyBundleIfRequired(outputPath);
+
                 return outputPath;
+            }
+        }
+
+        private void CreateDependencyBundleIfRequired(string h5OutputPath)
+        {
+            var assemblyInfo = Translator?.AssemblyInfo;
+            if (assemblyInfo == null || !assemblyInfo.BundleDependencies)
+            {
+                return;
+            }
+
+            var sourceDir = Translator.ProjectProperties?.OutDir;
+            if (string.IsNullOrEmpty(sourceDir))
+            {
+                sourceDir = Translator.ProjectProperties?.OutputPath;
+            }
+
+            if (string.IsNullOrEmpty(sourceDir) || !Directory.Exists(sourceDir))
+            {
+                Logger.LogWarning("BundleDependencies is enabled but the project output directory is not available. Skipping bundle creation.");
+                return;
+            }
+
+            var bundleFileName = assemblyInfo.BundleFileName;
+            if (string.IsNullOrWhiteSpace(bundleFileName))
+            {
+                var assemblyName = Translator.ProjectProperties?.AssemblyName;
+                if (string.IsNullOrWhiteSpace(assemblyName))
+                {
+                    assemblyName = Path.GetFileNameWithoutExtension(Translator.AssemblyLocation);
+                }
+                if (string.IsNullOrWhiteSpace(assemblyName))
+                {
+                    assemblyName = "dependencies";
+                }
+                bundleFileName = assemblyName + H5.Translator.Utils.DependencyBundle.FileExtension;
+            }
+            else if (!bundleFileName.EndsWith(H5.Translator.Utils.DependencyBundle.FileExtension, StringComparison.OrdinalIgnoreCase))
+            {
+                bundleFileName += H5.Translator.Utils.DependencyBundle.FileExtension;
+            }
+
+            var bundlePath = Path.Combine(h5OutputPath, bundleFileName);
+
+            try
+            {
+                var count = H5.Translator.Utils.DependencyBundle.Create(sourceDir, h5OutputPath, bundlePath);
+                Logger.ZLogInformation("Wrote dependency bundle '{0}' with {1} file(s)", bundlePath, count);
+            }
+            catch (Exception ex)
+            {
+                Logger.ZLogError(ex, "Failed to create dependency bundle at '{0}'", bundlePath);
+                throw;
             }
         }
 

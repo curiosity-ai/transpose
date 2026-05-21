@@ -16,7 +16,8 @@ namespace H5.Compiler.Service.Tests
     {
         public string WorkingDirectory { get; }
         private string SourceDir => Path.Combine(WorkingDirectory, "src");
-        private string OutDir => Path.Combine(WorkingDirectory, "bin");
+        public string OutDir => Path.Combine(WorkingDirectory, "bin");
+        public string H5OutputDir => Path.Combine(OutDir, "h5");
 
         public TestCompiler()
         {
@@ -38,12 +39,12 @@ namespace H5.Compiler.Service.Tests
             catch { }
         }
 
-        public CompilationOutput Compile(Dictionary<string, string> sources, bool rebuild = true)
+        public CompilationOutput Compile(Dictionary<string, string> sources, bool rebuild = true, Action<H5DotJson_AssemblySettings>? configureSettings = null, Action<CompilationRequest>? configureRequest = null, string assemblyName = "TestApp")
         {
-            var assemblyName = "TestApp";
-
             var settings = new H5DotJson_AssemblySettings();
             settings.EnableCache = true;
+            configureSettings?.Invoke(settings);
+
             var request = new CompilationRequest(assemblyName, settings);
             request.WithLanguageVersion("Latest");
 
@@ -51,6 +52,8 @@ namespace H5.Compiler.Service.Tests
             {
                 request.WithSourceFile(kvp.Key, kvp.Value);
             }
+
+            configureRequest?.Invoke(request);
 
             // Generate options and files
             var options = request.ToOptions(SourceDir, NuGetVersion.Parse("10.0.0"));
@@ -101,12 +104,16 @@ namespace H5.Compiler.Service.Tests
             // Let's use the directory where we expect output.
             var absoluteOutputLocation = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(options.ProjectLocation), outputLocation));
 
-            var dict = new Dictionary<string, string>();
+            var dict = new Dictionary<string, MemoryStream>();
             if (Directory.Exists(absoluteOutputLocation))
             {
-                dict = Directory.EnumerateFiles(absoluteOutputLocation, "*", SearchOption.AllDirectories)
-                    .Where(f => File.Exists(f))
-                    .ToDictionary(f => f.Replace(absoluteOutputLocation, "").TrimStart(Path.DirectorySeparatorChar), f => File.ReadAllText(f));
+                foreach (var f in Directory.EnumerateFiles(absoluteOutputLocation, "*", SearchOption.AllDirectories))
+                {
+                    if (!File.Exists(f)) continue;
+                    var key = f.Replace(absoluteOutputLocation, "").TrimStart(Path.DirectorySeparatorChar);
+                    var bytes = File.ReadAllBytes(f);
+                    dict[key] = new MemoryStream(bytes, writable: false);
+                }
             }
 
             outputProp.SetValue(output, dict);
@@ -119,5 +126,6 @@ namespace H5.Compiler.Service.Tests
 
             return output;
         }
+
     }
 }

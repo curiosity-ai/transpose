@@ -212,5 +212,19 @@ namespace H5.Translator
         public bool IgnoreDuplicateTypes { get; set; }
 
         public bool EnableCache { get; set; }
+
+        /// <summary>
+        /// When true, the compiler packs every file left in the project's output
+        /// directory (typically the bin/$(OutDir) folder) that is not inside the
+        /// H5 javascript/html output sub-folder into a single ".h5" bundle file
+        /// placed inside that H5 output folder.
+        /// </summary>
+        public bool BundleDependencies { get; set; }
+
+        /// <summary>
+        /// File name (relative to the H5 output folder) used for the generated
+        /// dependency bundle. Defaults to "$(AssemblyName).h5" when omitted.
+        /// </summary>
+        public string BundleFileName { get; set; }
     }
 }
