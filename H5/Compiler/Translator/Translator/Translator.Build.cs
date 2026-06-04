@@ -473,14 +473,48 @@ namespace H5.Translator
 
             EmitResult emitResult;
 
+            // Emit to a temp file first; only promote to the final assembly location on success.
+            // This avoids leaving a 0-byte/partial .dll behind on failure, which subsequent runs would
+            // mistake for a successful build and use as a reference.
+            var tempAssemblyPath = AssemblyLocation + ".tmp";
+
             using (new Measure(Logger, $"Compiling {AssemblyLocation} with Roslyn"))
             {
-                using (var outputStream = new FileStream(AssemblyLocation, FileMode.Create))
+                using (var outputStream = new FileStream(tempAssemblyPath, FileMode.Create))
                 {
                     emitResult = compilation.Emit(outputStream, options: new Microsoft.CodeAnalysis.Emit.EmitOptions(false, Microsoft.CodeAnalysis.Emit.DebugInformationFormat.Embedded, runtimeMetadataVersion: RuntimeMetadataVersion, includePrivateMembers: true), cancellationToken: cancellationToken);
                     outputStream.Flush();
                     outputStream.Close();
                 }
+            }
+
+            if (emitResult.Success)
+            {
+                try
+                {
+                    if (File.Exists(AssemblyLocation))
+                    {
+                        File.Delete(AssemblyLocation);
+                    }
+                    File.Move(tempAssemblyPath, AssemblyLocation);
+                }
+                catch
+                {
+                    try { File.Delete(tempAssemblyPath); } catch { }
+                    throw;
+                }
+            }
+            else
+            {
+                try { File.Delete(tempAssemblyPath); } catch { }
+                try
+                {
+                    if (File.Exists(AssemblyLocation))
+                    {
+                        File.Delete(AssemblyLocation);
+                    }
+                }
+                catch { }
             }
 
             return emitResult;
