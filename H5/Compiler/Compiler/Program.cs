@@ -29,6 +29,18 @@ namespace H5.Compiler
         private static ILogger Logger = ApplicationLogging.CreateLogger<Program>();
 
         private const int PORT = 44568;
+
+        // How long a client will wait for the compilation server to become reachable before giving
+        // up and falling back to in-process compilation.
+        private const int ServerStartupTimeoutSeconds = 30;
+
+        // Polling interval while waiting for the server to come online.
+        private const int ServerPollIntervalMs = 500;
+
+        // System-wide name used to make sure only a single h5 instance starts the server at a time,
+        // even when many clients are launched concurrently (e.g. parallel MSBuild project builds).
+        private const string ServerStartupMutexName = "H5-CompilationServer-Startup";
+
         private static bool DisableLogo = false;
         private static readonly CancellationTokenSource      _exitToken = new CancellationTokenSource();
         private static readonly TaskCompletionSource<object> _exitTask  = new TaskCompletionSource<object>();
@@ -122,43 +134,18 @@ namespace H5.Compiler
 
                 if (compilationRequest.NoCompilationServer)
                 {
-                    Microsoft.Build.Locator.MSBuildLocator.RegisterDefaults();
-
-                    foreach (var instance in Microsoft.Build.Locator.MSBuildLocator.QueryVisualStudioInstances())
-                    {
-                        Console.WriteLine($"Found {instance.MSBuildPath} version {instance.Version}");
-                    }
-
-                    var resp = CompilationProcessor.Compile(compilationRequest, default, _exitToken.Token);
-
-                    if (resp != 0)
-                    {
-                        //Gives some time for the logs to flush
-                        await Task.Delay(1000);
-                    }
-                    return resp;
+                    return await CompileInProcessAsync(compilationRequest);
                 }
                 else
                 {
                     var channel        = GrpcChannel.ForAddress($"http://localhost:{PORT}", new GrpcChannelOptions() { Credentials = ChannelCredentials.Insecure });
                     var remoteCompiler = new RemoteCompiler(channel, TimeSpan.FromMilliseconds(10_000));
-                    ;
 
-                    while (true)
+                    if (!await EnsureCompilationServerOnlineAsync(remoteCompiler))
                     {
-                        try
-                        {
-                            await remoteCompiler.Ping(_exitToken.Token);
-                            Logger.LogInformation("Found compilation server, sending compilation request\n\n");
-                            break;
-                        }
-                        catch (Exception E)
-                        {
-                            Logger.LogInformation("Compilation server not online, will start it in the background\n\n");
-                        }
-                        await TriggerCompilationServerChildProcessStarter();
+                        Logger.LogWarning("Could not start or reach the compilation server; falling back to in-process compilation.\n\n");
+                        return await CompileInProcessAsync(compilationRequest);
                     }
-
 
                     var compilationUID = await remoteCompiler.RequestCompilationAsync(compilationRequest, _exitToken.Token);
 
@@ -291,7 +278,125 @@ namespace H5.Compiler
             }
         }
 
-        private static async Task TriggerCompilationServerChildProcessStarter()
+        /// <summary>
+        /// Compiles the request in the current process, without using the persistent compilation server.
+        /// Used both for the explicit <c>--no-server</c> path and as a safety-net fallback when the
+        /// compilation server cannot be started or reached.
+        /// </summary>
+        private static async Task<int> CompileInProcessAsync(CompilationRequest compilationRequest)
+        {
+            if (!Microsoft.Build.Locator.MSBuildLocator.IsRegistered)
+            {
+                Microsoft.Build.Locator.MSBuildLocator.RegisterDefaults();
+            }
+
+            foreach (var instance in Microsoft.Build.Locator.MSBuildLocator.QueryVisualStudioInstances())
+            {
+                Console.WriteLine($"Found {instance.MSBuildPath} version {instance.Version}");
+            }
+
+            var resp = CompilationProcessor.Compile(compilationRequest, default, _exitToken.Token);
+
+            if (resp != 0)
+            {
+                //Gives some time for the logs to flush
+                await Task.Delay(1000);
+            }
+
+            return resp;
+        }
+
+        /// <summary>
+        /// Ensures the persistent compilation server is reachable, starting it at most once if necessary,
+        /// then polling until it comes online or a timeout elapses.
+        ///
+        /// A system-wide mutex guarantees that, no matter how many h5 clients are launched concurrently
+        /// (e.g. parallel MSBuild project builds), only a single instance ever spawns the server. The others
+        /// simply wait for it to appear instead of each spawning their own — which previously led to a storm
+        /// of server processes all racing for the same port.
+        ///
+        /// Returns <c>true</c> when the server is online and ready; <c>false</c> if it could not be reached
+        /// within <see cref="ServerStartupTimeoutSeconds"/>, in which case the caller should fall back to
+        /// in-process compilation rather than retrying forever.
+        /// </summary>
+        private static async Task<bool> EnsureCompilationServerOnlineAsync(RemoteCompiler remoteCompiler)
+        {
+            // Fast path: a server is already running.
+            if (await IsServerOnlineAsync(remoteCompiler))
+            {
+                Logger.LogInformation("Found compilation server, sending compilation request\n\n");
+                return true;
+            }
+
+            using var startupMutex = new Mutex(false, ServerStartupMutexName);
+
+            var ownsStartupMutex = false;
+            var startedServer    = false;
+
+            try
+            {
+                // Non-blocking acquire: if another instance already holds it, that instance is responsible
+                // for starting the server and we just wait below for it to come online.
+                try
+                {
+                    ownsStartupMutex = startupMutex.WaitOne(TimeSpan.Zero);
+                }
+                catch (AbandonedMutexException)
+                {
+                    // The previous owner died without releasing (e.g. crashed mid-startup); we now own it.
+                    ownsStartupMutex = true;
+                }
+
+                var deadline = DateTime.UtcNow.AddSeconds(ServerStartupTimeoutSeconds);
+
+                while (!_exitToken.IsCancellationRequested && DateTime.UtcNow < deadline)
+                {
+                    if (await IsServerOnlineAsync(remoteCompiler))
+                    {
+                        Logger.LogInformation("Found compilation server, sending compilation request\n\n");
+                        return true;
+                    }
+
+                    // Only the mutex owner may spawn the server, and only once.
+                    if (ownsStartupMutex && !startedServer)
+                    {
+                        Logger.LogInformation("Compilation server not online, starting it in the background\n\n");
+                        StartCompilationServerInBackground();
+                        startedServer = true;
+                    }
+
+                    await Task.Delay(ServerPollIntervalMs, _exitToken.Token);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                //Exit requested while waiting; fall through and report the server as unavailable.
+            }
+            finally
+            {
+                if (ownsStartupMutex)
+                {
+                    startupMutex.ReleaseMutex();
+                }
+            }
+
+            return false;
+        }
+
+        private static async Task<bool> IsServerOnlineAsync(RemoteCompiler remoteCompiler)
+        {
+            try
+            {
+                await remoteCompiler.Ping(_exitToken.Token);
+                return true;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        private static void StartCompilationServerInBackground()
         {
             var self = Process.GetCurrentProcess();
 
@@ -313,9 +418,6 @@ namespace H5.Compiler
             var process = new Process();
             process.StartInfo = pInfo;
             process.Start();
-
-            //Change this delay to monitoring the process console output for the ready message, or error message    
-            await Task.Delay(4000);
         }
 
         private static void ActuallyStartCompilationServer()
