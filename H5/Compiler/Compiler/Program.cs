@@ -328,6 +328,19 @@ namespace H5.Compiler
                 return true;
             }
 
+            // The mutex-guarded wait loop runs entirely on a single thread pool thread.
+            //
+            // A named Mutex has thread affinity: it must be released by the exact thread that acquired
+            // it. The previous implementation held the mutex across `await` calls, so the continuation
+            // could resume on a different thread and ReleaseMutex() then threw
+            // "Object synchronization method was called from an unsynchronized block of code."
+            // Running the whole acquire/loop/release sequence synchronously inside Task.Run keeps it
+            // pinned to one thread, so the mutex is always released by its owning thread.
+            return await Task.Run(() => WaitForCompilationServerOnline(remoteCompiler));
+        }
+
+        private static bool WaitForCompilationServerOnline(RemoteCompiler remoteCompiler)
+        {
             using var startupMutex = new Mutex(false, ServerStartupMutexName);
 
             var ownsStartupMutex = false;
@@ -351,7 +364,7 @@ namespace H5.Compiler
 
                 while (!_exitToken.IsCancellationRequested && DateTime.UtcNow < deadline)
                 {
-                    if (await IsServerOnlineAsync(remoteCompiler))
+                    if (IsServerOnline(remoteCompiler))
                     {
                         Logger.LogInformation("Found compilation server, sending compilation request\n\n");
                         return true;
@@ -365,12 +378,12 @@ namespace H5.Compiler
                         startedServer = true;
                     }
 
-                    await Task.Delay(ServerPollIntervalMs, _exitToken.Token);
+                    if (_exitToken.Token.WaitHandle.WaitOne(ServerPollIntervalMs))
+                    {
+                        // Exit requested while waiting; stop and report the server as unavailable.
+                        break;
+                    }
                 }
-            }
-            catch (OperationCanceledException)
-            {
-                //Exit requested while waiting; fall through and report the server as unavailable.
             }
             finally
             {
@@ -388,6 +401,19 @@ namespace H5.Compiler
             try
             {
                 await remoteCompiler.Ping(_exitToken.Token);
+                return true;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        private static bool IsServerOnline(RemoteCompiler remoteCompiler)
+        {
+            try
+            {
+                remoteCompiler.Ping(_exitToken.Token).GetAwaiter().GetResult();
                 return true;
             }
             catch (Exception)
