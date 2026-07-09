@@ -98,6 +98,14 @@ namespace System
         [H5.Template("H5.Int.trunc({d})")]
         public static extern float Truncate(float d);
 
+        // Note: the real .NET System.MathF does not expose Clamp (it lives on System.Math, which
+        // has a float overload). This is an intentional H5 extension that mirrors Math.Clamp(float, float, float).
+        [H5.Template(@"(function(value, min, max) {
+            if (min > max) { throw new System.ArgumentException('min > max'); }
+            return (value < min) ? min : ((value > max) ? max : value);
+        })({value}, {min}, {max})")]
+        public static extern float Clamp(float value, float min, float max);
+
         [H5.Template("((1.0 / {y}) < 0 ? -1.0 : 1.0) * Math.abs({x})")]
         public static extern float CopySign(float x, float y);
 

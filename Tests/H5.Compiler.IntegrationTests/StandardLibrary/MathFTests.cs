@@ -159,5 +159,38 @@ public class Program
 }
                 ");
         }
+
+        [TestMethod]
+        public async Task TestClampAsync()
+        {
+            // MathF.Clamp is an H5 extension (the real .NET MathF has no Clamp; it lives on Math).
+            // Compare H5's MathF.Clamp output against .NET's Math.Clamp(float, ...) for parity.
+            await RunTest(
+                @"
+using System;
+
+public class Program
+{
+    public static void Main()
+    {
+                Console.WriteLine(MathF.Clamp(5.0f, 1.0f, 10.0f).ToString(""F1"")); // within range => 5
+                Console.WriteLine(MathF.Clamp(-5.0f, 1.0f, 10.0f).ToString(""F1"")); // below min => 1
+                Console.WriteLine(MathF.Clamp(15.0f, 1.0f, 10.0f).ToString(""F1"")); // above max => 10
+    }
+}",
+                overrideRoslynCode:
+                @"
+using System;
+
+public class Program
+{
+    public static void Main()
+    {
+                Console.WriteLine(Math.Clamp(5.0f, 1.0f, 10.0f).ToString(""F1""));
+                Console.WriteLine(Math.Clamp(-5.0f, 1.0f, 10.0f).ToString(""F1""));
+                Console.WriteLine(Math.Clamp(15.0f, 1.0f, 10.0f).ToString(""F1""));
+    }
+}");
+        }
     }
 }
