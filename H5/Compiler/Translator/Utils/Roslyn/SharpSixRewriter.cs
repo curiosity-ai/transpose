@@ -79,6 +79,8 @@ namespace H5.Translator
 
             var configHash = JsonConvert.SerializeObject(translator.AssemblyInfo).Hash128();
 
+            configHash = Hashes.Combine(configHash, ("H5_DISABLE_REWRITE=" + RewriteSwitches.CacheKeyComponent).Hash128());
+
             foreach (var reference in translator.References.OrderBy(r => r.MainModule.FileName))
             {
                 var fi = new FileInfo(reference.MainModule.FileName);
@@ -266,7 +268,6 @@ namespace H5.Translator
             result = Visit(syntaxTree.GetRoot());
 
             var replacers = new List<ICSharpReplacer>();
-            replacers.Add(new MethodImplAttributeRewriter());
 
             if (hasLocalFunctions)
             {
@@ -1148,26 +1149,10 @@ namespace H5.Translator
 
         public override SyntaxNode VisitCompilationUnit(CompilationUnitSyntax node)
         {
-            // Handle Top-Level Statements
-            if (node.Members.OfType<GlobalStatementSyntax>().Any())
-            {
-                 // Move all GlobalStatementSyntax to a Main method in a Program class
-                 var globalStatements = node.Members.OfType<GlobalStatementSyntax>().ToList();
-                 var otherMembers = node.Members.Where(m => !(m is GlobalStatementSyntax)).ToList();
-
-                 var mainStatements = globalStatements.Select(g => g.Statement).ToList();
-
-                 var mainMethod = SyntaxFactory.MethodDeclaration(SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.VoidKeyword)), "Main")
-                     .WithModifiers(SyntaxTokenList.Create(SyntaxFactory.Token(SyntaxKind.StaticKeyword)))
-                     .WithBody(SyntaxFactory.Block(mainStatements));
-
-                 var programClass = SyntaxFactory.ClassDeclaration("Program")
-                     .WithModifiers(SyntaxTokenList.Create(SyntaxFactory.Token(SyntaxKind.PublicKeyword))) // Internal?
-                     .WithMembers(SyntaxFactory.SingletonList<MemberDeclarationSyntax>(mainMethod));
-
-                 otherMembers.Add(programClass);
-                 node = node.WithMembers(SyntaxFactory.List(otherMembers));
-            }
+            // Top-level statements (GlobalStatementSyntax) are rejected with a
+            // TranslatorException in Translator.BuildAssembly before the rewriter
+            // ever runs, so no handling is needed here (rewrite case S26,
+            // docs/REWRITE-REMOVAL-PLAN.md).
 
             var externs = VisitList(node.Externs);
 
@@ -2320,10 +2305,16 @@ namespace H5.Translator
                 }
             }
 
-            if (node.Expression is IdentifierNameSyntax syntax && syntax.Identifier.Text == "nameof")
+            if (method == null && node.Expression is IdentifierNameSyntax syntax && syntax.Identifier.Text == "nameof")
             {
+                // Only the nameof *operator* binds without a method symbol; an
+                // invocation of a user-defined method named `nameof` must be left alone.
                 string name = SyntaxHelper.GetSymbolName(node, si, costValue, semanticModel);
-                return SyntaxFactory.LiteralExpression(SyntaxKind.StringLiteralExpression, SyntaxFactory.Literal(name));
+
+                if (name != null)
+                {
+                    return SyntaxFactory.LiteralExpression(SyntaxKind.StringLiteralExpression, SyntaxFactory.Literal(name));
+                }
             }
             else
             {

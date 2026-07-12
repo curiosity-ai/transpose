@@ -232,12 +232,18 @@ pipeline monotonically shrinks and each step de-risks the next:
 
 **Wave 0 — dead or duplicated code (category A candidates)**
 1. S26 top-level statements (dead: rejected earlier in `Translator.Build.cs`)
-2. S13 stackalloc in `SharpSixRewriter` (duplicates B1 — one of the two is
-   dead depending on order; unify to a single place, then remove with S8/Span work)
-3. R1 `[MethodImpl]` stripping (probe: Inspector likely ignores unknown
+2. R1 `[MethodImpl]` stripping (probe: Inspector likely ignores unknown
    attributes already; if the emitter chokes, teach the Inspector to skip it —
    that's 5 lines vs. a whole rewriter)
-4. S45 constant folding (probe: NRefactory resolver folds constants itself)
+3. S45 constant folding — **found to be inter-case-dependent**: it also
+   shields `const` field/property initializers from other lowerings that
+   produce non-constant expressions (e.g. constant interpolated strings →
+   `string.Format`, folded binary literals). Removable only together with /
+   after S1 &amp; S10, or by scoping those lowerings to skip constant contexts.
+   Note: B1 (`StackAllocRewriter` in the assembly build) and S13 (stackalloc
+   in the rewriter) are *not* duplicates — the two frontends re-read the
+   original sources independently, so each path needs its own lowering as
+   long as both frontends exist.
 
 **Wave 1 — C# 6 syntax the mcs parser already parses (category B)**
 5. S24 `init` → `set` (parser: `init` is an identifier-token accessor — needs
@@ -314,8 +320,8 @@ pipeline monotonically shrinks and each step de-risks the next:
 |------|------|--------|-------|
 | S26 top-level statements | 0 | pending probe | expected dead code — rejected in `Translator.Build.cs` before the rewriter ever runs |
 | R1 `[MethodImpl]` strip | 0 | pending probe | |
-| S13 stackalloc (rewriter copy) | 0 | pending probe | possible duplicate of B1 |
-| S45 constant folding | 0 | pending probe | |
+| S13 stackalloc (rewriter copy) | 3 | blocked | NOT a duplicate of B1 — both frontends re-read original sources; moved to Wave 3 |
+| S45 constant folding | 1 | blocked on S1/S10 | shields const initializers from non-const lowering output |
 | everything else | 1–3 | pending | |
 
 *(Update this table with every commit that removes a case.)*
