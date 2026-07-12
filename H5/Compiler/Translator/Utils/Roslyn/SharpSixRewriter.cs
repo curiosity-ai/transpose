@@ -256,8 +256,11 @@ namespace H5.Translator
             var result = new ExpressionBodyToStatementRewriter(semanticModel).Visit(syntaxTree.GetRoot());
             modelUpdater(result);
 
-            result = new NameofReplacer(semanticModel).Visit(syntaxTree.GetRoot());
-            modelUpdater(result);
+            if (!RewriteSwitches.Disabled("P2"))
+            {
+                result = new NameofReplacer(semanticModel).Visit(syntaxTree.GetRoot());
+                modelUpdater(result);
+            }
 
             result = new DiscardReplacer().Replace(syntaxTree.GetRoot(), semanticModel, modelUpdater, this);
             modelUpdater(result);
@@ -2314,7 +2317,7 @@ namespace H5.Translator
                 }
             }
 
-            if (method == null && node.Expression is IdentifierNameSyntax syntax && syntax.Identifier.Text == "nameof")
+            if (!RewriteSwitches.Disabled("P2") && method == null && node.Expression is IdentifierNameSyntax syntax && syntax.Identifier.Text == "nameof")
             {
                 // Only the nameof *operator* binds without a method symbol; an
                 // invocation of a user-defined method named `nameof` must be left alone.
@@ -2495,6 +2498,12 @@ namespace H5.Translator
 
         public override SyntaxNode VisitUsingDirective(UsingDirectiveSyntax node)
         {
+            if (RewriteSwitches.Disabled("S2"))
+            {
+                // Probe mode: leave using-static/alias directives for the frontend.
+                return base.VisitUsingDirective(node);
+            }
+
             if (node.StaticKeyword.RawKind == (int)SyntaxKind.StaticKeyword)
             {
                 hasStaticUsingOrAliases = true;
