@@ -28,6 +28,58 @@ namespace H5.Translator
             return ReplacePatterns(root, model);
         }
 
+        private void GetVariablesFromDesignation(VariableDesignationSyntax designation, SemanticModel model, SharpSixRewriter rewriter, List<(SingleVariableDesignationSyntax Designation, TypeSyntax Type, bool IsValueType)> variables, ITypeSymbol expressionType)
+        {
+            if (designation is SingleVariableDesignationSyntax single)
+            {
+                TypeSyntax typeSyntax = null;
+                bool isValueType = false;
+
+                var symbol = model.GetDeclaredSymbol(single) as ILocalSymbol;
+                if (symbol != null && symbol.Type.TypeKind != TypeKind.Error)
+                {
+                    typeSyntax = SyntaxHelper.GenerateTypeSyntax(symbol.Type, model, single.SpanStart, rewriter);
+                    isValueType = symbol.Type.IsValueType;
+                }
+
+                if ((typeSyntax == null || typeSyntax.IsMissing) && expressionType != null && expressionType.TypeKind != TypeKind.Error)
+                {
+                    typeSyntax = SyntaxHelper.GenerateTypeSyntax(expressionType, model, single.SpanStart, rewriter);
+                    isValueType = expressionType.IsValueType;
+                }
+
+                if (typeSyntax == null || typeSyntax.IsMissing || typeSyntax.ToString() == "var" || typeSyntax.ToString().Trim() == "?")
+                {
+                    typeSyntax = SyntaxFactory.ParseTypeName("dynamic");
+                    isValueType = false;
+                }
+
+                variables.Add((single, typeSyntax, isValueType));
+            }
+            else if (designation is ParenthesizedVariableDesignationSyntax paren)
+            {
+                // var (x, y) deconstruction designation: each element binds against the
+                // corresponding tuple element of the matched expression.
+                int index = 0;
+                foreach (var element in paren.Variables)
+                {
+                    ITypeSymbol elementType = null;
+                    if (expressionType is INamedTypeSymbol nts && nts.IsTupleType && index < nts.TupleElements.Length)
+                    {
+                        elementType = nts.TupleElements[index].Type;
+                    }
+                    else if (expressionType != null)
+                    {
+                        elementType = (expressionType.GetMembers($"Item{index + 1}").FirstOrDefault() as IFieldSymbol)?.Type;
+                    }
+
+                    GetVariablesFromDesignation(element, model, rewriter, variables, elementType);
+                    index++;
+                }
+            }
+            // DiscardDesignationSyntax: nothing to declare
+        }
+
         private void GetVariables(PatternSyntax pattern, SemanticModel model, SharpSixRewriter rewriter, List<(SingleVariableDesignationSyntax Designation, TypeSyntax Type, bool IsValueType)> variables, ITypeSymbol expressionType)
         {
             if (pattern is DeclarationPatternSyntax decl)
@@ -77,38 +129,7 @@ namespace H5.Translator
             }
             else if (pattern is VarPatternSyntax varPattern)
             {
-                if (varPattern.Designation is SingleVariableDesignationSyntax single)
-                {
-                    TypeSyntax typeSyntax = null;
-                    bool isValueType = false;
-
-                    var symbol = model.GetDeclaredSymbol(single) as ILocalSymbol;
-                    if (symbol != null)
-                    {
-                        if (symbol.Type.TypeKind != TypeKind.Error)
-                        {
-                            typeSyntax = SyntaxHelper.GenerateTypeSyntax(symbol.Type, model, single.SpanStart, rewriter);
-                            isValueType = symbol.Type.IsValueType;
-                        }
-                    }
-
-                    if ((typeSyntax == null || typeSyntax.IsMissing) && expressionType != null)
-                    {
-                        if (expressionType.TypeKind != TypeKind.Error)
-                        {
-                            typeSyntax = SyntaxHelper.GenerateTypeSyntax(expressionType, model, varPattern.SpanStart, rewriter);
-                            isValueType = expressionType.IsValueType;
-                        }
-                    }
-
-                    if (typeSyntax == null || typeSyntax.IsMissing || typeSyntax.ToString() == "var" || typeSyntax.ToString().Trim() == "?")
-                    {
-                         typeSyntax = SyntaxFactory.ParseTypeName("dynamic");
-                         isValueType = false;
-                    }
-
-                    variables.Add((single, typeSyntax, isValueType));
-                }
+                GetVariablesFromDesignation(varPattern.Designation, model, rewriter, variables, expressionType);
             }
             else if (pattern is RecursivePatternSyntax recursive)
             {
@@ -455,6 +476,55 @@ namespace H5.Translator
             return root;
         }
 
+        /// <summary>
+        /// Builds the always-true assignment expression(s) binding a var-pattern
+        /// designation against <paramref name="expression"/>. Returns null when the
+        /// designation declares nothing (a discard). `var (x, y)` designations bind
+        /// each element against the corresponding ItemN of the matched tuple.
+        /// </summary>
+        private ExpressionSyntax MakeDesignationCheck(VariableDesignationSyntax designation, ExpressionSyntax expression)
+        {
+            if (designation is SingleVariableDesignationSyntax single)
+            {
+                var varName = SyntaxFactory.IdentifierName(single.Identifier.ValueText);
+
+                return SyntaxFactory.InvocationExpression(
+                    SyntaxFactory.MemberAccessExpression(SyntaxKind.SimpleMemberAccessExpression, SyntaxFactory.ParseName("global::H5.Script"), SyntaxFactory.GenericName("Write").AddTypeArgumentListArguments(SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.BoolKeyword)))),
+                    SyntaxFactory.ArgumentList(SyntaxFactory.SeparatedList(new[] {
+                        SyntaxFactory.Argument(SyntaxFactory.LiteralExpression(SyntaxKind.StringLiteralExpression, SyntaxFactory.Literal("({0} = {1}, true)"))),
+                        SyntaxFactory.Argument(varName),
+                        SyntaxFactory.Argument(expression)
+                    }))
+                );
+            }
+
+            if (designation is ParenthesizedVariableDesignationSyntax paren)
+            {
+                var receiver = expression is IdentifierNameSyntax || expression is MemberAccessExpressionSyntax || expression is InvocationExpressionSyntax || expression is ParenthesizedExpressionSyntax
+                    ? expression
+                    : SyntaxFactory.ParenthesizedExpression(expression);
+
+                ExpressionSyntax combined = null;
+                int index = 0;
+                foreach (var element in paren.Variables)
+                {
+                    var elementAccess = SyntaxFactory.MemberAccessExpression(SyntaxKind.SimpleMemberAccessExpression,
+                        receiver,
+                        SyntaxFactory.IdentifierName($"Item{index + 1}"));
+
+                    var elementCheck = MakeDesignationCheck(element, elementAccess);
+                    if (elementCheck != null)
+                    {
+                        combined = combined == null ? elementCheck : SyntaxFactory.BinaryExpression(SyntaxKind.LogicalAndExpression, combined, elementCheck);
+                    }
+                    index++;
+                }
+                return combined;
+            }
+
+            return null; // discard designation
+        }
+
         private ExpressionSyntax MakeCheck(ExpressionSyntax expression, PatternSyntax pattern, SemanticModel model, ITypeSymbol expressionType = null)
         {
             if (expressionType == null)
@@ -598,21 +668,8 @@ namespace H5.Translator
             }
             else if (pattern is VarPatternSyntax varPattern)
             {
-                if (varPattern.Designation is SingleVariableDesignationSyntax designation)
-                {
-                    var varName = SyntaxFactory.IdentifierName(designation.Identifier.ValueText);
-
-                    var assignmentHelper = SyntaxFactory.InvocationExpression(
-                        SyntaxFactory.MemberAccessExpression(SyntaxKind.SimpleMemberAccessExpression, SyntaxFactory.ParseName("global::H5.Script"), SyntaxFactory.GenericName("Write").AddTypeArgumentListArguments(SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.BoolKeyword)))),
-                        SyntaxFactory.ArgumentList(SyntaxFactory.SeparatedList(new[] {
-                            SyntaxFactory.Argument(SyntaxFactory.LiteralExpression(SyntaxKind.StringLiteralExpression, SyntaxFactory.Literal("({0} = {1}, true)"))),
-                            SyntaxFactory.Argument(varName),
-                            SyntaxFactory.Argument(expression)
-                        }))
-                    );
-                    return assignmentHelper;
-                }
-                return SyntaxFactory.LiteralExpression(SyntaxKind.TrueLiteralExpression);
+                var check = MakeDesignationCheck(varPattern.Designation, expression);
+                return check ?? SyntaxFactory.LiteralExpression(SyntaxKind.TrueLiteralExpression);
             }
             else if (pattern is ListPatternSyntax listPattern)
             {

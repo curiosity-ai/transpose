@@ -4,6 +4,7 @@ using H5.Translator;
 using NuGet.Versioning;
 using System;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Net.Http;
 using System.Text.Json;
@@ -17,8 +18,25 @@ namespace H5.Compiler.IntegrationTests
     {
         private static readonly HttpClient _httpClient = new HttpClient();
         private static Dictionary<string, NuGetVersion> _cachedLatestVersion = new Dictionary<string, NuGetVersion>();
+        private static readonly SemaphoreSlim _restoreLock = new SemaphoreSlim(1, 1);
 
         private static async Task<NuGetVersion> GetLatestVersionAsync(string package = "h5")
+        {
+            // Serialize resolution+restore: concurrent first calls from parallel test
+            // classes must not observe (or race with) a half-restored package folder,
+            // and the version must only be cached AFTER the restore completed.
+            await _restoreLock.WaitAsync();
+            try
+            {
+                return await GetLatestVersionLockedAsync(package);
+            }
+            finally
+            {
+                _restoreLock.Release();
+            }
+        }
+
+        private static async Task<NuGetVersion> GetLatestVersionLockedAsync(string package)
         {
             if (_cachedLatestVersion.TryGetValue(package, out var cachedVersion))
             {
@@ -36,8 +54,8 @@ namespace H5.Compiler.IntegrationTests
                     {
                         Console.WriteLine($"Found local H5 build at {localPackagePath}. Using version 0.0.42.");
                         var localVersion = new NuGetVersion("0.0.42");
-                        _cachedLatestVersion[package] = localVersion;
                         await EnsurePackageRestored(localVersion, package, repoRoot);
+                        _cachedLatestVersion[package] = localVersion;
                         return localVersion;
                     }
                 }

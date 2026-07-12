@@ -60,7 +60,7 @@ public class Program
         {
             (_, 0) => "divides",
             (0, _) => "smaller",
-            _ => "other",
+            var (x, y) => $"q{x}r{y}",
         };
         Console.WriteLine(Desc(10, 5));
         Console.WriteLine(Desc(3, 10));
@@ -72,7 +72,7 @@ public class Program
         }
 
         [TestMethod]
-        public async Task SwitchExpr_VarDeconstructionArm_MinimalPassing()
+        public async Task SwitchExpr_PerElementVarBindings()
         {
             var code = """
 using System;
@@ -96,10 +96,10 @@ public class Program
         }
 
         [TestMethod]
-        public async Task SwitchExpr_VarDeconstructionArm_MinimalFailing()
+        public async Task SwitchExpr_VarDeconstructionArm()
         {
-            // Minimal repro of the parse failure seen when a switch-expression arm
-            // uses a var *deconstruction* pattern (`var (x, y)`); see FINDINGS.md.
+            // Regression test: switch-expression arms with var *deconstruction*
+            // patterns (`var (x, y)`) previously produced unbound identifiers.
             var code = """
 using System;
 

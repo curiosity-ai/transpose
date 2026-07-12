@@ -196,6 +196,20 @@ For each case, in order:
 6. **Update the tracking table** (§8) and commit — one case (or one coherent
    group) per commit.
 
+### Tooling
+
+- Starting a source file with `//DEBUG REWRITE` makes the rewriter dump the
+  lowered source to `%TEMP%/h5/rewritten/<assembly>/<file>` — the fastest way
+  to see exactly what a rewrite case produces.
+- A minimal probe (console app referencing `H5.Compiler.Service` +
+  `H5.Translator` project refs, calling `CompilationProcessor.CompileAsync`
+  with a `CompilationRequest` and printing the dump) compiles a single
+  snippet in ~10 s without the Playwright round-trip; invaluable for
+  bisecting parse errors in lowered output.
+- The rewriter cache is disabled in DEBUG builds (`TryGetFromCache` returns
+  false), so probing with locally-built Debug binaries never sees stale
+  lowering.
+
 ## 5. Test plan
 
 New test folder: `Tests/H5.Compiler.IntegrationTests/RewriteCases/`, one class
@@ -318,8 +332,9 @@ pipeline monotonically shrinks and each step de-risks the next:
 
 | Case | Wave | Status | Notes |
 |------|------|--------|-------|
-| S26 top-level statements | 0 | pending probe | expected dead code — rejected in `Translator.Build.cs` before the rewriter ever runs |
-| R1 `[MethodImpl]` strip | 0 | pending probe | |
+| S26 top-level statements | 0 | **removed** | dead code — `Translator.BuildAssembly` rejects `GlobalStatementSyntax` before the rewriter runs |
+| R1 `[MethodImpl]` strip | 0 | **removed** | frontend+emitter handle the attribute fine; whole replacer deleted (RC_Wave0_Tests.MethodImpl_*) |
+| S24 `init` accessors | 1 | **removed** | mcs tokenizer maps contextual `init` → SET; setter-presence checks updated (RC_ModifierStripTests, RC_S3, CSharp9Tests) |
 | S13 stackalloc (rewriter copy) | 3 | blocked | NOT a duplicate of B1 — both frontends re-read original sources; moved to Wave 3 |
 | S45 constant folding | 1 | blocked on S1/S10 | shields const initializers from non-const lowering output |
 | everything else | 1–3 | pending | |

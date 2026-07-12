@@ -1494,6 +1494,11 @@ namespace ICSharpCode.NRefactory.MonoCSharp
                     number_builder [number_pos++] = (char) d;
                     get_char ();
                     seen_digits = true;
+                } else if (d == '_' && number_pos > 0){
+                    // C# 7.0 digit separator: skip without recording. The source has
+                    // already been validated by Roslyn upstream, so a permissive skip
+                    // (no between-digits enforcement) is safe here.
+                    get_char ();
                 } else
                     break;
             }
@@ -1672,6 +1677,9 @@ namespace ICSharpCode.NRefactory.MonoCSharp
                 if (is_hex (d)){
                     number_builder [number_pos++] = (char) d;
                     get_char ();
+                } else if (d == '_'){
+                    // C# 7.0/7.2 digit separator (0x_FF is legal); validated upstream by Roslyn.
+                    get_char ();
                 } else
                     break;
             }
@@ -1693,6 +1701,33 @@ namespace ICSharpCode.NRefactory.MonoCSharp
                 Report.Error (1013, Location, "Invalid number");
                 return new IntLiteral (context.BuiltinTypes, 0, loc);
             }
+        }
+
+        //
+        // C# 7.0 binary literals: 0b1010_1100 (digit separators allowed, incl. 0b_...).
+        // The source has already been validated by Roslyn upstream, so parsing is permissive.
+        //
+        ILiteralConstant handle_binary (Location loc)
+        {
+            int d;
+            ulong ul = 0;
+            int digits = 0;
+
+            get_char ();
+            while ((d = peek_char ()) != -1){
+                if (d == '0' || d == '1'){
+                    if (digits == 64)
+                        Error_NumericConstantTooLong ();
+                    ul = (ul << 1) | (ulong) (d - '0');
+                    digits++;
+                    get_char ();
+                } else if (d == '_'){
+                    get_char ();
+                } else
+                    break;
+            }
+
+            return integer_type_suffix (ul, peek_char (), loc);
         }
 
         //
@@ -1721,6 +1756,15 @@ namespace ICSharpCode.NRefactory.MonoCSharp
 
                     if (peek == 'x' || peek == 'X') {
                         val = res = handle_hex (loc);
+#if FULL_AST
+                        res.ParsedValue = reader.ReadChars (read_start, reader.Position - 1);
+#endif
+
+                        return Token.LITERAL;
+                    }
+
+                    if (peek == 'b' || peek == 'B') {
+                        val = res = handle_binary (loc);
 #if FULL_AST
                         res.ParsedValue = reader.ReadChars (read_start, reader.Position - 1);
 #endif

@@ -1,24 +1,88 @@
 # Findings
 
-## Switch expression with `var (x, y)` deconstruction arm produces unparseable rewritten code
+## Switch expressions over tuples emitted unparseable `FromTemp<(int a, int b)>` type args (FIXED)
 
-Found while building the rewrite-case test suite (docs/REWRITE-REMOVAL-PLAN.md).
-A switch-expression arm using a var *deconstruction* pattern makes the
-`SharpSixRewriter`/`IsPatternReplacer` lowering emit C# that the NRefactory (mcs)
-parser rejects with `Unexpected symbol 'q', expecting '.'`:
+`VisitSwitchExpression` rendered the governing expression's type with
+`ToMinimalDisplayString`, so tuple types appeared in C# 7 tuple syntax
+(`(int q, int r)`) inside `H5.Script.FromTemp<...>` / `Write<...>` type
+arguments — which the NRefactory (mcs) parser cannot read (`Unexpected symbol
+'q', expecting '.'`). Fixed by rendering through
+`SyntaxHelper.GenerateTypeSyntax`, which lowers tuples to
+`System.ValueTuple<...>`. Covered by
+`RC_CompositionTests.Patterns_LocalFunctions_Tuples_Combined`.
 
-```csharp
-var t = (3, 2);
-string r = t switch
-{
-    (0, 0) => "origin",
-    var (x, y) => "q" + x + "r" + y,   // <-- breaks the lowering
-};
-```
+## Switch expression with `var (x, y)` deconstruction arm left identifiers unbound (FIXED)
 
-Per-element bindings work: `(var x, var y) => ...` is fine (see
-`RC_CompositionTests.SwitchExpr_VarDeconstructionArm_MinimalPassing`).
-The failing repro is `RC_CompositionTests.SwitchExpr_VarDeconstructionArm_MinimalFailing`.
+`IsPatternReplacer` only handled `SingleVariableDesignationSyntax` in var
+patterns; a var *deconstruction* designation (`var (x, y)`) lowered to `true`
+without hoisting or assigning the variables, producing
+`UnknownIdentifierResolveResult`. Fixed by recursing through
+`ParenthesizedVariableDesignationSyntax` (hoisting each element with its tuple
+element type, binding via `ItemN`). Covered by
+`RC_CompositionTests.SwitchExpr_VarDeconstructionArm` and `_PerElementVarBindings`.
+
+## Derived records: inherited positional properties were redeclared (FIXED)
+
+`VisitRecordDeclaration` synthesized a property for *every* positional
+parameter, so `record Dog(string Name, string Breed) : Animal(Name)` declared
+its own `Name`, shadowing `Animal.Name`. This broke `with`-expression cloning
+(the copy lost `Name`) and derived-record equality. Fixed: parameters whose
+name matches a base-type property no longer synthesize a property or a
+constructor assignment (matching Roslyn, where the value flows through the
+base constructor arguments). Covered by `RC_S21_RecordTests.Records_InheritanceAndWith`.
+
+## Record equality used EqualityComparer<T>.Default in operator== (FIXED)
+
+The synthesized `operator==` called
+`EqualityComparer<T>.Default.Equals(left, right)`, which in the H5 runtime
+does not dispatch to the synthesized `Equals`. Now lowered to
+`ReferenceEquals(left, right) || (!ReferenceEquals(left, null) && left.Equals((object)right))`
+(virtual dispatch, so derived equality applies through base-typed references),
+and `Equals(T)` gained a `GetType() != other.GetType()` guard approximating
+the record EqualityContract.
+
+## Record ToString omitted non-positional members (FIXED)
+
+Synthesized `PrintMembers` printed only positional parameters;
+.NET records also print the body's public instance fields and readable
+properties in declaration order. `Tagged(string Name) { public int Extra ... }`
+printed `Tagged { Name = n }` instead of `Tagged { Name = n, Extra = 1 }`.
+Covered by `RC_S21_RecordTests.Records_EqualityHashToStringDeconstruct`.
+
+## String slices with composite bounds computed wrong lengths (FIXED)
+
+The Index/Range lowering built `Substring(start, end - start)` with raw
+`SyntaxFactory.BinaryExpression` operands, which never auto-parenthesize:
+`s[^5..]` became `s.Substring(s.Length-5, s.Length-s.Length-5)` (length -5 →
+empty string). All synthesized subtraction operands are now parenthesized
+(`ParenthesizeOperand`). Covered by `RC_S15_IndexRangeTests`.
+
+## Zero-argument expanded call of a params local function crashes at runtime
+
+`LocalFunctionReplacer` lowers `int SumAll(params int[] xs)` to a custom
+delegate keeping `params`. Call sites with arguments are wrapped into an array
+(`SumAll([1,2,3])` in JS), but a zero-argument expanded call emits `SumAll()`
+— `xs` is `undefined` and the body crashes (`Cannot read properties of
+undefined`). Repro: `RC_S9_LocalFunctionTests.LocalFunctions_ParamsZeroArgs_MinimalFailing`
+([Ignore]d). Likely an emitter gap in empty params expansion for *delegate*
+invocations (regular methods handle it).
+
+## Generic local functions are not supported (known limitation)
+
+`LocalFunctionReplacer` lowers local functions to delegate-typed locals, but
+no delegate instance can be open-generic, so `T Identity<T>(T v) => v;` calls
+fail to resolve (`UnknownIdentifierResolveResult`). Repro:
+`RC_S9_LocalFunctionTests.LocalFunctions_Generic_MinimalFailing` ([Ignore]d).
+A proper fix would lift generic local functions to private generic methods on
+the containing type (capture analysis required).
+
+## Integration-test infra: local h5 package restore races
+
+`H5Compiler.EnsurePackageRestored` force-deletes and re-restores the local
+`h5 0.0.42` package from `~/.nuget/packages` on first use per test class;
+under parallel test execution another class can observe the half-restored
+package and fail with "NuGet package not found on path ... h5/0.0.42"
+(seen as sub-second failures that pass on re-run).
 
 ## `nameof(...)` crash when a user-defined method is named `nameof` (FIXED)
 
