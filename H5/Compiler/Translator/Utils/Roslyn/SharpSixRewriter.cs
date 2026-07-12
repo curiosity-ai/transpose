@@ -2405,6 +2405,20 @@ namespace H5.Translator
 
         public override SyntaxNode VisitInterpolatedStringExpression(InterpolatedStringExpressionSyntax node)
         {
+            // C# 10 constant interpolated strings: fold to a plain literal so the
+            // result stays valid in constant contexts (const initializers, attribute
+            // arguments, ...) instead of becoming a string.Format call.
+            if (node.SyntaxTree != null && node.SyntaxTree == semanticModel.SyntaxTree)
+            {
+                var constant = semanticModel.GetConstantValue(node);
+                if (constant.HasValue && constant.Value is string constantText)
+                {
+                    return SyntaxFactory.LiteralExpression(SyntaxKind.StringLiteralExpression, SyntaxFactory.Literal(constantText))
+                        .WithLeadingTrivia(node.GetLeadingTrivia())
+                        .WithTrailingTrivia(node.GetTrailingTrivia());
+                }
+            }
+
             var isInterpolatedString = semanticModel.GetConversion(node).IsInterpolatedString;
 
             node = (InterpolatedStringExpressionSyntax)base.VisitInterpolatedStringExpression(node);
@@ -2580,99 +2594,12 @@ namespace H5.Translator
             return node;
         }
 
-        public override SyntaxNode VisitEqualsValueClause(EqualsValueClauseSyntax node)
-        {
-            if (node.SyntaxTree == null || node.SyntaxTree != semanticModel.SyntaxTree)
-            {
-                return base.VisitEqualsValueClause(node);
-            }
-
-            var value = semanticModel.GetConstantValue(node.Value);
-            var newNode = base.VisitEqualsValueClause(node);
-
-            if (value.HasValue && value.Value != null && newNode is EqualsValueClauseSyntax evc && !(node.Value is CastExpressionSyntax) && !(node.Value is LiteralExpressionSyntax))
-            {
-                var parent = node.GetParent<MemberDeclarationSyntax>();
-                if (parent != null && (parent is FieldDeclarationSyntax || parent is PropertyDeclarationSyntax pd && pd.Initializer != null && pd.Initializer.Equals(node)))
-                {
-                    ExpressionSyntax literal = null;
-                    if (SyntaxHelper.IsNumeric(value.Value.GetType()))
-                    {
-                        if (value.Value is double d && (double.IsNaN(d) || double.IsInfinity(d)))
-                        {
-                            IdentifierNameSyntax name = null;
-                            if (double.IsNaN(d))
-                            {
-                                name = SyntaxFactory.IdentifierName("NaN");
-                            }
-                            else if (double.IsPositiveInfinity(d))
-                            {
-                                name = SyntaxFactory.IdentifierName("PositiveInfinity");
-                            }
-                            else if (double.IsNegativeInfinity(d))
-                            {
-                                name = SyntaxFactory.IdentifierName("NegativeInfinity");
-                            }
-
-                            literal = SyntaxFactory.MemberAccessExpression(SyntaxKind.SimpleMemberAccessExpression, SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.DoubleKeyword)), name);
-                        }
-                        else if (value.Value is float f && (float.IsNaN(f) || float.IsInfinity(f)))
-                        {
-                            IdentifierNameSyntax name = null;
-                            if (float.IsNaN(f))
-                            {
-                                name = SyntaxFactory.IdentifierName("NaN");
-                            }
-                            else if (float.IsPositiveInfinity(f))
-                            {
-                                name = SyntaxFactory.IdentifierName("PositiveInfinity");
-                            }
-                            else if (float.IsNegativeInfinity(f))
-                            {
-                                name = SyntaxFactory.IdentifierName("NegativeInfinity");
-                            }
-
-                            literal = SyntaxFactory.MemberAccessExpression(SyntaxKind.SimpleMemberAccessExpression, SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.FloatKeyword)), name);
-                        }
-                        else
-                        {
-                            var ti = semanticModel.GetTypeInfo(node.Value);
-                            if (ti.Type != null && ti.Type.TypeKind == TypeKind.Enum || ti.ConvertedType != null && ti.ConvertedType.TypeKind == TypeKind.Enum)
-                            {
-                                return newNode;
-                            }
-
-                            if (value.Value is long lv && lv == long.MinValue)
-                            {
-                                return evc.WithValue(SyntaxFactory.MemberAccessExpression(SyntaxKind.SimpleMemberAccessExpression, SyntaxFactory.IdentifierName("long"), SyntaxFactory.IdentifierName("MinValue")));
-                            }
-
-                            literal = SyntaxFactory.LiteralExpression(SyntaxKind.NumericLiteralExpression, SyntaxFactory.Literal((dynamic)value.Value));
-                        }
-                    }
-                    else if (value.Value is bool boolean)
-                    {
-                        literal = SyntaxFactory.LiteralExpression(boolean ? SyntaxKind.TrueLiteralExpression : SyntaxKind.FalseLiteralExpression);
-                    }
-                    else if (value.Value is string stringVal)
-                    {
-                        literal = SyntaxFactory.LiteralExpression(SyntaxKind.StringLiteralExpression, SyntaxFactory.Literal(stringVal));
-                    }
-                    else if (value.Value is char charVal)
-                    {
-                        literal = SyntaxFactory.LiteralExpression(SyntaxKind.CharacterLiteralExpression, SyntaxFactory.Literal(charVal));
-                    }
-                    else
-                    {
-                        return newNode;
-                    }
-
-                    return evc.WithValue(literal);
-                }
-            }
-
-            return newNode;
-        }
+        // Rewrite case S45 (constant folding of field/property initializers) was
+        // removed: the NRefactory resolver folds constant expressions itself, and
+        // the lowerings that previously produced non-constant output in constant
+        // contexts now fold themselves (constant interpolated strings in
+        // VisitInterpolatedStringExpression; binary/digit-separator literals are
+        // handled natively by the tokenizer).
 
         public override SyntaxNode VisitIdentifierName(IdentifierNameSyntax node)
         {

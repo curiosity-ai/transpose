@@ -337,7 +337,8 @@ pipeline monotonically shrinks and each step de-risks the next:
 | S24 `init` accessors | 1 | **removed** | mcs tokenizer maps contextual `init` → SET; setter-presence checks updated (RC_ModifierStripTests, RC_S3, CSharp9Tests) |
 | S10 binary literals / digit separators | 1 | **removed** | mcs tokenizer handles `0b...` (`handle_binary`) and skips `_` separators in decimal/hex/binary lexing; verified by RC_S10_LiteralTests + full language-suite sweep |
 | S13 stackalloc (rewriter copy) | 3 | blocked | NOT a duplicate of B1 — both frontends re-read original sources; moved to Wave 3 |
-| S45 constant folding | 1 | blocked on S1/S10 | shields const initializers from non-const lowering output |
+| S45 constant folding | 1 | **removed** | NRefactory resolver folds constants itself; constant interpolated strings now fold in S1 (prerequisite), binary/separator literals handled by tokenizer (S10) |
+| B2 covariant returns | — | **blocked (probed)** | NOT removable at the assembly-build layer: Roslyn rejects covariant overrides against h5's BCL (CS8830/CS8831 — no `RuntimeFeature.CovariantReturnsOfClasses`). Removal requires adding the runtime feature flag to the h5 BCL *and* verifying the Cecil/NRefactory type system handles covariant override metadata — revisit in Horizon 2 |
 | everything else | 1–3 | pending | |
 
 *(Update this table with every commit that removes a case.)*
