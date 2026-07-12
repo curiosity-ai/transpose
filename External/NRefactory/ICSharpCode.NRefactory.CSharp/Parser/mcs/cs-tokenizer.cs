@@ -3169,6 +3169,109 @@ namespace ICSharpCode.NRefactory.MonoCSharp
             throw new NotImplementedException (directive.ToString ());
         }
 
+        //
+        // C# 11 raw string literals ("""..."""). Called after the first '"' has been
+        // consumed and the two next characters are known to be '"'. The source has
+        // already been validated by Roslyn upstream, so parsing is permissive: a run
+        // of >= N closing quotes ends the literal, with the excess quotes belonging
+        // to the content. Interpolated raw strings never reach this tokenizer (they
+        // are lowered to string.Format by the pre-translation rewriter).
+        //
+        int consume_raw_string ()
+        {
+            Location start_location = Location;
+
+            int open_quotes = 1;
+            while (peek_char () == '"') {
+                get_char ();
+                open_quotes++;
+            }
+
+            var content = new System.Text.StringBuilder ();
+            int quote_run = 0;
+            int c;
+
+            while (true) {
+                if (putback_char != -1) {
+                    c = putback_char;
+                    putback_char = -1;
+                } else {
+                    c = reader.Read ();
+                }
+
+                if (c == '"') {
+                    ++col;
+                    quote_run++;
+                    if (quote_run >= open_quotes && peek_char () != '"') {
+                        // Close found: any quotes beyond the delimiter length belong to the content.
+                        for (int i = 0; i < quote_run - open_quotes; i++)
+                            content.Append ('"');
+                        break;
+                    }
+                    continue;
+                }
+
+                for (int i = 0; i < quote_run; i++)
+                    content.Append ('"');
+                quote_run = 0;
+
+                if (c == -1) {
+                    Report.Error (1039, Location, "Unterminated string literal");
+                    recordNewLine = true;
+                    return Token.EOF;
+                }
+
+                if (c == '\n') {
+                    advance_line (content.Length > 0 && content [content.Length - 1] == '\r' ? SpecialsBag.NewLine.Windows : SpecialsBag.NewLine.Unix);
+                } else {
+                    ++col;
+                }
+
+                content.Append ((char) c);
+            }
+
+            string value = content.ToString ();
+
+            //
+            // Multi-line form: content starts with (whitespace +) newline right after the
+            // opening quotes and ends with newline + indentation before the closing quotes.
+            // The closing line's indentation is stripped from every content line.
+            //
+            int first_nl = value.IndexOf ('\n');
+            bool multi_line = first_nl >= 0 && value.Substring (0, first_nl).Trim ().Length == 0;
+
+            if (multi_line) {
+                int last_nl = value.LastIndexOf ('\n');
+                string indentation = value.Substring (last_nl + 1);
+
+                // between first newline and last newline (exclusive), dropping a \r before the last newline
+                int body_start = first_nl + 1;
+                int body_end = last_nl;
+                if (body_end > body_start && value [body_end - 1] == '\r')
+                    body_end--;
+
+                value = body_end > body_start ? value.Substring (body_start, body_end - body_start) : string.Empty;
+
+                if (indentation.Length > 0) {
+                    var lines = value.Split ('\n');
+                    for (int i = 0; i < lines.Length; i++) {
+                        if (lines [i].StartsWith (indentation, StringComparison.Ordinal)) {
+                            lines [i] = lines [i].Substring (indentation.Length);
+                        } else if (lines [i].TrimEnd ('\r').Trim ().Length == 0) {
+                            // whitespace-only lines may be shorter than the indentation
+                            lines [i] = lines [i].EndsWith ("\r", StringComparison.Ordinal) ? "\r" : string.Empty;
+                        }
+                    }
+                    value = string.Join ("\n", lines);
+                }
+            }
+
+            ILiteralConstant raw_res = new StringLiteral (context.BuiltinTypes, value, start_location);
+            val = raw_res;
+            recordNewLine = true;
+            return Token.LITERAL;
+        }
+
         int consume_string (bool quoted)
         {
             int c;
@@ -3888,6 +3991,12 @@ namespace ICSharpCode.NRefactory.MonoCSharp
                         Report.Error (8076, Location, "Missing close delimiter `}' for interpolated expression");
                         val = null;
                         return Token.INTERPOLATED_STRING_END;
+                    }
+
+                    // peek_char() loads the next char into putback_char; reader.Peek()
+                    // then sees the character after it — a two-char lookahead for `"""`.
+                    if (peek_char () == '"' && reader.Peek () == '"') {
+                        return consume_raw_string ();
                     }
 
                     return consume_string (false);

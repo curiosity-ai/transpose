@@ -765,13 +765,8 @@ namespace H5.Translator
                 return base.VisitLiteralExpression(node);
             }
 
-            if (node.Token.IsKind(SyntaxKind.SingleLineRawStringLiteralToken) ||
-                node.Token.IsKind(SyntaxKind.MultiLineRawStringLiteralToken))
-            {
-                return SyntaxFactory.LiteralExpression(
-                    SyntaxKind.StringLiteralExpression,
-                    SyntaxFactory.Literal(node.Token.ValueText));
-            }
+            // Raw string literals ("""...""") pass through unchanged (rewrite case S30,
+            // removed): the NRefactory tokenizer lexes them natively (consume_raw_string).
 
             var spanStart = node.SpanStart;
             var pos = node.GetLocation().SourceSpan.Start;
