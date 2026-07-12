@@ -335,8 +335,16 @@ pipeline monotonically shrinks and each step de-risks the next:
 | S26 top-level statements | 0 | **removed** | dead code — `Translator.BuildAssembly` rejects `GlobalStatementSyntax` before the rewriter runs |
 | R1 `[MethodImpl]` strip | 0 | **removed** | frontend+emitter handle the attribute fine; whole replacer deleted (RC_Wave0_Tests.MethodImpl_*) |
 | S24 `init` accessors | 1 | **removed** | mcs tokenizer maps contextual `init` → SET; setter-presence checks updated (RC_ModifierStripTests, RC_S3, CSharp9Tests) |
+| S10 binary literals / digit separators | 1 | **removed** | mcs tokenizer handles `0b...` (`handle_binary`) and skips `_` separators in decimal/hex/binary lexing; verified by RC_S10_LiteralTests + full language-suite sweep |
 | S13 stackalloc (rewriter copy) | 3 | blocked | NOT a duplicate of B1 — both frontends re-read original sources; moved to Wave 3 |
 | S45 constant folding | 1 | blocked on S1/S10 | shields const initializers from non-const lowering output |
 | everything else | 1–3 | pending | |
 
 *(Update this table with every commit that removes a case.)*
+
+Baseline note (2026-07): the following tests fail identically on master and on
+this branch (pre-existing, not caused by any removal):
+`AliasAnyType`, `OutVariables_RepeatedNameInSameScope`,
+`unimplemented…NullableReferenceTypes`, `FileLocalTypes`, `GenericMath`,
+`Utf8StringLiterals`, `NumericIntPtr`, `RefFields`, `ScopedRef`,
+`unimplemented…InlineArrays`, `unimplemented…ImplicitIndexAccess`.
