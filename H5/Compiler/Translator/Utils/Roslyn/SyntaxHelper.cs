@@ -807,7 +807,7 @@ namespace H5.Translator
                 return false;
             }
 
-            var setter = propertyDeclaration.AccessorList.Accessors.SingleOrDefault(a => a.Keyword.IsKind(SyntaxKind.SetKeyword));
+            var setter = propertyDeclaration.AccessorList.Accessors.SingleOrDefault(a => a.Keyword.IsKind(SyntaxKind.SetKeyword) || a.Keyword.IsKind(SyntaxKind.InitKeyword));
 
             if (setter != null && setter.Body != null)
             {

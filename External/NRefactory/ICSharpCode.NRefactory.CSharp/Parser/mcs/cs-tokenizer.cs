@@ -601,6 +601,10 @@ namespace ICSharpCode.NRefactory.MonoCSharp
             AddKeyword ("sbyte", Token.SBYTE);
             AddKeyword ("sealed", Token.SEALED);
             AddKeyword ("set", Token.SET);
+            // C# 9 `init` accessors behave exactly like setters for JS emission.
+            // `init` is contextual (only recognized while handle_get_set is active,
+            // same as get/set), so identifiers named `init` are unaffected.
+            AddKeyword ("init", Token.SET);
             AddKeyword ("short", Token.SHORT);
             AddKeyword ("sizeof", Token.SIZEOF);
             AddKeyword ("stackalloc", Token.STACKALLOC);

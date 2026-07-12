@@ -2978,7 +2978,10 @@ namespace H5.Translator
 
             if (node.IsAutoProperty() && node.AccessorList != null)
             {
-                var setter = node.AccessorList.Accessors.SingleOrDefault(a => a.Keyword.IsKind(SyntaxKind.SetKeyword));
+                // `init` accessors count as setters (they reach the frontend unchanged
+                // since rewrite case S24 was removed; the NRefactory tokenizer maps
+                // `init` to the SET token).
+                var setter = node.AccessorList.Accessors.SingleOrDefault(a => a.Keyword.IsKind(SyntaxKind.SetKeyword) || a.Keyword.IsKind(SyntaxKind.InitKeyword));
 
                 if (setter == null)
                 {
@@ -3358,10 +3361,8 @@ namespace H5.Translator
             var oldIndex = IndexInstance;
             IndexInstance = 0;
 
-            if (node.Keyword.IsKind(SyntaxKind.InitKeyword))
-            {
-                node = node.WithKeyword(SyntaxFactory.Token(SyntaxKind.SetKeyword).WithTrailingTrivia(node.Keyword.TrailingTrivia).WithLeadingTrivia(node.Keyword.LeadingTrivia));
-            }
+            // `init` accessors pass through unchanged (rewrite case S24, removed):
+            // the NRefactory tokenizer maps the contextual `init` keyword to SET.
 
             var result = base.VisitAccessorDeclaration(node);
 
