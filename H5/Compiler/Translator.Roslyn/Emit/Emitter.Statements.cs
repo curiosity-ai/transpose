@@ -1,0 +1,430 @@
+using System;
+using System.Linq;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+
+namespace H5.Translator.Roslyn;
+
+public sealed partial class Emitter
+{
+    private void EmitStatement(StatementSyntax statement)
+    {
+        switch (statement)
+        {
+            case BlockSyntax block:
+                EmitBlock(block);
+                break;
+            case LocalDeclarationStatementSyntax local:
+                EmitLocalDeclaration(local);
+                break;
+            case ExpressionStatementSyntax expr:
+                EmitExpressionStatement(expr.Expression);
+                break;
+            case IfStatementSyntax ifStmt:
+                EmitIf(ifStmt);
+                break;
+            case ForStatementSyntax forStmt:
+                EmitFor(forStmt);
+                break;
+            case ForEachStatementSyntax forEach:
+                EmitForEach(forEach);
+                break;
+            case WhileStatementSyntax whileStmt:
+                EmitWhile(whileStmt);
+                break;
+            case DoStatementSyntax doStmt:
+                EmitDo(doStmt);
+                break;
+            case ReturnStatementSyntax ret:
+                EmitReturn(ret);
+                break;
+            case BreakStatementSyntax:
+                _w.WriteLine("break;");
+                break;
+            case ContinueStatementSyntax:
+                _w.WriteLine("continue;");
+                break;
+            case ThrowStatementSyntax throwStmt:
+                EmitThrow(throwStmt);
+                break;
+            case TryStatementSyntax tryStmt:
+                EmitTry(tryStmt);
+                break;
+            case UsingStatementSyntax usingStmt:
+                EmitUsing(usingStmt);
+                break;
+            case SwitchStatementSyntax switchStmt:
+                EmitSwitch(switchStmt);
+                break;
+            case LocalFunctionStatementSyntax localFn:
+                EmitLocalFunction(localFn);
+                break;
+            case LockStatementSyntax lockStmt:
+                // Single-threaded: the lock is a no-op, emit the body.
+                EmitStatement(lockStmt.Statement);
+                break;
+            case CheckedStatementSyntax checkedStmt:
+                EmitBlock(checkedStmt.Block);
+                break;
+            case EmptyStatementSyntax:
+                break;
+            default:
+                Unsupported(statement, statement.Kind().ToString());
+                break;
+        }
+    }
+
+    private void EmitBlock(BlockSyntax block)
+    {
+        _w.Block(() => { foreach (var s in block.Statements) EmitStatement(s); });
+        _w.WriteLine();
+    }
+
+    private void EmitLocalDeclaration(LocalDeclarationStatementSyntax local)
+    {
+        if (local.UsingKeyword != default)
+        {
+            EmitUsingDeclaration(local);
+            return;
+        }
+
+        foreach (var variable in local.Declaration.Variables)
+        {
+            _w.Write($"let {NameMangler.JsIdentifier(variable.Identifier.Text)}");
+            if (variable.Initializer is not null)
+            {
+                _w.Write(" = ");
+                EmitExpressionConverted(variable.Initializer.Value, _model.GetTypeInfo(variable.Initializer.Value).ConvertedType);
+            }
+            _w.WriteLine(";");
+        }
+    }
+
+    private void EmitIf(IfStatementSyntax ifStmt)
+    {
+        _w.Write("if (");
+        EmitExpression(ifStmt.Condition);
+        _w.Write(") ");
+        EmitStatementAsBlock(ifStmt.Statement);
+
+        if (ifStmt.Else is not null)
+        {
+            _w.Write("else ");
+            if (ifStmt.Else.Statement is IfStatementSyntax elseIf)
+            {
+                EmitIf(elseIf);
+            }
+            else
+            {
+                EmitStatementAsBlock(ifStmt.Else.Statement);
+            }
+        }
+    }
+
+    /// <summary>Emits a statement, wrapping single statements into a block for safety.</summary>
+    private void EmitStatementAsBlock(StatementSyntax statement)
+    {
+        if (statement is BlockSyntax block)
+        {
+            EmitBlock(block);
+        }
+        else
+        {
+            _w.Block(() => EmitStatement(statement));
+            _w.WriteLine();
+        }
+    }
+
+    private void EmitFor(ForStatementSyntax forStmt)
+    {
+        _w.Write("for (");
+        if (forStmt.Declaration is not null)
+        {
+            _w.Write("let ");
+            var first = true;
+            foreach (var v in forStmt.Declaration.Variables)
+            {
+                if (!first) _w.Write(", ");
+                first = false;
+                _w.Write(NameMangler.JsIdentifier(v.Identifier.Text));
+                if (v.Initializer is not null) { _w.Write(" = "); EmitExpression(v.Initializer.Value); }
+            }
+        }
+        else
+        {
+            var first = true;
+            foreach (var init in forStmt.Initializers)
+            {
+                if (!first) _w.Write(", ");
+                first = false;
+                EmitExpression(init);
+            }
+        }
+        _w.Write("; ");
+        if (forStmt.Condition is not null) EmitExpression(forStmt.Condition);
+        _w.Write("; ");
+        var firstInc = true;
+        foreach (var inc in forStmt.Incrementors)
+        {
+            if (!firstInc) _w.Write(", ");
+            firstInc = false;
+            EmitExpression(inc);
+        }
+        _w.Write(") ");
+        EmitStatementAsBlock(forStmt.Statement);
+    }
+
+    private void EmitForEach(ForEachStatementSyntax forEach)
+    {
+        var iterVar = NameMangler.JsIdentifier(forEach.Identifier.Text);
+        var enumVar = "$e" + forEach.GetHashCode().ToString("x").Substring(0, 4);
+
+        _w.Write($"var {enumVar} = H5R.getEnumerator(");
+        EmitExpression(forEach.Expression);
+        _w.WriteLine(");");
+        _w.Write($"while ({enumVar}.moveNext()) ");
+        _w.Block(() =>
+        {
+            _w.WriteLine($"let {iterVar} = {enumVar}.current;");
+            if (forEach.Statement is BlockSyntax block)
+            {
+                foreach (var s in block.Statements) EmitStatement(s);
+            }
+            else
+            {
+                EmitStatement(forEach.Statement);
+            }
+        });
+        _w.WriteLine();
+    }
+
+    private void EmitWhile(WhileStatementSyntax whileStmt)
+    {
+        _w.Write("while (");
+        EmitExpression(whileStmt.Condition);
+        _w.Write(") ");
+        EmitStatementAsBlock(whileStmt.Statement);
+    }
+
+    private void EmitDo(DoStatementSyntax doStmt)
+    {
+        _w.Write("do ");
+        EmitStatementAsBlock(doStmt.Statement);
+        _w.Write("while (");
+        EmitExpression(doStmt.Condition);
+        _w.WriteLine(");");
+    }
+
+    private void EmitReturn(ReturnStatementSyntax ret)
+    {
+        if (ret.Expression is null)
+        {
+            _w.WriteLine("return;");
+            return;
+        }
+        _w.Write("return ");
+        var method = _model.GetEnclosingSymbol(ret.SpanStart) as IMethodSymbol;
+        EmitExpressionConverted(ret.Expression, _model.GetTypeInfo(ret.Expression).ConvertedType);
+        _w.WriteLine(";");
+    }
+
+    private void EmitThrow(ThrowStatementSyntax throwStmt)
+    {
+        if (throwStmt.Expression is null)
+        {
+            _w.WriteLine("throw $ex;"); // rethrow inside catch
+            return;
+        }
+        _w.Write("throw ");
+        EmitExpression(throwStmt.Expression);
+        _w.WriteLine(";");
+    }
+
+    private void EmitTry(TryStatementSyntax tryStmt)
+    {
+        _w.Write("try ");
+        EmitBlock(tryStmt.Block);
+
+        if (tryStmt.Catches.Count > 0)
+        {
+            _w.WriteLine("catch ($ex) {");
+            _w.Indent();
+            var first = true;
+            var hasCatchAll = false;
+            foreach (var katch in tryStmt.Catches)
+            {
+                var typeSyntax = katch.Declaration?.Type;
+                var exType = typeSyntax is not null ? _model.GetTypeInfo(typeSyntax).Type : null;
+                var isCatchAll = exType is null || exType.SpecialType == SpecialType.System_Object
+                    || exType.ToDisplayString() == "System.Exception";
+
+                var condition = isCatchAll ? null : $"H5R.is($ex, {ExceptionTypeRef(exType!)})";
+                if (katch.Filter is not null)
+                {
+                    // exception filter appended
+                }
+
+                if (condition is null)
+                {
+                    hasCatchAll = true;
+                    EmitCatchBody(katch, first ? null : "else");
+                }
+                else
+                {
+                    _w.Write(first ? "if (" : "else if (");
+                    _w.Write(condition);
+                    if (katch.Filter is not null)
+                    {
+                        _w.Write(" && (");
+                        EmitExpression(katch.Filter.FilterExpression);
+                        _w.Write(")");
+                    }
+                    _w.Write(") ");
+                    EmitCatchBodyBlock(katch);
+                }
+                first = false;
+            }
+            if (!hasCatchAll)
+            {
+                _w.WriteLine("else { throw $ex; }");
+            }
+            _w.Outdent();
+            _w.WriteLine("}");
+        }
+
+        if (tryStmt.Finally is not null)
+        {
+            _w.Write("finally ");
+            EmitBlock(tryStmt.Finally.Block);
+        }
+    }
+
+    private void EmitCatchBody(CatchClauseSyntax katch, string? prefix)
+    {
+        BindCatchVariable(katch);
+        foreach (var s in katch.Block.Statements) EmitStatement(s);
+    }
+
+    private void EmitCatchBodyBlock(CatchClauseSyntax katch)
+    {
+        _w.Block(() =>
+        {
+            BindCatchVariable(katch);
+            foreach (var s in katch.Block.Statements) EmitStatement(s);
+        });
+        _w.WriteLine();
+    }
+
+    private void BindCatchVariable(CatchClauseSyntax katch)
+    {
+        var id = katch.Declaration?.Identifier;
+        if (id is { RawKind: not 0 } token && !string.IsNullOrEmpty(token.Text))
+        {
+            _w.WriteLine($"let {NameMangler.JsIdentifier(token.Text)} = $ex;");
+        }
+    }
+
+    private string ExceptionTypeRef(ITypeSymbol type) => _names.TypeReference(type);
+
+    private void EmitUsing(UsingStatementSyntax usingStmt)
+    {
+        // using (var x = expr) body  =>  { let x = expr; try { body } finally { H5R.dispose(x); } }
+        _w.Block(() =>
+        {
+            string? resourceVar = null;
+            if (usingStmt.Declaration is not null)
+            {
+                foreach (var v in usingStmt.Declaration.Variables)
+                {
+                    resourceVar = NameMangler.JsIdentifier(v.Identifier.Text);
+                    _w.Write($"let {resourceVar} = ");
+                    if (v.Initializer is not null) EmitExpression(v.Initializer.Value); else _w.Write("null");
+                    _w.WriteLine(";");
+                }
+            }
+            else if (usingStmt.Expression is not null)
+            {
+                resourceVar = "$using" + Math.Abs(usingStmt.GetHashCode() % 10000);
+                _w.Write($"let {resourceVar} = ");
+                EmitExpression(usingStmt.Expression);
+                _w.WriteLine(";");
+            }
+
+            _w.Write("try ");
+            EmitStatementAsBlock(usingStmt.Statement);
+            _w.Write("finally ");
+            _w.Block(() => _w.WriteLine($"H5R.dispose({resourceVar});"));
+            _w.WriteLine();
+        });
+        _w.WriteLine();
+    }
+
+    private void EmitUsingDeclaration(LocalDeclarationStatementSyntax local)
+    {
+        // using var x = expr;  — dispose at end of enclosing block. Simplified: declare now.
+        foreach (var variable in local.Declaration.Variables)
+        {
+            _w.Write($"let {NameMangler.JsIdentifier(variable.Identifier.Text)}");
+            if (variable.Initializer is not null) { _w.Write(" = "); EmitExpression(variable.Initializer.Value); }
+            _w.WriteLine(";");
+        }
+        // Note: deterministic dispose for using-declarations is a later phase.
+    }
+
+    private void EmitSwitch(SwitchStatementSyntax switchStmt)
+    {
+        _w.Write("switch (");
+        EmitExpression(switchStmt.Expression);
+        _w.WriteLine(") {");
+        _w.Indent();
+        foreach (var section in switchStmt.Sections)
+        {
+            foreach (var label in section.Labels)
+            {
+                switch (label)
+                {
+                    case CaseSwitchLabelSyntax caseLabel:
+                        _w.Write("case ");
+                        EmitExpression(caseLabel.Value);
+                        _w.WriteLine(":");
+                        break;
+                    case DefaultSwitchLabelSyntax:
+                        _w.WriteLine("default:");
+                        break;
+                    default:
+                        Unsupported(label, "pattern switch label");
+                        break;
+                }
+            }
+            _w.Indent();
+            foreach (var stmt in section.Statements) EmitStatement(stmt);
+            _w.Outdent();
+        }
+        _w.Outdent();
+        _w.WriteLine("}");
+    }
+
+    private void EmitLocalFunction(LocalFunctionStatementSyntax localFn)
+    {
+        var symbol = _model.GetDeclaredSymbol(localFn) as IMethodSymbol;
+        var asyncKw = localFn.Modifiers.Any(SyntaxKind.AsyncKeyword) ? "async " : "";
+        _w.Write($"{asyncKw}function {NameMangler.JsIdentifier(localFn.Identifier.Text)}(");
+        if (symbol is not null) EmitParameterList(symbol);
+        _w.Write(") ");
+        _w.Block(() =>
+        {
+            if (symbol is not null) EmitOptionalDefaults(symbol);
+            if (localFn.Body is not null)
+            {
+                foreach (var s in localFn.Body.Statements) EmitStatement(s);
+            }
+            else if (localFn.ExpressionBody is not null)
+            {
+                if (symbol?.ReturnsVoid == true) EmitExpressionStatement(localFn.ExpressionBody.Expression);
+                else { _w.Write("return "); EmitExpression(localFn.ExpressionBody.Expression); _w.WriteLine(";"); }
+            }
+        });
+        _w.WriteLine();
+    }
+}
