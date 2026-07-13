@@ -119,7 +119,12 @@
 
     H5R.is = function (obj, type) {
         if (obj === null || obj === undefined) { return false; }
-        if (typeof type === "function") { return obj instanceof type || (obj.constructor === type); }
+        if (typeof type === "function") {
+            if (obj instanceof type || obj.constructor === type) { return true; }
+            // Interface implementation (tracked via $interfaces on the constructor).
+            var ctor = obj.constructor;
+            if (ctor && ctor.$interfaces && ctor.$interfaces.indexOf(type) >= 0) { return true; }
+        }
         return false;
     };
 

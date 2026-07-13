@@ -422,6 +422,24 @@ public sealed partial class Emitter
         _w.Write(" }");
     }
 
+    private void EmitAnonymousObject(AnonymousObjectCreationExpressionSyntax anon)
+    {
+        _w.Write("{ ");
+        for (var i = 0; i < anon.Initializers.Count; i++)
+        {
+            if (i > 0) _w.Write(", ");
+            var init = anon.Initializers[i];
+            // Member name: explicit (Name = expr) or inferred from the expression.
+            var name = init.NameEquals?.Name.Identifier.Text
+                ?? (init.Expression as MemberAccessExpressionSyntax)?.Name.Identifier.Text
+                ?? (init.Expression as IdentifierNameSyntax)?.Identifier.Text
+                ?? $"Item{i + 1}";
+            _w.Write($"{NameMangler.JsIdentifier(name)}: ");
+            EmitExpression(init.Expression);
+        }
+        _w.Write(" }");
+    }
+
     // ---- binary / unary / assignment --------------------------------------
 
     private void EmitBinary(BinaryExpressionSyntax binary)

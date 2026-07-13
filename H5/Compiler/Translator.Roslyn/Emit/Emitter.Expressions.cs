@@ -120,6 +120,9 @@ public sealed partial class Emitter
             case TupleExpressionSyntax tuple:
                 EmitTuple(tuple);
                 break;
+            case AnonymousObjectCreationExpressionSyntax anon:
+                EmitAnonymousObject(anon);
+                break;
             case QueryExpressionSyntax query:
                 EmitQuery(query);
                 break;

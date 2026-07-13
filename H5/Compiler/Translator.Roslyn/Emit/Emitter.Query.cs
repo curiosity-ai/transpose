@@ -15,12 +15,15 @@ public sealed partial class Emitter
     /// </summary>
     private void EmitQuery(QueryExpressionSyntax query)
     {
-        var range = NameMangler.JsIdentifier(query.FromClause.Identifier.Text);
-
-        // Start from the source, then fold each clause into a nested Enumerable call.
         Action emit = () => EmitExpression(query.FromClause.Expression);
+        EmitQueryBody(emit, NameMangler.JsIdentifier(query.FromClause.Identifier.Text), query.Body);
+    }
 
-        foreach (var clause in query.Body.Clauses)
+    private void EmitQueryBody(Action emitSource, string range, QueryBodySyntax body)
+    {
+        var emit = emitSource;
+
+        foreach (var clause in body.Clauses)
         {
             var inner = emit;
             switch (clause)
@@ -46,49 +49,59 @@ public sealed partial class Emitter
             }
         }
 
-        switch (query.Body.SelectOrGroup)
+        // Produce the select/group result sequence.
+        Action result;
+        switch (body.SelectOrGroup)
         {
+            case SelectClauseSyntax select when select.Expression is IdentifierNameSyntax sid && sid.Identifier.Text == range:
+                result = emit; // identity projection
+                break;
             case SelectClauseSyntax select:
-                // Skip an identity `select x` projection.
-                if (select.Expression is IdentifierNameSyntax id && id.Identifier.Text == query.FromClause.Identifier.Text)
-                {
-                    emit();
-                }
-                else
                 {
                     var inner = emit;
-                    _w.Write("System.Linq.Enumerable.Select(");
-                    inner();
-                    _w.Write($", function ({range}) {{ return ");
-                    EmitExpression(select.Expression);
-                    _w.Write("; })");
+                    result = () =>
+                    {
+                        _w.Write("System.Linq.Enumerable.Select(");
+                        inner();
+                        _w.Write($", function ({range}) {{ return ");
+                        EmitExpression(select.Expression);
+                        _w.Write("; })");
+                    };
+                    break;
                 }
-                break;
-
             case GroupClauseSyntax group:
-                var innerG = emit;
-                _w.Write("System.Linq.Enumerable.GroupBy(");
-                innerG();
-                _w.Write($", function ({range}) {{ return ");
-                EmitExpression(group.ByExpression);
-                _w.Write("; }");
-                if (!(group.GroupExpression is IdentifierNameSyntax gid && gid.Identifier.Text == query.FromClause.Identifier.Text))
                 {
-                    _w.Write($", function ({range}) {{ return ");
-                    EmitExpression(group.GroupExpression);
-                    _w.Write("; }");
+                    var inner = emit;
+                    result = () =>
+                    {
+                        _w.Write("System.Linq.Enumerable.GroupBy(");
+                        inner();
+                        _w.Write($", function ({range}) {{ return ");
+                        EmitExpression(group.ByExpression);
+                        _w.Write("; }");
+                        if (!(group.GroupExpression is IdentifierNameSyntax gid && gid.Identifier.Text == range))
+                        {
+                            _w.Write($", function ({range}) {{ return ");
+                            EmitExpression(group.GroupExpression);
+                            _w.Write("; }");
+                        }
+                        _w.Write(")");
+                    };
+                    break;
                 }
-                _w.Write(")");
-                break;
-
             default:
-                Unsupported(query.Body.SelectOrGroup, "query body");
-                break;
+                Unsupported(body.SelectOrGroup, "query body");
+                return;
         }
 
-        if (query.Body.Continuation is not null)
+        // `into` continuation: the result becomes the source of a new query body.
+        if (body.Continuation is not null)
         {
-            Unsupported(query.Body.Continuation, "query continuation (into)");
+            EmitQueryBody(result, NameMangler.JsIdentifier(body.Continuation.Identifier.Text), body.Continuation.Body);
+        }
+        else
+        {
+            result();
         }
     }
 

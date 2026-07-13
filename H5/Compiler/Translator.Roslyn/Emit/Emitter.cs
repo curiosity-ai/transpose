@@ -65,7 +65,12 @@ public sealed partial class Emitter
             }
         }
 
-        return declared.OrderBy(InheritanceDepth).ToList();
+        // Interfaces first (classes reference them for $interfaces), then by
+        // inheritance depth so base types precede derived types.
+        return declared
+            .OrderBy(t => t.TypeKind == TypeKind.Interface ? 0 : 1)
+            .ThenBy(InheritanceDepth)
+            .ToList();
     }
 
     private static int InheritanceDepth(INamedTypeSymbol type)

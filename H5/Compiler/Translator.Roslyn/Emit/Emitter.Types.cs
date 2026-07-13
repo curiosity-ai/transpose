@@ -17,7 +17,7 @@ public sealed partial class Emitter
                 EmitEnum(type);
                 break;
             case TypeKind.Interface:
-                // Interfaces are structural at runtime; nothing to emit for now.
+                EmitInterfaceMarker(type);
                 break;
             case TypeKind.Class:
             case TypeKind.Struct:
@@ -74,12 +74,41 @@ public sealed partial class Emitter
 
             EmitInstanceFieldInit(type, simpleName);
             EmitStaticInit(type, simpleName);
+            EmitInterfaceLinks(type, simpleName);
             EmitMembers(type, simpleName);
             if (type.IsRecord) EmitRecordMembers(type, simpleName);
 
             _w.WriteLine($"return {simpleName};");
         });
         _w.WriteLine(");");
+    }
+
+    private void EmitInterfaceMarker(INamedTypeSymbol type)
+    {
+        // A runtime marker object so `is`/pattern type tests against the interface work.
+        var fullName = _names.TypeFullName(type);
+        var simpleName = fullName.Split('.').Last();
+        _w.Write($"H5R.define(\"{fullName}\", function () ");
+        _w.Block(() =>
+        {
+            _w.WriteLine($"function {simpleName}() {{}}");
+            _w.WriteLine($"return {simpleName};");
+        });
+        _w.WriteLine(");");
+    }
+
+    private void EmitInterfaceLinks(INamedTypeSymbol type, string simpleName)
+    {
+        // Record implemented (source-defined) interfaces for H5R.is.
+        var interfaces = type.AllInterfaces
+            .Where(i => i.Locations.Any(l => l.IsInSource))
+            .Select(i => _names.TypeReference(i))
+            .Distinct()
+            .ToList();
+        if (interfaces.Count > 0)
+        {
+            _w.WriteLine($"{simpleName}.$interfaces = [{string.Join(", ", interfaces)}];");
+        }
     }
 
     private static bool IsValueTypeBase(INamedTypeSymbol baseType)
