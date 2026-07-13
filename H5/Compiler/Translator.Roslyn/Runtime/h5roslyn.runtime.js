@@ -144,6 +144,7 @@
         }
         if (typeof source.GetEnumerator === "function") {
             var e = source.GetEnumerator();
+            if (typeof e.moveNext === "function") { return e; } // internal-style enumerator
             return {
                 moveNext: function () { return e.MoveNext(); },
                 get current() { return e.Current; }
@@ -226,5 +227,231 @@
     makeException("NullReferenceException");
     makeException("FormatException");
     makeException("OverflowException");
+    makeException("KeyNotFoundException");
+    makeException("ArgumentOutOfRangeException");
+
+    // ---- String helpers ----------------------------------------------------
+
+    H5R.str = {
+        substr: function (s, start, len) { return len === undefined ? s.substring(start) : s.substr(start, len); },
+        indexOf: function (s, v, start) { return s.indexOf(typeof v === "number" ? String.fromCharCode(v) : v, start || 0); },
+        lastIndexOf: function (s, v) { return s.lastIndexOf(typeof v === "number" ? String.fromCharCode(v) : v); },
+        contains: function (s, v) { return s.indexOf(v) >= 0; },
+        replace: function (s, a, b) {
+            a = typeof a === "number" ? String.fromCharCode(a) : a;
+            b = typeof b === "number" ? String.fromCharCode(b) : b;
+            return s.split(a).join(b);
+        },
+        padLeft: function (s, total, ch) { ch = ch === undefined ? " " : String.fromCharCode(ch); while (s.length < total) { s = ch + s; } return s; },
+        padRight: function (s, total, ch) { ch = ch === undefined ? " " : String.fromCharCode(ch); while (s.length < total) { s = s + ch; } return s; },
+        split: function (s, seps) {
+            if (seps == null) { return s.split(/\s+/); }
+            var arr = Array.isArray(seps) ? seps : [seps];
+            arr = arr.map(function (c) { return typeof c === "number" ? String.fromCharCode(c) : c; });
+            var re = new RegExp(arr.map(function (c) { return c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }).join("|"));
+            return s.split(re);
+        },
+        charAt: function (s, i) { return s.charCodeAt(i); },
+        insert: function (s, i, v) { return s.substring(0, i) + v + s.substring(i); },
+        remove: function (s, i, n) { return n === undefined ? s.substring(0, i) : s.substring(0, i) + s.substring(i + n); },
+        repeat: function (ch, n) { return new Array(n + 1).join(String.fromCharCode(ch)); }
+    };
+
+    H5R.strEquals = function (a, b) { return a === b; };
+    H5R.strCompare = function (a, b) { return a < b ? -1 : (a > b ? 1 : 0); };
+
+    // Augment String.prototype with C#-cased instance members so the generic
+    // emit path (which uses source names for external members) resolves them.
+    var defMethod = function (proto, name, fn) { Object.defineProperty(proto, name, { value: fn, enumerable: false, writable: true, configurable: true }); };
+    var defGetter = function (proto, name, fn) { Object.defineProperty(proto, name, { get: fn, enumerable: false, configurable: true }); };
+
+    var asChar = function (v) { return typeof v === "number" ? String.fromCharCode(v) : v; };
+
+    defGetter(String.prototype, "Length", function () { return this.length; });
+    defMethod(String.prototype, "Substring", function (start, len) { return len === undefined ? this.substring(start) : this.substr(start, len); });
+    defMethod(String.prototype, "IndexOf", function (v, start) { return this.indexOf(asChar(v), start || 0); });
+    defMethod(String.prototype, "LastIndexOf", function (v) { return this.lastIndexOf(asChar(v)); });
+    defMethod(String.prototype, "Contains", function (v) { return this.indexOf(asChar(v)) >= 0; });
+    defMethod(String.prototype, "StartsWith", function (v) { return this.startsWith(asChar(v)); });
+    defMethod(String.prototype, "EndsWith", function (v) { return this.endsWith(asChar(v)); });
+    defMethod(String.prototype, "ToUpper", function () { return this.toUpperCase(); });
+    defMethod(String.prototype, "ToUpperInvariant", function () { return this.toUpperCase(); });
+    defMethod(String.prototype, "ToLower", function () { return this.toLowerCase(); });
+    defMethod(String.prototype, "ToLowerInvariant", function () { return this.toLowerCase(); });
+    defMethod(String.prototype, "Trim", function () { return this.trim(); });
+    defMethod(String.prototype, "TrimStart", function () { return this.replace(/^\s+/, ""); });
+    defMethod(String.prototype, "TrimEnd", function () { return this.replace(/\s+$/, ""); });
+    defMethod(String.prototype, "Replace", function (a, b) { return this.split(asChar(a)).join(asChar(b)); });
+    defMethod(String.prototype, "Split", function (sep) { return H5R.str.split(this.toString(), sep); });
+    defMethod(String.prototype, "PadLeft", function (t, c) { var s = this.toString(); c = c === undefined ? " " : asChar(c); while (s.length < t) { s = c + s; } return s; });
+    defMethod(String.prototype, "PadRight", function (t, c) { var s = this.toString(); c = c === undefined ? " " : asChar(c); while (s.length < t) { s = s + c; } return s; });
+    defMethod(String.prototype, "ToCharArray", function () { var a = []; for (var i = 0; i < this.length; i++) { a.push(this.charCodeAt(i)); } return a; });
+    defMethod(String.prototype, "Insert", function (i, v) { return this.substring(0, i) + v + this.substring(i); });
+    defMethod(String.prototype, "Remove", function (i, n) { return n === undefined ? this.substring(0, i) : this.substring(0, i) + this.substring(i + n); });
+    defMethod(String.prototype, "Equals", function (o) { return this.toString() === o; });
+    defMethod(String.prototype, "CompareTo", function (o) { return H5R.strCompare(this.toString(), o); });
+    defMethod(String.prototype, "GetHashCode", function () { var h = 0, s = this.toString(); for (var i = 0; i < s.length; i++) { h = (h * 31 + s.charCodeAt(i)) | 0; } return h; });
+    defMethod(String.prototype, "ToString", function () { return this.toString(); });
+
+    // Array.prototype C#-style members.
+    defGetter(Array.prototype, "Length", function () { return this.length; });
+    defMethod(Array.prototype, "GetLength", function (dim) { return this.length; });
+    defMethod(Array.prototype, "GetEnumerator", function () { return H5R.getEnumerator(this); });
+    defMethod(Array.prototype, "Clone", function () { return this.slice(); });
+
+    // Static System.String.
+    System.String = {
+        Empty: "",
+        IsNullOrEmpty: function (s) { return s == null || s.length === 0; },
+        IsNullOrWhiteSpace: function (s) { return s == null || s.trim().length === 0; },
+        Format: function (fmt) { var args = Array.prototype.slice.call(arguments, 1); if (args.length === 1 && Array.isArray(args[0])) { args = args[0]; } return H5R.format(fmt, args); },
+        Concat: function () { var r = ""; for (var i = 0; i < arguments.length; i++) { r += H5R.toStr(arguments[i]); } return r; },
+        Join: function (sep, values) { sep = asChar(sep); var arr = Array.isArray(values) ? values : H5R.toArray(values); return arr.map(function (v) { return H5R.toStr(v); }).join(sep); },
+        Compare: function (a, b) { return H5R.strCompare(a, b); },
+        Equals: function (a, b) { return a === b; }
+    };
+
+    H5R.toArray = function (source) {
+        if (Array.isArray(source)) { return source; }
+        var out = [], e = H5R.getEnumerator(source);
+        while (e.moveNext()) { out.push(e.current); }
+        return out;
+    };
+
+    // ---- Char helpers ------------------------------------------------------
+
+    var Char = System.Char = {
+        IsDigit: function (c) { return c >= 48 && c <= 57; },
+        IsLetter: function (c) { var s = String.fromCharCode(c); return s.toLowerCase() !== s.toUpperCase(); },
+        IsLetterOrDigit: function (c) { return Char.IsDigit(c) || Char.IsLetter(c); },
+        IsWhiteSpace: function (c) { return /\s/.test(String.fromCharCode(c)); },
+        IsUpper: function (c) { var s = String.fromCharCode(c); return s !== s.toLowerCase() && s === s.toUpperCase(); },
+        IsLower: function (c) { var s = String.fromCharCode(c); return s !== s.toUpperCase() && s === s.toLowerCase(); },
+        ToUpper: function (c) { return String.fromCharCode(c).toUpperCase().charCodeAt(0); },
+        ToLower: function (c) { return String.fromCharCode(c).toLowerCase().charCodeAt(0); },
+        Parse: function (s) { return s.charCodeAt(0); }
+    };
+
+    // ---- System.Math -------------------------------------------------------
+
+    var toEven = function (x) {
+        var f = Math.floor(x);
+        var diff = x - f;
+        if (diff < 0.5) { return f; }
+        if (diff > 0.5) { return f + 1; }
+        return (f % 2 === 0) ? f : f + 1; // banker's rounding
+    };
+
+    System.Math = {
+        PI: Math.PI, E: Math.E,
+        Abs: Math.abs, Sqrt: Math.sqrt, Sign: Math.sign, Floor: Math.floor, Ceiling: Math.ceil,
+        Sin: Math.sin, Cos: Math.cos, Tan: Math.tan, Asin: Math.asin, Acos: Math.acos, Atan: Math.atan,
+        Atan2: Math.atan2, Sinh: Math.sinh, Cosh: Math.cosh, Tanh: Math.tanh,
+        Exp: Math.exp, Log: function (x, b) { return b === undefined ? Math.log(x) : Math.log(x) / Math.log(b); },
+        Log10: Math.log10, Log2: Math.log2, Cbrt: Math.cbrt,
+        Pow: Math.pow, Max: Math.max, Min: Math.min, Truncate: Math.trunc,
+        Round: function (x, digits) {
+            if (digits === undefined || digits === 0) { return toEven(x); }
+            var m = Math.pow(10, digits);
+            return toEven(x * m) / m;
+        }
+    };
+    System.MathF = System.Math;
+
+    // ---- System.Convert ----------------------------------------------------
+
+    System.Convert = {
+        ToInt32: function (x) {
+            if (typeof x === "string") { var n = parseInt(x, 10); if (isNaN(n)) { throw new System.FormatException("Input string was not in a correct format."); } return n; }
+            if (typeof x === "boolean") { return x ? 1 : 0; }
+            return toEven(x);
+        },
+        ToInt64: function (x) { return System.Convert.ToInt32(x); },
+        ToDouble: function (x) { if (typeof x === "string") { return parseFloat(x); } return typeof x === "boolean" ? (x ? 1 : 0) : x; },
+        ToSingle: function (x) { return System.Convert.ToDouble(x); },
+        ToBoolean: function (x) { if (typeof x === "string") { return x.toLowerCase() === "true"; } return !!x; },
+        ToString: function (x) { return H5R.toStr(x); },
+        ToChar: function (x) { return typeof x === "string" ? x.charCodeAt(0) : x; }
+    };
+
+    // ---- Numeric parsing (Int32.Parse etc.) --------------------------------
+
+    var makeIntType = function (name) {
+        var t = System[name] = {
+            Parse: function (s) { var n = parseInt(s, 10); if (isNaN(n)) { throw new System.FormatException("Input string was not in a correct format."); } return n; },
+            TryParse: function (s, out) { var n = parseInt(s, 10); if (isNaN(n)) { out.v = 0; return false; } out.v = n; return true; },
+            MaxValue: 2147483647, MinValue: -2147483648
+        };
+        return t;
+    };
+    makeIntType("Int32"); makeIntType("Int16"); makeIntType("Int64"); makeIntType("Byte");
+    System.Double = {
+        Parse: function (s) { var n = parseFloat(s); if (isNaN(n)) { throw new System.FormatException("Input string was not in a correct format."); } return n; },
+        TryParse: function (s, out) { var n = parseFloat(s); if (isNaN(n)) { out.v = 0; return false; } out.v = n; return true; },
+        IsNaN: function (x) { return x !== x; }, IsInfinity: function (x) { return x === Infinity || x === -Infinity; },
+        MaxValue: Number.MAX_VALUE, MinValue: -Number.MAX_VALUE, NaN: NaN,
+        PositiveInfinity: Infinity, NegativeInfinity: -Infinity, Epsilon: Number.MIN_VALUE
+    };
+
+    // ---- System.Collections.Generic.List<T> --------------------------------
+
+    var List = H5R.List = function () { this._ = []; };
+    List.prototype.Add = function (item) { this._.push(item); };
+    List.prototype.AddRange = function (items) { var e = H5R.getEnumerator(items); while (e.moveNext()) { this._.push(e.current); } };
+    List.prototype.Insert = function (i, item) { this._.splice(i, 0, item); };
+    List.prototype.RemoveAt = function (i) { this._.splice(i, 1); };
+    List.prototype.Remove = function (item) { for (var i = 0; i < this._.length; i++) { if (H5R.equals(this._[i], item)) { this._.splice(i, 1); return true; } } return false; };
+    List.prototype.Contains = function (item) { for (var i = 0; i < this._.length; i++) { if (H5R.equals(this._[i], item)) { return true; } } return false; };
+    List.prototype.IndexOf = function (item) { for (var i = 0; i < this._.length; i++) { if (H5R.equals(this._[i], item)) { return i; } } return -1; };
+    List.prototype.Clear = function () { this._ = []; };
+    List.prototype.get_Item = function (i) { return this._[i]; };
+    List.prototype.set_Item = function (i, v) { this._[i] = v; };
+    List.prototype.ToArray = function () { return this._.slice(); };
+    List.prototype.Sort = function (cmp) { this._.sort(cmp ? function (a, b) { return cmp(a, b); } : function (a, b) { return a < b ? -1 : (a > b ? 1 : 0); }); };
+    List.prototype.Reverse = function () { this._.reverse(); };
+    List.prototype.ForEach = function (a) { for (var i = 0; i < this._.length; i++) { a(this._[i]); } };
+    List.prototype.GetEnumerator = function () { return H5R.getEnumerator(this._); };
+    List.prototype[Symbol.iterator] = function () { return this._[Symbol.iterator](); };
+    Object.defineProperty(List.prototype, "Count", { get: function () { return this._.length; } });
+
+    // ---- Dictionary<K,V> ---------------------------------------------------
+
+    var keyOf = function (k) { return (typeof k === "object" && k !== null) ? k : (typeof k) + ":" + k; };
+
+    var Dictionary = H5R.Dictionary = function () { this._ = new Map(); };
+    Dictionary.prototype.Add = function (k, v) { var kk = keyOf(k); if (this._.has(kk)) { throw new System.ArgumentException("An item with the same key has already been added."); } this._.set(kk, { k: k, v: v }); };
+    Dictionary.prototype.set_Item = function (k, v) { this._.set(keyOf(k), { k: k, v: v }); };
+    Dictionary.prototype.get_Item = function (k) { var e = this._.get(keyOf(k)); if (!e) { throw new System.KeyNotFoundException("The given key was not present in the dictionary."); } return e.v; };
+    Dictionary.prototype.ContainsKey = function (k) { return this._.has(keyOf(k)); };
+    Dictionary.prototype.TryGetValue = function (k, out) { var e = this._.get(keyOf(k)); if (e) { out.v = e.v; return true; } out.v = null; return false; };
+    Dictionary.prototype.Remove = function (k) { return this._.delete(keyOf(k)); };
+    Dictionary.prototype.Clear = function () { this._ = new Map(); };
+    Dictionary.prototype.GetEnumerator = function () {
+        var entries = Array.from(this._.values()); var i = -1;
+        return { moveNext: function () { i++; return i < entries.length; }, get current() { return { Key: entries[i].k, Value: entries[i].v }; } };
+    };
+    Object.defineProperty(Dictionary.prototype, "Count", { get: function () { return this._.size; } });
+    Object.defineProperty(Dictionary.prototype, "Keys", { get: function () { return Array.from(this._.values()).map(function (e) { return e.k; }); } });
+    Object.defineProperty(Dictionary.prototype, "Values", { get: function () { return Array.from(this._.values()).map(function (e) { return e.v; }); } });
+
+    // ---- HashSet<T> --------------------------------------------------------
+
+    var HashSet = H5R.HashSet = function () { this._ = new Map(); };
+    HashSet.prototype.Add = function (item) { var k = keyOf(item); if (this._.has(k)) { return false; } this._.set(k, item); return true; };
+    HashSet.prototype.Contains = function (item) { return this._.has(keyOf(item)); };
+    HashSet.prototype.Remove = function (item) { return this._.delete(keyOf(item)); };
+    HashSet.prototype.Clear = function () { this._ = new Map(); };
+    HashSet.prototype.GetEnumerator = function () { return H5R.getEnumerator(Array.from(this._.values())); };
+    HashSet.prototype[Symbol.iterator] = function () { return this._.values(); };
+    Object.defineProperty(HashSet.prototype, "Count", { get: function () { return this._.size; } });
+
+    // ---- StringBuilder -----------------------------------------------------
+
+    var StringBuilder = H5R.StringBuilder = function () { this._ = ""; };
+    StringBuilder.prototype.Append = function (x) { this._ += H5R.toStr(x); return this; };
+    StringBuilder.prototype.AppendLine = function (x) { this._ += (x === undefined ? "" : H5R.toStr(x)) + "\n"; return this; };
+    StringBuilder.prototype.Clear = function () { this._ = ""; return this; };
+    StringBuilder.prototype.ToString = function () { return this._; };
+    Object.defineProperty(StringBuilder.prototype, "Length", { get: function () { return this._.length; } });
 
 })(typeof globalThis !== "undefined" ? globalThis : this);

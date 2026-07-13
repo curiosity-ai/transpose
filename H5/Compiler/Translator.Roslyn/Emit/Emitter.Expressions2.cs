@@ -79,7 +79,21 @@ public sealed partial class Emitter
             return;
         }
 
-        // Determine the receiver / target.
+        // by-ref (out/ref/in) arguments need holder objects with write-back.
+        if (HasByRefArguments(invocation.ArgumentList, symbol))
+        {
+            EmitByRefInvocation(invocation, symbol);
+            return;
+        }
+
+        EmitCallee(invocation, symbol);
+        _w.Write("(");
+        EmitArguments(invocation.ArgumentList, symbol);
+        _w.Write(")");
+    }
+
+    private void EmitCallee(InvocationExpressionSyntax invocation, IMethodSymbol symbol)
+    {
         if (symbol.IsStatic)
         {
             _w.Write($"{_names.TypeReference(symbol.ContainingType)}.{_names.MethodName(symbol)}");
@@ -94,10 +108,82 @@ public sealed partial class Emitter
             // Unqualified instance call → implicit this.
             _w.Write($"this.{_names.MethodName(symbol)}");
         }
+    }
 
+    private bool HasByRefArguments(ArgumentListSyntax argList, IMethodSymbol symbol)
+    {
+        foreach (var arg in argList.Arguments)
+        {
+            if (arg.RefKindKeyword.RawKind != 0
+                && (arg.RefKindKeyword.IsKind(SyntaxKind.OutKeyword) || arg.RefKindKeyword.IsKind(SyntaxKind.RefKeyword)))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void EmitByRefInvocation(InvocationExpressionSyntax invocation, IMethodSymbol symbol)
+    {
+        var args = invocation.ArgumentList.Arguments;
+        var holders = new string?[args.Count];
+
+        _w.Write("(function () { ");
+
+        for (var i = 0; i < args.Count; i++)
+        {
+            var arg = args[i];
+            var isOut = arg.RefKindKeyword.IsKind(SyntaxKind.OutKeyword);
+            var isRef = arg.RefKindKeyword.IsKind(SyntaxKind.RefKeyword);
+            if (!isOut && !isRef) continue;
+
+            var holder = "$ref" + i;
+            holders[i] = holder;
+            _w.Write($"var {holder} = {{ v: ");
+            if (isOut)
+            {
+                var t = i < symbol.Parameters.Length ? symbol.Parameters[i].Type : null;
+                _w.Write(t is not null ? DefaultValueLiteral(t) : "null");
+            }
+            else
+            {
+                EmitExpression(arg.Expression); // ref: seed with current value
+            }
+            _w.Write(" }; ");
+        }
+
+        _w.Write("var $ret = ");
+        EmitCallee(invocation, symbol);
         _w.Write("(");
-        EmitArguments(invocation.ArgumentList, symbol);
-        _w.Write(")");
+        for (var i = 0; i < args.Count; i++)
+        {
+            if (i > 0) _w.Write(", ");
+            if (holders[i] is not null) _w.Write(holders[i]!);
+            else EmitExpressionConverted(args[i].Expression, i < symbol.Parameters.Length ? symbol.Parameters[i].Type : null);
+        }
+        _w.Write("); ");
+
+        // Write back out/ref values to their targets.
+        for (var i = 0; i < args.Count; i++)
+        {
+            if (holders[i] is null) continue;
+            EmitByRefWriteBackTarget(args[i].Expression);
+            _w.Write($" = {holders[i]}.v; ");
+        }
+
+        _w.Write("return $ret; })()");
+    }
+
+    private void EmitByRefWriteBackTarget(ExpressionSyntax expr)
+    {
+        if (expr is DeclarationExpressionSyntax { Designation: SingleVariableDesignationSyntax decl })
+        {
+            _w.Write(NameMangler.JsIdentifier(decl.Identifier.Text));
+        }
+        else
+        {
+            EmitExpression(expr);
+        }
     }
 
     private void EmitArguments(ArgumentListSyntax argList, IMethodSymbol? method)
@@ -169,6 +255,21 @@ public sealed partial class Emitter
 
     private void EmitConstructionCore(INamedTypeSymbol? type, IMethodSymbol? ctor, ArgumentListSyntax? argList, InitializerExpressionSyntax? initializer)
     {
+        if (initializer is { Expressions.Count: > 0 })
+        {
+            _w.Write("(function () { var $o = ");
+            EmitBareConstruction(type, ctor, argList);
+            _w.Write("; ");
+            EmitInitializer("$o", initializer);
+            _w.Write("return $o; })()");
+            return;
+        }
+
+        EmitBareConstruction(type, ctor, argList);
+    }
+
+    private void EmitBareConstruction(INamedTypeSymbol? type, IMethodSymbol? ctor, ArgumentListSyntax? argList)
+    {
         if (type is null)
         {
             _w.Write("{}");
@@ -183,9 +284,7 @@ public sealed partial class Emitter
             return;
         }
 
-        var isSource = type.Locations.Any(l => l.IsInSource);
-
-        if (isSource)
+        if (type.Locations.Any(l => l.IsInSource))
         {
             var ctorName = ctor is not null ? _names.MethodName(ctor) : "$ctor";
             _w.Write($"H5R.create({_names.TypeReference(type)}, \"{ctorName}\", [");
@@ -199,20 +298,46 @@ public sealed partial class Emitter
             if (argList is not null) EmitArguments(argList, ctor);
             _w.Write(")");
         }
-
-        if (initializer is not null)
-        {
-            // Object/collection initializers are a later phase; emit a note-free best effort.
-            EmitObjectInitializer(initializer);
-        }
     }
 
-    private void EmitObjectInitializer(InitializerExpressionSyntax initializer)
+    private void EmitInitializer(string target, InitializerExpressionSyntax initializer)
     {
-        // Wrap: (function(o){ o.X = ..; return o; })(<created>)
-        // Simplified inline form is complex; defer full support. For now, no-op if empty.
-        if (initializer.Expressions.Count == 0) return;
-        Unsupported(initializer, "object/collection initializer");
+        foreach (var expr in initializer.Expressions)
+        {
+            switch (expr)
+            {
+                // Object initializer member: X = value
+                case AssignmentExpressionSyntax { Left: IdentifierNameSyntax name } assign:
+                    _w.Write($"{target}.{NameMangler.JsIdentifier(name.Identifier.Text)} = ");
+                    EmitExpression(assign.Right);
+                    _w.Write("; ");
+                    break;
+                // Index initializer: [key] = value
+                case AssignmentExpressionSyntax { Left: ImplicitElementAccessSyntax idx } assign:
+                    _w.Write($"{target}.set_Item(");
+                    EmitArgumentList(idx.ArgumentList);
+                    _w.Write(", ");
+                    EmitExpression(assign.Right);
+                    _w.Write("); ");
+                    break;
+                // Collection element with multiple values: { k, v }  (e.g. dictionary)
+                case InitializerExpressionSyntax nested:
+                    _w.Write($"{target}.Add(");
+                    for (var i = 0; i < nested.Expressions.Count; i++)
+                    {
+                        if (i > 0) _w.Write(", ");
+                        EmitExpression(nested.Expressions[i]);
+                    }
+                    _w.Write("); ");
+                    break;
+                // Collection element: single value
+                default:
+                    _w.Write($"{target}.Add(");
+                    EmitExpression(expr);
+                    _w.Write("); ");
+                    break;
+            }
+        }
     }
 
     // ---- binary / unary / assignment --------------------------------------
@@ -312,6 +437,20 @@ public sealed partial class Emitter
         var op = assignment.OperatorToken.Text;
         var leftType = _model.GetTypeInfo(assignment.Left).Type;
         var rightType = _model.GetTypeInfo(assignment.Right).Type;
+
+        // Indexer set on a collection: coll[i] = v → coll.set_Item(i, v)
+        if (op == "=" && assignment.Left is ElementAccessExpressionSyntax ea
+            && _model.GetSymbolInfo(ea).Symbol is IPropertySymbol { IsIndexer: true } idx
+            && idx.ContainingType.SpecialType != SpecialType.System_String)
+        {
+            EmitExpression(ea.Expression);
+            _w.Write(".set_Item(");
+            EmitArgumentList(ea.ArgumentList);
+            _w.Write(", ");
+            EmitExpressionConverted(assignment.Right, leftType);
+            _w.Write(")");
+            return;
+        }
 
         // Compound string concat: s += x
         if (op == "+=" && IsStringType(leftType))
@@ -424,9 +563,19 @@ public sealed partial class Emitter
     {
         var symbol = _model.GetSymbolInfo(element).Symbol;
 
-        // Indexer property → get_Item(...)
-        if (symbol is IPropertySymbol { IsIndexer: true } indexer && indexer.ContainingType.Locations.Any(l => l.IsInSource))
+        if (symbol is IPropertySymbol { IsIndexer: true } indexer)
         {
+            // string[i] yields a char (code point).
+            if (indexer.ContainingType.SpecialType == SpecialType.System_String)
+            {
+                EmitExpression(element.Expression);
+                _w.Write(".charCodeAt(");
+                EmitArgumentList(element.ArgumentList);
+                _w.Write(")");
+                return;
+            }
+
+            // Source types and BCL collections route through get_Item.
             EmitExpression(element.Expression);
             _w.Write(".get_Item(");
             EmitArgumentList(element.ArgumentList);
@@ -434,6 +583,7 @@ public sealed partial class Emitter
             return;
         }
 
+        // Arrays: native element access.
         EmitExpression(element.Expression);
         _w.Write("[");
         EmitArgumentList(element.ArgumentList);

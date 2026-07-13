@@ -10,6 +10,10 @@ public sealed partial class Emitter
 {
     private void EmitStatement(StatementSyntax statement)
     {
+        // C# out-var declarations and is-pattern variables have block scope; declare
+        // them before the statement that introduces them.
+        PredeclareInlineVars(statement);
+
         switch (statement)
         {
             case BlockSyntax block:
@@ -72,6 +76,41 @@ public sealed partial class Emitter
             default:
                 Unsupported(statement, statement.Kind().ToString());
                 break;
+        }
+    }
+
+    /// <summary>
+    /// Declares block-scoped variables introduced inline by the statement's own
+    /// expressions (out-var declarations, is-pattern variables) before the statement.
+    /// Does not descend into nested statements/blocks or lambdas — those manage their own.
+    /// </summary>
+    private void PredeclareInlineVars(StatementSyntax statement)
+    {
+        // A local declaration's own initializer may contain out-vars, but its declared
+        // variables are emitted normally; only collect designation-introduced names.
+        var names = new List<string>();
+        CollectInlineDesignations(statement, isRoot: true, names);
+
+        foreach (var name in names.Distinct())
+        {
+            _w.WriteLine($"let {NameMangler.JsIdentifier(name)};");
+        }
+    }
+
+    private void CollectInlineDesignations(SyntaxNode node, bool isRoot, List<string> names)
+    {
+        foreach (var child in node.ChildNodes())
+        {
+            // Do not cross scope boundaries.
+            if (!isRoot && child is StatementSyntax) continue;
+            if (child is AnonymousFunctionExpressionSyntax or LocalFunctionStatementSyntax) continue;
+
+            if (child is SingleVariableDesignationSyntax { Parent: DeclarationExpressionSyntax or DeclarationPatternSyntax or RecursivePatternSyntax } single)
+            {
+                names.Add(single.Identifier.Text);
+            }
+
+            CollectInlineDesignations(child, isRoot: false, names);
         }
     }
 

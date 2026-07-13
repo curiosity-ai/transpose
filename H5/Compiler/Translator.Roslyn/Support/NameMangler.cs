@@ -57,6 +57,18 @@ public sealed class NameMangler
     /// static member access). User types resolve to their dotted global name; BCL
     /// types resolve under the runtime's namespace tree (e.g. System.Exception).
     /// </summary>
+    /// <summary>BCL types that map onto runtime-provided constructors.</summary>
+    private static readonly Dictionary<string, string> BclTypeMap = new(StringComparer.Ordinal)
+    {
+        ["System.Collections.Generic.List`1"] = "H5R.List",
+        ["System.Collections.Generic.IList`1"] = "H5R.List",
+        ["System.Collections.Generic.Dictionary`2"] = "H5R.Dictionary",
+        ["System.Collections.Generic.HashSet`1"] = "H5R.HashSet",
+        ["System.Collections.Generic.Queue`1"] = "H5R.List",
+        ["System.Collections.Generic.Stack`1"] = "H5R.List",
+        ["System.Text.StringBuilder"] = "H5R.StringBuilder",
+    };
+
     public string TypeReference(ITypeSymbol type)
     {
         if (type is INamedTypeSymbol named)
@@ -65,8 +77,15 @@ public sealed class NameMangler
             {
                 return TypeFullName(named);
             }
-            // BCL/library type — reference by dotted metadata namespace + name.
+
             var ns = named.ContainingNamespace?.ToDisplayString();
+            var metadataKey = string.IsNullOrEmpty(ns) ? named.MetadataName : ns + "." + named.MetadataName;
+            if (BclTypeMap.TryGetValue(metadataKey, out var mapped))
+            {
+                return mapped;
+            }
+
+            // BCL/library type — reference by dotted metadata namespace + name.
             return string.IsNullOrEmpty(ns) ? named.Name : ns + "." + named.Name;
         }
         return type.Name;

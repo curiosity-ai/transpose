@@ -240,6 +240,8 @@ public sealed partial class Emitter
                 break;
             case IParameterSymbol param:
                 _w.Write(NameMangler.JsIdentifier(param.Name));
+                // ref/out parameters are holder objects ({ v: ... }) inside the body.
+                if (param.RefKind is RefKind.Ref or RefKind.Out) _w.Write(".v");
                 break;
             case IFieldSymbol field:
                 EmitFieldAccess(field, thisTarget: null);
