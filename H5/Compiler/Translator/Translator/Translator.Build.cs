@@ -159,7 +159,11 @@ namespace H5.Translator
                         throw new TranslatorException("Global usings are not supported");
                     }
 
-                    if (syntaxTree.GetRoot().DescendantNodes().OfType<AttributeSyntax>().Any(a => a.Name.ToString().Contains("AsyncMethodBuilder")))
+                    // Custom task-like types are unsupported (the JS emitter only lowers
+                    // ValueTask), but the H5 base library itself legitimately declares
+                    // [AsyncMethodBuilder] on ValueTask so Roslyn accepts `async ValueTask`.
+                    if (!string.Equals(ProjectProperties.AssemblyName, H5_ASSEMBLY, StringComparison.OrdinalIgnoreCase)
+                        && syntaxTree.GetRoot().DescendantNodes().OfType<AttributeSyntax>().Any(a => a.Name.ToString().Contains("AsyncMethodBuilder")))
                     {
                         throw new TranslatorException("AsyncMethodBuilder attribute is not supported");
                     }
