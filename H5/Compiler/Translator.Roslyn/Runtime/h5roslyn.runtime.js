@@ -318,7 +318,7 @@
     defMethod(Number.prototype, "CompareTo", function (o) { var v = this.valueOf(); return v < o ? -1 : (v > o ? 1 : 0); });
     defMethod(Number.prototype, "Equals", function (o) { return this.valueOf() === o; });
     defMethod(Number.prototype, "GetHashCode", function () { return this.valueOf() | 0; });
-    defMethod(Number.prototype, "ToString", function () { return H5R.numToStr(this.valueOf()); });
+    defMethod(Number.prototype, "ToString", function (fmt) { return fmt ? H5R.formatValue(this.valueOf(), fmt) : H5R.numToStr(this.valueOf()); });
 
     // Boolean.prototype.
     defMethod(Boolean.prototype, "CompareTo", function (o) { var v = this.valueOf(); return v === o ? 0 : (v ? 1 : -1); });
@@ -505,6 +505,159 @@
     Tasks.TaskCompletionSource.prototype.SetException = function (e) { this._reject(e); };
     Tasks.TaskCompletionSource.prototype.TrySetResult = function (v) { this._resolve(v); return true; };
     Tasks.TaskCompletionSource.prototype.TrySetException = function (e) { this._reject(e); return true; };
+
+    // ---- System.Random (matches .NET's seeded legacy algorithm) ------------
+
+    var Random = System.Random = function (seed) {
+        this._seedArray = new Array(56);
+        var MBIG = 2147483647, MSEED = 161803398;
+        if (seed === undefined) { seed = (Date_nowSafe() ^ (H5R._randCounter = (H5R._randCounter || 0) + 1)) | 0; }
+        var subtraction = (seed === -2147483648) ? 2147483647 : Math.abs(seed);
+        var mj = MSEED - subtraction;
+        this._seedArray[55] = mj;
+        var mk = 1;
+        for (var i = 1; i < 55; i++) {
+            var ii = (21 * i) % 55;
+            this._seedArray[ii] = mk;
+            mk = mj - mk;
+            if (mk < 0) { mk += MBIG; }
+            mj = this._seedArray[ii];
+        }
+        for (var k = 1; k < 5; k++) {
+            for (var i2 = 1; i2 < 56; i2++) {
+                this._seedArray[i2] -= this._seedArray[1 + (i2 + 30) % 55];
+                if (this._seedArray[i2] < 0) { this._seedArray[i2] += MBIG; }
+            }
+        }
+        this._inext = 0;
+        this._inextp = 21;
+    };
+    var Date_nowSafe = function () { try { return Date.now(); } catch (e) { return 12345; } };
+
+    Random.prototype._internalSample = function () {
+        var MBIG = 2147483647;
+        var locINext = this._inext, locINextp = this._inextp;
+        if (++locINext >= 56) { locINext = 1; }
+        if (++locINextp >= 56) { locINextp = 1; }
+        var retVal = this._seedArray[locINext] - this._seedArray[locINextp];
+        if (retVal === MBIG) { retVal--; }
+        if (retVal < 0) { retVal += MBIG; }
+        this._seedArray[locINext] = retVal;
+        this._inext = locINext;
+        this._inextp = locINextp;
+        return retVal;
+    };
+    Random.prototype._sample = function () { return this._internalSample() * (1.0 / 2147483647); };
+    Random.prototype.Next = function (a, b) {
+        if (a === undefined) { return this._internalSample(); }
+        if (b === undefined) { return Math.trunc(this._sample() * a); }
+        var range = b - a;
+        return Math.trunc(this._sample() * range) + a;
+    };
+    Random.prototype.NextDouble = function () { return this._sample(); };
+    Random.prototype.NextInt64 = function (a, b) { return this.Next(a, b); };
+
+    // ---- System.TimeSpan (backed by milliseconds) --------------------------
+
+    var TimeSpan = System.TimeSpan = function (a, b, c, d, e) {
+        // (ticks) | (h, m, s) | (d, h, m, s[, ms])
+        if (b === undefined) { this._ms = a / 10000; }
+        else if (d === undefined) { this._ms = ((a * 3600) + (b * 60) + c) * 1000; }
+        else { this._ms = (((a * 24 + b) * 3600) + (c * 60) + d) * 1000 + (e || 0); }
+    };
+    var mkTs = function (ms) { var t = Object.create(TimeSpan.prototype); t._ms = ms; return t; };
+    TimeSpan.FromDays = function (v) { return mkTs(v * 86400000); };
+    TimeSpan.FromHours = function (v) { return mkTs(v * 3600000); };
+    TimeSpan.FromMinutes = function (v) { return mkTs(v * 60000); };
+    TimeSpan.FromSeconds = function (v) { return mkTs(v * 1000); };
+    TimeSpan.FromMilliseconds = function (v) { return mkTs(v); };
+    TimeSpan.Zero = mkTs(0);
+    Object.defineProperty(TimeSpan.prototype, "TotalDays", { get: function () { return this._ms / 86400000; } });
+    Object.defineProperty(TimeSpan.prototype, "TotalHours", { get: function () { return this._ms / 3600000; } });
+    Object.defineProperty(TimeSpan.prototype, "TotalMinutes", { get: function () { return this._ms / 60000; } });
+    Object.defineProperty(TimeSpan.prototype, "TotalSeconds", { get: function () { return this._ms / 1000; } });
+    Object.defineProperty(TimeSpan.prototype, "TotalMilliseconds", { get: function () { return this._ms; } });
+    Object.defineProperty(TimeSpan.prototype, "Days", { get: function () { return Math.trunc(this._ms / 86400000); } });
+    Object.defineProperty(TimeSpan.prototype, "Hours", { get: function () { return Math.trunc(this._ms / 3600000) % 24; } });
+    Object.defineProperty(TimeSpan.prototype, "Minutes", { get: function () { return Math.trunc(this._ms / 60000) % 60; } });
+    Object.defineProperty(TimeSpan.prototype, "Seconds", { get: function () { return Math.trunc(this._ms / 1000) % 60; } });
+    TimeSpan.prototype.ToString = function () {
+        var neg = this._ms < 0, ms = Math.abs(this._ms);
+        var d = Math.trunc(ms / 86400000), h = Math.trunc(ms / 3600000) % 24, m = Math.trunc(ms / 60000) % 60, s = Math.trunc(ms / 1000) % 60;
+        var p2 = function (n) { return (n < 10 ? "0" : "") + n; };
+        return (neg ? "-" : "") + (d > 0 ? d + "." : "") + p2(h) + ":" + p2(m) + ":" + p2(s);
+    };
+
+    // ---- System.DateTime (UTC-backed to keep components stable) ------------
+
+    var DateTime = System.DateTime = function (a, b, c, d, e, f, g) {
+        if (b === undefined) { this._ms = a; } // ms since epoch (internal)
+        else if (d === undefined) { this._ms = Date.UTC(a, b - 1, c); }
+        else { this._ms = Date.UTC(a, b - 1, c, d || 0, e || 0, f || 0, g || 0); }
+    };
+    var mkDt = function (ms) { var t = Object.create(DateTime.prototype); t._ms = ms; return t; };
+    Object.defineProperty(DateTime, "Now", { get: function () { return mkDt(Date_nowSafe()); } });
+    Object.defineProperty(DateTime, "UtcNow", { get: function () { return mkDt(Date_nowSafe()); } });
+    Object.defineProperty(DateTime, "Today", { get: function () { var d = new Date(Date_nowSafe()); return mkDt(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())); } });
+    DateTime.IsLeapYear = function (y) { return (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0; };
+    DateTime.DaysInMonth = function (y, m) { return [31, DateTime.IsLeapYear(y) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1]; };
+    var dtd = function (self) { return new Date(self._ms); };
+    Object.defineProperty(DateTime.prototype, "Year", { get: function () { return dtd(this).getUTCFullYear(); } });
+    Object.defineProperty(DateTime.prototype, "Month", { get: function () { return dtd(this).getUTCMonth() + 1; } });
+    Object.defineProperty(DateTime.prototype, "Day", { get: function () { return dtd(this).getUTCDate(); } });
+    Object.defineProperty(DateTime.prototype, "Hour", { get: function () { return dtd(this).getUTCHours(); } });
+    Object.defineProperty(DateTime.prototype, "Minute", { get: function () { return dtd(this).getUTCMinutes(); } });
+    Object.defineProperty(DateTime.prototype, "Second", { get: function () { return dtd(this).getUTCSeconds(); } });
+    Object.defineProperty(DateTime.prototype, "Millisecond", { get: function () { return dtd(this).getUTCMilliseconds(); } });
+    Object.defineProperty(DateTime.prototype, "DayOfWeek", { get: function () { return dtd(this).getUTCDay(); } });
+    Object.defineProperty(DateTime.prototype, "DayOfYear", { get: function () { var d = dtd(this); return Math.floor((Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - Date.UTC(d.getUTCFullYear(), 0, 1)) / 86400000) + 1; } });
+    Object.defineProperty(DateTime.prototype, "Date", { get: function () { var d = dtd(this); return mkDt(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())); } });
+    DateTime.prototype.AddMilliseconds = function (v) { return mkDt(this._ms + v); };
+    DateTime.prototype.AddSeconds = function (v) { return mkDt(this._ms + v * 1000); };
+    DateTime.prototype.AddMinutes = function (v) { return mkDt(this._ms + v * 60000); };
+    DateTime.prototype.AddHours = function (v) { return mkDt(this._ms + v * 3600000); };
+    DateTime.prototype.AddDays = function (v) { return mkDt(this._ms + v * 86400000); };
+    DateTime.prototype.AddMonths = function (v) { var d = dtd(this); return mkDt(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + v, d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds(), d.getUTCMilliseconds())); };
+    DateTime.prototype.AddYears = function (v) { var d = dtd(this); return mkDt(Date.UTC(d.getUTCFullYear() + v, d.getUTCMonth(), d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds(), d.getUTCMilliseconds())); };
+    DateTime.prototype.CompareTo = function (o) { return this._ms < o._ms ? -1 : (this._ms > o._ms ? 1 : 0); };
+    DateTime.prototype.Equals = function (o) { return o != null && this._ms === o._ms; };
+    DateTime.prototype.valueOf = function () { return this._ms; };
+    DateTime.prototype.ToString = function (fmt) {
+        var d = dtd(this);
+        var Y = d.getUTCFullYear(), M = d.getUTCMonth() + 1, D = d.getUTCDate();
+        var H = d.getUTCHours(), Mi = d.getUTCMinutes(), S = d.getUTCSeconds();
+        var p2 = function (n) { return (n < 10 ? "0" : "") + n; };
+        if (!fmt) {
+            var h12 = H % 12; if (h12 === 0) { h12 = 12; }
+            return M + "/" + D + "/" + Y + " " + h12 + ":" + p2(Mi) + ":" + p2(S) + " " + (H < 12 ? "AM" : "PM");
+        }
+        return fmt
+            .replace(/yyyy/g, Y).replace(/yy/g, p2(Y % 100))
+            .replace(/MM/g, p2(M)).replace(/M/g, M)
+            .replace(/dd/g, p2(D)).replace(/d/g, D)
+            .replace(/HH/g, p2(H)).replace(/H/g, H)
+            .replace(/mm/g, p2(Mi)).replace(/m/g, Mi)
+            .replace(/ss/g, p2(S)).replace(/s/g, S);
+    };
+
+    // ---- System.Guid -------------------------------------------------------
+
+    var Guid = System.Guid = function (s) { this._ = s ? Guid._normalize(s) : "00000000-0000-0000-0000-000000000000"; };
+    Guid._normalize = function (s) { return s.replace(/[{}()]/g, "").toLowerCase(); };
+    Guid.Empty = new Guid();
+    Guid.Parse = function (s) { return new Guid(s); };
+    Guid.NewGuid = function () {
+        var hex = "0123456789abcdef", s = "";
+        for (var i = 0; i < 36; i++) {
+            if (i === 8 || i === 13 || i === 18 || i === 23) { s += "-"; }
+            else if (i === 14) { s += "4"; }
+            else { s += hex[Math.floor(Math.random() * 16)]; }
+        }
+        return new Guid(s);
+    };
+    Guid.prototype.ToString = function () { return this._; };
+    Guid.prototype.Equals = function (o) { return o != null && this._ === o._; };
+    Guid.prototype.GetHashCode = function () { return H5R.hash(this._); };
 
     // ---- Iterators ---------------------------------------------------------
 
