@@ -35,6 +35,27 @@ public sealed partial class Emitter
             return;
         }
 
+        // Local function call → bare name.
+        if (symbol.MethodKind == MethodKind.LocalFunction)
+        {
+            _w.Write(NameMangler.JsIdentifier(symbol.Name));
+            _w.Write("(");
+            EmitArguments(invocation.ArgumentList, symbol);
+            _w.Write(")");
+            return;
+        }
+
+        // enum.ToString() → System.Enum.toString(EnumType, value)
+        if (symbol is { Name: "ToString", Parameters.Length: 0 }
+            && invocation.Expression is MemberAccessExpressionSyntax { Expression: { } enumRecv }
+            && _model.GetTypeInfo(enumRecv).Type is { TypeKind: TypeKind.Enum } enumType)
+        {
+            _w.Write($"System.Enum.toString({TypeRef(enumType)}, ");
+            EmitExpression(enumRecv);
+            _w.Write(")");
+            return;
+        }
+
         var origin = symbol.OriginalDefinition;
         var template = H5Naming.GetTemplate(origin) ?? H5Naming.GetTemplate(symbol);
 
@@ -51,9 +72,27 @@ public sealed partial class Emitter
         if (template is not null)
         {
             var (byName, byPos) = CaptureArguments(invocation.ArgumentList, symbol);
-            var receiver = symbol.IsStatic ? null
+            var receiver = symbol.IsStatic && !symbol.IsExtensionMethod ? null
                 : receiverExpr is not null ? Capture(() => EmitExpression(receiverExpr))
                 : "this";
+
+            // Reduced extension method: the receiver binds to the original first
+            // parameter (e.g. {source}); actual args map to the remaining params.
+            if (symbol is { IsExtensionMethod: true, ReducedFrom: { } reduced } && receiver is not null)
+            {
+                var rebuilt = new Dictionary<string, string>();
+                rebuilt[reduced.Parameters[0].Name] = receiver;
+                for (var i = 0; i < byPos.Count && i + 1 < reduced.Parameters.Length; i++)
+                    rebuilt[reduced.Parameters[i + 1].Name] = byPos[i];
+                byName = rebuilt;
+                byPos = new List<string> { receiver }.Concat(byPos).ToList();
+                AddTypeArguments(byName, reduced, symbol);
+            }
+            else
+            {
+                AddTypeArguments(byName, symbol.OriginalDefinition, symbol);
+            }
+
             _w.Write(SubstituteTemplate(template, receiver, byName, byPos));
             return;
         }
@@ -123,6 +162,21 @@ public sealed partial class Emitter
             }
         }
         return (byName, byPos);
+    }
+
+    /// <summary>Adds generic type-parameter bindings (e.g. {TSource} → System.Int32) for templates.</summary>
+    private void AddTypeArguments(Dictionary<string, string> byName, IMethodSymbol definition, IMethodSymbol constructed)
+    {
+        for (var i = 0; i < definition.TypeParameters.Length && i < constructed.TypeArguments.Length; i++)
+            byName[definition.TypeParameters[i].Name] = TypeRef(constructed.TypeArguments[i]);
+
+        var defType = definition.ContainingType;
+        var conType = constructed.ContainingType;
+        if (defType is not null && conType is not null)
+        {
+            for (var i = 0; i < defType.TypeParameters.Length && i < conType.TypeArguments.Length; i++)
+                byName[defType.TypeParameters[i].Name] = TypeRef(conType.TypeArguments[i]);
+        }
     }
 
     private bool HasByRefArguments(ArgumentListSyntax argList, IMethodSymbol symbol)
@@ -615,6 +669,12 @@ public sealed partial class Emitter
             EmitExpression(operand);
             _w.Write(")");
         }
+        else if (type is { TypeKind: TypeKind.Enum })
+        {
+            _w.Write($"System.Enum.toString({TypeRef(type)}, ");
+            EmitExpression(operand);
+            _w.Write(")");
+        }
         else
         {
             _w.Write("H5R.toStr(");
@@ -740,6 +800,12 @@ public sealed partial class Emitter
                     else if (IsCharType(_model.GetTypeInfo(interpolation.Expression).Type))
                     {
                         _w.Write("H5R.chr(");
+                        EmitExpression(interpolation.Expression);
+                        _w.Write(")");
+                    }
+                    else if (_model.GetTypeInfo(interpolation.Expression).Type is { TypeKind: TypeKind.Enum } enumT)
+                    {
+                        _w.Write($"System.Enum.toString({TypeRef(enumT)}, ");
                         EmitExpression(interpolation.Expression);
                         _w.Write(")");
                     }

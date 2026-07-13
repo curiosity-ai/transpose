@@ -161,6 +161,16 @@ public sealed partial class Emitter
             return;
         }
 
+        // Enum → object/string uses the enum's name (System.Enum.toString).
+        if (sourceType is { TypeKind: TypeKind.Enum }
+            && targetType?.SpecialType is SpecialType.System_Object or SpecialType.System_String)
+        {
+            _w.Write($"System.Enum.toString({TypeRef(sourceType)}, ");
+            EmitExpression(expr);
+            _w.Write(")");
+            return;
+        }
+
         // Value types (user-defined structs) are copied when assigned / passed / returned
         // from a referencing expression, so mutations to the copy don't alias the source.
         if (IsSourceStruct(sourceType) && IsReferencingExpression(expr))
@@ -396,7 +406,7 @@ public sealed partial class Emitter
 
         switch (symbol)
         {
-            case IFieldSymbol { IsConst: true } constField:
+            case IFieldSymbol { IsConst: true, ContainingType.TypeKind: not TypeKind.Enum } constField:
                 _w.Write(ConstantLiteral(constField.ConstantValue, constField.Type));
                 return;
             case IFieldSymbol { ContainingType.TypeKind: TypeKind.Enum } enumField:
