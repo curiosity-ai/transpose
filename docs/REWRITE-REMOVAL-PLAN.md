@@ -360,4 +360,6 @@ this branch (pre-existing, not caused by any removal):
 `Utf8StringLiterals`, `NumericIntPtr`, `RefFields`, `ScopedRef`,
 `unimplemented…InlineArrays`, `unimplemented…ImplicitIndexAccess`,
 `IntArrayAliasTest`, `ArrayAlias` (C#12 array aliases — S2b lowering bug),
-`AsyncValueTask` (ValueTask semantics, S39).
+`AsyncValueTask` (ValueTask semantics, S39 — fixed on this branch),
+`ExtensionMembers` (C#14 extension blocks were never lowered by any rewrite
+case — an upstream coverage gap, they fail at the mcs parser).
