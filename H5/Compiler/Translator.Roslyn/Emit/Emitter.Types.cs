@@ -214,6 +214,8 @@ public sealed partial class Emitter
     private string DefaultValueLiteral(ITypeSymbol type)
     {
         if (type.TypeKind == TypeKind.Enum) return "0";
+        // default(struct) is a zero-initialized instance, not null.
+        if (IsSourceStruct(type)) return $"H5R.createDefault({_names.TypeReference(type)})";
         switch (type.SpecialType)
         {
             case SpecialType.System_Boolean: return "false";

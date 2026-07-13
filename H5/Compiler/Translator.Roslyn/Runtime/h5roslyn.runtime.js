@@ -43,6 +43,13 @@
         return o;
     };
 
+    // A zero-initialized value-type instance (default(TStruct)).
+    H5R.createDefault = function (type) {
+        var o = new type();
+        if (o.$ctorInit) { o.$ctorInit(); }
+        return o;
+    };
+
     // ---- Value formatting (.NET semantics) --------------------------------
 
     H5R.toStr = function (v) {

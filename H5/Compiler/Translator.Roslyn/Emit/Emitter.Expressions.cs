@@ -154,8 +154,34 @@ public sealed partial class Emitter
             _w.Write(")");
             return;
         }
+
+        // Value types (user-defined structs) are copied when assigned / passed / returned
+        // from a referencing expression, so mutations to the copy don't alias the source.
+        if (IsSourceStruct(sourceType) && IsReferencingExpression(expr))
+        {
+            _w.Write("H5R.clone(");
+            EmitExpression(expr);
+            _w.Write(")");
+            return;
+        }
+
         EmitExpression(expr);
     }
+
+    /// <summary>A user-defined (source) struct — value-copy semantics apply.</summary>
+    private static bool IsSourceStruct(ITypeSymbol? type)
+        => type is { TypeKind: TypeKind.Struct } && type.Locations.Any(l => l.IsInSource) && !type.IsTupleType;
+
+    /// <summary>An expression that references existing storage (so could alias).</summary>
+    private static bool IsReferencingExpression(ExpressionSyntax expr) => expr switch
+    {
+        IdentifierNameSyntax => true,
+        MemberAccessExpressionSyntax => true,
+        ElementAccessExpressionSyntax => true,
+        ThisExpressionSyntax => true,
+        ParenthesizedExpressionSyntax paren => IsReferencingExpression(paren.Expression),
+        _ => false,
+    };
 
     // ---- literals ----------------------------------------------------------
 
