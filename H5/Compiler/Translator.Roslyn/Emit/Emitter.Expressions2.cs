@@ -438,10 +438,17 @@ public sealed partial class Emitter
             if (argList is not null) EmitArguments(argList, ctor);
             _w.Write(")");
         }
+        else if (type.IsGenericType)
+        {
+            // Generic BCL type: new (List$1(Int32)).ctor(args).
+            _w.Write($"new ({typeRef}).{ctorName}(");
+            if (argList is not null) EmitArguments(argList, ctor);
+            _w.Write(")");
+        }
         else
         {
-            // BCL type: new (TypeRef).ctorName(args) — matches H5's generic instantiation form.
-            _w.Write($"new ({typeRef}).{ctorName}(");
+            // Non-generic BCL type: direct new (h5 constructor functions dispatch by arity).
+            _w.Write($"new {typeRef}(");
             if (argList is not null) EmitArguments(argList, ctor);
             _w.Write(")");
         }
