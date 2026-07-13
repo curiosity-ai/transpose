@@ -166,8 +166,22 @@
     H5R.equals = function (a, b) {
         if (a === b) { return true; }
         if (a === null || a === undefined || b === null || b === undefined) { return false; }
+        if (typeof a.Equals === "function") { return a.Equals(b); }
         if (typeof a.equals === "function") { return a.equals(b); }
         return false;
+    };
+
+    // Shallow clone preserving the prototype (for record `with` expressions).
+    H5R.clone = function (o) { return Object.assign(Object.create(Object.getPrototypeOf(o)), o); };
+
+    H5R.hash = function (v) {
+        if (v === null || v === undefined) { return 0; }
+        var t = typeof v;
+        if (t === "number") { return v | 0; }
+        if (t === "boolean") { return v ? 1 : 0; }
+        if (t === "string") { var h = 0; for (var i = 0; i < v.length; i++) { h = (h * 31 + v.charCodeAt(i)) | 0; } return h; }
+        if (typeof v.GetHashCode === "function") { return v.GetHashCode(); }
+        return 0;
     };
 
     // ---- System.Console ----------------------------------------------------
@@ -207,11 +221,18 @@
     // ---- Exceptions --------------------------------------------------------
 
     var makeException = function (name) {
-        var fn = function (message) { this.message = message || name; this.$typeName = "System." + name; };
+        var fn = function (message) { this.message = (message === undefined ? name : message); this.$typeName = "System." + name; };
         fn.prototype = Object.create(Error.prototype);
         fn.prototype.constructor = fn;
+        // Base constructor + field-init hooks so user-defined exceptions can chain.
+        fn.prototype.$ctorInit = function () { };
+        fn.prototype.$ctor = function (message, inner) { if (message !== undefined) { this.message = message; } if (inner !== undefined) { this.innerException = inner; } };
         fn.prototype.get_Message = function () { return this.message; };
+        fn.prototype.GetType = function () { return { Name: this.$typeName }; };
+        fn.prototype.ToString = function () { return this.$typeName + ": " + this.message; };
         fn.prototype.toString = function () { return this.$typeName + ": " + this.message; };
+        Object.defineProperty(fn.prototype, "Message", { get: function () { return this.message; }, enumerable: false, configurable: true });
+        Object.defineProperty(fn.prototype, "InnerException", { get: function () { return this.innerException || null; }, enumerable: false, configurable: true });
         System[name] = fn;
         return fn;
     };
@@ -453,6 +474,27 @@
     StringBuilder.prototype.Clear = function () { this._ = ""; return this; };
     StringBuilder.prototype.ToString = function () { return this._; };
     Object.defineProperty(StringBuilder.prototype, "Length", { get: function () { return this._.length; } });
+
+    // ---- System.Threading.Tasks.Task (mapped to Promise) -------------------
+
+    var Tasks = H5R.ns("System.Threading.Tasks");
+    Tasks.Task = {
+        Delay: function (ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); },
+        FromResult: function (v) { return Promise.resolve(v); },
+        CompletedTask: Promise.resolve(),
+        Run: function (fn) { return Promise.resolve().then(function () { return fn(); }); },
+        WhenAll: function (tasks) { return Promise.all(H5R.toArray(tasks)); },
+        WhenAny: function (tasks) { return Promise.race(H5R.toArray(tasks)); },
+        Yield: function () { return Promise.resolve(); }
+    };
+    Tasks.TaskCompletionSource = function () {
+        var self = this;
+        this.Task = new Promise(function (resolve, reject) { self._resolve = resolve; self._reject = reject; });
+    };
+    Tasks.TaskCompletionSource.prototype.SetResult = function (v) { this._resolve(v); };
+    Tasks.TaskCompletionSource.prototype.SetException = function (e) { this._reject(e); };
+    Tasks.TaskCompletionSource.prototype.TrySetResult = function (v) { this._resolve(v); return true; };
+    Tasks.TaskCompletionSource.prototype.TrySetException = function (e) { this._reject(e); return true; };
 
     // ---- Iterators ---------------------------------------------------------
 

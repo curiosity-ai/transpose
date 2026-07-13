@@ -75,6 +75,7 @@ public sealed partial class Emitter
             EmitInstanceFieldInit(type, simpleName);
             EmitStaticInit(type, simpleName);
             EmitMembers(type, simpleName);
+            if (type.IsRecord) EmitRecordMembers(type, simpleName);
 
             _w.WriteLine($"return {simpleName};");
         });

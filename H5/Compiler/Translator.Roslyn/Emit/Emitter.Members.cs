@@ -11,31 +11,45 @@ public sealed partial class Emitter
 {
     private void EmitMembers(INamedTypeSymbol type, string simpleName)
     {
+        // For records, positional properties, the primary ctor, and value members
+        // (Equals/GetHashCode/ToString/Deconstruct) are synthesized in EmitRecordMembers.
         foreach (var method in type.GetMembers().OfType<IMethodSymbol>())
         {
+            if (type.IsRecord && method.IsImplicitlyDeclared) continue;
             switch (method.MethodKind)
             {
                 case MethodKind.Ordinary:
                     EmitMethod(method, simpleName);
                     break;
                 case MethodKind.Constructor:
+                    if (type.IsRecord) break; // handled in EmitRecordMembers
                     EmitConstructor(method, simpleName);
                     break;
                 // property/event accessors handled with their property; static ctor handled in $cctor
             }
         }
 
-        var instanceCtors = type.InstanceConstructors
-            .Where(c => c.DeclaringSyntaxReferences.Length > 0)
-            .ToList();
-
-        if (instanceCtors.Count == 0)
+        if (!type.IsRecord)
         {
-            EmitDefaultConstructor(type, simpleName);
+            var instanceCtors = type.InstanceConstructors
+                .Where(c => c.DeclaringSyntaxReferences.Length > 0)
+                .ToList();
+
+            if (instanceCtors.Count == 0)
+            {
+                EmitDefaultConstructor(type, simpleName);
+            }
         }
 
         foreach (var prop in type.GetMembers().OfType<IPropertySymbol>())
         {
+            // In records, positional properties (declared via the parameter list) are
+            // synthesized in EmitRecordMembers; only emit explicitly-bodied properties here.
+            if (type.IsRecord
+                && prop.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() is not PropertyDeclarationSyntax)
+            {
+                continue;
+            }
             EmitProperty(prop, simpleName);
         }
     }

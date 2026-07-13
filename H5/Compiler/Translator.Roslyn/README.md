@@ -38,11 +38,18 @@ Entry point: `RoslynTranslator.Translate(source)` → `TranslationResult { Javas
 - Classes / structs, inheritance (`virtual`/`override`/`abstract`), interfaces (structural).
 - Instance & static fields, auto- and full properties, indexers, methods, overloads.
 - Constructors: overloads, `: this(...)` / `: base(...)` chaining, field initializers, static ctors.
-- Statements: locals, `if/else`, `for`, `foreach`, `while`, `do`, `switch` (constant), `try/catch/finally`,
-  `using`, `throw`, `break`/`continue`/`return`, `lock` (no-op body), local functions.
-- Expressions: literals, arithmetic/relational/logical/bitwise ops, integer division, string concat & interpolation,
-  ternary, null-coalescing, casts (numeric truncation), `is`/`as`, object creation, arrays, element access,
-  lambdas / anonymous methods, `?.`, `await`, method groups, enums.
+- Statements: locals, `if/else`, `for`, `foreach`, `while`, `do`, `switch` (constant + pattern),
+  `try/catch/finally`, `using`, `throw`, `break`/`continue`/`return`, `lock` (no-op body), local functions.
+- Expressions: literals, arithmetic/relational/logical/bitwise ops, integer division, string concat &
+  interpolation, ternary, null-coalescing, casts (numeric truncation), `is`/`as`, object & collection
+  initializers, arrays, element access, lambdas / anonymous methods, `?.`, `await`, method groups, enums,
+  `ref`/`out` parameters (holder objects), `params`, named/optional arguments.
+- Modern C#: pattern matching (type/constant/relational/logical/property/positional), switch expressions,
+  tuples + deconstruction, records (positional, value equality, `with`, `Deconstruct`, ToString).
+- Collections: `List<T>`, `Dictionary<K,V>`, `HashSet<T>`, arrays; LINQ-to-objects; iterators (`yield`).
+- BCL surface: `Console`, `String` (+ static), `StringBuilder`, `Math`/`MathF`, `Convert`, numeric parsing,
+  `Char`, `Task`/`Task<T>` (→ Promise), `TaskCompletionSource`, exceptions with `Message`/`InnerException`.
+- Async/await → native JS `async`/`await`; async `Main` bootstrap.
 - Unsupported-feature reporting: pointers, `unsafe`, `fixed`, `stackalloc`, P/Invoke, File I/O, sockets,
   threading primitives (Task-based async is allowed).
 

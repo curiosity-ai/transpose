@@ -219,12 +219,61 @@ public sealed partial class Emitter
             return;
         }
 
+        // params array handling: collect trailing args into a JS array (except for
+        // the variadic BCL formatters, whose runtime functions take individual args).
+        if (method is { Parameters.Length: > 0 } && method.Parameters[^1].IsParams && ShouldWrapParams(method))
+        {
+            var fixedCount = method.Parameters.Length - 1;
+            var first = true;
+            for (var i = 0; i < fixedCount && i < args.Count; i++)
+            {
+                if (!first) _w.Write(", ");
+                first = false;
+                EmitExpressionConverted(args[i].Expression, method.Parameters[i].Type);
+            }
+
+            var trailing = args.Skip(fixedCount).ToList();
+            if (!first) _w.Write(", ");
+
+            var paramsArrayType = (method.Parameters[^1].Type as IArrayTypeSymbol)?.ElementType;
+            // A single array argument is passed through as the params array itself.
+            if (trailing.Count == 1 && _model.GetTypeInfo(trailing[0].Expression).Type is IArrayTypeSymbol)
+            {
+                EmitExpression(trailing[0].Expression);
+            }
+            else
+            {
+                _w.Write("[");
+                for (var i = 0; i < trailing.Count; i++)
+                {
+                    if (i > 0) _w.Write(", ");
+                    EmitExpressionConverted(trailing[i].Expression, paramsArrayType);
+                }
+                _w.Write("]");
+            }
+            return;
+        }
+
         for (var i = 0; i < args.Count; i++)
         {
             if (i > 0) _w.Write(", ");
             var targetType = method is not null && i < method.Parameters.Length ? method.Parameters[i].Type : null;
             EmitExpressionConverted(args[i].Expression, targetType);
         }
+    }
+
+    /// <summary>
+    /// Whether a params argument should be wrapped into a JS array. The variadic BCL
+    /// formatters (Console.Write/WriteLine, String.Format/Concat) take individual
+    /// arguments in the runtime, so they are excluded.
+    /// </summary>
+    private static bool ShouldWrapParams(IMethodSymbol method)
+    {
+        var containing = method.ContainingType?.ToDisplayString();
+        var name = method.Name;
+        if (containing == "System.Console" && name is "Write" or "WriteLine") return false;
+        if (containing == "System.String" && name is "Format" or "Concat") return false;
+        return true;
     }
 
     private void EmitArgumentList(ArgumentListSyntax argList) => EmitArguments(argList, null);
@@ -413,6 +462,19 @@ public sealed partial class Emitter
             _w.Write("(");
             EmitExpression(binary.Left);
             _w.Write(" ?? ");
+            EmitExpression(binary.Right);
+            _w.Write(")");
+            return;
+        }
+
+        // Record / value-equality via Equals for == and !=.
+        if ((binary.IsKind(SyntaxKind.EqualsExpression) || binary.IsKind(SyntaxKind.NotEqualsExpression))
+            && (leftType is { IsRecord: true } || rightType is { IsRecord: true }))
+        {
+            if (binary.IsKind(SyntaxKind.NotEqualsExpression)) _w.Write("!");
+            _w.Write("H5R.equals(");
+            EmitExpression(binary.Left);
+            _w.Write(", ");
             EmitExpression(binary.Right);
             _w.Write(")");
             return;
