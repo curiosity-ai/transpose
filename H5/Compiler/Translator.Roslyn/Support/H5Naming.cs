@@ -66,6 +66,14 @@ internal static class H5Naming
         var inSource = symbol.Locations.Any(l => l.IsInSource);
         if (inSource)
         {
+            // Object-method overrides map to h5's lowercase runtime names so the
+            // runtime's dispatch (H5.toString/H5.equals/H5.getHashCode) finds them.
+            if (symbol is IMethodSymbol m)
+            {
+                if (m is { Name: "ToString", Parameters.Length: 0 }) return "toString";
+                if (m is { Name: "GetHashCode", Parameters.Length: 0 }) return "getHashCode";
+                if (m is { Name: "Equals", Parameters.Length: 1 }) return "equals";
+            }
             return symbol.Name; // preserve C# name for user members
         }
 
