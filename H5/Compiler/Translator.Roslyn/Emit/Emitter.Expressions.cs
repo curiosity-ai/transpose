@@ -111,6 +111,15 @@ public sealed partial class Emitter
             case TypeOfExpressionSyntax typeOf:
                 _w.Write(_names.TypeReference(_model.GetTypeInfo(typeOf.Type).Type!));
                 break;
+            case IsPatternExpressionSyntax isPattern:
+                EmitIsPattern(isPattern);
+                break;
+            case SwitchExpressionSyntax switchExpr:
+                EmitSwitchExpression(switchExpr);
+                break;
+            case TupleExpressionSyntax tuple:
+                EmitTuple(tuple);
+                break;
             case PredefinedTypeSyntax predefined:
                 _w.Write(_model.GetTypeInfo(predefined).Type?.Name ?? "Object");
                 break;
@@ -334,6 +343,14 @@ public sealed partial class Emitter
                 _w.Write(Convert.ToInt64(enumField.ConstantValue).ToString(CultureInfo.InvariantCulture));
                 return;
             case IFieldSymbol field:
+                // Tuple element (named or ItemN) → the underlying ItemN slot.
+                if (field.ContainingType is { IsTupleType: true })
+                {
+                    EmitExpression(member.Expression);
+                    _w.Write(".");
+                    _w.Write((field.CorrespondingTupleField ?? field).Name);
+                    return;
+                }
                 if (field.IsStatic) { _w.Write($"{_names.TypeReference(field.ContainingType)}.{_names.FieldName(field)}"); }
                 else { EmitExpression(member.Expression); _w.Write("."); _w.Write(_names.FieldName(field)); }
                 return;

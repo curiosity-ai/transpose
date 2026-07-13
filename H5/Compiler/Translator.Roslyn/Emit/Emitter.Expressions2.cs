@@ -340,6 +340,22 @@ public sealed partial class Emitter
         }
     }
 
+    // ---- tuples ------------------------------------------------------------
+
+    private void EmitTuple(TupleExpressionSyntax tuple)
+    {
+        // Tuples are represented as { Item1, Item2, ... }; named-element access is
+        // mapped to the corresponding ItemN at the access site.
+        _w.Write("{ ");
+        for (var i = 0; i < tuple.Arguments.Count; i++)
+        {
+            if (i > 0) _w.Write(", ");
+            _w.Write($"Item{i + 1}: ");
+            EmitExpression(tuple.Arguments[i].Expression);
+        }
+        _w.Write(" }");
+    }
+
     // ---- binary / unary / assignment --------------------------------------
 
     private void EmitBinary(BinaryExpressionSyntax binary)

@@ -8,6 +8,10 @@ namespace H5.Translator.Roslyn;
 
 public sealed partial class Emitter
 {
+    // Break-target stack: null = plain `break` (loops / native switch);
+    // a label string = `break <label>` (pattern-switch labelled block).
+    private readonly Stack<string?> _breakTargets = new();
+
     private void EmitStatement(StatementSyntax statement)
     {
         // C# out-var declarations and is-pattern variables have block scope; declare
@@ -23,7 +27,14 @@ public sealed partial class Emitter
                 EmitLocalDeclaration(local);
                 break;
             case ExpressionStatementSyntax expr:
-                EmitExpressionStatement(expr.Expression);
+                if (expr.Expression is AssignmentExpressionSyntax da && IsDeconstruction(da))
+                {
+                    EmitDeconstruction(da);
+                }
+                else
+                {
+                    EmitExpressionStatement(expr.Expression);
+                }
                 break;
             case IfStatementSyntax ifStmt:
                 EmitIf(ifStmt);
@@ -44,7 +55,10 @@ public sealed partial class Emitter
                 EmitReturn(ret);
                 break;
             case BreakStatementSyntax:
-                _w.WriteLine("break;");
+                if (_breakTargets.Count > 0 && _breakTargets.Peek() is { } lbl)
+                    _w.WriteLine($"break {lbl};");
+                else
+                    _w.WriteLine("break;");
                 break;
             case ContinueStatementSyntax:
                 _w.WriteLine("continue;");
@@ -105,7 +119,7 @@ public sealed partial class Emitter
             if (!isRoot && child is StatementSyntax) continue;
             if (child is AnonymousFunctionExpressionSyntax or LocalFunctionStatementSyntax) continue;
 
-            if (child is SingleVariableDesignationSyntax { Parent: DeclarationExpressionSyntax or DeclarationPatternSyntax or RecursivePatternSyntax } single)
+            if (child is SingleVariableDesignationSyntax { Parent: DeclarationExpressionSyntax or DeclarationPatternSyntax or RecursivePatternSyntax or VarPatternSyntax } single)
             {
                 names.Add(single.Identifier.Text);
             }
@@ -211,7 +225,9 @@ public sealed partial class Emitter
             EmitExpression(inc);
         }
         _w.Write(") ");
+        _breakTargets.Push(null);
         EmitStatementAsBlock(forStmt.Statement);
+        _breakTargets.Pop();
     }
 
     private void EmitForEach(ForEachStatementSyntax forEach)
@@ -223,6 +239,7 @@ public sealed partial class Emitter
         EmitExpression(forEach.Expression);
         _w.WriteLine(");");
         _w.Write($"while ({enumVar}.moveNext()) ");
+        _breakTargets.Push(null);
         _w.Block(() =>
         {
             _w.WriteLine($"let {iterVar} = {enumVar}.current;");
@@ -235,6 +252,7 @@ public sealed partial class Emitter
                 EmitStatement(forEach.Statement);
             }
         });
+        _breakTargets.Pop();
         _w.WriteLine();
     }
 
@@ -243,13 +261,17 @@ public sealed partial class Emitter
         _w.Write("while (");
         EmitExpression(whileStmt.Condition);
         _w.Write(") ");
+        _breakTargets.Push(null);
         EmitStatementAsBlock(whileStmt.Statement);
+        _breakTargets.Pop();
     }
 
     private void EmitDo(DoStatementSyntax doStmt)
     {
         _w.Write("do ");
+        _breakTargets.Push(null);
         EmitStatementAsBlock(doStmt.Statement);
+        _breakTargets.Pop();
         _w.Write("while (");
         EmitExpression(doStmt.Condition);
         _w.WriteLine(");");
@@ -413,10 +435,22 @@ public sealed partial class Emitter
 
     private void EmitSwitch(SwitchStatementSyntax switchStmt)
     {
+        // Pattern-based switch → if/else-if chain over a temp subject.
+        var hasPatterns = switchStmt.Sections
+            .SelectMany(s => s.Labels)
+            .Any(l => l is CasePatternSwitchLabelSyntax);
+
+        if (hasPatterns)
+        {
+            EmitPatternSwitch(switchStmt);
+            return;
+        }
+
         _w.Write("switch (");
         EmitExpression(switchStmt.Expression);
         _w.WriteLine(") {");
         _w.Indent();
+        _breakTargets.Push(null);
         foreach (var section in switchStmt.Sections)
         {
             foreach (var label in section.Labels)
@@ -440,6 +474,74 @@ public sealed partial class Emitter
             foreach (var stmt in section.Statements) EmitStatement(stmt);
             _w.Outdent();
         }
+        _breakTargets.Pop();
+        _w.Outdent();
+        _w.WriteLine("}");
+    }
+
+    private void EmitPatternSwitch(SwitchStatementSyntax switchStmt)
+    {
+        var label = NextTemp("$switch");
+        var subject = NextTemp("$subj");
+
+        _w.WriteLine($"{label}: {{");
+        _w.Indent();
+        _w.Write($"let {subject} = ");
+        EmitExpression(switchStmt.Expression);
+        _w.WriteLine(";");
+
+        _breakTargets.Push(label);
+
+        SwitchSectionSyntax? defaultSection = null;
+        var first = true;
+
+        foreach (var section in switchStmt.Sections)
+        {
+            if (section.Labels.Any(l => l is DefaultSwitchLabelSyntax))
+            {
+                defaultSection = section;
+                continue;
+            }
+
+            _w.Write(first ? "if (" : "else if (");
+            first = false;
+
+            for (var i = 0; i < section.Labels.Count; i++)
+            {
+                if (i > 0) _w.Write(" || ");
+                _w.Write("(");
+                switch (section.Labels[i])
+                {
+                    case CasePatternSwitchLabelSyntax patternLabel:
+                        EmitPatternTest(subject, patternLabel.Pattern);
+                        if (patternLabel.WhenClause is not null)
+                        {
+                            _w.Write(" && (");
+                            EmitExpression(patternLabel.WhenClause.Condition);
+                            _w.Write(")");
+                        }
+                        break;
+                    case CaseSwitchLabelSyntax constLabel:
+                        _w.Write($"{subject} === ");
+                        EmitExpression(constLabel.Value);
+                        break;
+                }
+                _w.Write(")");
+            }
+
+            _w.Write(") ");
+            _w.Block(() => { foreach (var stmt in section.Statements) EmitStatement(stmt); });
+            _w.WriteLine();
+        }
+
+        if (defaultSection is not null)
+        {
+            _w.Write(first ? "" : "else ");
+            _w.Block(() => { foreach (var stmt in defaultSection.Statements) EmitStatement(stmt); });
+            _w.WriteLine();
+        }
+
+        _breakTargets.Pop();
         _w.Outdent();
         _w.WriteLine("}");
     }
