@@ -314,6 +314,16 @@
     defMethod(String.prototype, "GetHashCode", function () { var h = 0, s = this.toString(); for (var i = 0; i < s.length; i++) { h = (h * 31 + s.charCodeAt(i)) | 0; } return h; });
     defMethod(String.prototype, "ToString", function () { return this.toString(); });
 
+    // Number.prototype C#-style members (for IComparable<T>, boxing, etc.).
+    defMethod(Number.prototype, "CompareTo", function (o) { var v = this.valueOf(); return v < o ? -1 : (v > o ? 1 : 0); });
+    defMethod(Number.prototype, "Equals", function (o) { return this.valueOf() === o; });
+    defMethod(Number.prototype, "GetHashCode", function () { return this.valueOf() | 0; });
+    defMethod(Number.prototype, "ToString", function () { return H5R.numToStr(this.valueOf()); });
+
+    // Boolean.prototype.
+    defMethod(Boolean.prototype, "CompareTo", function (o) { var v = this.valueOf(); return v === o ? 0 : (v ? 1 : -1); });
+    defMethod(Boolean.prototype, "Equals", function (o) { return this.valueOf() === o; });
+
     // Array.prototype C#-style members.
     defGetter(Array.prototype, "Length", function () { return this.length; });
     defMethod(Array.prototype, "GetLength", function (dim) { return this.length; });

@@ -269,7 +269,8 @@ public sealed partial class Emitter
                 }
                 _w.WriteLine(",");
             }
-            // setter
+            // setter — auto-properties always get a setter so get-only auto-props
+            // (assigned in the constructor / via init) work.
             if (prop.SetMethod is not null)
             {
                 _w.Write("set: function (value) ");
@@ -281,6 +282,12 @@ public sealed partial class Emitter
                 {
                     EmitAccessorBody(prop.SetMethod, isGetter: false);
                 }
+                _w.WriteLine(",");
+            }
+            else if (isAuto)
+            {
+                _w.Write("set: function (value) ");
+                _w.Block(() => _w.WriteLine($"{backing} = value;"));
                 _w.WriteLine(",");
             }
             _w.WriteLine("enumerable: true, configurable: true");

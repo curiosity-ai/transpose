@@ -38,6 +38,23 @@ public sealed partial class Emitter
             return;
         }
 
+        // Nullable<T>.GetValueOrDefault([default])
+        if (symbol is { Name: "GetValueOrDefault", ContainingType.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T }
+            && invocation.Expression is MemberAccessExpressionSyntax nullableAccess)
+        {
+            _w.Write("(");
+            EmitExpression(nullableAccess.Expression);
+            _w.Write(" != null ? ");
+            EmitExpression(nullableAccess.Expression);
+            _w.Write(" : ");
+            if (invocation.ArgumentList.Arguments.Count > 0)
+                EmitExpression(invocation.ArgumentList.Arguments[0].Expression);
+            else
+                _w.Write(DefaultValueLiteral(((INamedTypeSymbol)symbol.ContainingType).TypeArguments[0]));
+            _w.Write(")");
+            return;
+        }
+
         // x.ToString()  → H5R.toStr(x)
         if (symbol is { Name: "ToString", Parameters.Length: 0 }
             && invocation.Expression is MemberAccessExpressionSyntax toStrAccess)

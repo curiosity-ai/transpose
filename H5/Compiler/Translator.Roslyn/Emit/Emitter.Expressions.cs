@@ -341,6 +341,20 @@ public sealed partial class Emitter
     {
         var symbol = _model.GetSymbolInfo(member).Symbol;
 
+        // Nullable<T> — represented as the value itself or null.
+        if (symbol?.ContainingType is { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T })
+        {
+            switch (symbol.Name)
+            {
+                case "HasValue":
+                    _w.Write("("); EmitExpression(member.Expression); _w.Write(" != null)");
+                    return;
+                case "Value":
+                    EmitExpression(member.Expression);
+                    return;
+            }
+        }
+
         switch (symbol)
         {
             case IFieldSymbol { IsConst: true } constField:
