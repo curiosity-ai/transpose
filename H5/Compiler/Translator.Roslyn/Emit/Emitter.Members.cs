@@ -51,6 +51,17 @@ public sealed partial class Emitter
 
         var name = _names.MethodName(method);
         var target = method.IsStatic ? $"{simpleName}.{name}" : $"{simpleName}.prototype.{name}";
+
+        if (decl.Body is not null && IsIteratorBody(decl.Body))
+        {
+            _w.Write($"{target} = function (");
+            EmitParameterList(method);
+            _w.Write(") ");
+            EmitIteratorBody(decl.Body, method);
+            _w.WriteLine(";");
+            return;
+        }
+
         var asyncKw = method.IsAsync || IsTaskType(method.ReturnType) && decl.Modifiers.Any(SyntaxKind.AsyncKeyword) ? "async " : "";
 
         _w.Write($"{target} = {asyncKw}function (");
@@ -58,6 +69,29 @@ public sealed partial class Emitter
         _w.Write(") ");
         EmitMethodBody(decl.Body, decl.ExpressionBody, method.ReturnsVoid, method);
         _w.WriteLine(";");
+    }
+
+    /// <summary>An iterator body (yield return/break) → returns a fresh-iterable generator.</summary>
+    private void EmitIteratorBody(BlockSyntax body, IMethodSymbol method)
+    {
+        _w.Block(() =>
+        {
+            EmitOptionalDefaults(method);
+            _w.Write("return H5R.iter(function* () ");
+            _w.Block(() => { foreach (var s in body.Statements) EmitStatement(s); });
+            _w.WriteLine(");");
+        });
+    }
+
+    /// <summary>True if the body contains a yield statement (not inside a nested function).</summary>
+    private static bool IsIteratorBody(SyntaxNode body)
+    {
+        foreach (var node in body.DescendantNodes(descendIntoChildren: n =>
+                     n is not AnonymousFunctionExpressionSyntax and not LocalFunctionStatementSyntax))
+        {
+            if (node is YieldStatementSyntax) return true;
+        }
+        return false;
     }
 
     private void EmitParameterList(IMethodSymbol method)

@@ -454,4 +454,112 @@
     StringBuilder.prototype.ToString = function () { return this._; };
     Object.defineProperty(StringBuilder.prototype, "Length", { get: function () { return this._.length; } });
 
+    // ---- Iterators ---------------------------------------------------------
+
+    // Wraps a generator function so the result can be enumerated repeatedly
+    // (each enumeration starts a fresh generator), matching IEnumerable<T>.
+    H5R.iter = function (genFn) {
+        return {
+            GetEnumerator: function () {
+                var it = genFn();
+                var cur;
+                return { moveNext: function () { var r = it.next(); cur = r.value; return !r.done; }, get current() { return cur; } };
+            }
+        };
+    };
+
+    // ---- System.Linq.Enumerable (LINQ to objects, materialized) ------------
+
+    var A = H5R.toArray;
+
+    var Linq = H5R.ns("System.Linq");
+    Linq.Enumerable = {
+        Where: function (src, pred) { return A(src).filter(function (x, i) { return pred(x, i); }); },
+        Select: function (src, sel) { return A(src).map(function (x, i) { return sel(x, i); }); },
+        SelectMany: function (src, sel) { var out = []; A(src).forEach(function (x, i) { A(sel(x, i)).forEach(function (y) { out.push(y); }); }); return out; },
+        Count: function (src, pred) { return pred ? A(src).filter(function (x) { return pred(x); }).length : A(src).length; },
+        LongCount: function (src, pred) { return Linq.Enumerable.Count(src, pred); },
+        Sum: function (src, sel) { return A(src).reduce(function (a, x) { return a + (sel ? sel(x) : x); }, 0); },
+        Average: function (src, sel) { var a = A(src); if (!a.length) { throw new System.InvalidOperationException("Sequence contains no elements"); } return a.reduce(function (s, x) { return s + (sel ? sel(x) : x); }, 0) / a.length; },
+        Min: function (src, sel) { var a = A(src).map(function (x) { return sel ? sel(x) : x; }); return Math.min.apply(null, a); },
+        Max: function (src, sel) { var a = A(src).map(function (x) { return sel ? sel(x) : x; }); return Math.max.apply(null, a); },
+        Any: function (src, pred) { var a = A(src); return pred ? a.some(function (x) { return pred(x); }) : a.length > 0; },
+        All: function (src, pred) { return A(src).every(function (x) { return pred(x); }); },
+        Contains: function (src, value) { return A(src).some(function (x) { return H5R.equals(x, value); }); },
+        First: function (src, pred) { var a = A(src); for (var i = 0; i < a.length; i++) { if (!pred || pred(a[i])) { return a[i]; } } throw new System.InvalidOperationException("Sequence contains no matching element"); },
+        FirstOrDefault: function (src, pred) { var a = A(src); for (var i = 0; i < a.length; i++) { if (!pred || pred(a[i])) { return a[i]; } } return null; },
+        Last: function (src, pred) { var a = A(src); for (var i = a.length - 1; i >= 0; i--) { if (!pred || pred(a[i])) { return a[i]; } } throw new System.InvalidOperationException("Sequence contains no matching element"); },
+        LastOrDefault: function (src, pred) { var a = A(src); for (var i = a.length - 1; i >= 0; i--) { if (!pred || pred(a[i])) { return a[i]; } } return null; },
+        Single: function (src, pred) { var a = A(src).filter(function (x) { return !pred || pred(x); }); if (a.length !== 1) { throw new System.InvalidOperationException("Sequence does not contain exactly one element"); } return a[0]; },
+        SingleOrDefault: function (src, pred) { var a = A(src).filter(function (x) { return !pred || pred(x); }); if (a.length > 1) { throw new System.InvalidOperationException("Sequence contains more than one element"); } return a.length ? a[0] : null; },
+        ElementAt: function (src, i) { return A(src)[i]; },
+        ElementAtOrDefault: function (src, i) { var a = A(src); return i >= 0 && i < a.length ? a[i] : null; },
+        Take: function (src, n) { return A(src).slice(0, n); },
+        Skip: function (src, n) { return A(src).slice(n); },
+        TakeWhile: function (src, pred) { var out = [], a = A(src); for (var i = 0; i < a.length && pred(a[i]); i++) { out.push(a[i]); } return out; },
+        SkipWhile: function (src, pred) { var a = A(src), i = 0; while (i < a.length && pred(a[i])) { i++; } return a.slice(i); },
+        Reverse: function (src) { return A(src).slice().reverse(); },
+        Distinct: function (src) { var seen = new Map(), out = []; A(src).forEach(function (x) { var k = keyOf(x); if (!seen.has(k)) { seen.set(k, true); out.push(x); } }); return out; },
+        Concat: function (src, other) { return A(src).concat(A(other)); },
+        Append: function (src, item) { return A(src).concat([item]); },
+        Prepend: function (src, item) { return [item].concat(A(src)); },
+        DefaultIfEmpty: function (src, dflt) { var a = A(src); return a.length ? a : [dflt === undefined ? null : dflt]; },
+        OrderBy: function (src, key) { return orderByImpl(A(src), key, false); },
+        OrderByDescending: function (src, key) { return orderByImpl(A(src), key, true); },
+        ThenBy: function (src, key) { return thenByImpl(src, key, false); },
+        ThenByDescending: function (src, key) { return thenByImpl(src, key, true); },
+        ToArray: function (src) { return A(src).slice(); },
+        ToList: function (src) { var l = new H5R.List(); l._ = A(src).slice(); return l; },
+        ToHashSet: function (src) { var s = new H5R.HashSet(); A(src).forEach(function (x) { s.Add(x); }); return s; },
+        ToDictionary: function (src, keySel, valSel) { var d = new H5R.Dictionary(); A(src).forEach(function (x) { d.set_Item(keySel(x), valSel ? valSel(x) : x); }); return d; },
+        Aggregate: function (src, seedOrFunc, func) {
+            var a = A(src);
+            if (func === undefined) { var acc = a[0]; for (var i = 1; i < a.length; i++) { acc = seedOrFunc(acc, a[i]); } return acc; }
+            var res = seedOrFunc; for (var j = 0; j < a.length; j++) { res = func(res, a[j]); } return res;
+        },
+        GroupBy: function (src, keySel, elemSel) {
+            var groups = new Map(), order = [];
+            A(src).forEach(function (x) {
+                var k = keySel(x), kk = keyOf(k);
+                if (!groups.has(kk)) { groups.set(kk, { Key: k, _: [] }); order.push(kk); }
+                groups.get(kk)._.push(elemSel ? elemSel(x) : x);
+            });
+            return order.map(function (kk) { var g = groups.get(kk); var arr = g._; arr.Key = g.Key; return arr; });
+        },
+        Range: function (start, count) { var out = []; for (var i = 0; i < count; i++) { out.push(start + i); } return out; },
+        Repeat: function (value, count) { var out = []; for (var i = 0; i < count; i++) { out.push(value); } return out; },
+        Empty: function () { return []; }
+    };
+
+    var cmpVals = function (a, b) { return a < b ? -1 : (a > b ? 1 : 0); };
+
+    var orderByImpl = function (arr, key, desc) {
+        var cmps = [{ key: key, desc: desc }];
+        var out = arr.slice();
+        stableSort(out, cmps);
+        out.$cmps = cmps;
+        return out;
+    };
+
+    var thenByImpl = function (src, key, desc) {
+        var cmps = (src.$cmps || []).concat([{ key: key, desc: desc }]);
+        var out = A(src).slice();
+        stableSort(out, cmps);
+        out.$cmps = cmps;
+        return out;
+    };
+
+    var stableSort = function (arr, cmps) {
+        var indexed = arr.map(function (v, i) { return { v: v, i: i }; });
+        indexed.sort(function (x, y) {
+            for (var c = 0; c < cmps.length; c++) {
+                var r = cmpVals(cmps[c].key(x.v), cmps[c].key(y.v));
+                if (cmps[c].desc) { r = -r; }
+                if (r !== 0) { return r; }
+            }
+            return x.i - y.i;
+        });
+        for (var i = 0; i < arr.length; i++) { arr[i] = indexed[i].v; }
+    };
+
 })(typeof globalThis !== "undefined" ? globalThis : this);

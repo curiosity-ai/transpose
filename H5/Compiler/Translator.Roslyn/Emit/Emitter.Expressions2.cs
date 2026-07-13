@@ -388,9 +388,11 @@ public sealed partial class Emitter
         if (binary.IsKind(SyntaxKind.AddExpression)
             && (IsStringType(leftType) || IsStringType(rightType) || IsStringType(resultType)))
         {
-            EmitConcatOperand(binary.Left, leftType);
+            // Use each operand's own type (not the converted/boxed type) so char
+            // operands render as characters rather than their code points.
+            EmitConcatOperand(binary.Left, _model.GetTypeInfo(binary.Left).Type ?? leftType);
             _w.Write(" + ");
-            EmitConcatOperand(binary.Right, rightType);
+            EmitConcatOperand(binary.Right, _model.GetTypeInfo(binary.Right).Type ?? rightType);
             return;
         }
 

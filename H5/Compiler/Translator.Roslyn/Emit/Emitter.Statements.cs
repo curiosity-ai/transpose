@@ -85,6 +85,18 @@ public sealed partial class Emitter
             case CheckedStatementSyntax checkedStmt:
                 EmitBlock(checkedStmt.Block);
                 break;
+            case YieldStatementSyntax yieldStmt:
+                if (yieldStmt.IsKind(SyntaxKind.YieldReturnStatement))
+                {
+                    _w.Write("yield ");
+                    if (yieldStmt.Expression is not null) EmitExpression(yieldStmt.Expression);
+                    _w.WriteLine(";");
+                }
+                else
+                {
+                    _w.WriteLine("return;"); // yield break
+                }
+                break;
             case EmptyStatementSyntax:
                 break;
             default:
