@@ -100,6 +100,14 @@ public sealed partial class Emitter
             case DefaultExpressionSyntax def:
                 _w.Write(DefaultValueLiteral(_model.GetTypeInfo(def).Type ?? _model.GetTypeInfo(def).ConvertedType!));
                 break;
+            case ThrowExpressionSyntax throwExpr:
+                _w.Write("(function () { throw ");
+                EmitExpression(throwExpr.Expression);
+                _w.Write("; })()");
+                break;
+            case CheckedExpressionSyntax checkedExpr:
+                EmitExpression(checkedExpr.Expression);
+                break;
             case AwaitExpressionSyntax await:
                 _w.Write("(await ");
                 EmitExpression(await.Expression);
@@ -346,7 +354,7 @@ public sealed partial class Emitter
         if (template is not null)
         {
             var receiver = thisTarget is null ? "this" : Capture(() => EmitExpression(thisTarget));
-            _w.Write(SubstituteTemplate(template, receiver, new(), new()));
+            WriteTemplate(template, isStatic: prop.IsStatic, isExtension: false, receiver, new(), new());
             return;
         }
         if (prop.IsStatic)
@@ -435,6 +443,24 @@ public sealed partial class Emitter
                 EmitExpression(member.Expression);
                 _w.Write("." + NameMangler.JsIdentifier(member.Name.Identifier.Text));
                 return;
+        }
+    }
+
+    /// <summary>
+    /// Emits an H5 [Template]. For plain instance members whose template does not
+    /// reference {this}, the template is relative to the receiver (e.g. "getTotalHours()"
+    /// → "recv.getTotalHours()"); otherwise it is absolute.
+    /// </summary>
+    private void WriteTemplate(string template, bool isStatic, bool isExtension, string? receiver, Dictionary<string, string> argsByName, List<string> argsByPos)
+    {
+        var sub = SubstituteTemplate(template, receiver, argsByName, argsByPos);
+        if (!isStatic && !isExtension && receiver is not null && !template.Contains("{this}"))
+        {
+            _w.Write(receiver + "." + sub);
+        }
+        else
+        {
+            _w.Write(sub);
         }
     }
 

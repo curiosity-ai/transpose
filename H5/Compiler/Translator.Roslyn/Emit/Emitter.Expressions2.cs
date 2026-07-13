@@ -93,7 +93,7 @@ public sealed partial class Emitter
                 AddTypeArguments(byName, symbol.OriginalDefinition, symbol);
             }
 
-            _w.Write(SubstituteTemplate(template, receiver, byName, byPos));
+            WriteTemplate(template, symbol.IsStatic, symbol.IsExtensionMethod, receiver, byName, byPos);
             return;
         }
 
