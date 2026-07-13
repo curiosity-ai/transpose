@@ -432,6 +432,20 @@ public sealed partial class Emitter
         var rightType = _model.GetTypeInfo(binary.Right).ConvertedType ?? _model.GetTypeInfo(binary.Right).Type;
         var resultType = _model.GetTypeInfo(binary).Type;
 
+        // User-defined operator overloads → static op_ method call.
+        // (Records synthesize op_Equality/op_Inequality; those are implicitly declared
+        // and handled by the value-equality path below, so exclude them here.)
+        if (_model.GetSymbolInfo(binary).Symbol is IMethodSymbol { MethodKind: MethodKind.UserDefinedOperator, IsImplicitlyDeclared: false } opMethod
+            && opMethod.Locations.Any(l => l.IsInSource))
+        {
+            _w.Write($"{_names.TypeReference(opMethod.ContainingType)}.{_names.MethodName(opMethod)}(");
+            EmitExpression(binary.Left);
+            _w.Write(", ");
+            EmitExpression(binary.Right);
+            _w.Write(")");
+            return;
+        }
+
         // is / as
         if (binary.IsKind(SyntaxKind.IsExpression))
         {
@@ -579,6 +593,15 @@ public sealed partial class Emitter
 
     private void EmitPrefixUnary(PrefixUnaryExpressionSyntax prefix)
     {
+        if (_model.GetSymbolInfo(prefix).Symbol is IMethodSymbol { MethodKind: MethodKind.UserDefinedOperator } opm
+            && opm.Locations.Any(l => l.IsInSource)
+            && !prefix.IsKind(SyntaxKind.PreIncrementExpression) && !prefix.IsKind(SyntaxKind.PreDecrementExpression))
+        {
+            _w.Write($"{_names.TypeReference(opm.ContainingType)}.{_names.MethodName(opm)}(");
+            EmitExpression(prefix.Operand);
+            _w.Write(")");
+            return;
+        }
         _w.Write(prefix.OperatorToken.Text);
         EmitExpression(prefix.Operand);
     }

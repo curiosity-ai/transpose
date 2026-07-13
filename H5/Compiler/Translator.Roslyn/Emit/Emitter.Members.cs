@@ -19,6 +19,8 @@ public sealed partial class Emitter
             switch (method.MethodKind)
             {
                 case MethodKind.Ordinary:
+                case MethodKind.UserDefinedOperator:
+                case MethodKind.Conversion:
                     EmitMethod(method, simpleName);
                     break;
                 case MethodKind.Constructor:
@@ -59,7 +61,8 @@ public sealed partial class Emitter
     private void EmitMethod(IMethodSymbol method, string simpleName)
     {
         if (method.IsAbstract) return; // no body
-        var decl = method.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() as MethodDeclarationSyntax;
+        // Handles ordinary methods, operators, and conversion operators uniformly.
+        var decl = method.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() as BaseMethodDeclarationSyntax;
         if (decl is null) return;
         if (decl.Body is null && decl.ExpressionBody is null) return; // partial/extern without body
 
