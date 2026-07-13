@@ -2904,12 +2904,12 @@ namespace ICSharpCode.NRefactory.CSharp.Resolver
                         currentRR = memberLookup.Lookup(new ResolveResult(enumeratorType), "Current", EmptyList<IType>.Instance, false);
                         elementType = currentRR.Type;
                     }
-                    else
+                    else if (!TryResolveExtensionGetEnumerator(expression, memberLookup, out collectionType, out enumeratorType, out elementType, out getEnumeratorInvocation, ref currentRR))
                     {
                         CheckForEnumerableInterface(expression, out collectionType, out enumeratorType, out elementType, out getEnumeratorInvocation);
                     }
                 }
-                else
+                else if (!TryResolveExtensionGetEnumerator(expression, memberLookup, out collectionType, out enumeratorType, out elementType, out getEnumeratorInvocation, ref currentRR))
                 {
                     CheckForEnumerableInterface(expression, out collectionType, out enumeratorType, out elementType, out getEnumeratorInvocation);
                 }
@@ -2950,6 +2950,43 @@ namespace ICSharpCode.NRefactory.CSharp.Resolver
             resolver = resolver.PopBlock();
             return new ForEachResolveResult(getEnumeratorInvocation, collectionType, enumeratorType, elementType,
                                             v, currentProperty, moveNextMethod, voidResult.Type);
+        }
+
+        //
+        // C# 9 extension GetEnumerator: `foreach` works when a public
+        // `GetEnumerator()` extension method is in scope for the collection type.
+        // Returns true (and fills the out params) when such a method applies; the
+        // resulting getEnumeratorInvocation is an extension InvocationResolveResult
+        // (Member.IsExtensionMethod), which the emitter routes to a static call.
+        //
+        bool TryResolveExtensionGetEnumerator(ResolveResult expression, MemberLookup memberLookup,
+            out IType collectionType, out IType enumeratorType, out IType elementType,
+            out ResolveResult getEnumeratorInvocation, ref ResolveResult currentRR)
+        {
+            collectionType = enumeratorType = elementType = SpecialType.UnknownType;
+            getEnumeratorInvocation = null;
+
+            var mgrr = resolver.ResolveMemberAccess(expression, "GetEnumerator", EmptyList<IType>.Instance, NameLookupMode.InvocationTarget) as MethodGroupResolveResult;
+            if (mgrr == null)
+                return false;
+
+            var or = mgrr.PerformOverloadResolution(
+                resolver.Compilation, new ResolveResult[0],
+                allowExtensionMethods: true, allowExpandingParams: false, allowOptionalParameters: false);
+
+            if (!or.FoundApplicableCandidate || or.IsAmbiguous || !((or.BestCandidate as IMethod)?.IsExtensionMethod ?? false))
+                return false;
+
+            var invocation = or.CreateResolveResult(expression);
+            if (invocation == null || invocation.IsError)
+                return false;
+
+            collectionType = expression.Type;
+            getEnumeratorInvocation = invocation;
+            enumeratorType = invocation.Type;
+            currentRR = memberLookup.Lookup(new ResolveResult(enumeratorType), "Current", EmptyList<IType>.Instance, false);
+            elementType = currentRR.Type;
+            return true;
         }
 
         void CheckForEnumerableInterface(ResolveResult expression, out IType collectionType, out IType enumeratorType, out IType elementType, out ResolveResult getEnumeratorInvocation)

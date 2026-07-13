@@ -23,6 +23,31 @@ namespace H5.Translator
 
         public IMethod CastMethod { get; set; }
 
+        /// <summary>
+        /// Emits the enumerator acquisition for a C# 9 extension `GetEnumerator`
+        /// (rewrite case S41): a static `ExtClass.GetEnumerator(collection)` call,
+        /// instead of the `H5.getEnumerator(collection)` runtime helper (which only
+        /// finds instance/interface enumerators). Returns false when the resolved
+        /// GetEnumerator is not an extension method, leaving normal emission to run.
+        /// </summary>
+        private bool TryEmitExtensionGetEnumerator(InvocationResolveResult get_rr)
+        {
+            if (!((get_rr?.Member as IMethod)?.IsExtensionMethod ?? false))
+            {
+                return false;
+            }
+
+            Write(H5Types.ToJsName(get_rr.Member.DeclaringType, Emitter));
+            WriteDot();
+            Write(OverloadsCollection.Create(Emitter, get_rr.Member).GetOverloadName());
+            WriteOpenParentheses();
+            ForeachStatement.InExpression.AcceptVisitor(Emitter);
+            WriteCloseParentheses();
+            WriteSemiColon();
+            WriteNewLine();
+            return true;
+        }
+
         protected override void DoEmit()
         {
             var awaiters = Emitter.IsAsync ? GetAwaiters(ForeachStatement) : null;
@@ -94,48 +119,59 @@ namespace H5.Translator
 
             Write(iteratorName, " = ");
 
-            if (!emitInline)
+            if ((get_rr?.Member as IMethod)?.IsExtensionMethod ?? false)
             {
-                Write(JS.Funcs.H5_GET_ENUMERATOR);
-                WriteOpenParentheses();
-                foreachStatement.InExpression.AcceptVisitor(Emitter);
+                // Extension GetEnumerator (rewrite case S41): static call, see the
+                // sync path's TryEmitExtensionGetEnumerator. TryEmit... writes the
+                // trailing `;`+newline, so only restore the awaiter flag here.
+                TryEmitExtensionGetEnumerator(get_rr);
+                Emitter.ReplaceAwaiterByVar = oldValue;
             }
-
-            if (checkEnum)
+            else
             {
-                if (for_rr.CollectionType.IsParameterized &&
-                for_rr.CollectionType.FullName == "System.Collections.Generic.IEnumerable")
+                if (!emitInline)
                 {
-                    WriteComma(false);
-                    Write(H5Types.ToJsName(((ParameterizedType)for_rr.CollectionType).TypeArguments[0], Emitter));
+                    Write(JS.Funcs.H5_GET_ENUMERATOR);
+                    WriteOpenParentheses();
+                    foreachStatement.InExpression.AcceptVisitor(Emitter);
                 }
-                else if (get_rr != null)
-                {
-                    if (inline != null)
-                    {
-                        var argsInfo = new ArgumentsInfo(Emitter, foreachStatement.InExpression, get_rr);
-                        new InlineArgumentsBlock(Emitter, argsInfo, inline).Emit();
-                    }
-                    else
-                    {
-                        var name = OverloadsCollection.Create(Emitter, get_rr.Member).GetOverloadName();
 
-                        if (name != "GetEnumerator" && name != "System$Collections$IEnumerable$GetEnumerator")
+                if (checkEnum)
+                {
+                    if (for_rr.CollectionType.IsParameterized &&
+                    for_rr.CollectionType.FullName == "System.Collections.Generic.IEnumerable")
+                    {
+                        WriteComma(false);
+                        Write(H5Types.ToJsName(((ParameterizedType)for_rr.CollectionType).TypeArguments[0], Emitter));
+                    }
+                    else if (get_rr != null)
+                    {
+                        if (inline != null)
                         {
-                            WriteComma(false);
-                            WriteScript(name);
+                            var argsInfo = new ArgumentsInfo(Emitter, foreachStatement.InExpression, get_rr);
+                            new InlineArgumentsBlock(Emitter, argsInfo, inline).Emit();
+                        }
+                        else
+                        {
+                            var name = OverloadsCollection.Create(Emitter, get_rr.Member).GetOverloadName();
+
+                            if (name != "GetEnumerator" && name != "System$Collections$IEnumerable$GetEnumerator")
+                            {
+                                WriteComma(false);
+                                WriteScript(name);
+                            }
                         }
                     }
                 }
-            }
 
-            Emitter.ReplaceAwaiterByVar = oldValue;
-            if (!emitInline)
-            {
-                WriteCloseParentheses();
+                Emitter.ReplaceAwaiterByVar = oldValue;
+                if (!emitInline)
+                {
+                    WriteCloseParentheses();
+                }
+                WriteSemiColon();
+                WriteNewLine();
             }
-            WriteSemiColon();
-            WriteNewLine();
             Write(JS.Vars.ASYNC_STEP + " = " + Emitter.AsyncBlock.Step + ";");
             WriteNewLine();
             Write("continue;");
@@ -306,46 +342,49 @@ namespace H5.Translator
 
             Write(iteratorName, " = ");
 
-            if (!emitInline)
+            if (!TryEmitExtensionGetEnumerator(get_rr))
             {
-                Write(JS.Funcs.H5_GET_ENUMERATOR);
-                WriteOpenParentheses();
-                foreachStatement.InExpression.AcceptVisitor(Emitter);
-            }
-
-            if (checkEnum)
-            {
-                if (isGenericEnumerable)
+                if (!emitInline)
                 {
-                    WriteComma(false);
-                    Write(H5Types.ToJsName(((ParameterizedType)rr.CollectionType).TypeArguments[0], Emitter));
+                    Write(JS.Funcs.H5_GET_ENUMERATOR);
+                    WriteOpenParentheses();
+                    foreachStatement.InExpression.AcceptVisitor(Emitter);
                 }
-                else if (get_rr != null)
-                {
-                    if (inline != null)
-                    {
-                        var argsInfo = new ArgumentsInfo(Emitter, foreachStatement.InExpression, get_rr);
-                        new InlineArgumentsBlock(Emitter, argsInfo, inline).Emit();
-                    }
-                    else
-                    {
-                        var name = OverloadsCollection.Create(Emitter, get_rr.Member).GetOverloadName();
 
-                        if (name != "GetEnumerator" && name != "System$Collections$IEnumerable$GetEnumerator")
+                if (checkEnum)
+                {
+                    if (isGenericEnumerable)
+                    {
+                        WriteComma(false);
+                        Write(H5Types.ToJsName(((ParameterizedType)rr.CollectionType).TypeArguments[0], Emitter));
+                    }
+                    else if (get_rr != null)
+                    {
+                        if (inline != null)
                         {
-                            WriteComma(false);
-                            WriteScript(name);
+                            var argsInfo = new ArgumentsInfo(Emitter, foreachStatement.InExpression, get_rr);
+                            new InlineArgumentsBlock(Emitter, argsInfo, inline).Emit();
+                        }
+                        else
+                        {
+                            var name = OverloadsCollection.Create(Emitter, get_rr.Member).GetOverloadName();
+
+                            if (name != "GetEnumerator" && name != "System$Collections$IEnumerable$GetEnumerator")
+                            {
+                                WriteComma(false);
+                                WriteScript(name);
+                            }
                         }
                     }
                 }
-            }
 
-            if (!emitInline)
-            {
-                WriteCloseParentheses();
+                if (!emitInline)
+                {
+                    WriteCloseParentheses();
+                }
+                WriteSemiColon();
+                WriteNewLine();
             }
-            WriteSemiColon();
-            WriteNewLine();
 
             WriteTry();
             BeginBlock();

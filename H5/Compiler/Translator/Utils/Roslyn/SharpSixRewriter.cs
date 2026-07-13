@@ -599,82 +599,10 @@ namespace H5.Translator
                 return base.VisitForEachStatement(node);
             }
 
-            var info = semanticModel.GetForEachStatementInfo(node);
-            if (info.GetEnumeratorMethod != null && info.GetEnumeratorMethod.IsExtensionMethod)
-            {
-                var collection = (ExpressionSyntax)Visit(node.Expression);
-                var enumeratorMethod = info.GetEnumeratorMethod;
-
-                var enumeratorVarName = GetUniqueTempKey("enumerator");
-                var enumeratorType = enumeratorMethod.ReturnType;
-                var enumeratorTypeSyntax = SyntaxHelper.GenerateTypeSyntax(enumeratorType, semanticModel, node.SpanStart, this);
-
-                var typeName = enumeratorMethod.ContainingType.FullyQualifiedName();
-                if (typeName.StartsWith("global::"))
-                {
-                    typeName = typeName.Substring(8);
-                }
-
-                var getEnumeratorCall = SyntaxHelper.GenerateStaticMethodCall(
-                    enumeratorMethod.Name,
-                    typeName,
-                    new[] { SyntaxFactory.Argument(collection) },
-                    enumeratorMethod.TypeArguments.ToArray()
-                ).Expression;
-
-                var enumeratorDecl = SyntaxFactory.LocalDeclarationStatement(
-                    SyntaxFactory.VariableDeclaration(SyntaxFactory.ParseTypeName("var"))
-                    .WithVariables(SyntaxFactory.SingletonSeparatedList(
-                        SyntaxFactory.VariableDeclarator(enumeratorVarName)
-                        .WithInitializer(SyntaxFactory.EqualsValueClause(getEnumeratorCall))
-                    ))
-                ).WithSemicolonToken(SyntaxFactory.Token(SyntaxKind.SemicolonToken)).NormalizeWhitespace();
-
-                var moveNextCall = SyntaxFactory.InvocationExpression(
-                    SyntaxFactory.MemberAccessExpression(SyntaxKind.SimpleMemberAccessExpression, SyntaxFactory.IdentifierName(enumeratorVarName), SyntaxFactory.IdentifierName("MoveNext")),
-                    SyntaxFactory.ArgumentList()
-                );
-
-                var loopBody = (StatementSyntax)Visit(node.Statement);
-                if (!(loopBody is BlockSyntax))
-                {
-                    loopBody = SyntaxFactory.Block(loopBody);
-                }
-
-                var currentAccess = SyntaxFactory.MemberAccessExpression(SyntaxKind.SimpleMemberAccessExpression, SyntaxFactory.IdentifierName(enumeratorVarName), SyntaxFactory.IdentifierName("Current"));
-
-                var iterationVarDecl = SyntaxFactory.LocalDeclarationStatement(
-                    SyntaxFactory.VariableDeclaration(node.Type)
-                    .WithVariables(SyntaxFactory.SingletonSeparatedList(
-                        SyntaxFactory.VariableDeclarator(node.Identifier)
-                        .WithInitializer(SyntaxFactory.EqualsValueClause(currentAccess))
-                    ))
-                ).WithSemicolonToken(SyntaxFactory.Token(SyntaxKind.SemicolonToken)).NormalizeWhitespace();
-
-                var newLoopBody = SyntaxFactory.Block(iterationVarDecl).AddStatements(((BlockSyntax)loopBody).Statements.ToArray());
-
-                var whileLoop = SyntaxFactory.WhileStatement(moveNextCall, newLoopBody);
-
-                var script = "if (H5.is({0}, System.IDisposable)) H5.cast({0}, System.IDisposable).System$IDisposable$Dispose();";
-                var writeCall = SyntaxFactory.InvocationExpression(
-                    SyntaxFactory.MemberAccessExpression(SyntaxKind.SimpleMemberAccessExpression, SyntaxFactory.ParseName("global::H5.Script"), SyntaxFactory.IdentifierName("Write")),
-                    SyntaxFactory.ArgumentList(SyntaxFactory.SeparatedList(new[] {
-                        SyntaxFactory.Argument(SyntaxFactory.LiteralExpression(SyntaxKind.StringLiteralExpression, SyntaxFactory.Literal(script))),
-                        SyntaxFactory.Argument(SyntaxFactory.IdentifierName(enumeratorVarName))
-                    }))
-                );
-
-                var disposeCheck = SyntaxFactory.ExpressionStatement(writeCall).WithSemicolonToken(SyntaxFactory.Token(SyntaxKind.SemicolonToken));
-
-                var tryFinally = SyntaxFactory.TryStatement(
-                    SyntaxFactory.Block(whileLoop),
-                    SyntaxFactory.List<CatchClauseSyntax>(),
-                    SyntaxFactory.FinallyClause(SyntaxFactory.Block(disposeCheck))
-                );
-
-                return SyntaxFactory.Block(enumeratorDecl, tryFinally);
-            }
-
+            // Extension-method foreach passes through unchanged (rewrite case S41,
+            // removed): the NRefactory resolver now finds a `GetEnumerator` extension
+            // method (ResolveVisitor.TryResolveExtensionGetEnumerator) and the emitter
+            // calls it statically (ForeachBlock.TryEmitExtensionGetEnumerator).
             return base.VisitForEachStatement(node);
         }
 

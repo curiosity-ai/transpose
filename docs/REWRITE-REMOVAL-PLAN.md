@@ -319,9 +319,21 @@ pipeline monotonically shrinks and each step de-risks the next:
   side-by-side kill-switch runs, one-case-per-commit.
 - **Rewriter-cache staleness during development** → tests clear
   `*.h5.rewriter.cache` (already done in several classes; do it centrally).
-- **mcs grammar changes** (Wave 1 items 8, 17, 18): `cs-parser.cs` is
-  jay-generated; prefer tokenizer-level changes and hand-edits confined to
-  `cs-tokenizer.cs`; avoid regenerating the grammar.
+- **mcs grammar changes** (`??=`, explicit-return lambdas, `using var`,
+  `new()`): `cs-parser.cs` is jay-generated; prefer tokenizer-level changes
+  and hand-edits confined to `cs-tokenizer.cs`; avoid regenerating the grammar.
+  **Regeneration is NOT faithful** (established 2026-07): jay 0.7 builds cleanly
+  (`cc -DSKEL_DIRECTORY=... *.c`, invoke as `jay -c cs-parser.jay < skeleton.cs
+  > out.cs`), but the committed `cs-parser.cs` was generated from a *newer/edited*
+  grammar than the vendored `cs-parser.jay` — the committed actions use C# 7
+  `is`-patterns and contain a fix (`result[n++]` in the token-name helper) that
+  the vendored `.jay` lacks, and the output namespace is rewritten
+  `Mono.CSharp` → `ICSharpCode.NRefactory.MonoCSharp`. Regenerating from the
+  repo `.jay` would silently revert those and churn all 16k lines. Grammar-level
+  cases are therefore **blocked** until the exact upstream `.jay`+skeleton are
+  recovered, or deferred to Horizon 2 (where the Roslyn frontend obviates them).
+  Token-stream rewrites in `cs-tokenizer.cs` remain the safe lever (used for
+  S28/S20/S10/S30/S24).
 - **Emitter regressions on the h5 base library** (`H5/H5` builds with the
   same compiler): CI builds the base library + runs the suite against the
   locally built `h5.0.0.42.nupkg`.
@@ -340,6 +352,11 @@ pipeline monotonically shrinks and each step de-risks the next:
 | P2 `nameof` | 1 | **removed** | folded natively at three layers: `ResolveVisitor` (expressions; only when `nameof` binds to no member, preserving user-defined nameof methods), `TypeSystemConvertVisitor.ConstantValueBuilder` (attribute args incl. C#11 extended nameof, const initializers, default params), `InvocationBlock` (emits the constant). `NameofReplacer` deleted. |
 | S2a `using static` + R4 | 1 | **removed** | native static imports in the frontend: `UsingDeclaration.IsStatic` (parser) → `UsingScope.StaticUsings` → `ResolvedUsingScope.StaticUsings` → `CSharpResolver.LookInCurrentUsingScope` member/nested-type lookup + `GetAllExtensionMethods` inclusion. Directives now pass through to the frontend; `UsingStaticReplacer` (R4) deleted (alias directives are removed by the main visit). |
 | S2b using-aliases | 1 | kept (narrowed) | classic aliases resolve natively downstream, but C# 12 alias-any-type targets (tuples, arrays, nullable, ...) are unparseable by mcs — alias usage rewriting stays until Horizon 2 (or a per-target-shape split). |
+| S41 extension `foreach` | 2 | **removed** | resolver finds an extension `GetEnumerator` (`ResolveVisitor.TryResolveExtensionGetEnumerator`, guarded on `IsExtensionMethod` so ordinary foreach is untouched); emitter calls it statically (`ForeachBlock.TryEmitExtensionGetEnumerator`, both sync + async paths). |
+| S16 `using var` decl | 1 | **blocked (grammar)** | needs a `using` local-declaration-statement grammar rule; parser regen not faithful (see §7). |
+| S17 `??=` | 1 | **blocked (grammar)** | needs an `OP_COALESCING_ASSIGN` token + assignment rule; parser regen not faithful (see §7). Current lowering (`a = a ?? b` with temp-stabilized LHS) is correct and stays. |
+| S22 target-typed `new()` | 1 | **blocked (grammar)** | `new()`/`new(args)` without a type needs a grammar rule + resolver target-type inference; parser regen not faithful (see §7). |
+| S37 explicit-return lambdas | 1 | **blocked (grammar)** | `T (args) => …` needs a lambda-production grammar change; parser regen not faithful (see §7). |
 | S27 `nint`/`nuint` | 1 | **removed** | contextual-keyword fallback in `CSharpResolver.LookupSimpleNameOrTypeName` (next to `dynamic`): resolves to int/uint only when nothing else in scope matches. |
 | S25 `[ModuleInitializer]` | 1 | **removed** | `Helpers.IsInitAttribute` treats `ModuleInitializerAttribute` as `[H5.Init(After)]` at all four Init-consuming sites (TypeInfo, CaptureAnalyzer, VisitorMethodBlock, ClassBlock); no source rewriting. |
 | S39 `ValueTask`→`Task` | 2 | kept (now functional) | the rewrite was dead for `async ValueTask` — Roslyn rejected it (CS1983) because the BCL's ValueTask wasn't task-like. Fixed by adding `[AsyncMethodBuilder]` + `AsyncValueTaskMethodBuilder(/<T>)` to the BCL and allowing the attribute when compiling the h5 assembly itself. `AsyncValueTask` (previously a baseline failure) now passes. **Bootstrap note:** the h5-lib CI pipeline builds the BCL with the *released* compiler; the first release after this merge must ship the compiler before (or retry after) the BCL pipeline. Full S39 removal (native ValueTask emission) stays in Wave 2. |
