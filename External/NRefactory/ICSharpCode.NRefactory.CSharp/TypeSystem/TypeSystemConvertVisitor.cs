@@ -1067,6 +1067,42 @@ namespace ICSharpCode.NRefactory.CSharp.TypeSystem
                 return parenthesizedExpression.Expression.AcceptVisitor(this);
             }
 
+            public override ConstantExpression VisitInvocationExpression(InvocationExpression invocationExpression)
+            {
+                // C# 6+ nameof operator in constant contexts (attribute arguments,
+                // const initializers, default parameter values): folds to a string
+                // constant. A method invocation can never be a constant, so any
+                // invocation of the simple name `nameof` here is the operator.
+                if (invocationExpression.Target is IdentifierExpression id
+                    && id.Identifier == "nameof"
+                    && id.TypeArguments.Count == 0
+                    && invocationExpression.Arguments.Count == 1)
+                {
+                    string name = null;
+                    switch (invocationExpression.Arguments.First()) {
+                        case IdentifierExpression argId:
+                            name = argId.Identifier;
+                            break;
+                        case MemberReferenceExpression mre:
+                            name = mre.MemberName;
+                            break;
+                        case TypeReferenceExpression tre:
+                            if (tre.Type is SimpleType st)
+                                name = st.Identifier;
+                            else if (tre.Type is MemberType mt)
+                                name = mt.MemberName;
+                            break;
+                    }
+
+                    if (name != null) {
+                        return interningProvider.Intern(
+                            new PrimitiveConstantExpression(KnownTypeReference.String, interningProvider.InternValue(name)));
+                    }
+                }
+
+                return null;
+            }
+
             public override ConstantExpression VisitCastExpression(CastExpression castExpression)
             {
                 ConstantExpression v = castExpression.Expression.AcceptVisitor(this);

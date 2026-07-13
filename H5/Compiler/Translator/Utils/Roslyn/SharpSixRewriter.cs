@@ -256,11 +256,8 @@ namespace H5.Translator
             var result = new ExpressionBodyToStatementRewriter(semanticModel).Visit(syntaxTree.GetRoot());
             modelUpdater(result);
 
-            if (!RewriteSwitches.Disabled("P2"))
-            {
-                result = new NameofReplacer(semanticModel).Visit(syntaxTree.GetRoot());
-                modelUpdater(result);
-            }
+            // Rewrite case P2 (nameof) was removed: the NRefactory resolver folds the
+            // nameof operator to a string constant and the emitter writes it directly.
 
             result = new DiscardReplacer().Replace(syntaxTree.GetRoot(), semanticModel, modelUpdater, this);
             modelUpdater(result);
@@ -2317,18 +2314,9 @@ namespace H5.Translator
                 }
             }
 
-            if (!RewriteSwitches.Disabled("P2") && method == null && node.Expression is IdentifierNameSyntax syntax && syntax.Identifier.Text == "nameof")
-            {
-                // Only the nameof *operator* binds without a method symbol; an
-                // invocation of a user-defined method named `nameof` must be left alone.
-                string name = SyntaxHelper.GetSymbolName(node, si, costValue, semanticModel);
-
-                if (name != null)
-                {
-                    return SyntaxFactory.LiteralExpression(SyntaxKind.StringLiteralExpression, SyntaxFactory.Literal(name));
-                }
-            }
-            else
+            // Rewrite case P2 (nameof) was removed: the NRefactory resolver folds the
+            // nameof operator to a string constant and the emitter writes it directly
+            // (ResolveVisitor.VisitInvocationExpression / InvocationBlock).
             {
                 if (method != null && method.IsGenericMethod && !method.TypeArguments.Any(ta => SyntaxHelper.IsAnonymous(ta) || ta.Kind == SymbolKind.TypeParameter && SymbolEqualityComparer.Default.Equals((ta as ITypeParameterSymbol)?.ContainingSymbol, method)))
                 {

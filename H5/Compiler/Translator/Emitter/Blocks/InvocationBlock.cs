@@ -102,6 +102,17 @@ namespace H5.Translator
                 throw new EmitterException(invocationExpression, "This method cannot be invoked directly");
             }
 
+            // C# 6 nameof(...) resolves to a string constant (ResolveVisitor folds it);
+            // emit the constant string and skip normal invocation emission entirely.
+            if (invocationExpression.Target is IdentifierExpression nameofTarget
+                && nameofTarget.Identifier == "nameof"
+                && Emitter.Resolver.ResolveNode(invocationExpression) is ConstantResolveResult nameofConstant
+                && nameofConstant.ConstantValue is string nameofValue)
+            {
+                WriteScript(nameofValue);
+                return;
+            }
+
             var oldValue = Emitter.ReplaceAwaiterByVar;
             var oldAsyncExpressionHandling = Emitter.AsyncExpressionHandling;
 

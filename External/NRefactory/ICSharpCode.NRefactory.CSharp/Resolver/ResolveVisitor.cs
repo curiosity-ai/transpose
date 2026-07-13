@@ -1938,6 +1938,26 @@ namespace ICSharpCode.NRefactory.CSharp.Resolver
 
         ResolveResult IAstVisitor<ResolveResult>.VisitInvocationExpression(InvocationExpression invocationExpression)
         {
+            // C# 6 nameof operator: an invocation of the simple name `nameof` with a
+            // single argument folds to a string constant, unless `nameof` binds to a
+            // real (user-defined) member. The argument itself is not evaluated.
+            if (invocationExpression.Target is IdentifierExpression nameofIdent
+                && nameofIdent.Identifier == "nameof"
+                && nameofIdent.TypeArguments.Count == 0
+                && invocationExpression.Arguments.Count == 1)
+            {
+                ResolveResult nameofTarget = resolver.ResolveSimpleName("nameof", EmptyList<IType>.Instance);
+                if (nameofTarget is UnknownIdentifierResolveResult)
+                {
+                    string nameofValue = GetNameofResultName(invocationExpression.Arguments.First());
+                    if (nameofValue != null)
+                    {
+                        ScanChildren(invocationExpression);
+                        return new ConstantResolveResult(resolver.Compilation.FindType(KnownTypeCode.String), nameofValue);
+                    }
+                }
+            }
+
             // rr = Resolve(invocationExpression)
             // target = Resolve(memberReferenceExpression = invocationExpression.Target)
             // idRR = Resolve(identifierExpression = memberReferenceExpression.Target)
@@ -1979,6 +1999,30 @@ namespace ICSharpCode.NRefactory.CSharp.Resolver
                     ScanChildren(invocationExpression);
                     return null;
                 }
+            }
+        }
+
+        /// <summary>
+        /// Extracts the simple name yielded by a nameof(...) argument, or null when
+        /// the expression shape is not a valid nameof operand.
+        /// </summary>
+        static string GetNameofResultName(Expression argument)
+        {
+            switch (argument) {
+                case IdentifierExpression id:
+                    return id.Identifier;
+                case MemberReferenceExpression mre:
+                    return mre.MemberName;
+                case TypeReferenceExpression tre:
+                    switch (tre.Type) {
+                        case SimpleType st:
+                            return st.Identifier;
+                        case MemberType mt:
+                            return mt.MemberName;
+                    }
+                    return null;
+                default:
+                    return null;
             }
         }
 
