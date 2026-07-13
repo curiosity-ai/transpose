@@ -2590,26 +2590,9 @@ namespace H5.Translator
                 return base.VisitIdentifierName(node);
             }
 
-            // Check if nint/nuint are used as identifiers (variables/members)
-            if (node.Identifier.ValueText == "nint" || node.Identifier.ValueText == "nuint")
-            {
-                var sym = semanticModel.GetSymbolInfo(node).Symbol;
-                if (sym == null || !(sym.Kind == SymbolKind.Local || sym.Kind == SymbolKind.Field || sym.Kind == SymbolKind.Parameter || sym.Kind == SymbolKind.Property || sym.Kind == SymbolKind.Method))
-                {
-                    if (node.Identifier.ValueText == "nint")
-                    {
-                        return SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.IntKeyword))
-                            .WithLeadingTrivia(node.GetLeadingTrivia())
-                            .WithTrailingTrivia(node.GetTrailingTrivia());
-                    }
-                    else if (node.Identifier.ValueText == "nuint")
-                    {
-                        return SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.UIntKeyword))
-                            .WithLeadingTrivia(node.GetLeadingTrivia())
-                            .WithTrailingTrivia(node.GetTrailingTrivia());
-                    }
-                }
-            }
+            // nint/nuint pass through unchanged (rewrite case S27, removed): the
+            // NRefactory resolver treats them as contextual keywords for int/uint
+            // when nothing else in scope matches (CSharpResolver, next to `dynamic`).
 
             ISymbol symbol = null;
             try
@@ -3202,51 +3185,9 @@ namespace H5.Translator
                 }
             }
 
-            bool isModuleInitializer = false;
-
-            if (methodSymbol != null)
-            {
-                var attrs = methodSymbol.GetAttributes();
-                if (attrs.Any(a => a.AttributeClass != null && a.AttributeClass.Name == "ModuleInitializerAttribute" && a.AttributeClass.ContainingNamespace?.ToDisplayString() == "System.Runtime.CompilerServices"))
-                {
-                    isModuleInitializer = true;
-                }
-            }
-
-            if (isModuleInitializer)
-            {
-                var newLists = new List<AttributeListSyntax>();
-                foreach (var list in node.AttributeLists)
-                {
-                    var newAttrs = new List<AttributeSyntax>();
-                    foreach (var attr in list.Attributes)
-                    {
-                        if (attr.Name.ToString().Contains("ModuleInitializer"))
-                        {
-                            continue;
-                        }
-                        newAttrs.Add(attr);
-                    }
-                    if (newAttrs.Count > 0)
-                    {
-                        newLists.Add(list.WithAttributes(SyntaxFactory.SeparatedList(newAttrs)));
-                    }
-                }
-
-                var initAttr = SyntaxFactory.Attribute(SyntaxFactory.ParseName("global::H5.Init"))
-                    .WithArgumentList(SyntaxFactory.AttributeArgumentList(SyntaxFactory.SingletonSeparatedList(
-                        SyntaxFactory.AttributeArgument(
-                            SyntaxFactory.MemberAccessExpression(SyntaxKind.SimpleMemberAccessExpression,
-                                SyntaxFactory.ParseTypeName("global::H5.InitPosition"),
-                                SyntaxFactory.IdentifierName("After")
-                            )
-                        )
-                    )));
-
-                newLists.Add(SyntaxFactory.AttributeList(SyntaxFactory.SingletonSeparatedList(initAttr)));
-
-                node = node.WithAttributeLists(SyntaxFactory.List(newLists));
-            }
+            // [ModuleInitializer] passes through unchanged (rewrite case S25, removed):
+            // the translator treats it as equivalent to [H5.Init(InitPosition.After)]
+            // (Helpers.IsInitAttribute).
 
             node = base.VisitMethodDeclaration(node) as MethodDeclarationSyntax;
 

@@ -55,7 +55,7 @@ namespace H5.Translator
                     {
                         return;
                     }
-                    else if (rr.Type.FullName == "H5.InitAttribute")
+                    else if (Helpers.IsInitAttribute(rr.Type))
                     {
                         InitPosition initPosition = InitPosition.After;
 

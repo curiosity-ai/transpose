@@ -1129,6 +1129,19 @@ namespace H5.Contract
             return GetInheritedAttribute(entity, "H5.NonScriptableAttribute") != null;
         }
 
+        /// <summary>
+        /// True for attribute types that mark a method as a module/assembly init
+        /// method: H5's own [Init] and (rewrite case S25, removed) the BCL's
+        /// [ModuleInitializer], which behaves like [Init(InitPosition.After)] —
+        /// both attributes have no positional argument in that form, so existing
+        /// call sites' no-argument default (After) applies to ModuleInitializer.
+        /// </summary>
+        public static bool IsInitAttribute(IType attributeType)
+        {
+            return attributeType.FullName == "H5.InitAttribute"
+                || attributeType.FullName == "System.Runtime.CompilerServices.ModuleInitializerAttribute";
+        }
+
         public static bool IsEntryPointMethod(IEmitter emitter, MethodDeclaration methodDeclaration)
         {
             IMethod method = emitter.Resolver.ResolveNode(methodDeclaration) is MemberResolveResult member_rr ? member_rr.Member as IMethod : null;

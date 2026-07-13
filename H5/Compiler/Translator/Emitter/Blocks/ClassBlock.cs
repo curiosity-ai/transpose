@@ -540,7 +540,6 @@ namespace H5.Translator
         protected virtual IEnumerable<string> GetDefineMethods(InitPosition value, Func<MethodDeclaration, IMethod, string> fn)
         {
             var methods = TypeInfo.InstanceMethods;
-            var attrName = "H5.InitAttribute";
 
             foreach (var methodGroup in methods)
             {
@@ -551,7 +550,7 @@ namespace H5.Translator
                         foreach (var attr in attrSection.Attributes)
                         {
                             var rr = Emitter.Resolver.ResolveNode(attr.Type);
-                            if (rr.Type.FullName == attrName)
+                            if (Helpers.IsInitAttribute(rr.Type))
                             {
                                 throw new EmitterException(attr, "Instance method cannot be Init method");
                             }
@@ -574,7 +573,7 @@ namespace H5.Translator
                         foreach (var attr in attrSection.Attributes)
                         {
                             var rr = Emitter.Resolver.ResolveNode(attr.Type);
-                            if (rr.Type.FullName == attrName)
+                            if (Helpers.IsInitAttribute(rr.Type))
                             {
                                 InitPosition? initPosition = null;
                                 if (attr.HasArgumentList)

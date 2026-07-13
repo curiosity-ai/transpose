@@ -128,7 +128,7 @@ namespace H5.Translator
                         foreach (var attr in attrSection.Attributes)
                         {
                             var rr = emitter.Resolver.ResolveNode(attr.Type);
-                            if (rr.Type.FullName == "H5.InitAttribute")
+                            if (Helpers.IsInitAttribute(rr.Type))
                             {
                                 if (!attr.HasArgumentList)
                                 {

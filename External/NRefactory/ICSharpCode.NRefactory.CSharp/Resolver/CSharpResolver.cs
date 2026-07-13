@@ -1551,6 +1551,11 @@ namespace ICSharpCode.NRefactory.CSharp.Resolver
 
             if (typeArguments.Count == 0 && identifier == "dynamic") {
                 return new TypeResolveResult(SpecialType.Dynamic);
+            } else if (typeArguments.Count == 0 && (identifier == "nint" || identifier == "nuint")) {
+                // C# 9 native-sized integers are contextual keywords: they only take
+                // effect when nothing else in scope matched. JS has no native-int
+                // distinction, so H5 maps them to int/uint (same as the JS runtime).
+                return new TypeResolveResult(compilation.FindType(identifier == "nint" ? KnownTypeCode.Int32 : KnownTypeCode.UInt32));
             } else {
                 //RFO: There is a bug that ends up here when using anonymous types: https://github.com/bridgedotnet/Bridge/issues/4065
                 // Need to check how to handle anonymous types properly (i.e. identifier == "anonymous" when it gets here)
