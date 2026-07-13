@@ -150,7 +150,14 @@ namespace ICSharpCode.NRefactory.CSharp.TypeSystem
         {
             if (ConvertTypeReference(usingDeclaration.Import, NameLookupMode.TypeInUsingDeclaration) is TypeOrNamespaceReference u)
             {
-                usingScope.Usings.Add(u);
+                if (usingDeclaration.IsStatic)
+                {
+                    usingScope.StaticUsings.Add(u);
+                }
+                else
+                {
+                    usingScope.Usings.Add(u);
+                }
             }
             return null;
         }

@@ -60,7 +60,6 @@ namespace H5.Translator
         private bool hasIsPattern;
         private bool hasCasePatternSwitchLabel;
         private bool hasLocalFunctions;
-        internal List<string> usingStaticNames;
 
         private SharpSixRewriterCachedOutput _cachedRewrittenData;
         private bool isParent;
@@ -238,7 +237,7 @@ namespace H5.Translator
 
             tempKeyCounter = 0;
             currentType = new Stack<ITypeSymbol>();
-            usingStaticNames = new List<string>();
+
 
             var syntaxTree = compilation.SyntaxTrees[index];
             semanticModel = compilation.GetSemanticModel(syntaxTree, true);
@@ -279,10 +278,9 @@ namespace H5.Translator
                 replacers.Add(new ChainingAssigmentReplacer());
             }
 
-            if (hasStaticUsingOrAliases)
-            {
-                replacers.Add(new UsingStaticReplacer());
-            }
+            // R4 (UsingStaticReplacer) was removed: alias directives are already
+            // removed by VisitUsingDirective, and `using static` directives must
+            // survive for the frontend's native static-import support (S2a).
 
             if (hasIsPattern)
             {
@@ -2486,24 +2484,15 @@ namespace H5.Translator
 
         public override SyntaxNode VisitUsingDirective(UsingDirectiveSyntax node)
         {
-            if (RewriteSwitches.Disabled("S2"))
-            {
-                // Probe mode: leave using-static/alias directives for the frontend.
-                return base.VisitUsingDirective(node);
-            }
-
-            if (node.StaticKeyword.RawKind == (int)SyntaxKind.StaticKeyword)
-            {
-                hasStaticUsingOrAliases = true;
-                usingStaticNames.Add(node.Name.ToString());
-            }
+            // `using static` directives pass through unchanged (rewrite case S2a,
+            // removed): the NRefactory frontend imports static members, nested types
+            // and extension methods natively (UsingScope.StaticUsings +
+            // CSharpResolver.LookInCurrentUsingScope). Alias directives are still
+            // lowered (S2b): C# 12 alias-any-type targets (tuples, arrays, ...)
+            // cannot be represented by the downstream parser.
             if (node.Alias != null)
             {
                 hasStaticUsingOrAliases = true;
-            }
-
-            if (node.StaticKeyword.IsKind(SyntaxKind.StaticKeyword) || node.Alias != null)
-            {
                 return null;
             }
 

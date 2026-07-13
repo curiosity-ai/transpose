@@ -487,6 +487,9 @@ namespace ICSharpCode.NRefactory.CSharp
             public override void Visit(UsingClause un)
             {
                 var ud = new UsingDeclaration();
+                // `using static Type;` arrives as Mono.CSharp.UsingType (UsingNamespace
+                // has its own overload above); preserve the static-import semantics.
+                ud.IsStatic = un is UsingType;
                 var loc = LocationsBag.GetLocations(un);
                 ud.AddChild(new CSharpTokenNode(Convert(un.Location), UsingDeclaration.UsingKeywordRole), UsingDeclaration.UsingKeywordRole);
                 if (un.NamespaceExpression != null)

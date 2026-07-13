@@ -431,11 +431,7 @@ namespace H5.Translator
             }
 
             var typeName = type.FullyQualifiedName(false);
-            if (rewriter.usingStaticNames.Any(n => typeName.StartsWith(n + '.')))
-            {
-                return SyntaxFactory.ParseTypeName(type.ToDisplayString());
-            }
-            else if (type is INamedTypeSymbol namedType && namedType.IsGenericType)
+            if (type is INamedTypeSymbol namedType && namedType.IsGenericType)
             {
                 var elements = namedType.TypeArguments;
                 var types = new List<TypeSyntax>();

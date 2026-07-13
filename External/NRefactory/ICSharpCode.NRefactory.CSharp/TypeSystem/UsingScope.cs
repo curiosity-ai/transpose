@@ -38,12 +38,14 @@ namespace ICSharpCode.NRefactory.CSharp.TypeSystem
         DomRegion region;
         string shortName = "";
         IList<TypeOrNamespaceReference> usings;
+        IList<TypeOrNamespaceReference> staticUsings;
         IList<KeyValuePair<string, TypeOrNamespaceReference>> usingAliases;
         IList<string> externAliases;
 
         protected override void FreezeInternal()
         {
             usings = FreezableHelper.FreezeList(usings);
+            staticUsings = FreezableHelper.FreezeList(staticUsings);
             usingAliases = FreezableHelper.FreezeList(usingAliases);
             externAliases = FreezableHelper.FreezeList(externAliases);
 
@@ -115,6 +117,18 @@ namespace ICSharpCode.NRefactory.CSharp.TypeSystem
                 if (usings == null)
                     usings = new List<TypeOrNamespaceReference>();
                 return usings;
+            }
+        }
+
+        /// <summary>
+        /// C# 6 `using static` type imports: their static members and nested types
+        /// are directly visible in this scope.
+        /// </summary>
+        public IList<TypeOrNamespaceReference> StaticUsings {
+            get {
+                if (staticUsings == null)
+                    staticUsings = new List<TypeOrNamespaceReference>();
+                return staticUsings;
             }
         }
 

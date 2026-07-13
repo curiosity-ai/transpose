@@ -106,6 +106,29 @@ namespace ICSharpCode.NRefactory.CSharp.TypeSystem
             }
         }
 
+        IList<IType> staticUsings;
+
+        /// <summary>
+        /// C# 6 `using static` type imports resolved to types. Unresolvable imports
+        /// are skipped.
+        /// </summary>
+        public IList<IType> StaticUsings {
+            get {
+                var result = LazyInit.VolatileRead(ref this.staticUsings);
+                if (result != null) {
+                    return result;
+                } else {
+                    result = new List<IType>();
+                    CSharpResolver resolver = new CSharpResolver(parentContext.WithUsingScope(this));
+                    foreach (var u in usingScope.StaticUsings) {
+                        if (u.Resolve(resolver) is TypeResolveResult trr && trr.Type.Kind != TypeKind.Unknown && !result.Contains(trr.Type))
+                            result.Add(trr.Type);
+                    }
+                    return LazyInit.GetOrSet(ref this.staticUsings, new ReadOnlyCollection<IType>(result));
+                }
+            }
+        }
+
         IList<KeyValuePair<string, ResolveResult>> usingAliases;
 
         public IList<KeyValuePair<string, ResolveResult>> UsingAliases {

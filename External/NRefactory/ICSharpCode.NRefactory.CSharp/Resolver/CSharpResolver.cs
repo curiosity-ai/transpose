@@ -1647,6 +1647,18 @@ namespace ICSharpCode.NRefactory.CSharp.Resolver
                     if (firstResult != null)
                         return new TypeResolveResult(firstResult);
                 }
+                // C# 6 `using static`: static members and nested types of imported
+                // types are directly visible. (The source has already been validated
+                // by Roslyn upstream, so no static-only filtering is required — an
+                // instance member could not have been used via a simple name.)
+                if (!(isInUsingDeclaration && u == currentUsingScope)) {
+                    foreach (IType importedType in u.StaticUsings) {
+                        MemberLookup staticImportLookup = CreateMemberLookup();
+                        ResolveResult member = staticImportLookup.Lookup(new TypeResolveResult(importedType), identifier, typeArguments, false);
+                        if (!(member is UnknownMemberResolveResult) && !member.IsError)
+                            return member;
+                    }
+                }
                 // if we didn't find anything: repeat lookup with parent namespace
             }
             return null;
@@ -2000,6 +2012,17 @@ namespace ICSharpCode.NRefactory.CSharp.Resolver
                 m = scope.Usings
                     .Distinct()
                     .SelectMany(importedNamespace =>  GetExtensionMethods(lookup, importedNamespace))
+                    .ToList();
+                if (m.Count > 0)
+                    extensionMethodGroups.Add(m);
+
+                // C# 6 `using static`: extension methods declared in statically
+                // imported types are also available.
+                m = scope.StaticUsings
+                    .Select(t => t.GetDefinition())
+                    .Where(c => c != null && c.IsStatic && c.HasExtensionMethods && c.TypeParameters.Count == 0 && lookup.IsAccessible(c, false))
+                    .Distinct()
+                    .SelectMany(c => c.Methods.Where(method => method.IsExtensionMethod))
                     .ToList();
                 if (m.Count > 0)
                     extensionMethodGroups.Add(m);

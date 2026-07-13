@@ -49,6 +49,12 @@ namespace ICSharpCode.NRefactory.CSharp
             get { return GetChildByRole (UsingKeywordRole); }
         }
 
+        /// <summary>
+        /// True for a C# 6 `using static Type;` directive (the import names a type
+        /// whose static members and nested types become directly visible).
+        /// </summary>
+        public bool IsStatic { get; set; }
+
         public AstType Import {
             get { return GetChildByRole (ImportRole); }
             set { SetChildByRole (ImportRole, value); }
