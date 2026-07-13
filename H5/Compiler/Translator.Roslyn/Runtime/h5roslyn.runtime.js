@@ -647,6 +647,14 @@
             .replace(/ss/g, p2(S)).replace(/s/g, S);
     };
 
+    // DateTime / TimeSpan arithmetic (operator support).
+    H5R.dtSub = function (a, b) { return mkTs(a._ms - b._ms); };            // DateTime - DateTime → TimeSpan
+    H5R.dtSubTs = function (a, b) { return mkDt(a._ms - b._ms); };          // DateTime - TimeSpan → DateTime
+    H5R.dtAddTs = function (a, b) { return mkDt(a._ms + b._ms); };          // DateTime + TimeSpan → DateTime
+    H5R.tsAdd = function (a, b) { return mkTs(a._ms + b._ms); };            // TimeSpan + TimeSpan
+    H5R.tsSub = function (a, b) { return mkTs(a._ms - b._ms); };            // TimeSpan - TimeSpan
+    H5R.tsNeg = function (a) { return mkTs(-a._ms); };
+
     // ---- System.Guid -------------------------------------------------------
 
     var Guid = System.Guid = function (s) { this._ = s ? Guid._normalize(s) : "00000000-0000-0000-0000-000000000000"; };

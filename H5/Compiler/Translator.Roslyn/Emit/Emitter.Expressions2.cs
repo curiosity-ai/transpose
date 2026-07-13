@@ -464,6 +464,31 @@ public sealed partial class Emitter
             return;
         }
 
+        // DateTime / TimeSpan arithmetic.
+        var lName = leftType?.ToDisplayString();
+        var rName = rightType?.ToDisplayString();
+        if ((lName is "System.DateTime" or "System.TimeSpan") && (binary.IsKind(SyntaxKind.AddExpression) || binary.IsKind(SyntaxKind.SubtractExpression)))
+        {
+            var helper = (lName, rName, sub: binary.IsKind(SyntaxKind.SubtractExpression)) switch
+            {
+                ("System.DateTime", "System.DateTime", true) => "H5R.dtSub",
+                ("System.DateTime", "System.TimeSpan", true) => "H5R.dtSubTs",
+                ("System.DateTime", "System.TimeSpan", false) => "H5R.dtAddTs",
+                ("System.TimeSpan", "System.TimeSpan", true) => "H5R.tsSub",
+                ("System.TimeSpan", "System.TimeSpan", false) => "H5R.tsAdd",
+                _ => null,
+            };
+            if (helper is not null)
+            {
+                _w.Write($"{helper}(");
+                EmitExpression(binary.Left);
+                _w.Write(", ");
+                EmitExpression(binary.Right);
+                _w.Write(")");
+                return;
+            }
+        }
+
         // String concatenation
         if (binary.IsKind(SyntaxKind.AddExpression)
             && (IsStringType(leftType) || IsStringType(rightType) || IsStringType(resultType)))

@@ -120,6 +120,9 @@ public sealed partial class Emitter
             case TupleExpressionSyntax tuple:
                 EmitTuple(tuple);
                 break;
+            case QueryExpressionSyntax query:
+                EmitQuery(query);
+                break;
             case WithExpressionSyntax with:
                 _w.Write("(function ($w) { var $c = H5R.clone($w); ");
                 EmitInitializer("$c", with.Initializer);
