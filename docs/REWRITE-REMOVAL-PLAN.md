@@ -353,4 +353,5 @@ this branch (pre-existing, not caused by any removal):
 `unimplemented…NullableReferenceTypes`, `FileLocalTypes`, `GenericMath`,
 `Utf8StringLiterals`, `NumericIntPtr`, `RefFields`, `ScopedRef`,
 `unimplemented…InlineArrays`, `unimplemented…ImplicitIndexAccess`,
-`IntArrayAliasTest`, `ArrayAlias` (C#12 array aliases — S2b lowering bug).
+`IntArrayAliasTest`, `ArrayAlias` (C#12 array aliases — S2b lowering bug),
+`AsyncValueTask` (ValueTask semantics, S39).
