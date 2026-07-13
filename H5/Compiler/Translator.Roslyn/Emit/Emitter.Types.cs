@@ -17,238 +17,249 @@ public sealed partial class Emitter
                 EmitEnum(type);
                 break;
             case TypeKind.Interface:
-                EmitInterfaceMarker(type);
+                EmitInterface(type);
                 break;
             case TypeKind.Class:
             case TypeKind.Struct:
-                EmitClass(type);
+                EmitClassLike(type);
                 break;
             case TypeKind.Delegate:
-                // Delegates map onto plain JS functions; no type object needed.
-                break;
+                break; // delegates map onto plain functions
             default:
                 Unsupported(type.DeclaringSyntaxReferences[0].GetSyntax(), $"type kind {type.TypeKind}");
                 break;
         }
     }
 
+    /// <summary>Full JS name a type is registered / referenced under.</summary>
+    private string TypeRef(ITypeSymbol type)
+    {
+        if (type is INamedTypeSymbol named)
+        {
+            var name = H5Naming.GetName(named);
+            if (name is not null && !named.Locations.Any(l => l.IsInSource)) return name;
+
+            if (named.Locations.Any(l => l.IsInSource))
+            {
+                return _names.TypeFullName(named);
+            }
+
+            // External BCL type — dotted metadata name; generics as Name$arity(typeArgs).
+            var ns = named.ContainingNamespace?.ToDisplayString();
+            var simple = named.MetadataName; // includes `arity
+            var full = string.IsNullOrEmpty(ns) ? named.Name : ns + "." + named.Name;
+            if (named.IsGenericType && named.TypeArguments.Length > 0)
+            {
+                var baseName = (string.IsNullOrEmpty(ns) ? "" : ns + ".") + StripArity(named.Name) + "$" + named.Arity;
+                var args = string.Join(", ", named.TypeArguments.Select(TypeRef));
+                return $"{baseName}({args})";
+            }
+            return full;
+        }
+        if (type is IArrayTypeSymbol) return "System.Array";
+        return type.Name;
+    }
+
+    private static string StripArity(string name)
+    {
+        var i = name.IndexOf('`');
+        return i >= 0 ? name.Substring(0, i) : name;
+    }
+
     private void EmitEnum(INamedTypeSymbol type)
     {
-        var fullName = _names.TypeFullName(type);
-        _w.Write($"H5R.define(\"{fullName}\", function () ");
+        _w.Write($"H5.define(\"{_names.TypeFullName(type)}\", ");
         _w.Block(() =>
         {
-            var simpleName = fullName.Split('.').Last();
-            _w.WriteLine($"var {simpleName} = {{}};");
-            foreach (var field in type.GetMembers().OfType<IFieldSymbol>().Where(f => f.HasConstantValue))
+            _w.WriteLine("$kind: \"enum\",");
+            _w.Write("statics: ");
+            _w.Block(() =>
             {
-                _w.WriteLine($"{simpleName}.{NameMangler.JsIdentifier(field.Name)} = {Convert.ToInt64(field.ConstantValue)};");
-            }
-            // Reverse map for ToString support.
-            _w.WriteLine($"{simpleName}.$names = {{}};");
-            foreach (var field in type.GetMembers().OfType<IFieldSymbol>().Where(f => f.HasConstantValue))
-            {
-                _w.WriteLine($"{simpleName}.$names[{Convert.ToInt64(field.ConstantValue)}] = \"{field.Name}\";");
-            }
-            _w.WriteLine($"return {simpleName};");
+                _w.Write("fields: ");
+                _w.Block(() =>
+                {
+                    var fields = type.GetMembers().OfType<IFieldSymbol>().Where(f => f.HasConstantValue).ToList();
+                    for (var i = 0; i < fields.Count; i++)
+                    {
+                        _w.Write($"{H5Naming.MemberJsName(fields[i])}: {Convert.ToInt64(fields[i].ConstantValue)}");
+                        _w.WriteLine(i < fields.Count - 1 ? "," : "");
+                    }
+                });
+                _w.WriteLine();
+            });
+            _w.WriteLine();
         });
         _w.WriteLine(");");
     }
 
-    private void EmitClass(INamedTypeSymbol type)
+    private void EmitInterface(INamedTypeSymbol type)
     {
-        var fullName = _names.TypeFullName(type);
-        var simpleName = fullName.Split('.').Last();
-
-        _w.Write($"H5R.define(\"{fullName}\", function () ");
+        _w.Write($"H5.define(\"{_names.TypeFullName(type)}\", ");
         _w.Block(() =>
         {
-            _w.WriteLine($"function {simpleName}() {{}}");
-
-            var baseType = type.BaseType;
-            if (baseType is not null && baseType.SpecialType != SpecialType.System_Object
-                && baseType.TypeKind != TypeKind.Error && !IsValueTypeBase(baseType))
+            _w.Write("$kind: \"interface\"");
+            var bases = type.Interfaces.Where(i => i.Locations.Any(l => l.IsInSource)).ToList();
+            if (bases.Count > 0)
             {
-                _w.WriteLine($"H5R.inherit({simpleName}, {_names.TypeFullName(baseType)});");
+                _w.WriteLine(",");
+                _w.WriteLine($"inherits: [{string.Join(", ", bases.Select(TypeRef))}]");
+            }
+            else
+            {
+                _w.WriteLine();
+            }
+        });
+        _w.WriteLine(");");
+    }
+
+    private void EmitClassLike(INamedTypeSymbol type)
+    {
+        var fullName = _names.TypeFullName(type);
+        var entryPoint = _compilation.GetEntryPoint(System.Threading.CancellationToken.None);
+
+        _w.Write($"H5.define(\"{fullName}\", ");
+        _w.Block(() =>
+        {
+            var sections = new List<Action>();
+
+            // $kind for structs.
+            if (type.TypeKind == TypeKind.Struct)
+            {
+                sections.Add(() => _w.Write("$kind: \"struct\""));
             }
 
-            EmitInstanceFieldInit(type, simpleName);
-            EmitStaticInit(type, simpleName);
-            EmitInterfaceLinks(type, simpleName);
-            EmitMembers(type, simpleName);
-            if (type.IsRecord) EmitRecordMembers(type, simpleName);
+            // inherits: base class + implemented (source) interfaces.
+            var inherits = new List<string>();
+            if (type.BaseType is { } bt && bt.SpecialType != SpecialType.System_Object
+                && bt.TypeKind != TypeKind.Error && !IsValueTypeBase(bt))
+            {
+                inherits.Add(TypeRef(bt));
+            }
+            inherits.AddRange(type.Interfaces.Where(i => i.Locations.Any(l => l.IsInSource)).Select(TypeRef));
+            if (inherits.Count > 0)
+            {
+                sections.Add(() => _w.Write($"inherits: [{string.Join(", ", inherits)}]"));
+            }
 
-            _w.WriteLine($"return {simpleName};");
+            // main: entry point.
+            if (entryPoint is not null && SymbolEqualityComparer.Default.Equals(entryPoint.ContainingType, type))
+            {
+                sections.Add(() => EmitEntryPoint(entryPoint));
+            }
+
+            // statics { fields, ctors.init/ctor, methods, properties }
+            var staticsBody = Capture(() => EmitStatics(type, fullName));
+            if (staticsBody.Trim().Length > 0)
+            {
+                sections.Add(() => { _w.Write("statics: "); _w.Write(staticsBody); });
+            }
+
+            // instance fields
+            var fieldsBody = Capture(() => EmitInstanceFields(type));
+            if (fieldsBody.Trim().Length > 0)
+            {
+                sections.Add(() => { _w.Write("fields: "); _w.Write(fieldsBody); });
+            }
+
+            // instance ctors
+            var ctorsBody = Capture(() => EmitInstanceCtors(type));
+            if (ctorsBody.Trim().Length > 0)
+            {
+                sections.Add(() => { _w.Write("ctors: "); _w.Write(ctorsBody); });
+            }
+
+            // instance properties (with logic)
+            var propsBody = Capture(() => EmitInstanceProperties(type));
+            if (propsBody.Trim().Length > 0)
+            {
+                sections.Add(() => { _w.Write("props: "); _w.Write(propsBody); });
+            }
+
+            // instance methods
+            var methodsBody = Capture(() => EmitInstanceMethods(type, entryPoint));
+            if (methodsBody.Trim().Length > 0)
+            {
+                sections.Add(() => { _w.Write("methods: "); _w.Write(methodsBody); });
+            }
+
+            for (var i = 0; i < sections.Count; i++)
+            {
+                sections[i]();
+                _w.WriteLine(i < sections.Count - 1 ? "," : "");
+            }
         });
         _w.WriteLine(");");
-    }
-
-    private void EmitInterfaceMarker(INamedTypeSymbol type)
-    {
-        // A runtime marker object so `is`/pattern type tests against the interface work.
-        var fullName = _names.TypeFullName(type);
-        var simpleName = fullName.Split('.').Last();
-        _w.Write($"H5R.define(\"{fullName}\", function () ");
-        _w.Block(() =>
-        {
-            _w.WriteLine($"function {simpleName}() {{}}");
-            _w.WriteLine($"return {simpleName};");
-        });
-        _w.WriteLine(");");
-    }
-
-    private void EmitInterfaceLinks(INamedTypeSymbol type, string simpleName)
-    {
-        // Record implemented (source-defined) interfaces for H5R.is.
-        var interfaces = type.AllInterfaces
-            .Where(i => i.Locations.Any(l => l.IsInSource))
-            .Select(i => _names.TypeReference(i))
-            .Distinct()
-            .ToList();
-        if (interfaces.Count > 0)
-        {
-            _w.WriteLine($"{simpleName}.$interfaces = [{string.Join(", ", interfaces)}];");
-        }
     }
 
     private static bool IsValueTypeBase(INamedTypeSymbol baseType)
         => baseType.SpecialType is SpecialType.System_ValueType or SpecialType.System_Enum;
 
-    /// <summary>
-    /// Emits the $ctorInit method which runs this type's instance field / auto-property
-    /// initializers (mirroring C# field-initializer execution order).
-    /// </summary>
-    private void EmitInstanceFieldInit(INamedTypeSymbol type, string simpleName)
+    /// <summary>Auto-properties are stored as plain fields; only these + real fields appear here.</summary>
+    private void EmitInstanceFields(INamedTypeSymbol type)
     {
-        var fields = InstanceFieldInitializers(type).ToList();
-        _w.Write($"{simpleName}.prototype.$ctorInit = function () ");
+        var entries = InstanceFieldSlots(type).ToList();
+        if (entries.Count == 0) return;
         _w.Block(() =>
         {
-            foreach (var (target, initializer, defaultLiteral) in fields)
+            for (var i = 0; i < entries.Count; i++)
             {
-                _w.Write($"this.{target} = ");
-                if (initializer is not null)
-                {
-                    EmitExpression(initializer);
-                }
-                else
-                {
-                    _w.Write(defaultLiteral);
-                }
-                _w.WriteLine(";");
+                _w.Write($"{entries[i].name}: {entries[i].def}");
+                _w.WriteLine(i < entries.Count - 1 ? "," : "");
             }
         });
-        _w.WriteLine(";");
     }
 
-    private IEnumerable<(string target, ExpressionSyntax? initializer, string defaultLiteral)> InstanceFieldInitializers(INamedTypeSymbol type)
+    private IEnumerable<(string name, string def, ISymbol symbol)> InstanceFieldSlots(INamedTypeSymbol type)
     {
-        foreach (var member in type.GetMembers())
+        foreach (var m in type.GetMembers())
         {
-            if (member.IsStatic) continue;
-
-            if (member is IFieldSymbol field && !field.IsConst && field.AssociatedSymbol is null)
-            {
-                yield return (_names.FieldName(field), FieldInitializerSyntax(field), DefaultValueLiteral(field.Type));
-            }
-            else if (member is IPropertySymbol { IsAbstract: false } prop && IsAutoProperty(prop))
-            {
-                yield return (_names.BackingFieldName(prop), AutoPropertyInitializerSyntax(prop), DefaultValueLiteral(prop.Type));
-            }
+            if (m.IsStatic) continue;
+            if (m is IFieldSymbol f && !f.IsConst && f.AssociatedSymbol is null)
+                yield return (H5Naming.MemberJsName(f), DefaultValueLiteral(f.Type), f);
+            else if (m is IPropertySymbol p && !p.IsAbstract && IsAutoProperty(p))
+                yield return (H5Naming.MemberJsName(p), DefaultValueLiteral(p.Type), p);
         }
     }
 
-    private void EmitStaticInit(INamedTypeSymbol type, string simpleName)
-    {
-        var staticFields = type.GetMembers()
-            .Where(m => m.IsStatic)
-            .Select(m => m switch
-            {
-                IFieldSymbol f when !f.IsConst && f.AssociatedSymbol is null => ((string target, ExpressionSyntax? init, string def)?)(_names.FieldName(f), FieldInitializerSyntax(f), DefaultValueLiteral(f.Type)),
-                IPropertySymbol p when IsAutoProperty(p) => (_names.BackingFieldName(p), AutoPropertyInitializerSyntax(p), DefaultValueLiteral(p.Type)),
-                _ => null,
-            })
-            .Where(x => x is not null)
-            .Select(x => x!.Value)
-            .ToList();
+    // ---- shared helpers ----------------------------------------------------
 
-        var staticCtor = type.StaticConstructors.FirstOrDefault();
-
-        if (staticFields.Count == 0 && staticCtor is null) return;
-
-        _w.Write($"{simpleName}.$cctor = function () ");
-        _w.Block(() =>
-        {
-            foreach (var (target, init, def) in staticFields)
-            {
-                _w.Write($"{simpleName}.{target} = ");
-                if (init is not null) EmitExpression(init); else _w.Write(def);
-                _w.WriteLine(";");
-            }
-
-            if (staticCtor is { DeclaringSyntaxReferences.Length: > 0 }
-                && staticCtor.DeclaringSyntaxReferences[0].GetSyntax() is ConstructorDeclarationSyntax { Body: { } body })
-            {
-                foreach (var stmt in body.Statements) EmitStatement(stmt);
-            }
-        });
-        _w.WriteLine(";");
-        _w.WriteLine($"{simpleName}.$cctor();");
-    }
-
-    // ---- syntax lookups ----------------------------------------------------
-
-    private ExpressionSyntax? FieldInitializerSyntax(IFieldSymbol field)
-    {
-        foreach (var reference in field.DeclaringSyntaxReferences)
-        {
-            if (reference.GetSyntax() is VariableDeclaratorSyntax { Initializer: { } init })
-            {
-                return init.Value;
-            }
-        }
-        return null;
-    }
-
-    private ExpressionSyntax? AutoPropertyInitializerSyntax(IPropertySymbol prop)
-    {
-        foreach (var reference in prop.DeclaringSyntaxReferences)
-        {
-            if (reference.GetSyntax() is PropertyDeclarationSyntax { Initializer: { } init })
-            {
-                return init.Value;
-            }
-        }
-        return null;
-    }
-
-    private static bool IsAutoProperty(IPropertySymbol prop)
+    internal static bool IsAutoProperty(IPropertySymbol prop)
     {
         foreach (var reference in prop.DeclaringSyntaxReferences)
         {
             if (reference.GetSyntax() is PropertyDeclarationSyntax decl)
             {
-                if (decl.ExpressionBody is not null) return false; // expression-bodied
+                if (decl.ExpressionBody is not null) return false;
                 if (decl.AccessorList is null) return false;
-                // auto-property: all accessors have no body
                 return decl.AccessorList.Accessors.All(a => a.Body is null && a.ExpressionBody is null);
             }
         }
         return false;
     }
 
-    /// <summary>Returns null; caller emits the JS default for the type.</summary>
-    private ExpressionSyntax? DefaultInitializer(ITypeSymbol type) => null;
+    private ExpressionSyntax? FieldInitializerSyntax(IFieldSymbol field)
+    {
+        foreach (var reference in field.DeclaringSyntaxReferences)
+            if (reference.GetSyntax() is VariableDeclaratorSyntax { Initializer: { } init })
+                return init.Value;
+        return null;
+    }
+
+    private ExpressionSyntax? AutoPropertyInitializerSyntax(IPropertySymbol prop)
+    {
+        foreach (var reference in prop.DeclaringSyntaxReferences)
+            if (reference.GetSyntax() is PropertyDeclarationSyntax { Initializer: { } init })
+                return init.Value;
+        return null;
+    }
 
     private string DefaultValueLiteral(ITypeSymbol type)
     {
         if (type.TypeKind == TypeKind.Enum) return "0";
-        // default(struct) is a zero-initialized instance, not null.
-        if (IsSourceStruct(type)) return $"H5R.createDefault({_names.TypeReference(type)})";
         switch (type.SpecialType)
         {
             case SpecialType.System_Boolean: return "false";
-            case SpecialType.System_Char: return "0";
+            case SpecialType.System_Char:
             case SpecialType.System_SByte:
             case SpecialType.System_Byte:
             case SpecialType.System_Int16:

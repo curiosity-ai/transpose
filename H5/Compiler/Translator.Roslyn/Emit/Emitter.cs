@@ -9,45 +9,62 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 namespace H5.Translator.Roslyn;
 
 /// <summary>
-/// Walks the Roslyn syntax tree (guided by the semantic model) and emits JavaScript.
+/// Walks the Roslyn syntax tree (guided by the semantic model) and emits JavaScript
+/// in the H5 runtime format (H5.assembly + H5.define), so the output runs against
+/// the real h5.js / h5.core runtime.
 /// </summary>
 public sealed partial class Emitter
 {
     private readonly CSharpCompilation _compilation;
-    private readonly JsWriter _w = new();
+    private JsWriter _w = new();
     private readonly NameMangler _names = new();
     private SemanticModel _model = null!;
+    private readonly string _assemblyName;
 
-    public Emitter(CSharpCompilation compilation)
+    public Emitter(CSharpCompilation compilation, string assemblyName = CompilationBuilder.DefaultAssemblyName)
     {
         _compilation = compilation;
+        _assemblyName = assemblyName;
     }
 
     public string Emit()
     {
-        _w.WriteLine("(function () {");
-        _w.Indent();
-
-        var types = CollectTypes();
-
-        foreach (var type in types)
+        _w.WriteLine("/**");
+        _w.WriteLine(" * H5.Translator.Roslyn generated output.");
+        _w.WriteLine(" */");
+        _w.Write($"H5.assembly(\"{_assemblyName}\", function ($asm, globals) ");
+        _w.Block(() =>
         {
-            _model = _compilation.GetSemanticModel(type.DeclaringSyntaxReferences[0].SyntaxTree);
-            EmitType(type);
+            _w.WriteLine("\"use strict\";");
             _w.WriteLine();
-        }
 
-        EmitBootstrap();
-
-        _w.Outdent();
-        _w.WriteLine("})();");
+            foreach (var type in CollectTypes())
+            {
+                _model = _compilation.GetSemanticModel(type.DeclaringSyntaxReferences[0].SyntaxTree);
+                EmitType(type);
+                _w.WriteLine();
+            }
+        });
+        _w.WriteLine(");");
         return _w.ToString();
     }
 
-    /// <summary>
-    /// Collects all named types declared in source, ordered so that base types
-    /// are emitted before their derived types.
-    /// </summary>
+    /// <summary>Runs <paramref name="emit"/> against a temporary writer and returns its text.</summary>
+    private string Capture(Action emit)
+    {
+        var saved = _w;
+        _w = new JsWriter();
+        try
+        {
+            emit();
+            return _w.ToString();
+        }
+        finally
+        {
+            _w = saved;
+        }
+    }
+
     private List<INamedTypeSymbol> CollectTypes()
     {
         var declared = new List<INamedTypeSymbol>();
@@ -65,8 +82,6 @@ public sealed partial class Emitter
             }
         }
 
-        // Interfaces first (classes reference them for $interfaces), then by
-        // inheritance depth so base types precede derived types.
         return declared
             .OrderBy(t => t.TypeKind == TypeKind.Interface ? 0 : 1)
             .ThenBy(InheritanceDepth)
@@ -78,31 +93,6 @@ public sealed partial class Emitter
         var depth = 0;
         for (var b = type.BaseType; b is not null; b = b.BaseType) depth++;
         return depth;
-    }
-
-    private void EmitBootstrap()
-    {
-        var entry = _compilation.GetEntryPoint(CancellationToken.None);
-        if (entry is null) return;
-
-        var typeName = _names.TypeFullName(entry.ContainingType);
-        var methodName = _names.MethodName(entry);
-
-        _w.WriteLine("// Entry point");
-        var isAsync = entry.IsAsync || IsTaskType(entry.ReturnType);
-
-        // Build the argument list Main expects (string[] args -> []).
-        var arg = entry.Parameters.Length > 0 ? "[]" : "";
-
-        if (isAsync)
-        {
-            _w.WriteLine($"Promise.resolve({typeName}.{methodName}({arg})).then(function () {{ H5R.flush(); }}).catch(function (e) {{ H5R.flush(); throw e; }});");
-        }
-        else
-        {
-            _w.WriteLine($"{typeName}.{methodName}({arg});");
-            _w.WriteLine("H5R.flush();");
-        }
     }
 
     // ---- helpers -----------------------------------------------------------

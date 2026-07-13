@@ -14,7 +14,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="Runtime\h5roslyn.runtime.js" />
+    <EmbeddedResource Include="Runtime\h5roslyn.shim.js" />
   </ItemGroup>
 
 </Project>

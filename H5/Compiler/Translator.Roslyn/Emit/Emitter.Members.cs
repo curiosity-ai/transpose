@@ -9,86 +9,284 @@ namespace H5.Translator.Roslyn;
 
 public sealed partial class Emitter
 {
-    private void EmitMembers(INamedTypeSymbol type, string simpleName)
+    // ---- statics -----------------------------------------------------------
+
+    private void EmitStatics(INamedTypeSymbol type, string fullName)
     {
-        // For records, positional properties, the primary ctor, and value members
-        // (Equals/GetHashCode/ToString/Deconstruct) are synthesized in EmitRecordMembers.
-        foreach (var method in type.GetMembers().OfType<IMethodSymbol>())
+        var staticFields = type.GetMembers().Where(m => m.IsStatic).Select(m => m switch
         {
-            if (type.IsRecord && method.IsImplicitlyDeclared) continue;
-            switch (method.MethodKind)
+            IFieldSymbol f when !f.IsConst && f.AssociatedSymbol is null => ((string name, string def)?)(H5Naming.MemberJsName(f), DefaultValueLiteral(f.Type)),
+            IPropertySymbol p when IsAutoProperty(p) => (H5Naming.MemberJsName(p), DefaultValueLiteral(p.Type)),
+            _ => null,
+        }).Where(x => x is not null).Select(x => x!.Value).ToList();
+
+        var staticInitAssignments = StaticInitializers(type).ToList();
+        var staticCtor = type.StaticConstructors.FirstOrDefault(c => c.DeclaringSyntaxReferences.Length > 0);
+        var staticMethods = type.GetMembers().OfType<IMethodSymbol>()
+            .Where(m => m.IsStatic && !m.IsImplicitlyDeclared && IsEmittableMethod(m) && !IsEntryPoint(m))
+            .ToList();
+        var staticProps = type.GetMembers().OfType<IPropertySymbol>()
+            .Where(p => p.IsStatic && !p.IsAbstract && !IsAutoProperty(p) && !p.IsIndexer)
+            .ToList();
+
+        var sections = new List<Action>();
+
+        if (staticFields.Count > 0)
+        {
+            sections.Add(() =>
             {
-                case MethodKind.Ordinary:
-                case MethodKind.UserDefinedOperator:
-                case MethodKind.Conversion:
-                    EmitMethod(method, simpleName);
-                    break;
-                case MethodKind.Constructor:
-                    if (type.IsRecord) break; // handled in EmitRecordMembers
-                    EmitConstructor(method, simpleName);
-                    break;
-                // property/event accessors handled with their property; static ctor handled in $cctor
-            }
+                _w.Write("fields: ");
+                _w.Block(() =>
+                {
+                    for (var i = 0; i < staticFields.Count; i++)
+                    {
+                        _w.Write($"{staticFields[i].name}: {staticFields[i].def}");
+                        _w.WriteLine(i < staticFields.Count - 1 ? "," : "");
+                    }
+                });
+            });
         }
 
-        if (!type.IsRecord)
+        if (staticInitAssignments.Count > 0 || staticCtor is not null)
         {
-            var instanceCtors = type.InstanceConstructors
-                .Where(c => c.DeclaringSyntaxReferences.Length > 0)
-                .ToList();
-
-            if (instanceCtors.Count == 0)
+            sections.Add(() =>
             {
-                EmitDefaultConstructor(type, simpleName);
-            }
+                _w.Write("ctors: ");
+                _w.Block(() =>
+                {
+                    _w.Write("init: function () ");
+                    _w.Block(() =>
+                    {
+                        foreach (var (target, init) in staticInitAssignments)
+                        {
+                            _w.Write($"{fullName}.{target} = ");
+                            EmitExpression(init);
+                            _w.WriteLine(";");
+                        }
+                        if (staticCtor?.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() is ConstructorDeclarationSyntax { Body: { } body })
+                        {
+                            foreach (var s in body.Statements) EmitStatement(s);
+                        }
+                    });
+                    _w.WriteLine();
+                });
+            });
         }
 
-        foreach (var prop in type.GetMembers().OfType<IPropertySymbol>())
+        if (staticMethods.Count > 0)
         {
-            // In records, positional properties (declared via the parameter list) are
-            // synthesized in EmitRecordMembers; only emit explicitly-bodied properties here.
-            if (type.IsRecord
-                && prop.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() is not PropertyDeclarationSyntax)
+            sections.Add(() =>
             {
-                continue;
+                _w.Write("methods: ");
+                EmitMethodMap(staticMethods, fullName);
+            });
+        }
+
+        if (staticProps.Count > 0)
+        {
+            sections.Add(() =>
+            {
+                _w.Write("properties: ");
+                EmitPropertyMap(staticProps);
+            });
+        }
+
+        if (sections.Count == 0) return;
+
+        _w.Block(() =>
+        {
+            for (var i = 0; i < sections.Count; i++)
+            {
+                sections[i]();
+                _w.WriteLine(i < sections.Count - 1 ? "," : "");
             }
-            EmitProperty(prop, simpleName);
+        });
+    }
+
+    private IEnumerable<(string target, ExpressionSyntax init)> StaticInitializers(INamedTypeSymbol type)
+    {
+        foreach (var m in type.GetMembers().Where(m => m.IsStatic))
+        {
+            if (m is IFieldSymbol f && !f.IsConst && f.AssociatedSymbol is null && FieldInitializerSyntax(f) is { } fi)
+                yield return (H5Naming.MemberJsName(f), fi);
+            else if (m is IPropertySymbol p && IsAutoProperty(p) && AutoPropertyInitializerSyntax(p) is { } pi)
+                yield return (H5Naming.MemberJsName(p), pi);
+        }
+    }
+
+    // ---- instance constructors ---------------------------------------------
+
+    private readonly Dictionary<ISymbol, string> _ctorNames = new(SymbolEqualityComparer.Default);
+
+    private string CtorName(IMethodSymbol ctor)
+    {
+        ctor = ctor.OriginalDefinition;
+        if (_ctorNames.TryGetValue(ctor, out var cached)) return cached;
+
+        var ctors = ctor.ContainingType.InstanceConstructors
+            .OrderBy(c => c.Parameters.Length)
+            .ThenBy(c => string.Join(",", c.Parameters.Select(p => p.Type.ToDisplayString())), StringComparer.Ordinal)
+            .ToList();
+
+        if (ctors.Count == 1)
+        {
+            _ctorNames[ctors[0].OriginalDefinition] = "ctor";
+        }
+        else
+        {
+            var primary = ctors.FirstOrDefault(c => c.Parameters.Length == 0) ?? ctors[0];
+            var n = 1;
+            foreach (var c in ctors)
+            {
+                _ctorNames[c.OriginalDefinition] = ReferenceEquals(c, primary) ? "ctor" : "$ctor" + n++;
+            }
+        }
+        return _ctorNames.TryGetValue(ctor, out var name) ? name : "ctor";
+    }
+
+    private void EmitInstanceCtors(INamedTypeSymbol type)
+    {
+        var ctors = type.InstanceConstructors.Where(c => !c.IsImplicitlyDeclared && c.DeclaringSyntaxReferences.Length > 0).ToList();
+        var hasExplicit = ctors.Count > 0;
+
+        _w.Block(() =>
+        {
+            if (!hasExplicit)
+            {
+                // Synthesized default constructor.
+                _w.Write("ctor: function () ");
+                _w.Block(() =>
+                {
+                    _w.WriteLine("this.$initialize();");
+                    EmitImplicitBaseCall(type);
+                    EmitInstanceFieldInitializers(type);
+                });
+                _w.WriteLine();
+                return;
+            }
+
+            var all = type.InstanceConstructors.Where(c => c.DeclaringSyntaxReferences.Length > 0).ToList();
+            for (var i = 0; i < all.Count; i++)
+            {
+                var ctor = all[i];
+                var decl = ctor.DeclaringSyntaxReferences[0].GetSyntax() as ConstructorDeclarationSyntax;
+                _w.Write($"{CtorName(ctor)}: function (");
+                EmitParameterList(ctor);
+                _w.Write(") ");
+                _w.Block(() =>
+                {
+                    EmitOptionalDefaults(ctor);
+                    _w.WriteLine("this.$initialize();");
+                    EmitConstructorChain(ctor, decl!, type);
+                    if (decl?.Body is not null)
+                        foreach (var s in decl.Body.Statements) EmitStatement(s);
+                    else if (decl?.ExpressionBody is not null)
+                        EmitExpressionStatement(decl.ExpressionBody.Expression);
+                });
+                _w.WriteLine(i < all.Count - 1 ? "," : "");
+            }
+        });
+    }
+
+    private void EmitConstructorChain(IMethodSymbol ctor, ConstructorDeclarationSyntax decl, INamedTypeSymbol type)
+    {
+        var initializer = decl?.Initializer;
+        if (initializer is { RawKind: (int)SyntaxKind.ThisConstructorInitializer }
+            && _model.GetSymbolInfo(initializer).Symbol is IMethodSymbol thisCtor)
+        {
+            _w.Write($"this.{CtorName(thisCtor)}(");
+            EmitArguments(initializer.ArgumentList, thisCtor);
+            _w.WriteLine(");");
+            EmitInstanceFieldInitializers(type);
+            return;
+        }
+
+        EmitInstanceFieldInitializers(type);
+
+        if (initializer is { RawKind: (int)SyntaxKind.BaseConstructorInitializer }
+            && _model.GetSymbolInfo(initializer).Symbol is IMethodSymbol baseCtor)
+        {
+            _w.Write($"{TypeRef(baseCtor.ContainingType)}.{CtorName(baseCtor)}.call(this");
+            if (initializer.ArgumentList.Arguments.Count > 0) { _w.Write(", "); EmitArguments(initializer.ArgumentList, baseCtor); }
+            _w.WriteLine(");");
+        }
+        else
+        {
+            EmitImplicitBaseCall(type);
+        }
+    }
+
+    private void EmitImplicitBaseCall(INamedTypeSymbol type)
+    {
+        var baseType = type.BaseType;
+        if (baseType is not null && baseType.SpecialType != SpecialType.System_Object
+            && !IsValueTypeBase(baseType) && baseType.TypeKind != TypeKind.Error)
+        {
+            var baseCtor = baseType.InstanceConstructors.FirstOrDefault(c => c.Parameters.Length == 0);
+            var name = baseCtor is not null ? CtorName(baseCtor) : "ctor";
+            _w.WriteLine($"{TypeRef(baseType)}.{name}.call(this);");
+        }
+    }
+
+    private void EmitInstanceFieldInitializers(INamedTypeSymbol type)
+    {
+        foreach (var m in type.GetMembers())
+        {
+            if (m.IsStatic) continue;
+            ExpressionSyntax? init = m switch
+            {
+                IFieldSymbol f when !f.IsConst && f.AssociatedSymbol is null => FieldInitializerSyntax(f),
+                IPropertySymbol p when IsAutoProperty(p) => AutoPropertyInitializerSyntax(p),
+                _ => null,
+            };
+            if (init is null) continue;
+            _w.Write($"this.{H5Naming.MemberJsName(m)} = ");
+            EmitExpression(init);
+            _w.WriteLine(";");
         }
     }
 
     // ---- methods -----------------------------------------------------------
 
-    private void EmitMethod(IMethodSymbol method, string simpleName)
+    private bool IsEmittableMethod(IMethodSymbol m)
+        => m.MethodKind is MethodKind.Ordinary or MethodKind.UserDefinedOperator or MethodKind.Conversion
+           && !m.IsAbstract
+           && m.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() is BaseMethodDeclarationSyntax d
+           && (d.Body is not null || d.ExpressionBody is not null);
+
+    private bool IsEntryPoint(IMethodSymbol m)
+        => SymbolEqualityComparer.Default.Equals(m, _compilation.GetEntryPoint(System.Threading.CancellationToken.None));
+
+    private void EmitInstanceMethods(INamedTypeSymbol type, IMethodSymbol? entryPoint)
     {
-        if (method.IsAbstract) return; // no body
-        // Handles ordinary methods, operators, and conversion operators uniformly.
-        var decl = method.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() as BaseMethodDeclarationSyntax;
-        if (decl is null) return;
-        if (decl.Body is null && decl.ExpressionBody is null) return; // partial/extern without body
-
-        var name = _names.MethodName(method);
-        var target = method.IsStatic ? $"{simpleName}.{name}" : $"{simpleName}.prototype.{name}";
-
-        if (decl.Body is not null && IsIteratorBody(decl.Body))
-        {
-            _w.Write($"{target} = function (");
-            EmitParameterList(method);
-            _w.Write(") ");
-            EmitIteratorBody(decl.Body, method);
-            _w.WriteLine(";");
-            return;
-        }
-
-        var asyncKw = method.IsAsync || IsTaskType(method.ReturnType) && decl.Modifiers.Any(SyntaxKind.AsyncKeyword) ? "async " : "";
-
-        _w.Write($"{target} = {asyncKw}function (");
-        EmitParameterList(method);
-        _w.Write(") ");
-        EmitMethodBody(decl.Body, decl.ExpressionBody, method.ReturnsVoid, method);
-        _w.WriteLine(";");
+        var methods = type.GetMembers().OfType<IMethodSymbol>()
+            .Where(m => !m.IsStatic && IsEmittableMethod(m))
+            .ToList();
+        if (methods.Count == 0) return;
+        EmitMethodMap(methods, TypeRef(type));
     }
 
-    /// <summary>An iterator body (yield return/break) → returns a fresh-iterable generator.</summary>
+    private void EmitMethodMap(List<IMethodSymbol> methods, string ownerRef)
+    {
+        _w.Block(() =>
+        {
+            for (var i = 0; i < methods.Count; i++)
+            {
+                var m = methods[i];
+                var decl = (BaseMethodDeclarationSyntax)m.DeclaringSyntaxReferences[0].GetSyntax();
+                var asyncKw = m.IsAsync ? "async " : "";
+                _w.Write($"{H5Naming.MemberJsName(m)}: {asyncKw}function (");
+                EmitParameterList(m);
+                _w.Write(") ");
+                if (decl.Body is not null && IsIteratorBody(decl.Body))
+                    EmitIteratorBody(decl.Body, m);
+                else
+                    EmitMethodBody(decl.Body, decl.ExpressionBody, m.ReturnsVoid, m);
+                _w.WriteLine(i < methods.Count - 1 ? "," : "");
+            }
+        });
+    }
+
     private void EmitIteratorBody(BlockSyntax body, IMethodSymbol method)
     {
         _w.Block(() =>
@@ -100,7 +298,6 @@ public sealed partial class Emitter
         });
     }
 
-    /// <summary>True if the body contains a yield statement (not inside a nested function).</summary>
     private static bool IsIteratorBody(SyntaxNode body)
     {
         foreach (var node in body.DescendantNodes(descendIntoChildren: n =>
@@ -111,13 +308,20 @@ public sealed partial class Emitter
         return false;
     }
 
+    private void EmitEntryPoint(IMethodSymbol entry)
+    {
+        var decl = (BaseMethodDeclarationSyntax)entry.DeclaringSyntaxReferences[0].GetSyntax();
+        var asyncKw = entry.IsAsync || IsTaskType(entry.ReturnType) ? "async " : "";
+        _w.Write($"main: {asyncKw}function Main () ");
+        EmitMethodBody(decl.Body, decl.ExpressionBody, entry.ReturnsVoid, entry);
+    }
+
     private void EmitParameterList(IMethodSymbol method)
     {
-        var ps = method.Parameters;
-        for (var i = 0; i < ps.Length; i++)
+        for (var i = 0; i < method.Parameters.Length; i++)
         {
             if (i > 0) _w.Write(", ");
-            _w.Write(NameMangler.JsIdentifier(ps[i].Name));
+            _w.Write(NameMangler.JsIdentifier(method.Parameters[i].Name));
         }
     }
 
@@ -137,165 +341,57 @@ public sealed partial class Emitter
         _w.Block(() =>
         {
             EmitOptionalDefaults(method);
-
             if (block is not null)
             {
                 foreach (var stmt in block.Statements) EmitStatement(stmt);
             }
             else if (arrow is not null)
             {
-                if (returnsVoid)
-                {
-                    EmitExpressionStatement(arrow.Expression);
-                }
-                else
-                {
-                    _w.Write("return ");
-                    EmitExpression(arrow.Expression);
-                    _w.WriteLine(";");
-                }
+                if (returnsVoid) EmitExpressionStatement(arrow.Expression);
+                else { _w.Write("return "); EmitExpressionConverted(arrow.Expression, method.ReturnType); _w.WriteLine(";"); }
             }
         });
     }
 
-    // ---- constructors ------------------------------------------------------
+    // ---- properties (with logic) -------------------------------------------
 
-    private void EmitConstructor(IMethodSymbol ctor, string simpleName)
+    private void EmitInstanceProperties(INamedTypeSymbol type)
     {
-        var decl = ctor.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() as ConstructorDeclarationSyntax;
-        if (decl is null) return;
+        var props = type.GetMembers().OfType<IPropertySymbol>()
+            .Where(p => !p.IsStatic && !p.IsAbstract && !p.IsIndexer && !IsAutoProperty(p)
+                        && p.DeclaringSyntaxReferences.Length > 0)
+            .ToList();
+        // Indexers → get_Item/set_Item under methods handled separately (skip for now).
+        if (props.Count == 0) return;
+        EmitPropertyMap(props);
+    }
 
-        var name = _names.MethodName(ctor);
-        _w.Write($"{simpleName}.prototype.{name} = function (");
-        EmitParameterList(ctor);
-        _w.Write(") ");
+    private void EmitPropertyMap(List<IPropertySymbol> props)
+    {
         _w.Block(() =>
         {
-            EmitOptionalDefaults(ctor);
-            EmitConstructorChain(ctor, decl, simpleName);
-
-            if (decl.Body is not null)
+            for (var i = 0; i < props.Count; i++)
             {
-                foreach (var stmt in decl.Body.Statements) EmitStatement(stmt);
-            }
-            else if (decl.ExpressionBody is not null)
-            {
-                EmitExpressionStatement(decl.ExpressionBody.Expression);
+                var p = props[i];
+                _w.Write($"{H5Naming.MemberJsName(p)}: ");
+                _w.Block(() =>
+                {
+                    if (p.GetMethod is not null)
+                    {
+                        _w.Write("get: function () ");
+                        EmitAccessorBody(p.GetMethod, isGetter: true);
+                        _w.WriteLine(p.SetMethod is not null ? "," : "");
+                    }
+                    if (p.SetMethod is not null)
+                    {
+                        _w.Write("set: function (value) ");
+                        EmitAccessorBody(p.SetMethod, isGetter: false);
+                        _w.WriteLine();
+                    }
+                });
+                _w.WriteLine(i < props.Count - 1 ? "," : "");
             }
         });
-        _w.WriteLine(";");
-    }
-
-    private void EmitConstructorChain(IMethodSymbol ctor, ConstructorDeclarationSyntax decl, string simpleName)
-    {
-        var initializer = decl.Initializer;
-
-        if (initializer is { RawKind: (int)SyntaxKind.ThisConstructorInitializer })
-        {
-            // : this(...) — delegate to sibling ctor (which runs field init).
-            if (_model.GetSymbolInfo(initializer).Symbol is IMethodSymbol target)
-            {
-                _w.Write($"this.{_names.MethodName(target)}(");
-                EmitArgumentList(initializer.ArgumentList);
-                _w.WriteLine(");");
-            }
-            return;
-        }
-
-        // Runs this type's field initializers first.
-        _w.WriteLine("this.$ctorInit();");
-
-        var baseType = ctor.ContainingType.BaseType;
-        if (initializer is { RawKind: (int)SyntaxKind.BaseConstructorInitializer })
-        {
-            if (_model.GetSymbolInfo(initializer).Symbol is IMethodSymbol baseCtor)
-            {
-                _w.Write($"{_names.TypeFullName(baseCtor.ContainingType)}.prototype.{_names.MethodName(baseCtor)}.call(this");
-                if (initializer.ArgumentList.Arguments.Count > 0)
-                {
-                    _w.Write(", ");
-                    EmitArgumentList(initializer.ArgumentList);
-                }
-                _w.WriteLine(");");
-            }
-        }
-        else if (baseType is not null && baseType.SpecialType != SpecialType.System_Object
-                 && !IsValueTypeBase(baseType) && baseType.TypeKind != TypeKind.Error)
-        {
-            // Implicit base() — call base parameterless ctor.
-            _w.WriteLine($"{_names.TypeFullName(baseType)}.prototype.$ctor.call(this);");
-        }
-    }
-
-    private void EmitDefaultConstructor(INamedTypeSymbol type, string simpleName)
-    {
-        _w.Write($"{simpleName}.prototype.$ctor = function () ");
-        _w.Block(() =>
-        {
-            _w.WriteLine("this.$ctorInit();");
-            var baseType = type.BaseType;
-            if (baseType is not null && baseType.SpecialType != SpecialType.System_Object
-                && !IsValueTypeBase(baseType) && baseType.TypeKind != TypeKind.Error)
-            {
-                _w.WriteLine($"{_names.TypeFullName(baseType)}.prototype.$ctor.call(this);");
-            }
-        });
-        _w.WriteLine(";");
-    }
-
-    // ---- properties --------------------------------------------------------
-
-    private void EmitProperty(IPropertySymbol prop, string simpleName)
-    {
-        if (prop.IsAbstract) return;
-        if (prop.IsIndexer) { EmitIndexer(prop, simpleName); return; }
-
-        var target = prop.IsStatic ? simpleName : $"{simpleName}.prototype";
-        var propName = _names.PropertyName(prop);
-        var isAuto = IsAutoProperty(prop);
-        var backing = prop.IsStatic ? $"{simpleName}.{_names.BackingFieldName(prop)}" : $"this.{_names.BackingFieldName(prop)}";
-
-        _w.Write($"Object.defineProperty({target}, \"{propName}\", ");
-        _w.Block(() =>
-        {
-            // getter
-            if (prop.GetMethod is not null)
-            {
-                _w.Write("get: function () ");
-                if (isAuto)
-                {
-                    _w.Block(() => _w.WriteLine($"return {backing};"));
-                }
-                else
-                {
-                    EmitAccessorBody(prop.GetMethod, isGetter: true);
-                }
-                _w.WriteLine(",");
-            }
-            // setter — auto-properties always get a setter so get-only auto-props
-            // (assigned in the constructor / via init) work.
-            if (prop.SetMethod is not null)
-            {
-                _w.Write("set: function (value) ");
-                if (isAuto)
-                {
-                    _w.Block(() => _w.WriteLine($"{backing} = value;"));
-                }
-                else
-                {
-                    EmitAccessorBody(prop.SetMethod, isGetter: false);
-                }
-                _w.WriteLine(",");
-            }
-            else if (isAuto)
-            {
-                _w.Write("set: function (value) ");
-                _w.Block(() => _w.WriteLine($"{backing} = value;"));
-                _w.WriteLine(",");
-            }
-            _w.WriteLine("enumerable: true, configurable: true");
-        });
-        _w.WriteLine(");");
     }
 
     private void EmitAccessorBody(IMethodSymbol accessor, bool isGetter)
@@ -307,52 +403,21 @@ public sealed partial class Emitter
                 _w.Block(() => { foreach (var s in body.Statements) EmitStatement(s); });
                 break;
             case AccessorDeclarationSyntax { ExpressionBody: { } arrow }:
+            case ArrowExpressionClauseSyntax arrow2 when (arrow2 = (ArrowExpressionClauseSyntax)syntax) != null:
+                var arrowExpr = (syntax as AccessorDeclarationSyntax)?.ExpressionBody?.Expression
+                                ?? ((ArrowExpressionClauseSyntax)syntax).Expression;
                 _w.Block(() =>
                 {
-                    if (isGetter) { _w.Write("return "); EmitExpression(arrow.Expression); _w.WriteLine(";"); }
-                    else EmitExpressionStatement(arrow.Expression);
+                    if (isGetter) { _w.Write("return "); EmitExpression(arrowExpr); _w.WriteLine(";"); }
+                    else EmitExpressionStatement(arrowExpr);
                 });
                 break;
-            case PropertyDeclarationSyntax { ExpressionBody: { } arrow }:
-                _w.Block(() => { _w.Write("return "); EmitExpression(arrow.Expression); _w.WriteLine(";"); });
-                break;
-            case ArrowExpressionClauseSyntax arrow:
-                // Expression-bodied property/accessor: `Prop => expr;`
-                _w.Block(() =>
-                {
-                    if (isGetter) { _w.Write("return "); EmitExpression(arrow.Expression); _w.WriteLine(";"); }
-                    else EmitExpressionStatement(arrow.Expression);
-                });
+            case PropertyDeclarationSyntax { ExpressionBody: { } arrow3 }:
+                _w.Block(() => { _w.Write("return "); EmitExpression(arrow3.Expression); _w.WriteLine(";"); });
                 break;
             default:
                 _w.Block(() => { });
                 break;
-        }
-    }
-
-    private void EmitIndexer(IPropertySymbol prop, string simpleName)
-    {
-        // Indexers map to get_Item/set_Item methods.
-        if (prop.GetMethod is not null)
-        {
-            _w.Write($"{simpleName}.prototype.get_Item = function (");
-            EmitParameterList(prop.GetMethod);
-            _w.Write(") ");
-            EmitAccessorBody(prop.GetMethod, isGetter: true);
-            _w.WriteLine(";");
-        }
-        if (prop.SetMethod is not null)
-        {
-            _w.Write($"{simpleName}.prototype.set_Item = function (");
-            var ps = prop.SetMethod.Parameters;
-            for (var i = 0; i < ps.Length; i++)
-            {
-                if (i > 0) _w.Write(", ");
-                _w.Write(NameMangler.JsIdentifier(ps[i].Name));
-            }
-            _w.Write(") ");
-            EmitAccessorBody(prop.SetMethod, isGetter: false);
-            _w.WriteLine(";");
         }
     }
 }

@@ -41,27 +41,12 @@ public static class CompilationBuilder
     }
 
     /// <summary>
-    /// Resolves the reference assemblies from the currently running runtime's
-    /// trusted platform assemblies. This gives the semantic model a complete
-    /// view of the BCL for symbol/overload/conversion resolution.
+    /// References the H5 assembly (H5.dll) as the sole BCL, exactly like the H5
+    /// compiler. H5.dll redefines System.* with the [External]/[Name]/[Template]
+    /// attributes that drive JavaScript emission and interop with the h5.js runtime.
     /// </summary>
     private static IReadOnlyList<MetadataReference> GetReferenceAssemblies()
     {
-        var tpa = (AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string) ?? string.Empty;
-
-        var refs = tpa
-            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
-            .Where(p => p.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
-            .Where(File.Exists)
-            .Select(p => (MetadataReference)MetadataReference.CreateFromFile(p))
-            .ToList();
-
-        if (refs.Count == 0)
-        {
-            throw new InvalidOperationException(
-                "Could not resolve any reference assemblies from TRUSTED_PLATFORM_ASSEMBLIES.");
-        }
-
-        return refs;
+        return new[] { (MetadataReference)MetadataReference.CreateFromFile(H5Assemblies.H5DllPath) };
     }
 }

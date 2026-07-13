@@ -43,9 +43,8 @@ public sealed class RoslynTranslator
 
         try
         {
-            var emitter = new Emitter(compilation);
-            var body = emitter.Emit();
-            var js = LoadRuntime() + "\n" + body;
+            var emitter = new Emitter(compilation, assemblyName);
+            var js = emitter.Emit();
             return new TranslationResult(js, diagnostics);
         }
         catch (TranslationException ex)
@@ -70,24 +69,24 @@ public sealed class RoslynTranslator
         return result.Javascript!;
     }
 
-    private static string? _cachedRuntime;
+    private static string? _shim;
 
+    /// <summary>
+    /// The full runtime prelude: the real h5.js followed by the thin H5R shim that
+    /// adapts the emitter's language-level helpers onto h5.js primitives.
+    /// </summary>
     public static string LoadRuntime()
     {
-        if (_cachedRuntime is not null) return _cachedRuntime;
+        _shim ??= ReadShim();
+        return H5Assemblies.RuntimeJs + "\n" + _shim;
+    }
 
+    private static string ReadShim()
+    {
         var asm = typeof(RoslynTranslator).Assembly;
-        var name = asm.GetManifestResourceNames()
-            .FirstOrDefault(n => n.EndsWith("h5roslyn.runtime.js", StringComparison.Ordinal));
-
-        if (name is null)
-        {
-            throw new InvalidOperationException("Embedded runtime resource h5roslyn.runtime.js not found.");
-        }
-
+        var name = asm.GetManifestResourceNames().First(n => n.EndsWith("h5roslyn.shim.js", StringComparison.Ordinal));
         using var stream = asm.GetManifestResourceStream(name)!;
         using var reader = new StreamReader(stream);
-        _cachedRuntime = reader.ReadToEnd();
-        return _cachedRuntime;
+        return reader.ReadToEnd();
     }
 }

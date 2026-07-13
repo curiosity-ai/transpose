@@ -305,7 +305,7 @@ public sealed partial class Emitter
                 EmitMethodGroup(method, thisTarget: null);
                 break;
             case INamedTypeSymbol type:
-                _w.Write(_names.TypeReference(type));
+                _w.Write(TypeRef(type));
                 break;
             default:
                 _w.Write(NameMangler.JsIdentifier(id.Identifier.Text));
@@ -322,36 +322,43 @@ public sealed partial class Emitter
         }
         if (field.IsStatic)
         {
-            _w.Write($"{_names.TypeReference(field.ContainingType)}.{_names.FieldName(field)}");
+            _w.Write($"{TypeRef(field.ContainingType)}.{H5Naming.MemberJsName(field)}");
             return;
         }
         EmitReceiver(thisTarget);
-        _w.Write(_names.FieldName(field));
+        _w.Write(H5Naming.MemberJsName(field));
     }
 
     private void EmitPropertyAccess(IPropertySymbol prop, ExpressionSyntax? thisTarget)
     {
+        // [Template] getter (BCL properties like string.Length).
+        var template = prop.GetMethod is not null ? H5Naming.GetTemplate(prop.GetMethod.OriginalDefinition) : null;
+        if (template is not null)
+        {
+            var receiver = thisTarget is null ? "this" : Capture(() => EmitExpression(thisTarget));
+            _w.Write(SubstituteTemplate(template, receiver, new(), new()));
+            return;
+        }
         if (prop.IsStatic)
         {
-            _w.Write($"{_names.TypeReference(prop.ContainingType)}.{_names.PropertyName(prop)}");
+            _w.Write($"{TypeRef(prop.ContainingType)}.{H5Naming.MemberJsName(prop)}");
             return;
         }
         EmitReceiver(thisTarget);
-        _w.Write(_names.PropertyName(prop));
+        _w.Write(H5Naming.MemberJsName(prop));
     }
 
     private void EmitMethodGroup(IMethodSymbol method, ExpressionSyntax? thisTarget)
     {
         if (method.IsStatic)
         {
-            _w.Write($"{_names.TypeReference(method.ContainingType)}.{_names.MethodName(method)}");
+            _w.Write($"{TypeRef(method.ContainingType)}.{H5Naming.MemberJsName(method)}");
         }
         else
         {
-            // bind `this`
             _w.Write("(");
             EmitReceiverExpr(thisTarget);
-            _w.Write($").{_names.MethodName(method)}.bind(");
+            _w.Write($").{H5Naming.MemberJsName(method)}.bind(");
             EmitReceiverExpr(thisTarget);
             _w.Write(")");
         }
@@ -392,37 +399,53 @@ public sealed partial class Emitter
             case IFieldSymbol { IsConst: true } constField:
                 _w.Write(ConstantLiteral(constField.ConstantValue, constField.Type));
                 return;
-            case IFieldSymbol { ContainingType.TypeKind: TypeKind.Enum } enumField when enumField.HasConstantValue:
-                _w.Write(Convert.ToInt64(enumField.ConstantValue).ToString(CultureInfo.InvariantCulture));
+            case IFieldSymbol { ContainingType.TypeKind: TypeKind.Enum } enumField:
+                // Enum member → the enum object's member (h5 enums are objects).
+                _w.Write($"{TypeRef(enumField.ContainingType)}.{H5Naming.MemberJsName(enumField)}");
                 return;
             case IFieldSymbol field:
-                // Tuple element (named or ItemN) → the underlying ItemN slot.
                 if (field.ContainingType is { IsTupleType: true })
                 {
                     EmitExpression(member.Expression);
-                    _w.Write(".");
-                    _w.Write((field.CorrespondingTupleField ?? field).Name);
+                    _w.Write("." + (field.CorrespondingTupleField ?? field).Name);
                     return;
                 }
-                if (field.IsStatic) { _w.Write($"{_names.TypeReference(field.ContainingType)}.{_names.FieldName(field)}"); }
-                else { EmitExpression(member.Expression); _w.Write("."); _w.Write(_names.FieldName(field)); }
+                EmitFieldAccess(field, field.IsStatic ? null : member.Expression);
                 return;
             case IPropertySymbol prop:
-                if (prop.IsStatic) { _w.Write($"{_names.TypeReference(prop.ContainingType)}.{_names.PropertyName(prop)}"); }
-                else { EmitExpression(member.Expression); _w.Write("."); _w.Write(_names.PropertyName(prop)); }
+                EmitPropertyAccess(prop, prop.IsStatic ? null : member.Expression);
                 return;
             case IMethodSymbol method:
                 EmitMethodGroup(method, member.Expression is ThisExpressionSyntax ? null : member.Expression);
                 return;
             case INamedTypeSymbol type:
-                _w.Write(_names.TypeReference(type));
+                _w.Write(TypeRef(type));
                 return;
             default:
                 EmitExpression(member.Expression);
-                _w.Write(".");
-                _w.Write(NameMangler.JsIdentifier(member.Name.Identifier.Text));
+                _w.Write("." + NameMangler.JsIdentifier(member.Name.Identifier.Text));
                 return;
         }
+    }
+
+    /// <summary>
+    /// Substitutes an H5 [Template] string. {this} → receiver, {paramName}/{index} → argument JS.
+    /// </summary>
+    private string SubstituteTemplate(string template, string? receiver, Dictionary<string, string> argsByName, List<string> argsByPos)
+    {
+        return System.Text.RegularExpressions.Regex.Replace(template, @"\{(\*?[A-Za-z_][A-Za-z0-9_]*|\d+)\}", m =>
+        {
+            var token = m.Groups[1].Value;
+            if (token == "this") return receiver ?? "this";
+            if (token.StartsWith("*"))
+            {
+                var n = token.Substring(1);
+                return argsByName.TryGetValue(n, out var av) ? av : string.Join(", ", argsByPos);
+            }
+            if (argsByName.TryGetValue(token, out var v)) return v;
+            if (int.TryParse(token, out var idx) && idx < argsByPos.Count) return argsByPos[idx];
+            return m.Value;
+        });
     }
 
     private void EmitConditionalAccess(ConditionalAccessExpressionSyntax condAccess)

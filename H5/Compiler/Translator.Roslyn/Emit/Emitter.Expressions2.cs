@@ -16,57 +16,17 @@ public sealed partial class Emitter
     {
         var symbol = _model.GetSymbolInfo(invocation).Symbol as IMethodSymbol;
 
-        // base.Method(...) → Base.prototype.Method.call(this, args)
-        if (invocation.Expression is MemberAccessExpressionSyntax { Expression: BaseExpressionSyntax } baseAccess
-            && symbol is not null)
+        if (symbol is null)
         {
-            _w.Write($"{_names.TypeReference(symbol.ContainingType)}.prototype.{_names.MethodName(symbol)}.call(this");
-            if (invocation.ArgumentList.Arguments.Count > 0) { _w.Write(", "); EmitArguments(invocation.ArgumentList, symbol); }
-            _w.Write(")");
-            return;
-        }
-
-        // Console.Write/WriteLine(char) must display the character, not its code point.
-        if (symbol is { ContainingType.Name: "Console", Name: "Write" or "WriteLine" }
-            && symbol.ContainingType.ContainingNamespace?.Name == "System"
-            && invocation.ArgumentList.Arguments.Count == 1
-            && IsCharType(_model.GetTypeInfo(invocation.ArgumentList.Arguments[0].Expression).Type))
-        {
-            _w.Write($"System.Console.{symbol.Name}(H5R.chr(");
-            EmitExpression(invocation.ArgumentList.Arguments[0].Expression);
-            _w.Write("))");
-            return;
-        }
-
-        // Nullable<T>.GetValueOrDefault([default])
-        if (symbol is { Name: "GetValueOrDefault", ContainingType.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T }
-            && invocation.Expression is MemberAccessExpressionSyntax nullableAccess)
-        {
+            EmitExpression(invocation.Expression);
             _w.Write("(");
-            EmitExpression(nullableAccess.Expression);
-            _w.Write(" != null ? ");
-            EmitExpression(nullableAccess.Expression);
-            _w.Write(" : ");
-            if (invocation.ArgumentList.Arguments.Count > 0)
-                EmitExpression(invocation.ArgumentList.Arguments[0].Expression);
-            else
-                _w.Write(DefaultValueLiteral(((INamedTypeSymbol)symbol.ContainingType).TypeArguments[0]));
+            EmitArguments(invocation.ArgumentList, null);
             _w.Write(")");
             return;
         }
 
-        // x.ToString()  → H5R.toStr(x)
-        if (symbol is { Name: "ToString", Parameters.Length: 0 }
-            && invocation.Expression is MemberAccessExpressionSyntax toStrAccess)
-        {
-            _w.Write("H5R.toStr(");
-            EmitExpression(toStrAccess.Expression);
-            _w.Write(")");
-            return;
-        }
-
-        // Delegate invocation: symbol is the Invoke method of a delegate type.
-        if (symbol is { MethodKind: MethodKind.DelegateInvoke })
+        // Delegate invocation.
+        if (symbol.MethodKind == MethodKind.DelegateInvoke)
         {
             EmitExpression(invocation.Expression);
             _w.Write("(");
@@ -75,56 +35,94 @@ public sealed partial class Emitter
             return;
         }
 
-        if (symbol is null)
-        {
-            // Fallback: emit target then args verbatim.
-            EmitExpression(invocation.Expression);
-            _w.Write("(");
-            EmitArguments(invocation.ArgumentList, null);
-            _w.Write(")");
-            return;
-        }
+        var origin = symbol.OriginalDefinition;
+        var template = H5Naming.GetTemplate(origin) ?? H5Naming.GetTemplate(symbol);
 
-        // Extension method: Ext(this x, ...) called as x.Ext(...) → StaticType.Ext(x, ...)
-        if (symbol.IsExtensionMethod && symbol.ReducedFrom is not null
-            && invocation.Expression is MemberAccessExpressionSyntax extAccess)
-        {
-            _w.Write($"{_names.TypeReference(symbol.ContainingType)}.{_names.MethodName(symbol.ReducedFrom)}(");
-            EmitExpression(extAccess.Expression);
-            if (invocation.ArgumentList.Arguments.Count > 0) { _w.Write(", "); EmitArguments(invocation.ArgumentList, symbol.ReducedFrom); }
-            _w.Write(")");
-            return;
-        }
-
-        // by-ref (out/ref/in) arguments need holder objects with write-back.
-        if (HasByRefArguments(invocation.ArgumentList, symbol))
+        // by-ref args (no template): holder objects with write-back.
+        if (template is null && HasByRefArguments(invocation.ArgumentList, symbol))
         {
             EmitByRefInvocation(invocation, symbol);
             return;
         }
 
-        EmitCallee(invocation, symbol);
+        var isBase = invocation.Expression is MemberAccessExpressionSyntax { Expression: BaseExpressionSyntax };
+        var receiverExpr = invocation.Expression is MemberAccessExpressionSyntax ma && !isBase ? ma.Expression : null;
+
+        if (template is not null)
+        {
+            var (byName, byPos) = CaptureArguments(invocation.ArgumentList, symbol);
+            var receiver = symbol.IsStatic ? null
+                : receiverExpr is not null ? Capture(() => EmitExpression(receiverExpr))
+                : "this";
+            _w.Write(SubstituteTemplate(template, receiver, byName, byPos));
+            return;
+        }
+
+        // base.Method(...) → Base.Method.call(this, args)
+        if (isBase)
+        {
+            _w.Write($"{TypeRef(symbol.ContainingType)}.{H5Naming.MemberJsName(symbol)}.call(this");
+            if (invocation.ArgumentList.Arguments.Count > 0) { _w.Write(", "); EmitArguments(invocation.ArgumentList, symbol); }
+            _w.Write(")");
+            return;
+        }
+
+        // Extension method (no template) → StaticType.Method(receiver, args)
+        if (symbol is { IsExtensionMethod: true, ReducedFrom: not null } && receiverExpr is not null)
+        {
+            _w.Write($"{TypeRef(symbol.ContainingType)}.{H5Naming.MemberJsName(symbol.ReducedFrom)}(");
+            EmitExpression(receiverExpr);
+            if (invocation.ArgumentList.Arguments.Count > 0) { _w.Write(", "); EmitArguments(invocation.ArgumentList, symbol.ReducedFrom); }
+            _w.Write(")");
+            return;
+        }
+
+        // Ordinary call.
+        if (symbol.IsStatic)
+        {
+            _w.Write($"{TypeRef(symbol.ContainingType)}.{H5Naming.MemberJsName(symbol)}");
+        }
+        else if (receiverExpr is not null)
+        {
+            EmitExpression(receiverExpr);
+            _w.Write($".{H5Naming.MemberJsName(symbol)}");
+        }
+        else
+        {
+            _w.Write($"this.{H5Naming.MemberJsName(symbol)}");
+        }
         _w.Write("(");
         EmitArguments(invocation.ArgumentList, symbol);
         _w.Write(")");
     }
 
-    private void EmitCallee(InvocationExpressionSyntax invocation, IMethodSymbol symbol)
+    /// <summary>Captures each argument's JS, keyed by parameter name and by position.</summary>
+    private (Dictionary<string, string> byName, List<string> byPos) CaptureArguments(ArgumentListSyntax argList, IMethodSymbol method)
     {
-        if (symbol.IsStatic)
+        var byName = new Dictionary<string, string>();
+        var byPos = new List<string>();
+        var args = argList.Arguments;
+
+        for (var i = 0; i < args.Count; i++)
         {
-            _w.Write($"{_names.TypeReference(symbol.ContainingType)}.{_names.MethodName(symbol)}");
+            var pType = i < method.Parameters.Length ? method.Parameters[i].Type : null;
+            var idx = i;
+            byPos.Add(Capture(() => EmitExpressionConverted(args[idx].Expression, pType)));
         }
-        else if (invocation.Expression is MemberAccessExpressionSyntax memberAccess)
+
+        for (var pi = 0; pi < method.Parameters.Length; pi++)
         {
-            EmitExpression(memberAccess.Expression);
-            _w.Write($".{_names.MethodName(symbol)}");
+            var p = method.Parameters[pi];
+            if (p.IsParams)
+            {
+                byName[p.Name] = "[" + string.Join(", ", byPos.Skip(pi)) + "]";
+            }
+            else if (pi < byPos.Count)
+            {
+                byName[p.Name] = byPos[pi];
+            }
         }
-        else
-        {
-            // Unqualified instance call → implicit this.
-            _w.Write($"this.{_names.MethodName(symbol)}");
-        }
+        return (byName, byPos);
     }
 
     private bool HasByRefArguments(ArgumentListSyntax argList, IMethodSymbol symbol)
@@ -138,6 +136,23 @@ public sealed partial class Emitter
             }
         }
         return false;
+    }
+
+    private void EmitCallee(InvocationExpressionSyntax invocation, IMethodSymbol symbol)
+    {
+        if (symbol.IsStatic)
+        {
+            _w.Write($"{TypeRef(symbol.ContainingType)}.{H5Naming.MemberJsName(symbol)}");
+        }
+        else if (invocation.Expression is MemberAccessExpressionSyntax memberAccess)
+        {
+            EmitExpression(memberAccess.Expression);
+            _w.Write($".{H5Naming.MemberJsName(symbol)}");
+        }
+        else
+        {
+            _w.Write($"this.{H5Naming.MemberJsName(symbol)}");
+        }
     }
 
     private void EmitByRefInvocation(InvocationExpressionSyntax invocation, IMethodSymbol symbol)
@@ -350,17 +365,29 @@ public sealed partial class Emitter
             return;
         }
 
+        // Constructor [Template] (some BCL types).
+        var template = ctor is not null ? H5Naming.GetTemplate(ctor.OriginalDefinition) : null;
+        if (template is not null && argList is not null)
+        {
+            var (byName, byPos) = CaptureArguments(argList, ctor!);
+            _w.Write(SubstituteTemplate(template, null, byName, byPos));
+            return;
+        }
+
+        var ctorName = ctor is not null ? CtorName(ctor) : "ctor";
+        var typeRef = TypeRef(type);
+
         if (type.Locations.Any(l => l.IsInSource))
         {
-            var ctorName = ctor is not null ? _names.MethodName(ctor) : "$ctor";
-            _w.Write($"H5R.create({_names.TypeReference(type)}, \"{ctorName}\", [");
+            // User type: new Type(args) for the primary ctor, new Type.$ctorN(args) otherwise.
+            _w.Write(ctorName == "ctor" ? $"new {typeRef}(" : $"new {typeRef}.{ctorName}(");
             if (argList is not null) EmitArguments(argList, ctor);
-            _w.Write("])");
+            _w.Write(")");
         }
         else
         {
-            // BCL type: use JS `new` on the runtime-provided constructor.
-            _w.Write($"new {_names.TypeReference(type)}(");
+            // BCL type: new (TypeRef).ctorName(args) — matches H5's generic instantiation form.
+            _w.Write($"new ({typeRef}).{ctorName}(");
             if (argList is not null) EmitArguments(argList, ctor);
             _w.Write(")");
         }
@@ -374,13 +401,15 @@ public sealed partial class Emitter
             {
                 // Object initializer member: X = value
                 case AssignmentExpressionSyntax { Left: IdentifierNameSyntax name } assign:
-                    _w.Write($"{target}.{NameMangler.JsIdentifier(name.Identifier.Text)} = ");
+                    var memberSym = _model.GetSymbolInfo(name).Symbol;
+                    var memberName = memberSym is not null ? H5Naming.MemberJsName(memberSym) : NameMangler.JsIdentifier(name.Identifier.Text);
+                    _w.Write($"{target}.{memberName} = ");
                     EmitExpression(assign.Right);
                     _w.Write("; ");
                     break;
                 // Index initializer: [key] = value
                 case AssignmentExpressionSyntax { Left: ImplicitElementAccessSyntax idx } assign:
-                    _w.Write($"{target}.set_Item(");
+                    _w.Write($"{target}.setItem(");
                     EmitArgumentList(idx.ArgumentList);
                     _w.Write(", ");
                     EmitExpression(assign.Right);
@@ -388,7 +417,7 @@ public sealed partial class Emitter
                     break;
                 // Collection element with multiple values: { k, v }  (e.g. dictionary)
                 case InitializerExpressionSyntax nested:
-                    _w.Write($"{target}.Add(");
+                    _w.Write($"{target}.{AddMethodName(nested)}(");
                     for (var i = 0; i < nested.Expressions.Count; i++)
                     {
                         if (i > 0) _w.Write(", ");
@@ -398,12 +427,20 @@ public sealed partial class Emitter
                     break;
                 // Collection element: single value
                 default:
-                    _w.Write($"{target}.Add(");
+                    _w.Write($"{target}.{AddMethodName(expr)}(");
                     EmitExpression(expr);
                     _w.Write("); ");
                     break;
             }
         }
+    }
+
+    /// <summary>Resolves the JS name of the Add method a collection initializer element binds to.</summary>
+    private string AddMethodName(ExpressionSyntax element)
+    {
+        if (_model.GetCollectionInitializerSymbolInfo(element).Symbol is IMethodSymbol add)
+            return H5Naming.MemberJsName(add);
+        return "add";
     }
 
     // ---- tuples ------------------------------------------------------------
@@ -456,7 +493,7 @@ public sealed partial class Emitter
         if (_model.GetSymbolInfo(binary).Symbol is IMethodSymbol { MethodKind: MethodKind.UserDefinedOperator, IsImplicitlyDeclared: false } opMethod
             && opMethod.Locations.Any(l => l.IsInSource))
         {
-            _w.Write($"{_names.TypeReference(opMethod.ContainingType)}.{_names.MethodName(opMethod)}(");
+            _w.Write($"{TypeRef(opMethod.ContainingType)}.{H5Naming.MemberJsName(opMethod)}(");
             EmitExpression(binary.Left);
             _w.Write(", ");
             EmitExpression(binary.Right);
@@ -470,7 +507,7 @@ public sealed partial class Emitter
             var t = _model.GetTypeInfo(binary.Right).Type;
             _w.Write("H5R.is(");
             EmitExpression(binary.Left);
-            _w.Write($", {_names.TypeReference(t!)})");
+            _w.Write($", {TypeRef(t!)})");
             return;
         }
         if (binary.IsKind(SyntaxKind.AsExpression))
@@ -478,7 +515,7 @@ public sealed partial class Emitter
             var t = _model.GetTypeInfo(binary.Right).Type;
             _w.Write("H5R.as(");
             EmitExpression(binary.Left);
-            _w.Write($", {_names.TypeReference(t!)})");
+            _w.Write($", {TypeRef(t!)})");
             return;
         }
 
@@ -592,13 +629,13 @@ public sealed partial class Emitter
         var leftType = _model.GetTypeInfo(assignment.Left).Type;
         var rightType = _model.GetTypeInfo(assignment.Right).Type;
 
-        // Indexer set on a collection: coll[i] = v → coll.set_Item(i, v)
+        // Indexer set on a collection: coll[i] = v → coll.setItem(i, v)
         if (op == "=" && assignment.Left is ElementAccessExpressionSyntax ea
             && _model.GetSymbolInfo(ea).Symbol is IPropertySymbol { IsIndexer: true } idx
             && idx.ContainingType.SpecialType != SpecialType.System_String)
         {
             EmitExpression(ea.Expression);
-            _w.Write(".set_Item(");
+            _w.Write(".setItem(");
             EmitArgumentList(ea.ArgumentList);
             _w.Write(", ");
             EmitExpressionConverted(assignment.Right, leftType);
@@ -640,7 +677,7 @@ public sealed partial class Emitter
             && opm.Locations.Any(l => l.IsInSource)
             && !prefix.IsKind(SyntaxKind.PreIncrementExpression) && !prefix.IsKind(SyntaxKind.PreDecrementExpression))
         {
-            _w.Write($"{_names.TypeReference(opm.ContainingType)}.{_names.MethodName(opm)}(");
+            _w.Write($"{TypeRef(opm.ContainingType)}.{H5Naming.MemberJsName(opm)}(");
             EmitExpression(prefix.Operand);
             _w.Write(")");
             return;
@@ -740,7 +777,7 @@ public sealed partial class Emitter
 
             // Source types and BCL collections route through get_Item.
             EmitExpression(element.Expression);
-            _w.Write(".get_Item(");
+            _w.Write(".getItem(");
             EmitArgumentList(element.ArgumentList);
             _w.Write(")");
             return;
