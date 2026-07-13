@@ -870,37 +870,10 @@ namespace H5.Translator
             return node.WithStatements(newStatements);
         }
 
-        public override SyntaxNode VisitLockStatement(LockStatementSyntax node)
-        {
-            if (node.SyntaxTree == null || node.SyntaxTree != semanticModel.SyntaxTree)
-            {
-                return base.VisitLockStatement(node);
-            }
-
-            var typeInfo = semanticModel.GetTypeInfo(node.Expression);
-            var type = typeInfo.Type ?? typeInfo.ConvertedType;
-
-            if (type != null && type.Name == "Lock" && type.ContainingNamespace?.ToString() == "System.Threading")
-            {
-                var memberAccess = SyntaxFactory.MemberAccessExpression(
-                    SyntaxKind.SimpleMemberAccessExpression,
-                    node.Expression,
-                    SyntaxFactory.IdentifierName("EnterScope")
-                );
-
-                var invocation = SyntaxFactory.InvocationExpression(memberAccess);
-
-                var usingStmt = SyntaxFactory.UsingStatement(
-                    null,
-                    invocation,
-                    node.Statement
-                ).WithLeadingTrivia(node.GetLeadingTrivia()).WithTrailingTrivia(node.GetTrailingTrivia());
-
-                return Visit(usingStmt);
-            }
-
-            return base.VisitLockStatement(node);
-        }
+        // lock statements pass through unchanged, including C# 13
+        // System.Threading.Lock (rewrite case S38, removed): the emitter lowers
+        // every lock to `expression; body` — JS is single-threaded, and the
+        // EnterScope/Dispose pair the old lowering produced were both no-ops.
 
         private SyntaxList<StatementSyntax> ProcessBlockStatements(IEnumerable<StatementSyntax> statementsEnumerable)
         {
@@ -1171,6 +1144,10 @@ namespace H5.Translator
 
         public override SyntaxNode VisitFileScopedNamespaceDeclaration(FileScopedNamespaceDeclarationSyntax node)
         {
+            // File-scoped namespaces pass through unchanged (rewrite case S28,
+            // removed): the NRefactory tokenizer lowers `namespace X;` to the braced
+            // form at the token level. Only the usings/members are visited here,
+            // with the same removed-using trivia bookkeeping as braced namespaces.
             var externs = VisitList(node.Externs);
 
             SyntaxTriviaList? pendingTrivia = null;
@@ -1180,8 +1157,7 @@ namespace H5.Translator
             bool firstMember = true;
             foreach (var member in node.Members)
             {
-                var visited = Visit(member) as MemberDeclarationSyntax;
-                if (visited != null)
+                if (Visit(member) is MemberDeclarationSyntax visited)
                 {
                     if (firstMember && pendingTrivia != null)
                     {
@@ -1193,21 +1169,17 @@ namespace H5.Translator
                 }
             }
 
-            var nsDecl = SyntaxFactory.NamespaceDeclaration(
-                node.Name,
-                externs,
-                usings,
-                SyntaxFactory.List(members)
-            )
-            .WithNamespaceKeyword(SyntaxFactory.Token(SyntaxKind.NamespaceKeyword).WithTrailingTrivia(SyntaxFactory.Space))
-            .WithLeadingTrivia(node.GetLeadingTrivia());
+            var result = node
+                .WithExterns(externs)
+                .WithUsings(usings)
+                .WithMembers(SyntaxFactory.List(members));
 
             if (pendingTrivia != null)
             {
-                nsDecl = nsDecl.WithCloseBraceToken(nsDecl.CloseBraceToken.WithLeadingTrivia(pendingTrivia.Value.AddRange(nsDecl.CloseBraceToken.LeadingTrivia)));
+                result = result.WithSemicolonToken(result.SemicolonToken.WithTrailingTrivia(result.SemicolonToken.TrailingTrivia.AddRange(pendingTrivia.Value)));
             }
 
-            return nsDecl;
+            return result;
         }
 
         public override SyntaxNode VisitWithExpression(WithExpressionSyntax node)
@@ -4166,12 +4138,8 @@ namespace H5.Translator
             var ti = semanticModel.GetTypeInfo(node);
             var oldValue = IsExpressionOfT;
 
-            // Remove static
-            if (node.Modifiers.Any(m => m.IsKind(SyntaxKind.StaticKeyword)))
-            {
-                var idx = node.Modifiers.IndexOf(SyntaxKind.StaticKeyword);
-                node = node.WithModifiers(node.Modifiers.RemoveAt(idx));
-            }
+            // static lambda modifiers pass through unchanged (rewrite case S20,
+            // removed): the NRefactory tokenizer drops `static` inside blocks.
 
             if (ti.Type != null && ti.Type.IsExpressionOfT() ||
                 ti.ConvertedType != null && ti.ConvertedType.IsExpressionOfT())
@@ -4352,12 +4320,8 @@ namespace H5.Translator
             var ti = semanticModel.GetTypeInfo(node);
             var oldValue = IsExpressionOfT;
 
-            // Remove static
-            if (node.Modifiers.Any(m => m.IsKind(SyntaxKind.StaticKeyword)))
-            {
-                var idx = node.Modifiers.IndexOf(SyntaxKind.StaticKeyword);
-                node = node.WithModifiers(node.Modifiers.RemoveAt(idx));
-            }
+            // static lambda modifiers pass through unchanged (rewrite case S20,
+            // removed): the NRefactory tokenizer drops `static` inside blocks.
 
             if (ti.Type != null && ti.Type.IsExpressionOfT() ||
                 ti.ConvertedType != null && ti.ConvertedType.IsExpressionOfT())

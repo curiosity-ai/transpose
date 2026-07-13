@@ -423,6 +423,8 @@ namespace ICSharpCode.NRefactory.MonoCSharp
             public int parsing_generic_less_than;
             public int current_token;
             public object val;
+            public bool parsing_namespace_header;
+            public int file_scoped_namespace_depth;
 
             public Position (Tokenizer t)
             {
@@ -443,6 +445,8 @@ namespace ICSharpCode.NRefactory.MonoCSharp
                 parsing_generic_less_than = t.parsing_generic_less_than;
                 current_token = t.current_token;
                 val = t.val;
+                parsing_namespace_header = t.parsing_namespace_header;
+                file_scoped_namespace_depth = t.file_scoped_namespace_depth;
             }
         }
 
@@ -487,6 +491,8 @@ namespace ICSharpCode.NRefactory.MonoCSharp
             parsing_generic_less_than = p.parsing_generic_less_than;
             current_token = p.current_token;
             val = p.val;
+            parsing_namespace_header = p.parsing_namespace_header;
+            file_scoped_namespace_depth = p.file_scoped_namespace_depth;
         }
 
         // Do not reset the position, ignore it.
@@ -2053,7 +2059,10 @@ namespace ICSharpCode.NRefactory.MonoCSharp
 
         public bool advance ()
         {
-            return peek_char () != -1 || CompleteOnEOF;
+            // file_scoped_namespace_depth: synthesized close braces for C# 10
+            // file-scoped namespaces are still pending after the raw input ends
+            // (see token()), so the parser must keep pulling tokens.
+            return peek_char () != -1 || CompleteOnEOF || file_scoped_namespace_depth > 0;
         }
 
         public Object Value {
@@ -2067,9 +2076,45 @@ namespace ICSharpCode.NRefactory.MonoCSharp
             return val;
         }
 
+        //
+        // C# 10 file-scoped namespaces are handled at the token level: the `;`
+        // terminating `namespace Some.Name;` is turned into `{` and a matching `}`
+        // is injected before EOF, so the parser only ever sees the braced form.
+        // The state participates in Push/PopPosition so peek_token stays sound.
+        //
+        bool parsing_namespace_header;
+        int file_scoped_namespace_depth;
+
         public int token ()
         {
             current_token = xtoken ();
+
+            // C# 9 static lambdas / anonymous methods: inside a block, `static` can
+            // only be an anonymous-function modifier (static local functions are
+            // lowered away before this parser runs), and it has no semantic effect
+            // on the generated JS — drop the token so the C#6 grammar accepts it.
+            while (current_token == Token.STATIC && parsing_block > 0) {
+                current_token = xtoken ();
+            }
+
+            if (parsing_namespace_header) {
+                if (current_token == Token.SEMICOLON) {
+                    parsing_namespace_header = false;
+                    file_scoped_namespace_depth++;
+                    current_token = Token.OPEN_BRACE;
+                } else if (current_token != Token.IDENTIFIER && current_token != Token.DOT) {
+                    // `{` (regular form) or anything unexpected ends the header.
+                    parsing_namespace_header = false;
+                }
+            } else if (current_token == Token.NAMESPACE) {
+                parsing_namespace_header = true;
+            }
+
+            if (current_token == Token.EOF && file_scoped_namespace_depth > 0) {
+                file_scoped_namespace_depth--;
+                current_token = Token.CLOSE_BRACE;
+            }
+
             return current_token;
         }
 
