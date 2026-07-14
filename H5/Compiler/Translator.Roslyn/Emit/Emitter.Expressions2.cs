@@ -314,16 +314,23 @@ public sealed partial class Emitter
         }
         _w.Write("); ");
 
-        // Write back out/ref values to their targets.
+        // Write back out/ref values to their targets (skip discards: out _).
         for (var i = 0; i < args.Count; i++)
         {
             if (holders[i] is null) continue;
+            if (IsDiscardTarget(args[i].Expression)) continue;
             EmitByRefWriteBackTarget(args[i].Expression);
             _w.Write($" = {holders[i]}.v; ");
         }
 
         _w.Write("return $ret; })()");
     }
+
+    /// <summary>True for a discard target (out _ or a discard designation).</summary>
+    private bool IsDiscardTarget(ExpressionSyntax expr)
+        => expr is DeclarationExpressionSyntax { Designation: DiscardDesignationSyntax }
+           || _model.GetSymbolInfo(expr).Symbol is IDiscardSymbol
+           || (expr is IdentifierNameSyntax { Identifier.Text: "_" } && _model.GetSymbolInfo(expr).Symbol is null);
 
     private void EmitByRefWriteBackTarget(ExpressionSyntax expr)
     {
@@ -359,13 +366,23 @@ public sealed partial class Emitter
                 }
             }
 
+            // Positional JS calls can't skip a hole, so fill any omitted argument that
+            // precedes a provided one with its parameter's default value. Trailing
+            // omitted optionals are left off (the callee supplies its own defaults).
+            var lastProvided = -1;
+            for (var i = 0; i < ordered.Length; i++) if (ordered[i] is not null) lastProvided = i;
+
             var first = true;
-            for (var i = 0; i < ordered.Length; i++)
+            for (var i = 0; i <= lastProvided; i++)
             {
-                if (ordered[i] is null) continue; // rely on callee default
                 if (!first) _w.Write(", ");
                 first = false;
-                EmitExpressionConverted(ordered[i]!, i < method.Parameters.Length ? method.Parameters[i].Type : null);
+                if (ordered[i] is not null)
+                    EmitExpressionConverted(ordered[i]!, method.Parameters[i].Type);
+                else if (method.Parameters[i].HasExplicitDefaultValue)
+                    _w.Write(ConstantLiteral(method.Parameters[i].ExplicitDefaultValue, method.Parameters[i].Type));
+                else
+                    _w.Write("null");
             }
             return;
         }
@@ -762,6 +779,13 @@ public sealed partial class Emitter
         var leftType = _model.GetTypeInfo(assignment.Left).Type;
         var rightType = _model.GetTypeInfo(assignment.Right).Type;
 
+        // Discard assignment: _ = expr → evaluate expr for its side effects only.
+        if (op == "=" && _model.GetSymbolInfo(assignment.Left).Symbol is IDiscardSymbol)
+        {
+            EmitExpression(assignment.Right);
+            return;
+        }
+
         // Indexer set on a collection: coll[i] = v → coll.setItem(i, v)
         if (op == "=" && assignment.Left is ElementAccessExpressionSyntax ea
             && _model.GetSymbolInfo(ea).Symbol is IPropertySymbol { IsIndexer: true } idx
@@ -1012,27 +1036,46 @@ public sealed partial class Emitter
 
     // ---- lambda ------------------------------------------------------------
 
-    private void EmitLambda(IEnumerable<string> parameters, CSharpSyntaxNode body, bool isAsync)
+    private void EmitLambda(IEnumerable<string> parameters, CSharpSyntaxNode body, bool isAsync,
+        SeparatedSyntaxList<ParameterSyntax>? paramSyntax = null)
     {
         if (isAsync) _w.Write("async ");
         _w.Write("function (");
-        _w.Write(string.Join(", ", parameters.Select(NameMangler.JsIdentifier)));
+        // Uniquify discard parameters ("_") so JS doesn't see duplicate names.
+        var discardN = 0;
+        _w.Write(string.Join(", ", parameters.Select(p =>
+            p == "_" ? "$d" + discardN++ : NameMangler.JsIdentifier(p))));
         _w.Write(") ");
+
+        // Optional lambda parameters (C# 12): default when undefined.
+        var defaults = paramSyntax?.Where(p => p.Default is not null).ToList();
 
         if (body is BlockSyntax block)
         {
-            _w.Block(() => { foreach (var s in block.Statements) EmitStatement(s); });
+            _w.Block(() => { EmitLambdaParamDefaults(defaults); foreach (var s in block.Statements) EmitStatement(s); });
         }
         else if (body is ExpressionSyntax exprBody)
         {
             _w.Block(() =>
             {
+                EmitLambdaParamDefaults(defaults);
                 // If the lambda's body has a value, return it.
-                var typeInfo = _model.GetTypeInfo(exprBody);
                 _w.Write("return ");
                 EmitExpression(exprBody);
                 _w.WriteLine(";");
             });
+        }
+    }
+
+    private void EmitLambdaParamDefaults(System.Collections.Generic.List<ParameterSyntax>? defaults)
+    {
+        if (defaults is null) return;
+        foreach (var p in defaults)
+        {
+            var name = NameMangler.JsIdentifier(p.Identifier.Text);
+            _w.Write($"if ({name} === undefined) {{ {name} = ");
+            EmitExpression(p.Default!.Value);
+            _w.WriteLine("; }");
         }
     }
 

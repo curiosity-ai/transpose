@@ -89,7 +89,8 @@ public sealed partial class Emitter
                 EmitInitializerArray(initializer);
                 break;
             case ParenthesizedLambdaExpressionSyntax lambda:
-                EmitLambda(lambda.ParameterList.Parameters.Select(p => p.Identifier.Text), lambda.Body, lambda.Modifiers.Any(SyntaxKind.AsyncKeyword));
+                EmitLambda(lambda.ParameterList.Parameters.Select(p => p.Identifier.Text), lambda.Body,
+                    lambda.Modifiers.Any(SyntaxKind.AsyncKeyword), lambda.ParameterList.Parameters);
                 break;
             case SimpleLambdaExpressionSyntax simpleLambda:
                 EmitLambda(new[] { simpleLambda.Parameter.Identifier.Text }, simpleLambda.Body, simpleLambda.Modifiers.Any(SyntaxKind.AsyncKeyword));
@@ -413,7 +414,10 @@ public sealed partial class Emitter
                     _w.Write("("); EmitExpression(member.Expression); _w.Write(" != null)");
                     return;
                 case "Value":
+                    // Nullable<T>.Value throws InvalidOperationException when null.
+                    _w.Write("System.Nullable.getValue(");
                     EmitExpression(member.Expression);
+                    _w.Write(")");
                     return;
             }
         }

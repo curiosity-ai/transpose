@@ -245,8 +245,9 @@ public sealed partial class Emitter
         {
             for (var i = 0; i < targets.Count; i++)
             {
-                var (name, isNew) = targets[i];
-                _w.WriteLine($"{(isNew ? "let " : "")}{NameMangler.JsIdentifier(name)} = {temp}.Item{i + 1};");
+                var (name, isNew, isDiscard) = targets[i];
+                if (isDiscard) continue; // position preserved, no binding
+                _w.WriteLine($"{(isNew ? "let " : "")}{NameMangler.JsIdentifier(name!)} = {temp}.Item{i + 1};");
             }
             return;
         }
@@ -255,17 +256,18 @@ public sealed partial class Emitter
         var holders = targets.Select((_, i) => $"{temp}_h{i}").ToList();
         for (var i = 0; i < targets.Count; i++)
         {
-            if (targets[i].isNew) _w.WriteLine($"let {NameMangler.JsIdentifier(targets[i].name)};");
+            if (targets[i].isNew && !targets[i].isDiscard) _w.WriteLine($"let {NameMangler.JsIdentifier(targets[i].name!)};");
             _w.WriteLine($"let {holders[i]} = {{ v: null }};");
         }
         _w.WriteLine($"{temp}.Deconstruct({string.Join(", ", holders)});");
         for (var i = 0; i < targets.Count; i++)
         {
-            _w.WriteLine($"{NameMangler.JsIdentifier(targets[i].name)} = {holders[i]}.v;");
+            if (targets[i].isDiscard) continue;
+            _w.WriteLine($"{NameMangler.JsIdentifier(targets[i].name!)} = {holders[i]}.v;");
         }
     }
 
-    private System.Collections.Generic.IEnumerable<(string name, bool isNew)> CollectDeconstructionTargets(ExpressionSyntax left)
+    private System.Collections.Generic.IEnumerable<(string? name, bool isNew, bool isDiscard)> CollectDeconstructionTargets(ExpressionSyntax left)
     {
         switch (left)
         {
@@ -275,10 +277,16 @@ public sealed partial class Emitter
                     switch (arg.Expression)
                     {
                         case DeclarationExpressionSyntax { Designation: SingleVariableDesignationSyntax d }:
-                            yield return (d.Identifier.Text, true);
+                            yield return (d.Identifier.Text, true, false);
+                            break;
+                        case DeclarationExpressionSyntax { Designation: DiscardDesignationSyntax }:
+                            yield return (null, false, true);
+                            break;
+                        case IdentifierNameSyntax { Identifier.Text: "_" } when _model.GetSymbolInfo(arg.Expression).Symbol is IDiscardSymbol:
+                            yield return (null, false, true);
                             break;
                         case IdentifierNameSyntax id:
-                            yield return (id.Identifier.Text, false);
+                            yield return (id.Identifier.Text, false, false);
                             break;
                     }
                 }
@@ -287,7 +295,9 @@ public sealed partial class Emitter
                 foreach (var v in paren.Variables)
                 {
                     if (v is SingleVariableDesignationSyntax single)
-                        yield return (single.Identifier.Text, true);
+                        yield return (single.Identifier.Text, true, false);
+                    else if (v is DiscardDesignationSyntax)
+                        yield return (null, false, true);
                 }
                 break;
         }
