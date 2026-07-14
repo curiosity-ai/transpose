@@ -468,14 +468,11 @@ public sealed partial class Emitter
     private void WriteTemplate(string template, bool isStatic, bool isExtension, string? receiver, Dictionary<string, string> argsByName, List<string> argsByPos)
     {
         var sub = SubstituteTemplate(template, receiver, argsByName, argsByPos);
-        if (!isStatic && !isExtension && receiver is not null && !template.Contains("{this}"))
-        {
-            _w.Write(receiver + "." + sub);
-        }
-        else
-        {
-            _w.Write(sub);
-        }
+        // A leading "<self>" marker (or a {this...} reference) means the template is
+        // self-contained; otherwise a bare instance template is relative to the receiver.
+        var absolute = isStatic || isExtension || receiver is null
+                       || template.Contains("{this") || template.Contains("<self>");
+        _w.Write(absolute ? sub : receiver + "." + sub);
     }
 
     /// <summary>
@@ -483,6 +480,20 @@ public sealed partial class Emitter
     /// </summary>
     private string SubstituteTemplate(string template, string? receiver, Dictionary<string, string> argsByName, List<string> argsByPos)
     {
+        // Strip the self-reference marker used by some H5 templates (e.g. GetType()).
+        template = template.Replace("<self>", "");
+        var recv = receiver ?? "this";
+        // {this:type} / {key:type} → runtime type via H5.getType(expr).
+        template = System.Text.RegularExpressions.Regex.Replace(template, @"\{(this|\*?[A-Za-z_][A-Za-z0-9_]*|\d+):type\}", m =>
+        {
+            var tok = m.Groups[1].Value;
+            var expr = tok == "this" ? recv
+                : argsByName.TryGetValue(tok, out var av) ? av
+                : int.TryParse(tok, out var i2) && i2 < argsByPos.Count ? argsByPos[i2]
+                : recv;
+            return $"H5.getType({expr})";
+        });
+
         return System.Text.RegularExpressions.Regex.Replace(template, @"\{(\*?[A-Za-z_][A-Za-z0-9_]*|\d+)\}", m =>
         {
             var token = m.Groups[1].Value;
