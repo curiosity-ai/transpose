@@ -26,6 +26,13 @@ public sealed class RoslynTranslator
     {
         "CS8830", // covariant return types in overrides — no runtime type check in JS
         "CS5001", // no static Main — library-style snippets simply emit no entry point
+        // async ValueTask: H5.dll's ValueTask lacks the async method-builder attribute, so
+        // Roslyn (against the H5 BCL) rejects it as a task-like return type and then reports
+        // a missing return. We emit ValueTask exactly like Task (a Promise → h5.js Task), so
+        // both are harmless. (The native comparison compiles against the real BCL, unaffected.)
+        "CS1983", // return type of an async method must be void/Task/task-like…
+        "CS0161", // not all code paths return a value (fallout of the above; JS returns undefined)
+        "CS4032", // 'await' in a method with a non-task-like return (same ValueTask fallout)
     };
 
     /// <summary>Translate a single source file.</summary>
