@@ -25,6 +25,13 @@ public sealed partial class Emitter
     /// function parameters (raw names); elsewhere captured params read from the instance.</summary>
     private bool _inPrimaryCtorBody;
 
+    /// <summary>
+    /// Active goto label-dispatch contexts. When non-empty a statement body is being lowered
+    /// into a `for(;;) switch($state)` machine: `goto L` sets the state and continues the loop.
+    /// The top entry maps each label name to its case index and names the dispatch loop.
+    /// </summary>
+    private readonly Stack<(System.Collections.Generic.Dictionary<string, int> labels, string loopLabel, string stateVar)> _gotoContexts = new();
+
     public Emitter(CSharpCompilation compilation, string assemblyName = CompilationBuilder.DefaultAssemblyName)
     {
         _compilation = compilation;

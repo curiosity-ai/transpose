@@ -97,6 +97,13 @@ public sealed partial class Emitter
                     _w.WriteLine("return;"); // yield break
                 }
                 break;
+            case GotoStatementSyntax gotoStmt:
+                EmitGoto(gotoStmt);
+                break;
+            case LabeledStatementSyntax labeled:
+                // Reached outside a state machine (label with no goto to it): emit its body.
+                EmitStatement(labeled.Statement);
+                break;
             case EmptyStatementSyntax:
                 break;
             default:
@@ -157,6 +164,15 @@ public sealed partial class Emitter
     /// </summary>
     internal void EmitStatements(IReadOnlyList<StatementSyntax> statements, int start = 0)
     {
+        // A body containing labels (goto targets) is lowered into a state machine so that
+        // `goto` can jump between top-level sections (works for backward loops and forward
+        // skips, and — since async bodies are native `async` IIFEs — across `await`).
+        if (start == 0 && statements.Any(s => s is LabeledStatementSyntax))
+        {
+            EmitGotoStateMachine(statements);
+            return;
+        }
+
         for (var i = start; i < statements.Count; i++)
         {
             var s = statements[i];
@@ -183,6 +199,67 @@ public sealed partial class Emitter
         }
     }
 
+    /// <summary>
+    /// Lowers a statement body containing labels into a `for(;;) switch($state)` machine.
+    /// Top-level statements are split into sections at each label; sequential flow is the
+    /// switch's fall-through, and `goto L` sets $state and re-enters the loop. Locals are
+    /// declared with `var` (function-scoped) so their values survive across loop iterations.
+    /// </summary>
+    private void EmitGotoStateMachine(IReadOnlyList<StatementSyntax> statements)
+    {
+        var sections = new List<(string? label, List<StatementSyntax> stmts)> { (null, new List<StatementSyntax>()) };
+        var labelIndex = new Dictionary<string, int>();
+        foreach (var s in statements)
+        {
+            if (s is LabeledStatementSyntax lbl)
+            {
+                labelIndex[lbl.Identifier.Text] = sections.Count;
+                sections.Add((lbl.Identifier.Text, new List<StatementSyntax> { lbl.Statement }));
+            }
+            else
+            {
+                sections[^1].stmts.Add(s);
+            }
+        }
+
+        var depth = _gotoContexts.Count;
+        var loopLabel = depth == 0 ? "$goto" : "$goto" + depth;
+        var stateVar = depth == 0 ? "$state" : "$state" + depth;
+
+        _w.WriteLine($"var {stateVar} = 0;");
+        _w.Write($"{loopLabel}: for (;;) ");
+        _gotoContexts.Push((labelIndex, loopLabel, stateVar));
+        _w.Block(() =>
+        {
+            _w.Write($"switch ({stateVar}) ");
+            _w.Block(() =>
+            {
+                for (var i = 0; i < sections.Count; i++)
+                {
+                    _w.WriteLine($"case {i}:");
+                    _w.Indent();
+                    foreach (var st in sections[i].stmts) EmitStatement(st);
+                    _w.Outdent();
+                }
+            });
+            _w.WriteLine($"break {loopLabel};");
+        });
+        _gotoContexts.Pop();
+        _w.WriteLine();
+    }
+
+    private void EmitGoto(GotoStatementSyntax gotoStmt)
+    {
+        if (gotoStmt.IsKind(SyntaxKind.GotoStatement) && gotoStmt.Expression is IdentifierNameSyntax id
+            && _gotoContexts.Count > 0 && _gotoContexts.Peek().labels.TryGetValue(id.Identifier.Text, out var idx))
+        {
+            var ctx = _gotoContexts.Peek();
+            _w.WriteLine($"{ctx.stateVar} = {idx}; continue {ctx.loopLabel};");
+            return;
+        }
+        Unsupported(gotoStmt, "goto");
+    }
+
     private void EmitLocalDeclaration(LocalDeclarationStatementSyntax local)
     {
         if (local.UsingKeyword != default)
@@ -191,9 +268,11 @@ public sealed partial class Emitter
             return;
         }
 
+        // Inside a goto state machine, locals must persist across loop iterations → `var`.
+        var kw = _gotoContexts.Count > 0 ? "var" : "let";
         foreach (var variable in local.Declaration.Variables)
         {
-            _w.Write($"let {NameMangler.JsIdentifier(variable.Identifier.Text)}");
+            _w.Write($"{kw} {NameMangler.JsIdentifier(variable.Identifier.Text)}");
             if (variable.Initializer is not null)
             {
                 _w.Write(" = ");
