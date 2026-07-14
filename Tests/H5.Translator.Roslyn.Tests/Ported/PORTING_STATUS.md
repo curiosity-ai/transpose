@@ -7,7 +7,7 @@ diffing output against native .NET — the same contract as the original suite.
 
 ## Current results
 
-- **~291 passing**, ~32 failing, **17 skipped** (`WebApiTests` — need the h5.core browser/DOM
+- **301 passing**, 22 failing, **17 skipped** (`WebApiTests` — need the h5.core browser/DOM
   bindings, out of scope for a runtime-only harness).
 
 Fixed since the re-target: LINQ/extension templates, enum values/ToString, `[Flags]` enums,
@@ -54,25 +54,27 @@ exception aggregation), while `await x` drives any Task or promise through `H5.t
 `async ValueTask` is emitted identically to `Task` (the H5.dll-only task-like-metadata
 errors are suppressed, since they don't arise in the real-BCL native comparison).
 
-## Remaining failure categories (long tail, ~32)
+Hand-written BCL runtime quirks are now handled by porting H5's actual rules rather than
+per-type maps: an `extern` (body-less) method on a non-external type is left out of the
+overload set (so `Regex.Replace` → `replace`, no suffix), the parameterless object
+`ToString` still occupies overload slot 0 (so `Version.ToString(int)` → `toString$1`),
+`[Enum(Emit.X)]` value/string-name modes are honoured (RegexOptions, `[Enum]` test),
+`[Template]` type-parameter tokens (`{T}`) are substituted with the call-site type argument
+(`Comparer<T>`/`EqualityComparer<T>` defaults), and a method-level `[Convention]` is read
+(e.g. `IComparer<T>.Compare` → `compare`). Guid, Regex, Version, CultureInfo and Comparer
+now match h5.js. Exception filters (`when`) bind the catch variable before the guard runs.
 
-1. **Hand-written BCL runtime quirks.** A few h5.js types are hand-authored (`// @source X.js`)
-   and diverge from their C# metadata, so method names computed from metadata don't match:
-   e.g. `Guid.ToString(string)` maps to `format(...)` in h5.js, not `toString$1`. Affects
-   `Guid`, `Regex`, `Version`, `CultureInfo`, `Comparer`.
-   These need per-type name maps rather than the generic overload algorithm.
-2. **`goto` across `await`** — `goto` between labels that straddle an `await` needs the
-   step-state-machine lowering that native async can't express (plain `goto`/labels, and
-   `goto` in a sync method, are supported via the label-dispatch state machine).
-3. **Generic method type arguments** — a generic *method* (not class) that uses `T` at
+## Remaining failure categories (long tail, ~22)
+
+1. **Generic method type arguments** — a generic *method* (not class) that uses `T` at
    runtime (`new T()`, `default(T)`, `typeof(T)`) needs `T` threaded as a call argument.
-4. **Reflection metadata** — the `H5.setMetadata` block is not emitted, so richer
-   `GetType()` details and `[Enum(Emit.X)]` value modes differ.
-5. **Newer/edge C# forms** — C#14 `extension` members and ref-lambda params,
+2. **Reflection metadata** — the `H5.setMetadata` block is not emitted, so richer
+   `GetType()` details differ.
+3. **Newer/edge C# forms** — C#14 `extension` members and ref-lambda params,
    null-conditional assignment, `params List<T>`/`Span<T>` (C#13), multi-dimensional-array
    indexing, `System.Threading.Lock`, `nint`/`nuint`, `checked` overflow throwing, explicit
    interface implementation, and the `[ObjectLiteral]` Ignore/Initializer modes.
-6. **File I/O** — `MemoryStream`/`BinaryWriter` (largely reported unsupported by design).
+4. **File I/O** — `MemoryStream`/`BinaryWriter` (largely reported unsupported by design).
 
 These are the same kinds of features the legacy emitter handles via its metadata/overload
 machinery; porting them incrementally (each with its mirrored test) is the path to parity.
