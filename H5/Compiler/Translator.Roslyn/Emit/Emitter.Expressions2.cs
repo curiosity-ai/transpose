@@ -111,10 +111,12 @@ public sealed partial class Emitter
             return;
         }
 
-        // base.Method(...) → Base.Method.call(this, args)
+        // base.Method(...) → Base.prototype.Method.call(this, args) for instance methods
+        // (instance methods live on the prototype in the H5 runtime); statics on the type.
         if (isBase)
         {
-            _w.Write($"{TypeRef(symbol.ContainingType)}.{H5Naming.MemberJsName(symbol)}.call(this");
+            var baseAccess = symbol.IsStatic ? "" : ".prototype";
+            _w.Write($"{TypeRef(symbol.ContainingType)}{baseAccess}.{H5Naming.MemberJsName(symbol)}.call(this");
             if (invocation.ArgumentList.Arguments.Count > 0) { _w.Write(", "); EmitArguments(invocation.ArgumentList, symbol); }
             _w.Write(")");
             return;

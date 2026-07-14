@@ -16,6 +16,14 @@ namespace H5.Translator.Roslyn;
 /// </summary>
 public sealed class RoslynTranslator
 {
+    /// <summary>
+    /// Roslyn errors that are artifacts of compiling against the H5 BCL (which targets a
+    /// runtime feature-set narrower than the language) but are harmless when the output is
+    /// untyped JavaScript. CS8830: covariant return types in overrides — no runtime type
+    /// check exists in JS, so the override simply works.
+    /// </summary>
+    private static readonly HashSet<string> BenignForJs = new() { "CS8830" };
+
     /// <summary>Translate a single source file.</summary>
     public TranslationResult Translate(string source, string path = "App.cs", string assemblyName = CompilationBuilder.DefaultAssemblyName)
         => Translate(new[] { (path, source) }, assemblyName);
@@ -26,7 +34,8 @@ public sealed class RoslynTranslator
         var compilation = CompilationBuilder.Build(sources, assemblyName);
 
         var diagnostics = new List<Diagnostic>();
-        diagnostics.AddRange(compilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error));
+        diagnostics.AddRange(compilation.GetDiagnostics()
+            .Where(d => d.Severity == DiagnosticSeverity.Error && !BenignForJs.Contains(d.Id)));
 
         if (diagnostics.Count > 0)
         {
