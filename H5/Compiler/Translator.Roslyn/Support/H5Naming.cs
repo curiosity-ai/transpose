@@ -104,6 +104,11 @@ internal static class H5Naming
     /// </summary>
     public static string MemberJsName(ISymbol symbol)
     {
+        // An explicit interface implementation is named by the interface-qualified mangled
+        // name H5 uses (e.g. IMyInterface.Method → Namespace$IMyInterface$method), so it
+        // stays a valid JS identifier and matches the runtime's interface-member slot.
+        if (ExplicitInterfaceMangledName(symbol) is { } explicitName) return explicitName;
+
         if (symbol is IMethodSymbol m) return MethodJsName(m);
 
         var name = GetName(symbol);
@@ -124,6 +129,35 @@ internal static class H5Naming
                        ?? ResolveNotation(symbol.ContainingType, kindFlag)
                        ?? (HasExternalAttribute(symbol.ContainingType) ? Notation.CamelCase : Notation.None);
         return Apply(notation, symbol.Name);
+    }
+
+    /// <summary>
+    /// The mangled JS name of an explicit interface implementation
+    /// (<c>Namespace$IFace$member</c>), or null when the member isn't an explicit impl.
+    /// </summary>
+    private static string? ExplicitInterfaceMangledName(ISymbol symbol)
+    {
+        ISymbol? im = symbol switch
+        {
+            IMethodSymbol m when m.ExplicitInterfaceImplementations.Length > 0 => m.ExplicitInterfaceImplementations[0],
+            IPropertySymbol p when p.ExplicitInterfaceImplementations.Length > 0 => p.ExplicitInterfaceImplementations[0],
+            IEventSymbol e when e.ExplicitInterfaceImplementations.Length > 0 => e.ExplicitInterfaceImplementations[0],
+            _ => null,
+        };
+        if (im?.ContainingType is not { } iface) return null;
+        return MangledTypeName(iface) + "$" + MemberJsName(im.OriginalDefinition);
+    }
+
+    /// <summary>Full type name as a single JS identifier: dotted segments joined by <c>$</c>,
+    /// with a generic arity suffix (e.g. <c>System$Collections$Generic$IComparer$1</c>).</summary>
+    private static string MangledTypeName(INamedTypeSymbol type)
+    {
+        var parts = new System.Collections.Generic.List<string>();
+        for (INamedTypeSymbol? t = type; t is not null; t = t.ContainingType)
+            parts.Insert(0, t.Arity > 0 ? t.Name + "$" + t.Arity : t.Name);
+        for (var ns = type.ContainingNamespace; ns is { IsGlobalNamespace: false }; ns = ns.ContainingNamespace)
+            parts.Insert(0, ns.Name);
+        return string.Join("$", parts);
     }
 
     private static readonly System.Collections.Generic.Dictionary<ISymbol, string> _methodCache = new(SymbolEqualityComparer.Default);

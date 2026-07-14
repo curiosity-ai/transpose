@@ -18,7 +18,7 @@ public sealed partial class Emitter
     private readonly CSharpCompilation _compilation;
     private JsWriter _w = new();
     private readonly NameMangler _names = new();
-    private SemanticModel _model = null!;
+    private readonly TreeModel _model;
     private readonly string _assemblyName;
 
     /// <summary>While emitting a primary constructor's own body, its parameters are the JS
@@ -36,6 +36,7 @@ public sealed partial class Emitter
     {
         _compilation = compilation;
         _assemblyName = assemblyName;
+        _model = new TreeModel(compilation);
     }
 
     public string Emit()
@@ -51,7 +52,6 @@ public sealed partial class Emitter
 
             foreach (var type in CollectTypes())
             {
-                _model = _compilation.GetSemanticModel(type.DeclaringSyntaxReferences[0].SyntaxTree);
                 EmitType(type);
                 _w.WriteLine();
             }

@@ -41,8 +41,23 @@ public sealed class RoslynTranslator
 
     /// <summary>Translate multiple source files into a single JS bundle.</summary>
     public TranslationResult Translate(IEnumerable<(string path, string text)> sources, string assemblyName = CompilationBuilder.DefaultAssemblyName)
+        => Translate(sources, assemblyName, null);
+
+    /// <summary>
+    /// Translate multiple source files into a single JS bundle, referencing extra assemblies
+    /// (e.g. h5.core, h5.Newtonsoft.Json) alongside H5.dll — used when compiling a real project.
+    /// </summary>
+    public TranslationResult Translate(
+        IEnumerable<(string path, string text)> sources,
+        string assemblyName,
+        IEnumerable<string>? extraReferencePaths,
+        IEnumerable<string>? preprocessorSymbols = null,
+        LanguageVersion languageVersion = LanguageVersion.Latest)
     {
-        var compilation = CompilationBuilder.Build(sources, assemblyName);
+        var compilation = CompilationBuilder.Build(
+            sources, assemblyName, languageVersion,
+            extraReferencePaths: extraReferencePaths,
+            preprocessorSymbols: preprocessorSymbols);
 
         var diagnostics = new List<Diagnostic>();
         diagnostics.AddRange(compilation.GetDiagnostics()

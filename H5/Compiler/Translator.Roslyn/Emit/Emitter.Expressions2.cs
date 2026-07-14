@@ -199,14 +199,20 @@ public sealed partial class Emitter
     private void AddTypeArguments(Dictionary<string, string> byName, IMethodSymbol definition, IMethodSymbol constructed)
     {
         for (var i = 0; i < definition.TypeParameters.Length && i < constructed.TypeArguments.Length; i++)
+        {
             byName[definition.TypeParameters[i].Name] = TypeRef(constructed.TypeArguments[i]);
+            byName[definition.TypeParameters[i].Name + ":default"] = DefaultValueLiteral(constructed.TypeArguments[i]);
+        }
 
         var defType = definition.ContainingType;
         var conType = constructed.ContainingType;
         if (defType is not null && conType is not null)
         {
             for (var i = 0; i < defType.TypeParameters.Length && i < conType.TypeArguments.Length; i++)
+            {
                 byName[defType.TypeParameters[i].Name] = TypeRef(conType.TypeArguments[i]);
+                byName[defType.TypeParameters[i].Name + ":default"] = DefaultValueLiteral(conType.TypeArguments[i]);
+            }
         }
     }
 

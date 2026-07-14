@@ -91,7 +91,7 @@ public sealed partial class Emitter
                     var fields = type.GetMembers().OfType<IFieldSymbol>().Where(f => f.HasConstantValue).ToList();
                     for (var i = 0; i < fields.Count; i++)
                     {
-                        _w.Write($"{H5Naming.MemberJsName(fields[i])}: {Convert.ToInt64(fields[i].ConstantValue)}");
+                        _w.Write($"{NameMangler.JsPropertyKey(H5Naming.MemberJsName(fields[i]))}: {Convert.ToInt64(fields[i].ConstantValue)}");
                         _w.WriteLine(i < fields.Count - 1 ? "," : "");
                     }
                 });

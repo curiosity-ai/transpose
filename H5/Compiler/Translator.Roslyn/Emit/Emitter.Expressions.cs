@@ -29,6 +29,11 @@ public sealed partial class Emitter
             case MemberAccessExpressionSyntax member:
                 EmitMemberAccess(member);
                 break;
+            case MemberBindingExpressionSyntax binding:
+                // The head of a null-conditional continuation (a?.b.c → `?.` already written,
+                // this emits `b`); the rest of the chain is ordinary member access.
+                EmitMemberBinding(binding);
+                break;
             case InvocationExpressionSyntax invocation:
                 EmitInvocation(invocation);
                 break;
@@ -459,7 +464,11 @@ public sealed partial class Emitter
         {
             if (ps.Length != args.Length) return;
             for (var i = 0; i < ps.Length; i++)
+            {
                 (map ??= new())[ps[i].Name] = TypeRef(args[i]);
+                // {T:default} in a template → the default value of the bound type argument.
+                map[ps[i].Name + ":default"] = DefaultValueLiteral(args[i]);
+            }
         }
         if (member.ContainingType is { IsGenericType: true } ct)
             Add(ct.OriginalDefinition.TypeParameters, ct.TypeArguments);
@@ -611,6 +620,16 @@ public sealed partial class Emitter
             return $"H5.getType({expr})";
         });
 
+        // {T:default} → the default value of the type argument bound to T (precomputed in
+        // the type-argument maps under the "T:default" key).
+        template = System.Text.RegularExpressions.Regex.Replace(template, @"\{([A-Za-z_][A-Za-z0-9_]*):default\}", m =>
+        {
+            var key = m.Groups[1].Value + ":default";
+            if (argsByName.TryGetValue(key, out var d)) return d;
+            if (typeArgs is not null && typeArgs.TryGetValue(key, out var td)) return td;
+            return "null";
+        });
+
         // Sentinel for a template slot that resolves to no argument (e.g. an optional
         // trailing param not supplied); the slot and its leading comma are stripped after.
         const string drop = "￿";
@@ -644,6 +663,19 @@ public sealed partial class Emitter
         result = System.Text.RegularExpressions.Regex.Replace(result, @"\s*,\s*￿", "");
         result = System.Text.RegularExpressions.Regex.Replace(result, @"￿\s*,\s*", "");
         return result.Replace(drop, "");
+    }
+
+    /// <summary>
+    /// Emits the member name of a binding (the <c>.b</c> in <c>a?.b</c>) without a leading
+    /// connector — the enclosing null-conditional already wrote <c>?.</c> — so a chain like
+    /// <c>a?.classList.add(x)</c> continues as ordinary member access after the head.
+    /// </summary>
+    private void EmitMemberBinding(MemberBindingExpressionSyntax binding)
+    {
+        var sym = _model.GetSymbolInfo(binding).Symbol;
+        _w.Write(sym is not null
+            ? H5Naming.MemberJsName(sym)
+            : NameMangler.JsIdentifier(binding.Name.Identifier.Text));
     }
 
     private void EmitConditionalAccess(ConditionalAccessExpressionSyntax condAccess)
@@ -686,6 +718,13 @@ public sealed partial class Emitter
                 _w.Write("(");
                 EmitArgumentList(inv.ArgumentList);
                 _w.Write(")");
+                break;
+            case ConditionalAccessExpressionSyntax nested:
+                // Chained null-conditional (a?.b()?.c()): the outer WhenNotNull is itself a
+                // conditional access. Continue the chain — emit its head as a binding, then
+                // recurse into its continuation — instead of restarting it as a fresh expression.
+                EmitWhenNotNull(nested.Expression);
+                EmitWhenNotNull(nested.WhenNotNull);
                 break;
             case ElementBindingExpressionSyntax elemBind:
                 // a?[i] — indexer access on a possibly-null receiver.

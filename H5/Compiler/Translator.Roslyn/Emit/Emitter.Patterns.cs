@@ -299,8 +299,19 @@ public sealed partial class Emitter
         _w.WriteLine(";");
 
         var rhsType = _model.GetTypeInfo(assign.Right).Type;
+        var isTuple = rhsType is { IsTupleType: true } || assign.Right is TupleExpressionSyntax;
+        EmitDeconstructionBindings(targets, temp, isTuple);
+    }
 
-        if (rhsType is { IsTupleType: true } || assign.Right is TupleExpressionSyntax)
+    /// <summary>
+    /// Binds deconstruction targets from an already-evaluated value <paramref name="temp"/>:
+    /// tuple elements read <c>temp.Item{n}</c>, otherwise the value's Deconstruct(out …) runs.
+    /// </summary>
+    private void EmitDeconstructionBindings(
+        System.Collections.Generic.List<(string? name, bool isNew, bool isDiscard)> targets,
+        string temp, bool isTuple)
+    {
+        if (isTuple)
         {
             for (var i = 0; i < targets.Count; i++)
             {
