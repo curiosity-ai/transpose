@@ -430,7 +430,7 @@ public sealed partial class Emitter
             EmitOptionalDefaults(method);
             if (block is not null)
             {
-                foreach (var stmt in block.Statements) EmitStatement(stmt);
+                EmitStatements(block.Statements);
             }
             else if (arrow is not null)
             {

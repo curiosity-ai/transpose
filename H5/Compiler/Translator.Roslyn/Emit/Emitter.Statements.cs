@@ -147,8 +147,40 @@ public sealed partial class Emitter
 
     private void EmitBlock(BlockSyntax block)
     {
-        _w.Block(() => { foreach (var s in block.Statements) EmitStatement(s); });
+        _w.Block(() => EmitStatements(block.Statements));
         _w.WriteLine();
+    }
+
+    /// <summary>
+    /// Emits a statement sequence, desugaring `using var x = e;` declarations into a
+    /// try/finally whose body is the remainder of the sequence (C# block-scoped dispose).
+    /// </summary>
+    internal void EmitStatements(IReadOnlyList<StatementSyntax> statements, int start = 0)
+    {
+        for (var i = start; i < statements.Count; i++)
+        {
+            var s = statements[i];
+            if (s is LocalDeclarationStatementSyntax { UsingKeyword.RawKind: not 0 } u)
+            {
+                var resources = new List<string>();
+                foreach (var v in u.Declaration.Variables)
+                {
+                    var name = NameMangler.JsIdentifier(v.Identifier.Text);
+                    resources.Add(name);
+                    _w.Write($"let {name} = ");
+                    if (v.Initializer is not null) EmitExpression(v.Initializer.Value); else _w.Write("null");
+                    _w.WriteLine(";");
+                }
+                _w.Write("try ");
+                _w.Block(() => EmitStatements(statements, i + 1));
+                _w.WriteLine();
+                _w.Write("finally ");
+                _w.Block(() => { foreach (var r in Enumerable.Reverse(resources)) _w.WriteLine($"H5R.dispose({r});"); });
+                _w.WriteLine();
+                return; // the rest of the sequence was emitted inside the try
+            }
+            EmitStatement(s);
+        }
     }
 
     private void EmitLocalDeclaration(LocalDeclarationStatementSyntax local)

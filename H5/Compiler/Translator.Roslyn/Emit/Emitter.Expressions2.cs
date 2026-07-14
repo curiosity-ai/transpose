@@ -1072,7 +1072,7 @@ public sealed partial class Emitter
 
         if (body is BlockSyntax block)
         {
-            _w.Block(() => { EmitLambdaParamDefaults(defaults); foreach (var s in block.Statements) EmitStatement(s); });
+            _w.Block(() => { EmitLambdaParamDefaults(defaults); EmitStatements(block.Statements); });
         }
         else if (body is ExpressionSyntax exprBody)
         {
