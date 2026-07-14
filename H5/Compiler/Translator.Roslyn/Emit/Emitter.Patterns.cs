@@ -129,10 +129,58 @@ public sealed partial class Emitter
                 EmitRecursivePattern(subject, recursive);
                 break;
 
+            case ListPatternSyntax listPat:
+                EmitListPattern(subject, listPat);
+                break;
+
             default:
                 Unsupported(pattern, pattern.Kind().ToString());
                 break;
         }
+    }
+
+    /// <summary>
+    /// C# 11 list pattern `[p0, p1, .. rest, pk]` over an array. Emits a length check plus
+    /// per-element tests (pre-slice indexed from the start, post-slice from the end); a slice
+    /// designation binds the middle span via .slice(...).
+    /// </summary>
+    private void EmitListPattern(string subject, ListPatternSyntax list)
+    {
+        var patterns = list.Patterns;
+        var sliceIndex = -1;
+        for (var i = 0; i < patterns.Count; i++)
+            if (patterns[i] is SlicePatternSyntax) { sliceIndex = i; break; }
+        var hasSlice = sliceIndex >= 0;
+        var preCount = hasSlice ? sliceIndex : patterns.Count;
+        var postCount = hasSlice ? patterns.Count - sliceIndex - 1 : 0;
+
+        _w.Write($"({subject} != null && {subject}.length {(hasSlice ? ">=" : "===")} {preCount + postCount}");
+
+        for (var i = 0; i < preCount; i++)
+        {
+            _w.Write(" && ");
+            EmitPatternTest($"{subject}[{i}]", patterns[i]);
+        }
+        for (var j = 0; j < postCount; j++)
+        {
+            _w.Write(" && ");
+            EmitPatternTest($"{subject}[{subject}.length - {postCount - j}]", patterns[sliceIndex + 1 + j]);
+        }
+
+        // A `.. rest` slice designation binds the middle span.
+        if (hasSlice && ((SlicePatternSyntax)patterns[sliceIndex]).Pattern is { } slicePat)
+        {
+            var name = slicePat switch
+            {
+                VarPatternSyntax { Designation: SingleVariableDesignationSyntax d } => d.Identifier.Text,
+                DeclarationPatternSyntax { Designation: SingleVariableDesignationSyntax d2 } => d2.Identifier.Text,
+                _ => null,
+            };
+            if (name is not null)
+                _w.Write($" && ({NameMangler.JsIdentifier(name)} = {subject}.slice({preCount}, {subject}.length - {postCount}), true)");
+        }
+
+        _w.Write(")");
     }
 
     private void EmitRecursivePattern(string subject, RecursivePatternSyntax recursive)
