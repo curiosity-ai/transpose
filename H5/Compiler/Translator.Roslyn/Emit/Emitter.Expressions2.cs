@@ -1012,11 +1012,45 @@ public sealed partial class Emitter
             return;
         }
 
+        // Arrays with an Index (^n) or Range (a..b) argument.
+        var arg = element.ArgumentList.Arguments.Count == 1 ? element.ArgumentList.Arguments[0].Expression : null;
+        if (arg is RangeExpressionSyntax range)
+        {
+            var arr = Capture(() => EmitExpression(element.Expression));
+            _w.Write($"{arr}.slice(");
+            EmitIndexValue(range.LeftOperand, arr, isEnd: false);
+            _w.Write(", ");
+            EmitIndexValue(range.RightOperand, arr, isEnd: true);
+            _w.Write(")");
+            return;
+        }
+        if (arg is not null && arg.IsKind(SyntaxKind.IndexExpression))
+        {
+            var arr = Capture(() => EmitExpression(element.Expression));
+            _w.Write($"{arr}[");
+            EmitIndexValue(arg, arr, isEnd: false);
+            _w.Write("]");
+            return;
+        }
+
         // Arrays: native element access.
         EmitExpression(element.Expression);
         _w.Write("[");
         EmitArgumentList(element.ArgumentList);
         _w.Write("]");
+    }
+
+    /// <summary>Emits a JS index/bound for C# Index/Range on an array (`^n` → len-n).</summary>
+    private void EmitIndexValue(ExpressionSyntax? expr, string arrRef, bool isEnd)
+    {
+        if (expr is null) { _w.Write(isEnd ? $"{arrRef}.length" : "0"); return; }
+        if (expr.IsKind(SyntaxKind.IndexExpression) && expr is PrefixUnaryExpressionSyntax fromEnd)
+        {
+            _w.Write($"{arrRef}.length - ");
+            EmitExpression(fromEnd.Operand);
+            return;
+        }
+        EmitExpression(expr);
     }
 
     // ---- arrays ------------------------------------------------------------

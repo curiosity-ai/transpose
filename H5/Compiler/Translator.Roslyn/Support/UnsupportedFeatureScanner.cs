@@ -51,6 +51,13 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
         base.VisitGlobalStatement(node);
     }
 
+    public override void VisitUsingDirective(UsingDirectiveSyntax node)
+    {
+        if (node.GlobalKeyword.RawKind != 0)
+            Report(node, "Global usings are not supported; add per-file using directives instead.");
+        base.VisitUsingDirective(node);
+    }
+
     public override void VisitPrefixUnaryExpression(PrefixUnaryExpressionSyntax node)
     {
         if (node.IsKind(SyntaxKind.AddressOfExpression) || node.IsKind(SyntaxKind.PointerIndirectionExpression))
