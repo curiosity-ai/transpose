@@ -976,8 +976,8 @@ public sealed partial class Emitter
             && !setProp.IsIndexer
             && H5Naming.GetTemplate(setter.OriginalDefinition) is { } setTemplate)
         {
-            var recv = assignment.Left is MemberAccessExpressionSyntax sma
-                ? Capture(() => EmitExpression(sma.Expression))
+            var recv = setProp.IsStatic ? TypeRef(setProp.ContainingType)
+                : assignment.Left is MemberAccessExpressionSyntax sma ? Capture(() => EmitExpression(sma.Expression))
                 : "this";
             var val = Capture(() => EmitExpressionConverted(assignment.Right, leftType));
             WriteTemplate(setTemplate, setProp.IsStatic, isExtension: false, recv,

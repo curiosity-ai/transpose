@@ -426,7 +426,10 @@ public sealed partial class Emitter
         var template = prop.GetMethod is not null ? H5Naming.GetTemplate(prop.GetMethod.OriginalDefinition) : null;
         if (template is not null)
         {
-            var receiver = thisTarget is null ? "this" : Capture(() => EmitExpression(thisTarget));
+            // For a static member, {this} is the declaring type (e.g. CultureInfo.CurrentCulture
+            // → System.Globalization.CultureInfo.getCurrentCulture()); for instance, the receiver.
+            var receiver = prop.IsStatic ? TypeRef(prop.ContainingType)
+                : thisTarget is null ? "this" : Capture(() => EmitExpression(thisTarget));
             WriteTemplate(template, isStatic: prop.IsStatic, isExtension: false, receiver, new(), new());
             return;
         }
