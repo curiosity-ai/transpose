@@ -93,15 +93,29 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
         {
             Report(node, "Unsafe code is not supported in the browser environment.");
         }
-        if (modifiers.Any(SyntaxKind.ExternKeyword))
+    }
+
+    /// <summary>An `extern` member is only unsupported when it is real native interop —
+    /// not when it carries an H5 codegen attribute ([Template]/[Name]/[External]/[Script])
+    /// that maps it to JavaScript.</summary>
+    private void CheckExtern(SyntaxTokenList modifiers, SyntaxList<AttributeListSyntax> attributes, SyntaxNode node)
+    {
+        if (!modifiers.Any(SyntaxKind.ExternKeyword)) return;
+        var jsMapped = attributes.SelectMany(a => a.Attributes).Any(a =>
         {
+            var n = a.Name.ToString();
+            return n is "Template" or "Name" or "External" or "Script"
+                or "H5.Template" or "H5.Name" or "H5.External" or "H5.Script"
+                or "TemplateAttribute" or "NameAttribute" or "ExternalAttribute" or "ScriptAttribute";
+        });
+        if (!jsMapped)
             Report(node, "Native interop (extern methods) is not supported in the browser environment.");
-        }
     }
 
     public override void VisitMethodDeclaration(MethodDeclarationSyntax node)
     {
         CheckUnsafeModifier(node.Modifiers, node);
+        CheckExtern(node.Modifiers, node.AttributeLists, node);
         CheckDllImport(node);
         base.VisitMethodDeclaration(node);
     }

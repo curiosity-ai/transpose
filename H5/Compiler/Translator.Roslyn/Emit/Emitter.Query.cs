@@ -9,13 +9,19 @@ namespace H5.Translator.Roslyn;
 public sealed partial class Emitter
 {
     /// <summary>
-    /// Translates a LINQ query expression into the equivalent Enumerable method chain.
-    /// Supports single-source from/where/orderby/select/group by. Multi-from, let, and
-    /// join (which introduce transparent identifiers) are reported as unsupported.
+    /// Translates a LINQ query expression into the h5.js Enumerable chain
+    /// (<c>System.Linq.Enumerable.from(src).where(fn).orderBy(fn).select(fn)</c>) — the same
+    /// runtime API the method-syntax <c>[Template]</c>s target. Supports single-source
+    /// from/where/orderby/select/group by; multi-from, let, and join are reported unsupported.
     /// </summary>
     private void EmitQuery(QueryExpressionSyntax query)
     {
-        Action emit = () => EmitExpression(query.FromClause.Expression);
+        Action emit = () =>
+        {
+            _w.Write("System.Linq.Enumerable.from(");
+            EmitExpression(query.FromClause.Expression);
+            _w.Write(")");
+        };
         EmitQueryBody(emit, NameMangler.JsIdentifier(query.FromClause.Identifier.Text), query.Body);
     }
 
@@ -31,9 +37,8 @@ public sealed partial class Emitter
                 case WhereClauseSyntax where:
                     emit = () =>
                     {
-                        _w.Write("System.Linq.Enumerable.Where(");
                         inner();
-                        _w.Write($", function ({range}) {{ return ");
+                        _w.Write($".where(function ({range}) {{ return ");
                         EmitExpression(where.Condition);
                         _w.Write("; })");
                     };
@@ -54,16 +59,15 @@ public sealed partial class Emitter
         switch (body.SelectOrGroup)
         {
             case SelectClauseSyntax select when select.Expression is IdentifierNameSyntax sid && sid.Identifier.Text == range:
-                result = emit; // identity projection
+                result = emit; // identity projection — the sequence is already the result
                 break;
             case SelectClauseSyntax select:
                 {
                     var inner = emit;
                     result = () =>
                     {
-                        _w.Write("System.Linq.Enumerable.Select(");
                         inner();
-                        _w.Write($", function ({range}) {{ return ");
+                        _w.Write($".select(function ({range}) {{ return ");
                         EmitExpression(select.Expression);
                         _w.Write("; })");
                     };
@@ -74,9 +78,8 @@ public sealed partial class Emitter
                     var inner = emit;
                     result = () =>
                     {
-                        _w.Write("System.Linq.Enumerable.GroupBy(");
                         inner();
-                        _w.Write($", function ({range}) {{ return ");
+                        _w.Write($".groupBy(function ({range}) {{ return ");
                         EmitExpression(group.ByExpression);
                         _w.Write("; }");
                         if (!(group.GroupExpression is IdentifierNameSyntax gid && gid.Identifier.Text == range))
@@ -107,26 +110,14 @@ public sealed partial class Emitter
 
     private void EmitOrderBy(Action inner, string range, OrderByClauseSyntax orderBy)
     {
-        string MethodFor(int i)
-        {
-            var descending = orderBy.Orderings[i].IsKind(SyntaxKind.DescendingOrdering);
-            return i == 0
-                ? (descending ? "OrderByDescending" : "OrderBy")
-                : (descending ? "ThenByDescending" : "ThenBy");
-        }
-
-        // Opening calls: the outermost is the LAST ordering (ThenBy…), innermost is OrderBy.
-        for (var i = orderBy.Orderings.Count - 1; i >= 0; i--)
-        {
-            _w.Write($"System.Linq.Enumerable.{MethodFor(i)}(");
-        }
-
         inner();
-
-        // Closing: innermost (OrderBy, index 0) is closed first.
         for (var i = 0; i < orderBy.Orderings.Count; i++)
         {
-            _w.Write($", function ({range}) {{ return ");
+            var descending = orderBy.Orderings[i].IsKind(SyntaxKind.DescendingOrdering);
+            var method = i == 0
+                ? (descending ? "orderByDescending" : "orderBy")
+                : (descending ? "thenByDescending" : "thenBy");
+            _w.Write($".{method}(function ({range}) {{ return ");
             EmitExpression(orderBy.Orderings[i].Expression);
             _w.Write("; })");
         }
