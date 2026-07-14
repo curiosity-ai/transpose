@@ -23,10 +23,16 @@
     };
     H5R.hash = function (v) { return H5.getHashCode ? H5.getHashCode(v) : 0; };
     H5R.getEnumerator = function (src) {
-        if (H5.getEnumerator) {
-            var e = H5.getEnumerator(src);
+        var wrap = function (e) {
             return { moveNext: function () { return e.moveNext ? e.moveNext() : e.MoveNext(); }, get current() { return e.Current !== undefined ? e.Current : e.current; } };
+        };
+        if (src != null) {
+            // Already an enumerator (pattern-based / extension GetEnumerator result).
+            if (typeof src.moveNext === "function" || typeof src.MoveNext === "function") { return wrap(src); }
+            // An enumerable with its own GetEnumerator (e.g. H5R.iter iterables).
+            if (typeof src.GetEnumerator === "function") { return wrap(src.GetEnumerator()); }
         }
+        if (H5.getEnumerator) { return wrap(H5.getEnumerator(src)); }
         var i = -1; return { moveNext: function () { i++; return i < src.length; }, get current() { return src[i]; } };
     };
     H5R.dispose = function (x) { if (x) { if (x.dispose) { x.dispose(); } else if (x.Dispose) { x.Dispose(); } } };

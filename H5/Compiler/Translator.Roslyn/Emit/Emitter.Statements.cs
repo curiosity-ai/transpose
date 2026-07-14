@@ -363,8 +363,21 @@ public sealed partial class Emitter
         var iterVar = NameMangler.JsIdentifier(forEach.Identifier.Text);
         var enumVar = "$e" + forEach.GetHashCode().ToString("x").Substring(0, 4);
 
+        // A foreach may bind to an extension GetEnumerator (C# pattern-based enumeration);
+        // route the source through it so H5R.getEnumerator sees an enumerable/enumerator.
+        var getEnum = _model.GetForEachStatementInfo(forEach).GetEnumeratorMethod;
+        var ext = getEnum is { IsExtensionMethod: true } ? (getEnum.ReducedFrom ?? getEnum) : null;
         _w.Write($"var {enumVar} = H5R.getEnumerator(");
-        EmitExpression(forEach.Expression);
+        if (ext is not null && ext.Locations.Any(l => l.IsInSource))
+        {
+            _w.Write($"{TypeRef(ext.ContainingType)}.{H5Naming.MemberJsName(ext)}(");
+            EmitExpression(forEach.Expression);
+            _w.Write(")");
+        }
+        else
+        {
+            EmitExpression(forEach.Expression);
+        }
         _w.WriteLine(");");
         _w.Write($"while ({enumVar}.moveNext()) ");
         _breakTargets.Push(null);
