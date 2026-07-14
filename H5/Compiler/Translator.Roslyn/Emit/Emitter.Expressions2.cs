@@ -732,6 +732,17 @@ public sealed partial class Emitter
             return;
         }
 
+        // decimal arithmetic/comparison → System.Decimal method calls.
+        if ((IsDecimalType(leftType) || IsDecimalType(rightType)) && DecimalOp(binary) is { } decOp)
+        {
+            if (IsDecimalType(leftType)) EmitExpression(binary.Left);
+            else { _w.Write("System.Decimal("); EmitExpression(binary.Left); _w.Write(")"); }
+            _w.Write($".{decOp}(");
+            EmitExpression(binary.Right);
+            _w.Write(")");
+            return;
+        }
+
         // Integer division
         if (binary.IsKind(SyntaxKind.DivideExpression) && IsIntegerType(leftType) && IsIntegerType(rightType))
         {
@@ -827,6 +838,25 @@ public sealed partial class Emitter
         SyntaxKind.ExclusiveOrExpression => "xor",
         SyntaxKind.LeftShiftExpression => "shl",
         SyntaxKind.RightShiftExpression => "shr",
+        _ => null,
+    };
+
+    private static bool IsDecimalType(ITypeSymbol? t) => t?.SpecialType == SpecialType.System_Decimal;
+
+    /// <summary>The System.Decimal method name for a binary operator, or null.</summary>
+    private static string? DecimalOp(BinaryExpressionSyntax b) => b.Kind() switch
+    {
+        SyntaxKind.AddExpression => "add",
+        SyntaxKind.SubtractExpression => "sub",
+        SyntaxKind.MultiplyExpression => "mul",
+        SyntaxKind.DivideExpression => "div",
+        SyntaxKind.ModuloExpression => "mod",
+        SyntaxKind.LessThanExpression => "lt",
+        SyntaxKind.GreaterThanExpression => "gt",
+        SyntaxKind.LessThanOrEqualExpression => "lte",
+        SyntaxKind.GreaterThanOrEqualExpression => "gte",
+        SyntaxKind.EqualsExpression => "equals",
+        SyntaxKind.NotEqualsExpression => "ne",
         _ => null,
     };
 
@@ -990,6 +1020,13 @@ public sealed partial class Emitter
             if (prefix.IsKind(SyntaxKind.UnaryPlusExpression)) { EmitExpression(prefix.Operand); return; }
         }
 
+        // decimal negation → System.Decimal.neg().
+        if (IsDecimalType(_model.GetTypeInfo(prefix.Operand).Type))
+        {
+            if (prefix.IsKind(SyntaxKind.UnaryMinusExpression)) { EmitExpression(prefix.Operand); _w.Write(".neg()"); return; }
+            if (prefix.IsKind(SyntaxKind.UnaryPlusExpression)) { EmitExpression(prefix.Operand); return; }
+        }
+
         _w.Write(prefix.OperatorToken.Text);
         EmitExpression(prefix.Operand);
     }
@@ -1008,7 +1045,7 @@ public sealed partial class Emitter
         var sourceType = _model.GetTypeInfo(cast.Expression).Type;
 
         // 64-bit conversions: to long/ulong → wrap; from long/ulong to a 32-bit/float → number.
-        if (Is64BitInteger(targetType) && !Is64BitInteger(sourceType))
+        if (Is64BitInteger(targetType) && !Is64BitInteger(sourceType) && !IsDecimalType(sourceType))
         {
             _w.Write(Is64BitUnsigned(targetType) ? "System.UInt64(" : "System.Int64(");
             EmitExpression(cast.Expression);
@@ -1018,6 +1055,19 @@ public sealed partial class Emitter
         if (Is64BitInteger(sourceType) && !Is64BitInteger(targetType) && (IsIntegerType(targetType) || IsFloatingType(targetType)))
         {
             _w.Write("("); EmitExpression(cast.Expression); _w.Write(").toNumber()");
+            return;
+        }
+
+        // decimal conversions: to decimal → wrap; decimal → float/int → toFloat (truncated for int).
+        if (IsDecimalType(targetType) && !IsDecimalType(sourceType))
+        {
+            _w.Write("System.Decimal("); EmitExpression(cast.Expression); _w.Write(")");
+            return;
+        }
+        if (IsDecimalType(sourceType) && !IsDecimalType(targetType) && (IsIntegerType(targetType) || IsFloatingType(targetType)))
+        {
+            if (IsIntegerType(targetType) && !Is64BitInteger(targetType)) { _w.Write("H5R.trunc("); EmitExpression(cast.Expression); _w.Write(".toFloat())"); }
+            else { _w.Write("("); EmitExpression(cast.Expression); _w.Write(").toFloat()"); }
             return;
         }
 
@@ -1310,6 +1360,9 @@ public sealed partial class Emitter
         // 64-bit integer constants (e.g. long.MinValue) must be System.Int64/UInt64 instances.
         if (value is long or ulong && Is64BitInteger(type))
             return Long64Literal(value, Is64BitUnsigned(type));
+        // decimal constants (e.g. decimal.MaxValue) must be System.Decimal instances.
+        if (value is decimal && IsDecimalType(type))
+            return $"System.Decimal(\"{((decimal)value).ToString(CultureInfo.InvariantCulture)}\")";
         return value switch
         {
             bool b => b ? "true" : "false",

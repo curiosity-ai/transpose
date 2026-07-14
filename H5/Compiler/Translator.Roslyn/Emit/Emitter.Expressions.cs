@@ -197,6 +197,16 @@ public sealed partial class Emitter
             return;
         }
 
+        // Implicit widening of a numeric value to decimal → wrap as a System.Decimal.
+        if (IsDecimalType(targetType) && sourceType is not null && !IsDecimalType(sourceType)
+            && (IsIntegerType(sourceType) || IsFloatingType(sourceType)) && expr is not LiteralExpressionSyntax)
+        {
+            _w.Write("System.Decimal(");
+            EmitExpression(expr);
+            _w.Write(")");
+            return;
+        }
+
         // Enum → object/string uses the enum's name (System.Enum.toString).
         if (sourceType is { TypeKind: TypeKind.Enum }
             && targetType?.SpecialType is SpecialType.System_Object or SpecialType.System_String)
@@ -246,6 +256,8 @@ public sealed partial class Emitter
                 if (conv?.SpecialType is SpecialType.System_Int64 or SpecialType.System_UInt64
                     && lit.Token.Value is not double and not float and not decimal)
                     _w.Write(Long64Literal(lit.Token.Value!, conv.SpecialType == SpecialType.System_UInt64));
+                else if (conv?.SpecialType == SpecialType.System_Decimal)
+                    _w.Write($"System.Decimal(\"{Convert.ToString(lit.Token.Value, CultureInfo.InvariantCulture)}\")");
                 else
                     _w.Write(FormatNumericLiteral(lit));
                 break;
