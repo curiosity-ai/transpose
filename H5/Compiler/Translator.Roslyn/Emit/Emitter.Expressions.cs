@@ -548,7 +548,11 @@ public sealed partial class Emitter
             return $"H5.getType({expr})";
         });
 
-        return System.Text.RegularExpressions.Regex.Replace(template, @"\{(\*?[A-Za-z_][A-Za-z0-9_]*|\d+)\}", m =>
+        // Sentinel for a template slot that resolves to no argument (e.g. an optional
+        // trailing param not supplied); the slot and its leading comma are stripped after.
+        const string drop = "￿";
+        var posCursor = 0;
+        var result = System.Text.RegularExpressions.Regex.Replace(template, @"\{(\*?[A-Za-z_][A-Za-z0-9_]*|\d+)\}", m =>
         {
             var token = m.Groups[1].Value;
             if (token == "this") return receiver ?? "this";
@@ -557,10 +561,23 @@ public sealed partial class Emitter
                 var n = token.Substring(1);
                 return argsByName.TryGetValue(n, out var av) ? av : string.Join(", ", argsByPos);
             }
-            if (argsByName.TryGetValue(token, out var v)) return v;
-            if (int.TryParse(token, out var idx) && idx < argsByPos.Count) return argsByPos[idx];
-            return m.Value;
+            if (argsByName.TryGetValue(token, out var v)) { posCursor++; return v; }
+            if (int.TryParse(token, out var idx))
+            {
+                if (idx >= argsByPos.Count) return drop;
+                posCursor = idx + 1;
+                return argsByPos[idx];
+            }
+            // A named token with no matching parameter (some H5 templates reuse a name like
+            // {result} for the next positional slot) → the next unconsumed argument, else drop.
+            if (posCursor < argsByPos.Count) return argsByPos[posCursor++];
+            return drop;
         });
+
+        // Remove dropped slots together with an adjacent comma so the call stays well-formed.
+        result = System.Text.RegularExpressions.Regex.Replace(result, @"\s*,\s*￿", "");
+        result = System.Text.RegularExpressions.Regex.Replace(result, @"￿\s*,\s*", "");
+        return result.Replace(drop, "");
     }
 
     private void EmitConditionalAccess(ConditionalAccessExpressionSyntax condAccess)
