@@ -7,59 +7,54 @@ diffing output against native .NET — the same contract as the original suite.
 
 ## Current results
 
-- **~218 passing**, ~105 failing, **17 skipped** (`WebApiTests` — need the h5.core browser/DOM
-  bindings + `Script.Write` JS-interop, out of scope for a runtime-only harness).
+- **~265 passing**, ~58 failing, **17 skipped** (`WebApiTests` — need the h5.core browser/DOM
+  bindings, out of scope for a runtime-only harness).
 
-Fixed since the re-target: LINQ/extension templates, enum values/ToString, relative external
-templates, non-generic BCL `new`, local functions, `throw`/`checked`, user
-`ToString`/`Equals`/`GetHashCode` override naming, external base-ctor naming, user indexers
-(`getItem`/`setItem`), deconstruction, records (value semantics/`with`/`Deconstruct`), struct
-`$clone`/`getDefaultValue`, `nameof`, and out/ref args inside `[Template]` calls.
+Fixed since the re-target: LINQ/extension templates, enum values/ToString, `[Flags]` enums,
+relative external templates, non-generic/`[External]` BCL `new`, local functions,
+`throw`/`checked`, user `ToString`/`Equals`/`GetHashCode` naming, external base-ctor naming,
+user indexers (`getItem`/`setItem`) and named indexers (`[Name]`/`[AccessorsIndexer]`),
+deconstruction, records, struct `$clone`/`getDefaultValue`, `nameof`, out/ref args in
+`[Template]` calls, base instance calls (`.prototype`), covariant returns, catch-clause
+ordering, events + multicast delegates, property/indexer setter `[Template]`s, discards
+(assignment/`out _`/lambda/deconstruction), nullable `.Value`, named-argument defaults,
+optional lambda parameters, 32-bit integer multiply wrap (`Math.imul`), member-level
+`[Convention]` (e.g. `KeyValuePair.Key`), `GetType()` (`{this:type}`/`<self>`), null-conditional
+element access + property templates, switch-expression pattern variables, `using var`
+block-scoped dispose, C#12 collection expressions, C#12 primary constructors (with capture
+analysis), C#14 `field` keyword, `[ModuleInitializer]`, `Index`/`Range` on arrays (`^n`,
+`a..b`), `H5.Script.Write` raw-JS interop, `[ObjectLiteral]`, universal
+`ToString`/`GetHashCode`/`Equals` lowercasing for BCL types, and rejecting top-level
+statements / global usings as unsupported.
 
 The translator emits H5-runtime-format code (`H5.assembly` + `H5.define`) and drives BCL
 interop through H5's `[Template]`/`[Name]`/`[External]`/`[Convention]` attributes read from
 H5.dll, so it composes with the real runtime.
 
-## Remaining failure categories (long tail)
+The translator now ports H5's exact `OverloadsCollection` ordering for method overload
+suffixes, reads type- and member-level `[Convention]`, honours `[Name]`/`[Template]`/
+`[External]`, and emits universal `toString`/`getHashCode`/`equals` names — so most member
+naming now matches h5.js.
 
-1. **H5 member-naming subsystem (largest bucket).** h5's JS member names are produced by a
-   specific system that the current heuristic (library methods → camelCase) only partially
-   matches. Verified against H5.dll / h5.js:
-   - **`[Convention(Notation, Member, …)]`** on a type controls casing per member-kind. e.g.
-     `StringBuilder`/`Console`/`Math` carry `Convention(Member = Method|Field, Notation = CamelCase)`
-     → methods & fields camelCase, **properties preserved**.
-   - **No `[Convention]` ⇒ preserve** (PascalCase): `System.Random.Next` stays `Next`.
-   - **Interface-implementing methods take the (camelCased) interface member name** even without
-     a type convention: `List<T>.Add` → `add` (implements `ICollection<T>.Add`) but the
-     List-specific `AddRange` stays `AddRange`.
-   - **Overload suffixes**: overloaded members get `$1`, `$2`… (`Next`, `Next$1`, `Next$2`),
-     ordered by H5's `OverloadsCollection`.
-   - **Property accessors** vary: `List.Count` is a JS property `.Count`, but `StringBuilder.Length`
-     is `getLength()`/`setLength()` methods.
-   **Implemented so far** (net +9): a `[Convention]` reader driving library **method** naming —
-   convention notation, interface-member-inherited camelCase, `[External]` camelCase, else
-   preserve. This alone fixed a batch (StringBuilder/Console/Math methods, List interface methods,
-   preserve-style types).
+## Remaining failure categories (long tail, ~58)
 
-   **Still needed** (measured to regress when approximated, so deferred until done faithfully):
-   - **Overload suffixes for library methods.** h5 names overloads `Next`/`Next$1`/`Next$2` via its
-     `OverloadsCollection` ordering. A naive (param-count, signature) ordering produces the wrong
-     suffix for many BCL methods and regressed the suite (218→185), so it must reproduce H5's exact
-     ordering. (Source-method overload suffixes are also needed to avoid JS collisions, but must not
-     be applied to virtual/interface overrides — a blanket version regressed 218→217.)
-   - **Property-accessor representation.** Some library properties are JS properties (`List.Count`
-     → `.Count`) and some are accessor methods (`StringBuilder.Length` → `getLength()`/`setLength()`).
-     The trigger is finer than "type has a `[Convention]`" (that blanket rule regressed 218→198);
-     it needs H5's exact property-emission condition.
-2. **Reflection metadata** — the `H5.setMetadata` block is not emitted, so `GetType()`,
-   `typeof` details, `$$fullname`, and enum boxing-based `ToString` in some paths differ.
-3. **Generic type arguments at runtime** — H5 threads type parameters as runtime arguments
-   (`List$1(T)`); constructs that need `T` as a runtime value (e.g. `default(T)`, `new T[]`,
-   `typeof(T)`) can emit an undefined `T`.
-4. **A few unlowered syntax forms** — collection expressions (`[1,2,3]`), list patterns,
-   range/index (`..`, `^`), `goto`/labels, some `out var` positions.
-5. **Async scheduling order** — micro-task ordering can differ from native for
-   `Task.WhenAll`-style interleavings.
+1. **Hand-written BCL runtime quirks.** A few h5.js types are hand-authored (`// @source X.js`)
+   and diverge from their C# metadata, so method names computed from metadata don't match:
+   e.g. `Guid.ToString(string)` maps to `format(...)` in h5.js, not `toString$1`. Affects
+   `Guid`, `Decimal`, `TimeSpan`, `Regex`, `Version`, `DateTimeOffset`, `CultureInfo`.
+   These need per-type name maps rather than the generic overload algorithm.
+2. **Full 64-bit integer arithmetic** — `long`/`ulong` are `System.Int64` objects in h5.js
+   with `.mul`/`.add`/… methods; the emitter currently emits raw JS operators for them.
+3. **Async scheduling / Task interop** — `Task.WhenAll`, `ContinueWith`, `ValueTask`,
+   `Task.Run` timing and micro-task ordering differ from native.
+4. **Generic type arguments at runtime** — constructs needing `T` as a runtime value
+   (`new T()`, `default(T)`, `typeof(T)`, `Enum.IsDefined<T>`) can emit an undefined `T`.
+5. **Reflection metadata** — the `H5.setMetadata` block is not emitted, so richer
+   `GetType()` details and `[Enum(Emit.X)]` value modes differ.
+6. **Newer/edge C# forms** — C#14 `extension` members, `params List<T>`/`Span<T>`
+   (C#13), multi-dimensional-array indexing, `System.Threading.Lock`, `goto`,
+   explicit interface implementation, and the `[ObjectLiteral]` Ignore/Initializer modes.
+7. **File I/O** — `MemoryStream`/`BinaryWriter` (largely reported unsupported by design).
 
 These are the same kinds of features the legacy emitter handles via its metadata/overload
 machinery; porting them incrementally (each with its mirrored test) is the path to parity.
