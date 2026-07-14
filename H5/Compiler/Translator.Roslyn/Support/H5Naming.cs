@@ -252,10 +252,12 @@ internal static class H5Naming
         return m;
     }
 
-    /// <summary>Notation for a library method: convention, else interface-inherited camelCase, else external, else preserve.</summary>
+    /// <summary>Notation for a library method: member [Convention], else type [Convention], else interface-inherited camelCase, else external, else preserve.</summary>
     private static Notation MethodNotation(IMethodSymbol method)
     {
         if (method.Locations.Any(l => l.IsInSource)) return Notation.None;
+        // A [Convention] applied directly to the method (e.g. IComparer<T>.Compare) wins.
+        if (MemberConventionNotation(method) is { } mc) return mc;
         var conv = ResolveNotation(method.ContainingType, ConvMethod);
         if (conv is { } c) return c;
         if (ImplementsInterfaceMember(method)) return Notation.CamelCase;

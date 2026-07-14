@@ -434,7 +434,7 @@ public sealed partial class Emitter
             // → System.Globalization.CultureInfo.getCurrentCulture()); for instance, the receiver.
             var receiver = prop.IsStatic ? TypeRef(prop.ContainingType)
                 : thisTarget is null ? "this" : Capture(() => EmitExpression(thisTarget));
-            WriteTemplate(template, isStatic: prop.IsStatic, isExtension: false, receiver, new(), new());
+            WriteTemplate(template, isStatic: prop.IsStatic, isExtension: false, receiver, new(), new(), TemplateTypeArgs(prop));
             return;
         }
         if (prop.IsStatic)
@@ -444,6 +444,28 @@ public sealed partial class Emitter
         }
         EmitReceiver(thisTarget);
         _w.Write(H5Naming.MemberJsName(prop));
+    }
+
+    /// <summary>
+    /// Maps a member's generic type-parameter names to the type arguments bound at the call
+    /// site — for both the constructed containing type and (for generic methods) the method
+    /// itself — so a [Template] token like {T} resolves to the concrete runtime type.
+    /// </summary>
+    private Dictionary<string, string>? TemplateTypeArgs(ISymbol member)
+    {
+        Dictionary<string, string>? map = null;
+        void Add(System.Collections.Immutable.ImmutableArray<ITypeParameterSymbol> ps,
+                 System.Collections.Immutable.ImmutableArray<ITypeSymbol> args)
+        {
+            if (ps.Length != args.Length) return;
+            for (var i = 0; i < ps.Length; i++)
+                (map ??= new())[ps[i].Name] = TypeRef(args[i]);
+        }
+        if (member.ContainingType is { IsGenericType: true } ct)
+            Add(ct.OriginalDefinition.TypeParameters, ct.TypeArguments);
+        if (member is IMethodSymbol { IsGenericMethod: true } m)
+            Add(m.OriginalDefinition.TypeParameters, m.TypeArguments);
+        return map;
     }
 
     private void EmitMethodGroup(IMethodSymbol method, ExpressionSyntax? thisTarget)
@@ -560,9 +582,9 @@ public sealed partial class Emitter
     /// reference {this}, the template is relative to the receiver (e.g. "getTotalHours()"
     /// → "recv.getTotalHours()"); otherwise it is absolute.
     /// </summary>
-    private void WriteTemplate(string template, bool isStatic, bool isExtension, string? receiver, Dictionary<string, string> argsByName, List<string> argsByPos)
+    private void WriteTemplate(string template, bool isStatic, bool isExtension, string? receiver, Dictionary<string, string> argsByName, List<string> argsByPos, Dictionary<string, string>? typeArgs = null)
     {
-        var sub = SubstituteTemplate(template, receiver, argsByName, argsByPos);
+        var sub = SubstituteTemplate(template, receiver, argsByName, argsByPos, typeArgs);
         // A leading "<self>" marker (or a {this...} reference) means the template is
         // self-contained; otherwise a bare instance template is relative to the receiver.
         var absolute = isStatic || isExtension || receiver is null
@@ -573,7 +595,7 @@ public sealed partial class Emitter
     /// <summary>
     /// Substitutes an H5 [Template] string. {this} → receiver, {paramName}/{index} → argument JS.
     /// </summary>
-    private string SubstituteTemplate(string template, string? receiver, Dictionary<string, string> argsByName, List<string> argsByPos)
+    private string SubstituteTemplate(string template, string? receiver, Dictionary<string, string> argsByName, List<string> argsByPos, Dictionary<string, string>? typeArgs = null)
     {
         // Strip the self-reference marker used by some H5 templates (e.g. GetType()).
         template = template.Replace("<self>", "");
@@ -603,6 +625,9 @@ public sealed partial class Emitter
                 return argsByName.TryGetValue(n, out var av) ? av : string.Join(", ", argsByPos);
             }
             if (argsByName.TryGetValue(token, out var v)) { posCursor++; return v; }
+            // A generic type-parameter placeholder ({T}, {TSource}, …) → the type argument
+            // bound at the call site (e.g. Comparer<string>.Default's {T} → System.String).
+            if (typeArgs is not null && typeArgs.TryGetValue(token, out var ta)) return ta;
             if (int.TryParse(token, out var idx))
             {
                 if (idx >= argsByPos.Count) return drop;
