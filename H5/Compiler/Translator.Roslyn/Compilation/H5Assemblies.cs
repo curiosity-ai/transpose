@@ -1,7 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Reflection.Metadata;
+using System.Reflection.Metadata.Ecma335;
+using System.Reflection.PortableExecutable;
 
 namespace H5.Translator.Roslyn;
 
@@ -13,6 +17,7 @@ public static class H5Assemblies
 {
     private static string? _h5DllPath;
     private static string? _runtimeJs;
+    private static HashSet<int>? _noBodyTokens;
 
     /// <summary>Path to H5.dll, discovered from the NuGet global-packages cache (overridable).</summary>
     public static string H5DllPath
@@ -53,6 +58,35 @@ public static class H5Assemblies
         var env = Environment.GetEnvironmentVariable("NUGET_PACKAGES");
         if (!string.IsNullOrEmpty(env)) yield return env;
         yield return "/root/.nuget/packages";
+    }
+
+    /// <summary>
+    /// Metadata tokens of the H5.dll methods that carry no IL body and are not abstract —
+    /// i.e. C# <c>extern</c> methods/constructors whose behaviour is supplied by a
+    /// hand-written JS runtime file (e.g. <c>Regex</c>). H5's <c>OverloadsCollection</c>
+    /// excludes these from a non-external type's overload set, so they receive no
+    /// <c>$N</c> suffix (matching the single dispatching name in the hand-written JS).
+    /// </summary>
+    public static HashSet<int> NoBodyMethodTokens
+    {
+        get
+        {
+            if (_noBodyTokens is not null) return _noBodyTokens;
+            var set = new HashSet<int>();
+            using (var fs = File.OpenRead(H5DllPath))
+            using (var pe = new PEReader(fs))
+            {
+                var mr = pe.GetMetadataReader();
+                foreach (var handle in mr.MethodDefinitions)
+                {
+                    var md = mr.GetMethodDefinition(handle);
+                    var isAbstract = (md.Attributes & MethodAttributes.Abstract) != 0;
+                    if (md.RelativeVirtualAddress == 0 && !isAbstract)
+                        set.Add(MetadataTokens.GetToken(handle));
+                }
+            }
+            return _noBodyTokens = set;
+        }
     }
 
     /// <summary>The embedded H5 JavaScript runtime (h5.js), read once from H5.dll.</summary>

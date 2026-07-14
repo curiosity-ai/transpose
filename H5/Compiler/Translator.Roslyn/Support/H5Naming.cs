@@ -108,7 +108,10 @@ internal static class H5Naming
         // External non-interface types also skip suffixes.
         var declType = method.ContainingType;
         var external = declType is not null && HasExternalAttribute(declType) && declType.TypeKind != TypeKind.Interface;
-        if (external || HasCanonicalName(method)) return Cache(method, baseName);
+
+        // Extern (no IL body) methods on a non-external type are hand-written-JS backed:
+        // H5 excludes them from the overload set, so they carry no suffix.
+        if (external || HasCanonicalName(method) || HasNoBody(method)) return Cache(method, baseName);
 
         // Overload index via H5's overload-collection ordering (override → base member),
         // grouped by the FINAL JS base name so differently-named overloads don't collide.
@@ -154,6 +157,19 @@ internal static class H5Naming
     private static bool HasCanonicalName(IMethodSymbol m)
         => IsObjectToString(m) || IsObjectGetHashCode(m) || IsObjectEquals(m)
            || GetName(m) is not null || InheritedName(m) is not null || ImplementedInterfaceMember(m) is not null;
+
+    /// <summary>
+    /// True if this is a library (H5.dll) method with no IL body and not abstract — a C#
+    /// <c>extern</c> member backed by hand-written runtime JS (e.g. <c>Regex.Replace</c>).
+    /// H5 leaves such members out of a non-external type's overload set, so they take the
+    /// bare convention name with no <c>$N</c> suffix.
+    /// </summary>
+    private static bool HasNoBody(IMethodSymbol method)
+    {
+        if (method.Locations.Any(l => l.IsInSource)) return false;
+        if (method.ContainingAssembly?.Name != "H5") return false;
+        return H5Assemblies.NoBodyMethodTokens.Contains(method.OriginalDefinition.MetadataToken);
+    }
 
     /// <summary>A [Name] inherited from an overridden base method or an implemented interface member.</summary>
     private static string? InheritedName(IMethodSymbol method)
@@ -250,9 +266,15 @@ internal static class H5Naming
                 var c = candidate.OriginalDefinition;
                 if (c.MethodKind != kind || c.IsStatic != isStatic) continue;
                 if (c.ExplicitInterfaceImplementations.Length > 0) continue;
-                if (GetTemplate(c) is not null) continue;              // inline methods are excluded
                 if (JsBaseName(c) != jsBase) continue;                 // group by final JS name
                 if (c.IsOverride) continue;                            // overrides fold into their base
+
+                // The parameterless object ToString occupies a slot (so a same-named
+                // overload like Version.ToString(int) numbers from $1), even though it is
+                // inline/body-less — H5 keeps only ToString here, not Equals/GetHashCode.
+                var isToStringSlot = IsObjectToString(c);
+                if (!isToStringSlot && GetTemplate(c) is not null) continue;   // inline methods are excluded
+                if (!isToStringSlot && HasNoBody(c)) continue;                 // extern (hand-written JS) methods aren't numbered
                 if (seen.Add(c)) members.Add(c);
             }
             if (kind == MethodKind.Constructor) break;                 // ctors aren't inherited
