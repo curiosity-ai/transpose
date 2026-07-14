@@ -521,8 +521,19 @@ public sealed partial class Emitter
         switch (whenNotNull)
         {
             case MemberBindingExpressionSyntax binding:
-                _w.Write("?.");
-                _w.Write(NameMangler.JsIdentifier(binding.Name.Identifier.Text));
+                // Honour a property's [Template] (e.g. string.Length → {this}.length).
+                if (_model.GetSymbolInfo(binding).Symbol is IPropertySymbol { GetMethod: { } getM } prop
+                    && H5Naming.GetTemplate(getM.OriginalDefinition) is { } propTpl)
+                {
+                    var sub = SubstituteTemplate(propTpl, "", new(), new());
+                    _w.Write(sub.StartsWith(".") ? "?" + sub : "?." + sub);
+                }
+                else
+                {
+                    _w.Write("?.");
+                    var bsym = _model.GetSymbolInfo(binding).Symbol;
+                    _w.Write(bsym is not null ? H5Naming.MemberJsName(bsym) : NameMangler.JsIdentifier(binding.Name.Identifier.Text));
+                }
                 break;
             case InvocationExpressionSyntax { Expression: MemberBindingExpressionSyntax mb } inv:
                 // Delegate invoke (event?.Invoke(...)) → optional call, not a member call.
@@ -538,6 +549,22 @@ public sealed partial class Emitter
                 _w.Write("(");
                 EmitArgumentList(inv.ArgumentList);
                 _w.Write(")");
+                break;
+            case ElementBindingExpressionSyntax elemBind:
+                // a?[i] — indexer access on a possibly-null receiver.
+                if (_model.GetSymbolInfo(elemBind).Symbol is IPropertySymbol { IsIndexer: true } idx
+                    && idx.ContainingType.SpecialType != SpecialType.System_String)
+                {
+                    _w.Write("?." + H5Naming.IndexerAccessorName(idx, isGet: true) + "(");
+                    EmitArgumentList(elemBind.ArgumentList);
+                    _w.Write(")");
+                }
+                else
+                {
+                    _w.Write("?.[");
+                    EmitArgumentList(elemBind.ArgumentList);
+                    _w.Write("]");
+                }
                 break;
             default:
                 _w.Write("?.");

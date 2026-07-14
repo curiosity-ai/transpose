@@ -27,6 +27,17 @@ public sealed partial class Emitter
     {
         var subject = NextTemp("$sw");
         _w.Write($"(function ({subject}) {{ ");
+
+        // Pre-declare pattern variables bound in the arms (e.g. `int i` in `> 0 and int i`).
+        var patternVars = new List<string>();
+        foreach (var arm in switchExpr.Arms)
+        {
+            CollectInlineDesignations(arm.Pattern, isRoot: true, patternVars);
+            if (arm.WhenClause is not null) CollectInlineDesignations(arm.WhenClause, isRoot: true, patternVars);
+        }
+        foreach (var v in patternVars.Distinct())
+            _w.Write($"var {NameMangler.JsIdentifier(v)}; ");
+
         foreach (var arm in switchExpr.Arms)
         {
             _w.Write("if (");
