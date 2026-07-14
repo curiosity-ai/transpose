@@ -160,29 +160,7 @@ public class Program
 }
 """;
 
-            //For Rosyln we don't wrap it in a static class as the code already is compiled as a "static class"
-            var rosylnCode = """
-using System;
-
-public static string ReverseText(this string s)
-{
-    Console.WriteLine($"Reversing text: {s}");
-    char[] charArray = s.ToCharArray();
-    Array.Reverse(charArray);
-    return new string(charArray);
-}
-
-public class Program
-{
-    public static void Main()
-    {
-        string s = "Hello";
-        Console.WriteLine(s.ReverseText());
-    }
-}
-""";
-
-            await RunTest(code, overrideRoslynCode: rosylnCode);
+            await RunTest(code);
         }
 
         [TestMethod]

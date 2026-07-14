@@ -718,6 +718,19 @@ public sealed partial class Emitter
             return;
         }
 
+        // 32-bit integer multiplication wraps (unchecked C# semantics); JS "*" does not,
+        // so route through Math.imul via H5.Int.mul / umul.
+        if (binary.IsKind(SyntaxKind.MultiplyExpression)
+            && resultType?.SpecialType is SpecialType.System_Int32 or SpecialType.System_UInt32)
+        {
+            _w.Write(resultType.SpecialType == SpecialType.System_UInt32 ? "H5.Int.umul(" : "H5.Int.mul(");
+            EmitExpression(binary.Left);
+            _w.Write(", ");
+            EmitExpression(binary.Right);
+            _w.Write(")");
+            return;
+        }
+
         // Null-coalescing
         if (binary.IsKind(SyntaxKind.CoalesceExpression))
         {

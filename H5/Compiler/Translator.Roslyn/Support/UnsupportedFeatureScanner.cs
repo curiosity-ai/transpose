@@ -45,6 +45,12 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
         base.VisitPointerType(node);
     }
 
+    public override void VisitGlobalStatement(GlobalStatementSyntax node)
+    {
+        Report(node, "Top-level statements are not supported; use an explicit class with a Main method.");
+        base.VisitGlobalStatement(node);
+    }
+
     public override void VisitPrefixUnaryExpression(PrefixUnaryExpressionSyntax node)
     {
         if (node.IsKind(SyntaxKind.AddressOfExpression) || node.IsKind(SyntaxKind.PointerIndirectionExpression))
