@@ -36,6 +36,18 @@
     H5R.combine = function (a, b) { return H5.fn.combine(a, b); };
     H5R.remove = function (a, b) { return H5.fn.remove(a, b); };
 
+    // Async interop: adapt a native Promise (produced by an emitted `async` body) into an
+    // h5.js Task, so async methods return real Tasks that compose with Task.Run/WhenAll/
+    // ContinueWith and route exceptions through the Task (faulted state), matching h5.js.
+    H5R.fromPromise = function (p) {
+        var tcs = new System.Threading.Tasks.TaskCompletionSource();
+        Promise.resolve(p).then(
+            function (v) { tcs.setResult(v); },
+            function (e) { tcs.setException(System.Exception.create(e)); }
+        );
+        return tcs.task;
+    };
+
     // Spread source → JS array (arrays pass through; other enumerables are drained).
     H5R.spread = function (x) {
         if (x == null) { return []; }

@@ -609,22 +609,25 @@ public sealed partial class Emitter
     private void EmitLocalFunction(LocalFunctionStatementSyntax localFn)
     {
         var symbol = _model.GetDeclaredSymbol(localFn) as IMethodSymbol;
-        var asyncKw = localFn.Modifiers.Any(SyntaxKind.AsyncKeyword) ? "async " : "";
-        _w.Write($"{asyncKw}function {NameMangler.JsIdentifier(localFn.Identifier.Text)}(");
+        var isAsync = localFn.Modifiers.Any(SyntaxKind.AsyncKeyword);
+        _w.Write($"function {NameMangler.JsIdentifier(localFn.Identifier.Text)}(");
         if (symbol is not null) EmitParameterList(symbol);
         _w.Write(") ");
         _w.Block(() =>
         {
             if (symbol is not null) EmitOptionalDefaults(symbol);
-            if (localFn.Body is not null)
+            EmitMaybeAsyncBody(isAsync, () =>
             {
-                foreach (var s in localFn.Body.Statements) EmitStatement(s);
-            }
-            else if (localFn.ExpressionBody is not null)
-            {
-                if (symbol?.ReturnsVoid == true) EmitExpressionStatement(localFn.ExpressionBody.Expression);
-                else { _w.Write("return "); EmitExpression(localFn.ExpressionBody.Expression); _w.WriteLine(";"); }
-            }
+                if (localFn.Body is not null)
+                {
+                    EmitStatements(localFn.Body.Statements);
+                }
+                else if (localFn.ExpressionBody is not null)
+                {
+                    if (symbol?.ReturnsVoid == true) EmitExpressionStatement(localFn.ExpressionBody.Expression);
+                    else { _w.Write("return "); EmitExpression(localFn.ExpressionBody.Expression); _w.WriteLine(";"); }
+                }
+            });
         });
         _w.WriteLine();
     }

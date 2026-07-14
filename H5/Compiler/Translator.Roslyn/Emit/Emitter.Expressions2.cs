@@ -1241,7 +1241,9 @@ public sealed partial class Emitter
     private void EmitLambda(IEnumerable<string> parameters, CSharpSyntaxNode body, bool isAsync,
         SeparatedSyntaxList<ParameterSyntax>? paramSyntax = null)
     {
-        if (isAsync) _w.Write("async ");
+        // An async lambda returns an h5.js Task (via the H5R.fromPromise wrapper in
+        // EmitMaybeAsyncBody), so it composes with Task.Run/WhenAll/ContinueWith; the outer
+        // function is therefore not itself `async`.
         _w.Write("function (");
         // Uniquify discard parameters ("_") so JS doesn't see duplicate names.
         var discardN = 0;
@@ -1252,21 +1254,24 @@ public sealed partial class Emitter
         // Optional lambda parameters (C# 12): default when undefined.
         var defaults = paramSyntax?.Where(p => p.Default is not null).ToList();
 
-        if (body is BlockSyntax block)
+        _w.Block(() =>
         {
-            _w.Block(() => { EmitLambdaParamDefaults(defaults); EmitStatements(block.Statements); });
-        }
-        else if (body is ExpressionSyntax exprBody)
-        {
-            _w.Block(() =>
+            EmitLambdaParamDefaults(defaults);
+            EmitMaybeAsyncBody(isAsync, () =>
             {
-                EmitLambdaParamDefaults(defaults);
-                // If the lambda's body has a value, return it.
-                _w.Write("return ");
-                EmitExpression(exprBody);
-                _w.WriteLine(";");
+                if (body is BlockSyntax block)
+                {
+                    EmitStatements(block.Statements);
+                }
+                else if (body is ExpressionSyntax exprBody)
+                {
+                    // If the lambda's body has a value, return it.
+                    _w.Write("return ");
+                    EmitExpression(exprBody);
+                    _w.WriteLine(";");
+                }
             });
-        }
+        });
     }
 
     private void EmitLambdaParamDefaults(System.Collections.Generic.List<ParameterSyntax>? defaults)

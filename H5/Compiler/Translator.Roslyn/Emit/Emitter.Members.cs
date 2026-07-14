@@ -429,8 +429,7 @@ public sealed partial class Emitter
     private void EmitMethodEntry(IMethodSymbol m)
     {
         var decl = (BaseMethodDeclarationSyntax)m.DeclaringSyntaxReferences[0].GetSyntax();
-        var asyncKw = m.IsAsync ? "async " : "";
-        _w.Write($"{H5Naming.MemberJsName(m)}: {asyncKw}function (");
+        _w.Write($"{H5Naming.MemberJsName(m)}: function (");
         EmitParameterList(m);
         _w.Write(") ");
         if (decl.Body is not null && IsIteratorBody(decl.Body))
@@ -447,8 +446,7 @@ public sealed partial class Emitter
             {
                 var m = methods[i];
                 var decl = (BaseMethodDeclarationSyntax)m.DeclaringSyntaxReferences[0].GetSyntax();
-                var asyncKw = m.IsAsync ? "async " : "";
-                _w.Write($"{H5Naming.MemberJsName(m)}: {asyncKw}function (");
+                _w.Write($"{H5Naming.MemberJsName(m)}: function (");
                 EmitParameterList(m);
                 _w.Write(") ");
                 if (decl.Body is not null && IsIteratorBody(decl.Body))
@@ -484,8 +482,8 @@ public sealed partial class Emitter
     private void EmitEntryPoint(IMethodSymbol entry)
     {
         var decl = (BaseMethodDeclarationSyntax)entry.DeclaringSyntaxReferences[0].GetSyntax();
-        var asyncKw = entry.IsAsync || IsTaskType(entry.ReturnType) ? "async " : "";
-        _w.Write($"main: {asyncKw}function Main () ");
+        var isAsync = entry.IsAsync || IsTaskType(entry.ReturnType);
+        _w.Write("main: function Main () ");
 
         var moduleInits = ModuleInitializerMethods();
         if (moduleInits.Count == 0)
@@ -501,12 +499,15 @@ public sealed partial class Emitter
             foreach (var mi in moduleInits)
                 _w.WriteLine($"{TypeRef(mi.ContainingType)}.{H5Naming.MemberJsName(mi)}();");
             EmitOptionalDefaults(entry);
-            if (decl.Body is not null) EmitStatements(decl.Body.Statements);
-            else if (decl.ExpressionBody is not null)
+            EmitMaybeAsyncBody(isAsync, () =>
             {
-                if (entry.ReturnsVoid) EmitExpressionStatement(decl.ExpressionBody.Expression);
-                else { _w.Write("return "); EmitExpressionConverted(decl.ExpressionBody.Expression, entry.ReturnType); _w.WriteLine(";"); }
-            }
+                if (decl.Body is not null) EmitStatements(decl.Body.Statements);
+                else if (decl.ExpressionBody is not null)
+                {
+                    if (entry.ReturnsVoid) EmitExpressionStatement(decl.ExpressionBody.Expression);
+                    else { _w.Write("return "); EmitExpressionConverted(decl.ExpressionBody.Expression, entry.ReturnType); _w.WriteLine(";"); }
+                }
+            });
         });
     }
 
@@ -542,16 +543,33 @@ public sealed partial class Emitter
         _w.Block(() =>
         {
             EmitOptionalDefaults(method);
-            if (block is not null)
+            EmitMaybeAsyncBody(method.IsAsync, () =>
             {
-                EmitStatements(block.Statements);
-            }
-            else if (arrow is not null)
-            {
-                if (returnsVoid) EmitExpressionStatement(arrow.Expression);
-                else { _w.Write("return "); EmitExpressionConverted(arrow.Expression, method.ReturnType); _w.WriteLine(";"); }
-            }
+                if (block is not null)
+                {
+                    EmitStatements(block.Statements);
+                }
+                else if (arrow is not null)
+                {
+                    if (returnsVoid) EmitExpressionStatement(arrow.Expression);
+                    else { _w.Write("return "); EmitExpressionConverted(arrow.Expression, method.ReturnType); _w.WriteLine(";"); }
+                }
+            });
         });
+    }
+
+    /// <summary>
+    /// Emits statements directly, or — for an async member — inside a native `async` IIFE
+    /// whose promise is adapted to an h5.js Task via H5R.fromPromise. This gives async
+    /// methods the same contract as h5.js's own state-machine output: they return a Task
+    /// that composes with Task.Run/WhenAll/ContinueWith and carries faults through the Task.
+    /// </summary>
+    private void EmitMaybeAsyncBody(bool isAsync, Action emitStatements)
+    {
+        if (!isAsync) { emitStatements(); return; }
+        _w.Write("return H5R.fromPromise((async () => ");
+        _w.Block(emitStatements);
+        _w.WriteLine(")());");
     }
 
     // ---- properties (with logic) -------------------------------------------
