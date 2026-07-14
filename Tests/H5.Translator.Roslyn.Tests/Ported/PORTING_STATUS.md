@@ -7,7 +7,7 @@ diffing output against native .NET — the same contract as the original suite.
 
 ## Current results
 
-- **~287 passing**, ~36 failing, **17 skipped** (`WebApiTests` — need the h5.core browser/DOM
+- **~290 passing**, ~33 failing, **17 skipped** (`WebApiTests` — need the h5.core browser/DOM
   bindings, out of scope for a runtime-only harness).
 
 Fixed since the re-target: LINQ/extension templates, enum values/ToString, `[Flags]` enums,
@@ -52,12 +52,12 @@ resulting promise is adapted to an h5.js **Task** via `H5R.fromPromise` (a
 `Task.Run`/`Task.WhenAll`/`ContinueWith` and carry faults through the Task (enabling
 exception aggregation), while `await x` drives any Task or promise through `H5.toPromise`.
 
-## Remaining failure categories (long tail, ~36)
+## Remaining failure categories (long tail, ~33)
 
 1. **Hand-written BCL runtime quirks.** A few h5.js types are hand-authored (`// @source X.js`)
    and diverge from their C# metadata, so method names computed from metadata don't match:
    e.g. `Guid.ToString(string)` maps to `format(...)` in h5.js, not `toString$1`. Affects
-   `Guid`, `TimeSpan`, `Regex`, `Version`, `DateTimeOffset`, `CultureInfo`, `Comparer`.
+   `Guid`, `Regex`, `Version`, `CultureInfo`, `Comparer`.
    These need per-type name maps rather than the generic overload algorithm.
 2. **`async ValueTask` / `goto` across `await`** — `async ValueTask` trips a Roslyn
    task-like-metadata error from the H5 BCL (H5.dll's `ValueTask` lacks the async
