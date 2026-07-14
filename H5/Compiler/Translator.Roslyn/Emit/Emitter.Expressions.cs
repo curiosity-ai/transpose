@@ -207,9 +207,13 @@ public sealed partial class Emitter
             return;
         }
 
-        // Enum → object/string uses the enum's name (System.Enum.toString).
+        // Enum → object/string uses the enum's name (System.Enum.toString) — but only for
+        // the Name/default modes, whose runtime value is numeric. Under Emit.Value the value
+        // is already the number, and under the Emit.StringName* modes it is already the name
+        // string, so those box to themselves without a lookup.
         if (sourceType is { TypeKind: TypeKind.Enum }
-            && targetType?.SpecialType is SpecialType.System_Object or SpecialType.System_String)
+            && targetType?.SpecialType is SpecialType.System_Object or SpecialType.System_String
+            && H5Naming.EnumEmitMode(sourceType) is not (2 or 3 or 4 or 5 or 6))
         {
             _w.Write($"System.Enum.toString({TypeRef(sourceType)}, ");
             EmitExpression(expr);
@@ -497,8 +501,7 @@ public sealed partial class Emitter
                 _w.Write(ConstantLiteral(constField.ConstantValue, constField.Type));
                 return;
             case IFieldSymbol { ContainingType.TypeKind: TypeKind.Enum } enumField:
-                // Enum member → the enum object's member (h5 enums are objects).
-                _w.Write($"{TypeRef(enumField.ContainingType)}.{H5Naming.MemberJsName(enumField)}");
+                EmitEnumMemberAccess(enumField);
                 return;
             case IFieldSymbol field:
                 if (field.ContainingType is { IsTupleType: true })
@@ -525,6 +528,29 @@ public sealed partial class Emitter
             default:
                 EmitExpression(member.Expression);
                 _w.Write("." + NameMangler.JsIdentifier(member.Name.Identifier.Text));
+                return;
+        }
+    }
+
+    /// <summary>
+    /// Emits a reference to an enum member honouring H5's <c>[Enum(Emit.X)]</c> mode:
+    /// <c>Value</c> emits the numeric constant, the <c>StringName*</c> modes emit the
+    /// member name as a (cased) string literal, and the <c>Name*</c> modes (and the
+    /// default) reference the runtime enum object's member.
+    /// </summary>
+    private void EmitEnumMemberAccess(IFieldSymbol enumField)
+    {
+        switch (H5Naming.EnumEmitMode(enumField.ContainingType))
+        {
+            case 2: // Emit.Value
+                _w.Write(ConstantLiteral(enumField.ConstantValue,
+                    enumField.ContainingType.EnumUnderlyingType ?? enumField.Type));
+                return;
+            case 3 or 4 or 5 or 6: // Emit.StringName*
+                _w.Write(JsString(H5Naming.EnumStringName(enumField, H5Naming.EnumEmitMode(enumField.ContainingType))));
+                return;
+            default: // Emit.Name* / default → the runtime enum object's member
+                _w.Write($"{TypeRef(enumField.ContainingType)}.{H5Naming.MemberJsName(enumField)}");
                 return;
         }
     }

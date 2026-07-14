@@ -14,6 +14,38 @@ internal static class H5Naming
     public const string NameAttr = "H5.NameAttribute";
     public const string ExternalAttr = "H5.ExternalAttribute";
     public const string ScriptAttr = "H5.ScriptAttribute";
+    public const string EnumAttr = "H5.EnumAttribute";
+
+    /// <summary>
+    /// The <c>[Enum(Emit.X)]</c> mode of an enum type (H5's <c>Emit</c> values:
+    /// 1 Name, 2 Value, 3 StringName, 4 StringNamePreserveCase, 5 StringNameLowerCase,
+    /// 6 StringNameUpperCase, 7 NamePreserveCase, 8 NameLowerCase, 9 NameUpperCase).
+    /// Defaults to 7 (NamePreserveCase) when the attribute is absent, matching H5.
+    /// </summary>
+    public static int EnumEmitMode(ITypeSymbol enumType)
+    {
+        var a = enumType.GetAttributes().FirstOrDefault(x => x.AttributeClass?.ToDisplayString() == EnumAttr);
+        if (a is null || a.ConstructorArguments.Length == 0) return 7;
+        return a.ConstructorArguments[0].Value is int m ? m : 7;
+    }
+
+    /// <summary>
+    /// The string an enum member emits under a StringName mode (3–6): the member name
+    /// with H5's per-mode casing (3 camelCases the first letter, 5 lowercases, 6 uppercases,
+    /// 4 preserves), unless an explicit <c>[Name]</c> overrides it.
+    /// </summary>
+    public static string EnumStringName(IFieldSymbol member, int mode)
+    {
+        if (GetName(member) is { } named) return named;
+        var name = member.Name;
+        return mode switch
+        {
+            3 => char.ToLowerInvariant(name[0]) + name.Substring(1),
+            5 => name.ToLowerInvariant(),
+            6 => name.ToUpperInvariant(),
+            _ => name,
+        };
+    }
 
     /// <summary>The [Template] JS string for a member, or null.</summary>
     public static string? GetTemplate(ISymbol symbol)

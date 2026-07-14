@@ -237,8 +237,8 @@ public class Program
         // Note: H5 default notation might affect this, but StringName usually emits the name.
         // Let's verify if it's a string.
         if (!(valFirst is string)) throw new Exception(""EnumString should emit string"");
-        // Verify value - standard behavior for StringName is usually the name (First).
-        if ((string)valFirst != ""First"") throw new Exception(""EnumString.First should be 'First'"");
+        // Emit.StringName camelCases the first letter (H5 behaviour): First -> first.
+        if ((string)valFirst != ""first"") throw new Exception(""EnumString.First should be 'first'"");
 
         // Emit.StringNamePreserveCase
         object valMixed = EnumPreserve.MixedCase;
