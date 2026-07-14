@@ -124,9 +124,11 @@ public sealed partial class Emitter
                 EmitExpression(checkedExpr.Expression);
                 break;
             case AwaitExpressionSyntax await:
-                _w.Write("(await ");
+                // h5.js Tasks are not natively thenable; H5.toPromise adapts a Task (or an
+                // already-native Promise) into something JS `await` can drive.
+                _w.Write("(await H5.toPromise(");
                 EmitExpression(await.Expression);
-                _w.Write(")");
+                _w.Write("))");
                 break;
             case ConditionalAccessExpressionSyntax condAccess:
                 EmitConditionalAccess(condAccess);
