@@ -100,6 +100,9 @@ public sealed partial class Emitter
             case DefaultExpressionSyntax def:
                 _w.Write(DefaultValueLiteral(_model.GetTypeInfo(def).Type ?? _model.GetTypeInfo(def).ConvertedType!));
                 break;
+            case DeclarationExpressionSyntax { Designation: SingleVariableDesignationSyntax d }:
+                _w.Write(NameMangler.JsIdentifier(d.Identifier.Text));
+                break;
             case ThrowExpressionSyntax throwExpr:
                 _w.Write("(function () { throw ");
                 EmitExpression(throwExpr.Expression);

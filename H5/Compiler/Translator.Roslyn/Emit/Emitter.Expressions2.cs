@@ -77,6 +77,12 @@ public sealed partial class Emitter
         var isBase = invocation.Expression is MemberAccessExpressionSyntax { Expression: BaseExpressionSyntax };
         var receiverExpr = invocation.Expression is MemberAccessExpressionSyntax ma && !isBase ? ma.Expression : null;
 
+        if (template is not null && HasByRefArguments(invocation.ArgumentList, symbol))
+        {
+            EmitByRefTemplateInvocation(invocation, symbol, template);
+            return;
+        }
+
         if (template is not null)
         {
             var (byName, byPos) = CaptureArguments(invocation.ArgumentList, symbol);
@@ -215,6 +221,51 @@ public sealed partial class Emitter
         {
             _w.Write($"this.{H5Naming.MemberJsName(symbol)}");
         }
+    }
+
+    /// <summary>Template call with out/ref args → holder objects + write-back.</summary>
+    private void EmitByRefTemplateInvocation(InvocationExpressionSyntax invocation, IMethodSymbol symbol, string template)
+    {
+        var args = invocation.ArgumentList.Arguments;
+        var holders = new string?[args.Count];
+        var byName = new Dictionary<string, string>();
+        var byPos = new List<string>();
+
+        _w.Write("(function () { ");
+        for (var i = 0; i < args.Count; i++)
+        {
+            var isRef = args[i].RefKindKeyword.IsKind(SyntaxKind.OutKeyword) || args[i].RefKindKeyword.IsKind(SyntaxKind.RefKeyword);
+            string val;
+            if (isRef)
+            {
+                var holder = "$ref" + i;
+                holders[i] = holder;
+                var t = i < symbol.Parameters.Length ? symbol.Parameters[i].Type : null;
+                var seed = args[i].RefKindKeyword.IsKind(SyntaxKind.OutKeyword) ? (t is not null ? DefaultValueLiteral(t) : "null") : Capture(() => EmitExpression(args[i].Expression));
+                _w.Write($"var {holder} = {{ v: {seed} }}; ");
+                val = holder;
+            }
+            else
+            {
+                var pType = i < symbol.Parameters.Length ? symbol.Parameters[i].Type : null;
+                var idx = i;
+                val = Capture(() => EmitExpressionConverted(args[idx].Expression, pType));
+            }
+            byPos.Add(val);
+            if (i < symbol.Parameters.Length) byName[symbol.Parameters[i].Name] = val;
+        }
+
+        _w.Write("var $ret = ");
+        _w.Write(SubstituteTemplate(template, symbol.IsStatic ? null : "this", byName, byPos));
+        _w.Write("; ");
+
+        for (var i = 0; i < args.Count; i++)
+        {
+            if (holders[i] is null) continue;
+            EmitByRefWriteBackTarget(args[i].Expression);
+            _w.Write($" = {holders[i]}.v; ");
+        }
+        _w.Write("return $ret; })()");
     }
 
     private void EmitByRefInvocation(InvocationExpressionSyntax invocation, IMethodSymbol symbol)
