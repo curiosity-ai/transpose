@@ -7,7 +7,7 @@ diffing output against native .NET — the same contract as the original suite.
 
 ## Current results
 
-- **~285 passing**, ~38 failing, **17 skipped** (`WebApiTests` — need the h5.core browser/DOM
+- **~287 passing**, ~36 failing, **17 skipped** (`WebApiTests` — need the h5.core browser/DOM
   bindings, out of scope for a runtime-only harness).
 
 Fixed since the re-target: LINQ/extension templates, enum values/ToString, `[Flags]` enums,
@@ -42,7 +42,8 @@ constants such as `long.MinValue`/`decimal.MaxValue`). `goto`/labels lower to a
 label-dispatch state machine (works across `await`). Lifted nullable operators propagate
 null. C#12 generic classes/interfaces thread their type parameters at runtime
 (`Factory$1(Item)`, `new T()` → `H5.createInstance(T)`). LINQ query syntax lowers to the
-h5.js `Enumerable.from(src).where(...).select(...)` chain.
+h5.js `Enumerable.from(src).where(...).select(...)` chain. C#11 list patterns match
+arrays; foreach honours an extension `GetEnumerator`.
 
 Async constructs are aligned with h5.js's contract: an `async` method/lambda/local
 function emits a plain outer function whose body runs in a native `async` IIFE, and the
@@ -51,26 +52,27 @@ resulting promise is adapted to an h5.js **Task** via `H5R.fromPromise` (a
 `Task.Run`/`Task.WhenAll`/`ContinueWith` and carry faults through the Task (enabling
 exception aggregation), while `await x` drives any Task or promise through `H5.toPromise`.
 
-## Remaining failure categories (long tail, ~50)
+## Remaining failure categories (long tail, ~36)
 
 1. **Hand-written BCL runtime quirks.** A few h5.js types are hand-authored (`// @source X.js`)
    and diverge from their C# metadata, so method names computed from metadata don't match:
    e.g. `Guid.ToString(string)` maps to `format(...)` in h5.js, not `toString$1`. Affects
-   `Guid`, `Decimal`, `TimeSpan`, `Regex`, `Version`, `DateTimeOffset`, `CultureInfo`.
+   `Guid`, `TimeSpan`, `Regex`, `Version`, `DateTimeOffset`, `CultureInfo`, `Comparer`.
    These need per-type name maps rather than the generic overload algorithm.
 2. **`async ValueTask` / `goto` across `await`** — `async ValueTask` trips a Roslyn
    task-like-metadata error from the H5 BCL (H5.dll's `ValueTask` lacks the async
    method-builder attribute, unfixable without changing the BCL). `goto` between labels
-   that straddle an `await` needs the full step-state-machine lowering that native
-   async/await cannot express.
-3. **Generic type arguments at runtime** — constructs needing `T` as a runtime value
-   (`new T()`, `default(T)`, `typeof(T)`, `Enum.IsDefined<T>`) can emit an undefined `T`.
-5. **Reflection metadata** — the `H5.setMetadata` block is not emitted, so richer
+   that straddle an `await` needs the step-state-machine lowering that native async can't
+   express (plain `goto`/labels are supported via the sync state machine).
+3. **Generic method type arguments** — a generic *method* (not class) that uses `T` at
+   runtime (`new T()`, `default(T)`, `typeof(T)`) needs `T` threaded as a call argument.
+4. **Reflection metadata** — the `H5.setMetadata` block is not emitted, so richer
    `GetType()` details and `[Enum(Emit.X)]` value modes differ.
-6. **Newer/edge C# forms** — C#14 `extension` members, `params List<T>`/`Span<T>`
-   (C#13), multi-dimensional-array indexing, `System.Threading.Lock`, `goto`,
-   explicit interface implementation, and the `[ObjectLiteral]` Ignore/Initializer modes.
-7. **File I/O** — `MemoryStream`/`BinaryWriter` (largely reported unsupported by design).
+5. **Newer/edge C# forms** — C#14 `extension` members and ref-lambda params,
+   null-conditional assignment, `params List<T>`/`Span<T>` (C#13), multi-dimensional-array
+   indexing, `System.Threading.Lock`, `nint`/`nuint`, `checked` overflow throwing, explicit
+   interface implementation, and the `[ObjectLiteral]` Ignore/Initializer modes.
+6. **File I/O** — `MemoryStream`/`BinaryWriter` (largely reported unsupported by design).
 
 These are the same kinds of features the legacy emitter handles via its metadata/overload
 machinery; porting them incrementally (each with its mirrored test) is the path to parity.
