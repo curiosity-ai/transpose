@@ -68,6 +68,17 @@ public sealed partial class Emitter
             return;
         }
 
+        // H5.Script.Write(code, args) — inject raw JavaScript, substituting {0},{1}… with args.
+        if (symbol is { Name: "Write" } && symbol.ContainingType?.ToDisplayString() == "H5.Script"
+            && invocation.ArgumentList.Arguments.Count >= 1
+            && _model.GetConstantValue(invocation.ArgumentList.Arguments[0].Expression).Value is string rawJs)
+        {
+            var argJs = invocation.ArgumentList.Arguments.Skip(1)
+                .Select(a => Capture(() => EmitExpression(a.Expression))).ToList();
+            _w.Write(SubstituteTemplate(rawJs, null, new(), argJs));
+            return;
+        }
+
         var origin = symbol.OriginalDefinition;
         var template = H5Naming.GetTemplate(origin) ?? H5Naming.GetTemplate(symbol);
 
@@ -505,6 +516,13 @@ public sealed partial class Emitter
         {
             if (argList is { Arguments.Count: 1 }) EmitExpression(argList.Arguments[0].Expression);
             else _w.Write("null");
+            return;
+        }
+
+        // [ObjectLiteral] type → a plain JS object ({}); the initializer sets its members.
+        if (type.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "H5.ObjectLiteralAttribute"))
+        {
+            _w.Write("{}");
             return;
         }
 
