@@ -88,7 +88,8 @@ internal static class H5Naming
             SymbolKind.Event => ConvEvent,
             _ => ConvAll,
         };
-        var notation = ResolveNotation(symbol.ContainingType, kindFlag)
+        var notation = MemberConventionNotation(symbol)
+                       ?? ResolveNotation(symbol.ContainingType, kindFlag)
                        ?? (HasExternalAttribute(symbol.ContainingType) ? Notation.CamelCase : Notation.None);
         return Apply(notation, symbol.Name);
     }
@@ -253,6 +254,17 @@ internal static class H5Naming
 
     private enum Notation { None = 0, LowerCase = 1, UpperCase = 2, CamelCase = 3, PascalCase = 4 }
     private const int ConvAll = 0, ConvMethod = 0x1, ConvProperty = 0x2, ConvField = 0x4, ConvEvent = 0x8;
+
+    /// <summary>A [Convention] applied directly to a member (e.g. KeyValuePair.Key).</summary>
+    private static Notation? MemberConventionNotation(ISymbol symbol)
+    {
+        var a = symbol.GetAttributes().FirstOrDefault(x => x.AttributeClass?.ToDisplayString() == ConventionAttr);
+        if (a is null) return null;
+        var notation = a.ConstructorArguments.Length > 0 && a.ConstructorArguments[0].Value is int cn
+            ? cn
+            : NamedInt(a, "Notation", (int)Notation.None);
+        return (Notation)notation;
+    }
 
     private static Notation? ResolveNotation(ITypeSymbol? type, int memberKindFlag)
     {
