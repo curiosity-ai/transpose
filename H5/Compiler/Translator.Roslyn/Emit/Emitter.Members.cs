@@ -400,8 +400,36 @@ public sealed partial class Emitter
         var decl = (BaseMethodDeclarationSyntax)entry.DeclaringSyntaxReferences[0].GetSyntax();
         var asyncKw = entry.IsAsync || IsTaskType(entry.ReturnType) ? "async " : "";
         _w.Write($"main: {asyncKw}function Main () ");
-        EmitMethodBody(decl.Body, decl.ExpressionBody, entry.ReturnsVoid, entry);
+
+        var moduleInits = ModuleInitializerMethods();
+        if (moduleInits.Count == 0)
+        {
+            EmitMethodBody(decl.Body, decl.ExpressionBody, entry.ReturnsVoid, entry);
+            return;
+        }
+
+        // Run [ModuleInitializer] methods before the entry point body (they execute at
+        // module load in .NET; here we sequence them just ahead of Main).
+        _w.Block(() =>
+        {
+            foreach (var mi in moduleInits)
+                _w.WriteLine($"{TypeRef(mi.ContainingType)}.{H5Naming.MemberJsName(mi)}();");
+            EmitOptionalDefaults(entry);
+            if (decl.Body is not null) EmitStatements(decl.Body.Statements);
+            else if (decl.ExpressionBody is not null)
+            {
+                if (entry.ReturnsVoid) EmitExpressionStatement(decl.ExpressionBody.Expression);
+                else { _w.Write("return "); EmitExpressionConverted(decl.ExpressionBody.Expression, entry.ReturnType); _w.WriteLine(";"); }
+            }
+        });
     }
+
+    private List<IMethodSymbol> ModuleInitializerMethods()
+        => CollectTypes()
+            .SelectMany(t => t.GetMembers().OfType<IMethodSymbol>())
+            .Where(m => m.IsStatic && m.GetAttributes().Any(a =>
+                a.AttributeClass?.ToDisplayString() == "System.Runtime.CompilerServices.ModuleInitializerAttribute"))
+            .ToList();
 
     private void EmitParameterList(IMethodSymbol method)
     {
