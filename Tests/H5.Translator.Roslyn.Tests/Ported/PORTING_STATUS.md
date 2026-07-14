@@ -7,7 +7,7 @@ diffing output against native .NET — the same contract as the original suite.
 
 ## Current results
 
-- **~273 passing**, ~50 failing, **17 skipped** (`WebApiTests` — need the h5.core browser/DOM
+- **~285 passing**, ~38 failing, **17 skipped** (`WebApiTests` — need the h5.core browser/DOM
   bindings, out of scope for a runtime-only harness).
 
 Fixed since the re-target: LINQ/extension templates, enum values/ToString, `[Flags]` enums,
@@ -36,9 +36,13 @@ suffixes, reads type- and member-level `[Convention]`, honours `[Name]`/`[Templa
 `[External]`, and emits universal `toString`/`getHashCode`/`equals` names — so most member
 naming now matches h5.js.
 
-64-bit integers (`long`/`ulong`) are now emitted as h5.js `System.Int64`/`UInt64` objects
-(literals, arithmetic/comparison operators, conversions, and constants such as
-`long.MinValue`).
+64-bit integers (`long`/`ulong`) and `decimal` are emitted as h5.js `System.Int64`/`UInt64`/
+`System.Decimal` objects (literals, arithmetic/comparison operators, conversions, and
+constants such as `long.MinValue`/`decimal.MaxValue`). `goto`/labels lower to a
+label-dispatch state machine (works across `await`). Lifted nullable operators propagate
+null. C#12 generic classes/interfaces thread their type parameters at runtime
+(`Factory$1(Item)`, `new T()` → `H5.createInstance(T)`). LINQ query syntax lowers to the
+h5.js `Enumerable.from(src).where(...).select(...)` chain.
 
 Async constructs are aligned with h5.js's contract: an `async` method/lambda/local
 function emits a plain outer function whose body runs in a native `async` IIFE, and the
