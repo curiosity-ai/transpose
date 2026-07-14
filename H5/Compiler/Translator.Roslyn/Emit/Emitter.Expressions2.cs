@@ -476,6 +476,14 @@ public sealed partial class Emitter
 
     private void EmitObjectCreation(ObjectCreationExpressionSyntax creation)
     {
+        // new T() on a generic type parameter (new() constraint) → runtime instantiation.
+        // Only a *type* type-parameter is threaded at runtime (via the generic type's
+        // defining function); method type-parameters aren't yet, so fall through for those.
+        if (_model.GetTypeInfo(creation).Type is ITypeParameterSymbol { TypeParameterKind: TypeParameterKind.Type } tp)
+        {
+            _w.Write($"H5.createInstance({tp.Name})");
+            return;
+        }
         var symbol = _model.GetSymbolInfo(creation).Symbol as IMethodSymbol;
         var type = _model.GetTypeInfo(creation).Type as INamedTypeSymbol ?? symbol?.ContainingType;
         EmitConstructionCore(type, symbol, creation.ArgumentList, creation.Initializer);
@@ -537,11 +545,13 @@ public sealed partial class Emitter
 
         var ctorName = ctor is not null ? CtorName(ctor) : "ctor";
         var typeRef = TypeRef(type);
+        // A generic instantiation like Factory$1(Item) must be parenthesized before `new`.
+        var newTarget = typeRef.Contains('(') ? $"({typeRef})" : typeRef;
 
         if (type.Locations.Any(l => l.IsInSource))
         {
             // User type: new Type(args) for the primary ctor, new Type.$ctorN(args) otherwise.
-            _w.Write(ctorName == "ctor" ? $"new {typeRef}(" : $"new {typeRef}.{ctorName}(");
+            _w.Write(ctorName == "ctor" ? $"new {newTarget}(" : $"new {newTarget}.{ctorName}(");
             if (argList is not null) EmitArguments(argList, ctor);
             _w.Write(")");
         }

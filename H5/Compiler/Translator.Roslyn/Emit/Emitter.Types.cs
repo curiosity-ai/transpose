@@ -41,6 +41,14 @@ public sealed partial class Emitter
 
             if (named.Locations.Any(l => l.IsInSource))
             {
+                // Constructed source generic → Name$arity(typeArgs); the type args are the
+                // runtime values passed to the generic type's defining function.
+                if (named.IsGenericType && named.TypeArguments.Length > 0)
+                {
+                    var gBase = _names.TypeFullName(named) + "$" + named.Arity;
+                    var gArgs = string.Join(", ", named.TypeArguments.Select(TypeRef));
+                    return $"{gBase}({gArgs})";
+                }
                 return _names.TypeFullName(named);
             }
 
@@ -96,7 +104,14 @@ public sealed partial class Emitter
 
     private void EmitInterface(INamedTypeSymbol type)
     {
-        _w.Write($"H5.define(\"{_names.TypeFullName(type)}\", ");
+        // A generic interface is a function of its type parameters (like generic classes),
+        // so references such as IContainer$1(T) resolve at runtime.
+        var typeParams = type.TypeParameters;
+        var isGeneric = typeParams.Length > 0;
+        var fullName = isGeneric ? _names.TypeFullName(type) + "$" + type.Arity : _names.TypeFullName(type);
+
+        _w.Write($"H5.define(\"{fullName}\", ");
+        if (isGeneric) _w.Write($"function ({string.Join(", ", typeParams.Select(p => p.Name))}) {{ return ");
         _w.Block(() =>
         {
             _w.Write("$kind: \"interface\"");
@@ -111,15 +126,23 @@ public sealed partial class Emitter
                 _w.WriteLine();
             }
         });
+        if (isGeneric) _w.Write("; }");
         _w.WriteLine(");");
     }
 
     private void EmitClassLike(INamedTypeSymbol type)
     {
-        var fullName = _names.TypeFullName(type);
         var entryPoint = _compilation.GetEntryPoint(System.Threading.CancellationToken.None);
 
+        // A generic type is defined as a function of its type parameters, returning the
+        // config object (H5.define("Name$N", function (T) { return { … }; })); the type
+        // parameters are then in scope at runtime for new T()/default(T)/typeof(T).
+        var typeParams = type.TypeParameters;
+        var isGeneric = typeParams.Length > 0;
+        var fullName = isGeneric ? _names.TypeFullName(type) + "$" + type.Arity : _names.TypeFullName(type);
+
         _w.Write($"H5.define(\"{fullName}\", ");
+        if (isGeneric) _w.Write($"function ({string.Join(", ", typeParams.Select(p => p.Name))}) {{ return ");
         _w.Block(() =>
         {
             var sections = new List<Action>();
@@ -190,6 +213,7 @@ public sealed partial class Emitter
                 _w.WriteLine(i < sections.Count - 1 ? "," : "");
             }
         });
+        if (isGeneric) _w.Write("; }");
         _w.WriteLine(");");
     }
 
