@@ -7,7 +7,7 @@ diffing output against native .NET — the same contract as the original suite.
 
 ## Current results
 
-- **~209 passing**, ~114 failing, **17 skipped** (`WebApiTests` — need the h5.core browser/DOM
+- **~218 passing**, ~105 failing, **17 skipped** (`WebApiTests` — need the h5.core browser/DOM
   bindings + `Script.Write` JS-interop, out of scope for a runtime-only harness).
 
 Fixed since the re-target: LINQ/extension templates, enum values/ToString, relative external
@@ -36,11 +36,21 @@ H5.dll, so it composes with the real runtime.
      ordered by H5's `OverloadsCollection`.
    - **Property accessors** vary: `List.Count` is a JS property `.Count`, but `StringBuilder.Length`
      is `getLength()`/`setLength()` methods.
-   Implementing a faithful `[Convention]` reader + interface-member-name inheritance + overload
-   collection + property-accessor rules is the single change that unlocks the most remaining
-   tests (Random, Guid, Encoding, DateTimeOffset, Queue/LinkedList, and every overloaded BCL call).
-   It is intentionally deferred here because the pieces are coupled and a partial version
-   regresses the currently-passing collection/StringBuilder/Console tests.
+   **Implemented so far** (net +9): a `[Convention]` reader driving library **method** naming —
+   convention notation, interface-member-inherited camelCase, `[External]` camelCase, else
+   preserve. This alone fixed a batch (StringBuilder/Console/Math methods, List interface methods,
+   preserve-style types).
+
+   **Still needed** (measured to regress when approximated, so deferred until done faithfully):
+   - **Overload suffixes for library methods.** h5 names overloads `Next`/`Next$1`/`Next$2` via its
+     `OverloadsCollection` ordering. A naive (param-count, signature) ordering produces the wrong
+     suffix for many BCL methods and regressed the suite (218→185), so it must reproduce H5's exact
+     ordering. (Source-method overload suffixes are also needed to avoid JS collisions, but must not
+     be applied to virtual/interface overrides — a blanket version regressed 218→217.)
+   - **Property-accessor representation.** Some library properties are JS properties (`List.Count`
+     → `.Count`) and some are accessor methods (`StringBuilder.Length` → `getLength()`/`setLength()`).
+     The trigger is finer than "type has a `[Convention]`" (that blanket rule regressed 218→198);
+     it needs H5's exact property-emission condition.
 2. **Reflection metadata** — the `H5.setMetadata` block is not emitted, so `GetType()`,
    `typeof` details, `$$fullname`, and enum boxing-based `ToString` in some paths differ.
 3. **Generic type arguments at runtime** — H5 threads type parameters as runtime arguments
