@@ -101,18 +101,9 @@ internal static class H5Naming
         method = method.OriginalDefinition;
         if (_methodCache.TryGetValue(method, out var cached)) return cached;
 
-        var inSource = method.Locations.Any(l => l.IsInSource);
-        if (inSource)
-        {
-            // Object-method overrides map to h5's runtime dispatch names.
-            if (method is { Name: "ToString", Parameters.Length: 0 }) return Cache(method, "toString");
-            if (method is { Name: "GetHashCode", Parameters.Length: 0 }) return Cache(method, "getHashCode");
-            if (method is { Name: "Equals", Parameters.Length: 1 }) return Cache(method, "equals");
-        }
-
         // [Name] wins over convention, but suffixing still uses the base name.
         var explicitName = GetName(method);
-        var baseName = explicitName ?? Apply(MethodNotation(method), method.Name);
+        var baseName = JsBaseName(method);
 
         // External non-interface types skip overload suffixes (h5 does not suffix them).
         var declType = method.ContainingType;
@@ -128,12 +119,29 @@ internal static class H5Naming
         for (var i = 0; i < group.Count; i++)
         {
             if (_methodCache.ContainsKey(group[i])) continue;
-            var gBase = GetName(group[i]) ?? Apply(MethodNotation(group[i]), group[i].Name);
+            var gBase = JsBaseName(group[i]);
             _methodCache[group[i]] = i == 0 ? gBase : $"{gBase}${i}";
         }
 
         var result = index < 0 ? baseName : (index == 0 ? baseName : $"{baseName}${index}");
         return Cache(method, result);
+    }
+
+    /// <summary>
+    /// The un-suffixed JS name for a method: an explicit [Name], else the h5 runtime
+    /// dispatch name for object members (ToString/GetHashCode/Equals are always
+    /// lowercased across all types), else the convention-derived name.
+    /// </summary>
+    private static string JsBaseName(IMethodSymbol method)
+    {
+        if (GetName(method) is { } explicitName) return explicitName;
+        switch (method.Name)
+        {
+            case "ToString": return "toString";
+            case "GetHashCode": return "getHashCode";
+            case "Equals": return "equals";
+        }
+        return Apply(MethodNotation(method), method.Name);
     }
 
     private static string Cache(IMethodSymbol m, string name) { _methodCache[m.OriginalDefinition] = name; return name; }
