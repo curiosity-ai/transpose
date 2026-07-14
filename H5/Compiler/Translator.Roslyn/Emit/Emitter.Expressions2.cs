@@ -1091,8 +1091,10 @@ public sealed partial class Emitter
         }
 
         var target = _model.GetTypeInfo(collection).ConvertedType;
-        // Arrays and spans are represented as plain JS arrays.
+        // Arrays, spans, and collection interfaces (IEnumerable/IReadOnlyList/…) are all
+        // represented as plain JS arrays (h5.js enumerates arrays natively).
         if (target is IArrayTypeSymbol
+            || target is { TypeKind: TypeKind.Interface }
             || target?.OriginalDefinition.ToDisplayString() is "System.Span<T>" or "System.ReadOnlySpan<T>"
             || target is null)
         {

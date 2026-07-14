@@ -223,6 +223,8 @@ public sealed partial class Emitter
                 yield return (H5Naming.MemberJsName(p), DefaultValueLiteral(p.Type), p);
             else if (m is IEventSymbol ev && IsFieldLikeEvent(ev))
                 yield return (H5Naming.MemberJsName(ev), "null", ev);
+            else if (m is IPropertySymbol fbp && IsFieldBackedProperty(fbp))
+                yield return (PropertyBackingName(fbp), DefaultValueLiteral(fbp.Type), fbp);
         }
     }
 

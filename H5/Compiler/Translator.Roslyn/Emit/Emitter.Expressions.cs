@@ -91,6 +91,14 @@ public sealed partial class Emitter
             case CollectionExpressionSyntax collection:
                 EmitCollectionExpression(collection);
                 break;
+            case FieldExpressionSyntax fieldExpr:
+                // C# 14 `field` keyword → the property's synthesized backing field.
+                if (fieldExpr.FirstAncestorOrSelf<PropertyDeclarationSyntax>() is { } pd
+                    && _model.GetDeclaredSymbol(pd) is IPropertySymbol fp)
+                    _w.Write($"this.{PropertyBackingName(fp)}");
+                else
+                    _w.Write("this.$field");
+                break;
             case ParenthesizedLambdaExpressionSyntax lambda:
                 EmitLambda(lambda.ParameterList.Parameters.Select(p => p.Identifier.Text), lambda.Body,
                     lambda.Modifiers.Any(SyntaxKind.AsyncKeyword), lambda.ParameterList.Parameters);

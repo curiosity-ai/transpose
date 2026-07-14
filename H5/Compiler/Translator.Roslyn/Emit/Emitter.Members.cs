@@ -483,8 +483,38 @@ public sealed partial class Emitter
         });
     }
 
+    /// <summary>
+    /// A property that needs a compiler-synthesized backing field: it mixes an auto
+    /// accessor with a bodied one, or an accessor uses the C# 14 `field` keyword.
+    /// </summary>
+    internal static bool IsFieldBackedProperty(IPropertySymbol p)
+    {
+        if (p.IsStatic || p.IsIndexer || p.IsAbstract) return false;
+        if (p.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() is not PropertyDeclarationSyntax { AccessorList: { } accessors })
+            return false;
+        var anyAuto = accessors.Accessors.Any(a => a.Body is null && a.ExpressionBody is null);
+        var anyBodied = accessors.Accessors.Any(a => a.Body is not null || a.ExpressionBody is not null);
+        if (anyAuto && anyBodied) return true;
+        return accessors.Accessors.Any(a => a.DescendantNodes().Any(n => n.IsKind(SyntaxKind.FieldExpression)));
+    }
+
+    internal static string PropertyBackingName(IPropertySymbol p) => "$" + H5Naming.MemberJsName(p);
+
     private void EmitAccessorBody(IMethodSymbol accessor, bool isGetter)
     {
+        // Field-backed property with an auto accessor → read/write the backing field.
+        if (accessor.AssociatedSymbol is IPropertySymbol prop && IsFieldBackedProperty(prop))
+        {
+            var syn = accessor.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax();
+            var isAuto = syn is AccessorDeclarationSyntax { Body: null, ExpressionBody: null };
+            if (isAuto)
+            {
+                var backing = PropertyBackingName(prop);
+                _w.Block(() => _w.WriteLine(isGetter ? $"return this.{backing};" : $"this.{backing} = value;"));
+                return;
+            }
+        }
+
         var syntax = accessor.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax();
         switch (syntax)
         {
