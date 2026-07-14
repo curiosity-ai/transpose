@@ -184,6 +184,17 @@ public sealed partial class Emitter
             return;
         }
 
+        // Implicit widening of a 32-bit integer to long/ulong → wrap as a 64-bit instance.
+        // (Numeric literals already self-wrap via their converted type in EmitLiteral.)
+        if (Is64BitInteger(targetType) && sourceType is not null && !Is64BitInteger(sourceType)
+            && IsIntegerType(sourceType) && expr is not LiteralExpressionSyntax)
+        {
+            _w.Write(Is64BitUnsigned(targetType) ? "System.UInt64(" : "System.Int64(");
+            EmitExpression(expr);
+            _w.Write(")");
+            return;
+        }
+
         // Enum → object/string uses the enum's name (System.Enum.toString).
         if (sourceType is { TypeKind: TypeKind.Enum }
             && targetType?.SpecialType is SpecialType.System_Object or SpecialType.System_String)
@@ -229,7 +240,12 @@ public sealed partial class Emitter
         switch (lit.Kind())
         {
             case SyntaxKind.NumericLiteralExpression:
-                _w.Write(FormatNumericLiteral(lit));
+                var conv = _model.GetTypeInfo(lit).ConvertedType;
+                if (conv?.SpecialType is SpecialType.System_Int64 or SpecialType.System_UInt64
+                    && lit.Token.Value is not double and not float and not decimal)
+                    _w.Write(Long64Literal(lit.Token.Value!, conv.SpecialType == SpecialType.System_UInt64));
+                else
+                    _w.Write(FormatNumericLiteral(lit));
                 break;
             case SyntaxKind.StringLiteralExpression:
                 _w.Write(JsString((string)lit.Token.Value!));
@@ -253,6 +269,23 @@ public sealed partial class Emitter
                 Unsupported(lit, lit.Kind().ToString());
                 break;
         }
+    }
+
+    /// <summary>
+    /// A 64-bit integer literal → an h5.js System.Int64/UInt64 instance. Values within JS
+    /// safe-integer range pass a number; larger ones pass a decimal string to keep precision.
+    /// </summary>
+    internal static string Long64Literal(object value, bool unsigned)
+    {
+        var type = unsigned ? "System.UInt64" : "System.Int64";
+        var str = System.Convert.ToString(value, CultureInfo.InvariantCulture)!;
+        var safe = value switch
+        {
+            long l => l >= -9007199254740992L && l <= 9007199254740992L,
+            ulong u => u <= 9007199254740992UL,
+            _ => false,
+        };
+        return safe ? $"{type}({str})" : $"{type}(\"{str}\")";
     }
 
     private string FormatNumericLiteral(LiteralExpressionSyntax lit)

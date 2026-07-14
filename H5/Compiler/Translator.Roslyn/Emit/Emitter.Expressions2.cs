@@ -725,6 +725,13 @@ public sealed partial class Emitter
             return;
         }
 
+        // 64-bit integer arithmetic/comparison → System.Int64/UInt64 method calls.
+        if ((Is64BitInteger(leftType) || Is64BitInteger(rightType)) && Long64Op(binary) is not null)
+        {
+            EmitLong64Binary(binary, leftType, rightType);
+            return;
+        }
+
         // Integer division
         if (binary.IsKind(SyntaxKind.DivideExpression) && IsIntegerType(leftType) && IsIntegerType(rightType))
         {
@@ -783,6 +790,50 @@ public sealed partial class Emitter
         EmitExpression(binary.Left);
         _w.Write($" {jsOp} ");
         EmitExpression(binary.Right);
+    }
+
+    /// <summary>The System.Int64/UInt64 method name for a binary operator, or null.</summary>
+    private static string? Long64Op(BinaryExpressionSyntax b) => b.Kind() switch
+    {
+        SyntaxKind.AddExpression => "add",
+        SyntaxKind.SubtractExpression => "sub",
+        SyntaxKind.MultiplyExpression => "mul",
+        SyntaxKind.DivideExpression => "div",
+        SyntaxKind.ModuloExpression => "mod",
+        SyntaxKind.LessThanExpression => "lt",
+        SyntaxKind.GreaterThanExpression => "gt",
+        SyntaxKind.LessThanOrEqualExpression => "lte",
+        SyntaxKind.GreaterThanOrEqualExpression => "gte",
+        SyntaxKind.EqualsExpression => "eq",
+        SyntaxKind.NotEqualsExpression => "ne",
+        SyntaxKind.BitwiseAndExpression => "and",
+        SyntaxKind.BitwiseOrExpression => "or",
+        SyntaxKind.ExclusiveOrExpression => "xor",
+        SyntaxKind.LeftShiftExpression => "shl",
+        SyntaxKind.RightShiftExpression => "shr",
+        _ => null,
+    };
+
+    private void EmitLong64Binary(BinaryExpressionSyntax binary, ITypeSymbol? leftType, ITypeSymbol? rightType)
+    {
+        var op = Long64Op(binary)!;
+        var unsigned = Is64BitUnsigned(leftType) || Is64BitUnsigned(rightType);
+        if (op == "shr" && unsigned) op = "shru";
+
+        // The receiver must be a 64-bit instance; lift the left operand if it is a plain number.
+        if (Is64BitInteger(leftType))
+        {
+            EmitExpression(binary.Left);
+        }
+        else
+        {
+            _w.Write(unsigned ? "System.UInt64(" : "System.Int64(");
+            EmitExpression(binary.Left);
+            _w.Write(")");
+        }
+        _w.Write($".{op}(");
+        EmitExpression(binary.Right);
+        _w.Write(")");
     }
 
     private void EmitConcatOperand(ExpressionSyntax operand, ITypeSymbol? type)
@@ -914,6 +965,15 @@ public sealed partial class Emitter
             _w.Write(")");
             return;
         }
+
+        // 64-bit negation / bitwise-not → System.Int64/UInt64 methods.
+        if (Is64BitInteger(_model.GetTypeInfo(prefix.Operand).Type))
+        {
+            if (prefix.IsKind(SyntaxKind.UnaryMinusExpression)) { EmitExpression(prefix.Operand); _w.Write(".neg()"); return; }
+            if (prefix.IsKind(SyntaxKind.BitwiseNotExpression)) { EmitExpression(prefix.Operand); _w.Write(".not()"); return; }
+            if (prefix.IsKind(SyntaxKind.UnaryPlusExpression)) { EmitExpression(prefix.Operand); return; }
+        }
+
         _w.Write(prefix.OperatorToken.Text);
         EmitExpression(prefix.Operand);
     }
@@ -930,6 +990,20 @@ public sealed partial class Emitter
     {
         var targetType = _model.GetTypeInfo(cast.Type).Type;
         var sourceType = _model.GetTypeInfo(cast.Expression).Type;
+
+        // 64-bit conversions: to long/ulong → wrap; from long/ulong to a 32-bit/float → number.
+        if (Is64BitInteger(targetType) && !Is64BitInteger(sourceType))
+        {
+            _w.Write(Is64BitUnsigned(targetType) ? "System.UInt64(" : "System.Int64(");
+            EmitExpression(cast.Expression);
+            _w.Write(")");
+            return;
+        }
+        if (Is64BitInteger(sourceType) && !Is64BitInteger(targetType) && (IsIntegerType(targetType) || IsFloatingType(targetType)))
+        {
+            _w.Write("("); EmitExpression(cast.Expression); _w.Write(").toNumber()");
+            return;
+        }
 
         // Numeric narrowing to an integer type truncates toward zero.
         if (IsIntegerType(targetType) && IsFloatingType(sourceType))
@@ -1212,6 +1286,9 @@ public sealed partial class Emitter
     private string ConstantLiteral(object? value, ITypeSymbol type)
     {
         if (value is null) return type.SpecialType == SpecialType.System_String ? "null" : DefaultValueLiteral(type);
+        // 64-bit integer constants (e.g. long.MinValue) must be System.Int64/UInt64 instances.
+        if (value is long or ulong && Is64BitInteger(type))
+            return Long64Literal(value, Is64BitUnsigned(type));
         return value switch
         {
             bool b => b ? "true" : "false",
@@ -1240,4 +1317,11 @@ public sealed partial class Emitter
 
     private static bool IsFloatingType(ITypeSymbol? type)
         => type?.SpecialType is SpecialType.System_Single or SpecialType.System_Double;
+
+    /// <summary>64-bit integer type (long/ulong) — h5.js models these as System.Int64/UInt64 objects.</summary>
+    private static bool Is64BitInteger(ITypeSymbol? type)
+        => type?.SpecialType is SpecialType.System_Int64 or SpecialType.System_UInt64;
+
+    private static bool Is64BitUnsigned(ITypeSymbol? type)
+        => type?.SpecialType == SpecialType.System_UInt64;
 }
