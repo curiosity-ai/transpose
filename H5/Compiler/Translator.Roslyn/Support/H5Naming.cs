@@ -23,6 +23,18 @@ internal static class H5Naming
     public static string? GetName(ISymbol symbol)
         => GetStringAttr(symbol, NameAttr);
 
+    /// <summary>
+    /// Accessor-method name for an indexer element access. An indexer with a [Name]
+    /// (e.g. StringBuilder's [Name("Char")]) maps to get&lt;Name&gt;/set&lt;Name&gt;
+    /// (getChar/setChar); the default is getItem/setItem.
+    /// </summary>
+    public static string IndexerAccessorName(IPropertySymbol indexer, bool isGet)
+    {
+        var name = GetName(indexer);
+        var suffix = name ?? "Item";
+        return (isGet ? "get" : "set") + suffix;
+    }
+
     /// <summary>True if the type (or an enclosing type) carries the [External] attribute.</summary>
     public static bool HasExternalAttribute(ITypeSymbol? type)
     {

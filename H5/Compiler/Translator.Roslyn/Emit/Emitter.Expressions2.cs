@@ -503,16 +503,17 @@ public sealed partial class Emitter
             if (argList is not null) EmitArguments(argList, ctor);
             _w.Write(")");
         }
-        else if (type.ToDisplayString() == "System.Exception")
+        else if (type.ToDisplayString() == "System.Exception" || H5Naming.HasExternalAttribute(type))
         {
-            // System.Exception is collapsed to a single dispatching constructor in h5.
+            // [External] types (StringBuilder, Exception, …) map to a hand-written JS type
+            // whose single native constructor dispatches on arguments — call it directly.
             _w.Write($"new {typeRef}(");
             if (argList is not null) EmitArguments(argList, ctor);
             _w.Write(")");
         }
         else
         {
-            // BCL type: new (TypeRef).ctorName(args) — h5's named-constructor form.
+            // H5-generated BCL type: new (TypeRef).ctorName(args) — named-constructor form.
             _w.Write($"new ({typeRef}).{ctorName}(");
             if (argList is not null) EmitArguments(argList, ctor);
             _w.Write(")");
@@ -766,12 +767,35 @@ public sealed partial class Emitter
             && _model.GetSymbolInfo(ea).Symbol is IPropertySymbol { IsIndexer: true } idx
             && idx.ContainingType.SpecialType != SpecialType.System_String)
         {
+            // Indexer setter [Template].
+            if (idx.SetMethod is { } setIdx && H5Naming.GetTemplate(setIdx.OriginalDefinition) is { } setIdxTpl)
+            {
+                var recv = Capture(() => EmitExpression(ea.Expression));
+                var args = ea.ArgumentList.Arguments.Select(a => Capture(() => EmitExpression(a.Expression))).ToList();
+                args.Add(Capture(() => EmitExpressionConverted(assignment.Right, leftType)));
+                WriteTemplate(setIdxTpl, idx.IsStatic, isExtension: false, recv, new(), args);
+                return;
+            }
             EmitExpression(ea.Expression);
-            _w.Write(".setItem(");
+            _w.Write("." + H5Naming.IndexerAccessorName(idx, isGet: false) + "(");
             EmitArgumentList(ea.ArgumentList);
             _w.Write(", ");
             EmitExpressionConverted(assignment.Right, leftType);
             _w.Write(")");
+            return;
+        }
+
+        // Property setter with a [Template] (e.g. StringBuilder.Length → setLength({0})).
+        if (op == "=" && _model.GetSymbolInfo(assignment.Left).Symbol is IPropertySymbol { SetMethod: { } setter } setProp
+            && !setProp.IsIndexer
+            && H5Naming.GetTemplate(setter.OriginalDefinition) is { } setTemplate)
+        {
+            var recv = assignment.Left is MemberAccessExpressionSyntax sma
+                ? Capture(() => EmitExpression(sma.Expression))
+                : "this";
+            var val = Capture(() => EmitExpressionConverted(assignment.Right, leftType));
+            WriteTemplate(setTemplate, setProp.IsStatic, isExtension: false, recv,
+                new() { ["value"] = val }, new() { val });
             return;
         }
 
@@ -927,9 +951,18 @@ public sealed partial class Emitter
                 return;
             }
 
-            // Source types and BCL collections route through get_Item.
+            // Indexer getter [Template] (e.g. some BCL indexers).
+            if (indexer.GetMethod is { } getM && H5Naming.GetTemplate(getM.OriginalDefinition) is { } getTpl)
+            {
+                var recv = Capture(() => EmitExpression(element.Expression));
+                var args = element.ArgumentList.Arguments.Select(a => Capture(() => EmitExpression(a.Expression))).ToList();
+                WriteTemplate(getTpl, indexer.IsStatic, isExtension: false, recv, new(), args);
+                return;
+            }
+
+            // Source types and BCL collections route through the indexer accessor.
             EmitExpression(element.Expression);
-            _w.Write(".getItem(");
+            _w.Write("." + H5Naming.IndexerAccessorName(indexer, isGet: true) + "(");
             EmitArgumentList(element.ArgumentList);
             _w.Write(")");
             return;
