@@ -166,6 +166,15 @@ public sealed partial class Emitter
                 sections.Add(() => _w.Write($"inherits: [{string.Join(", ", inherits)}]"));
             }
 
+            // alias: maps each implicitly-implemented interface member's plain slot to the
+            // mangled interface slot, so access through the interface type resolves.
+            var aliases = H5Naming.InterfaceAliasPairs(type);
+            if (aliases.Count > 0)
+            {
+                sections.Add(() => _w.Write(
+                    $"alias: [{string.Join(", ", aliases.SelectMany(a => new[] { JsString(a.plain), JsString(a.mangled) }))}]"));
+            }
+
             // main: entry point.
             if (entryPoint is not null && SymbolEqualityComparer.Default.Equals(entryPoint.ContainingType, type))
             {

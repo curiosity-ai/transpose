@@ -109,6 +109,20 @@ internal static class H5Naming
         // stays a valid JS identifier and matches the runtime's interface-member slot.
         if (ExplicitInterfaceMangledName(symbol) is { } explicitName) return explicitName;
 
+        // A member accessed through a *source* interface type resolves to the interface's own
+        // member; H5 stores it under a mangled slot (Namespace$IFace$member) that every
+        // implementer aliases (see InterfaceAliasPairs), so route the access there — this is
+        // what reaches explicit implementations. BCL interfaces keep the plain name: their
+        // implementers (h5.js types) expose it directly, so plain access already resolves.
+        if (symbol.ContainingType is { TypeKind: TypeKind.Interface } iface && IsSourceInterface(iface))
+            return MangledTypeName(iface) + "$" + LeafJsName(symbol);
+
+        return LeafJsName(symbol);
+    }
+
+    /// <summary>The un-mangled JS name of a member (ignoring interface qualification).</summary>
+    private static string LeafJsName(ISymbol symbol)
+    {
         if (symbol is IMethodSymbol m) return MethodJsName(m);
 
         var name = GetName(symbol);
@@ -137,16 +151,66 @@ internal static class H5Naming
     /// </summary>
     private static string? ExplicitInterfaceMangledName(ISymbol symbol)
     {
-        ISymbol? im = symbol switch
-        {
-            IMethodSymbol m when m.ExplicitInterfaceImplementations.Length > 0 => m.ExplicitInterfaceImplementations[0],
-            IPropertySymbol p when p.ExplicitInterfaceImplementations.Length > 0 => p.ExplicitInterfaceImplementations[0],
-            IEventSymbol e when e.ExplicitInterfaceImplementations.Length > 0 => e.ExplicitInterfaceImplementations[0],
-            _ => null,
-        };
+        var im = ExplicitlyImplementedMember(symbol);
         if (im?.ContainingType is not { } iface) return null;
-        return MangledTypeName(iface) + "$" + MemberJsName(im.OriginalDefinition);
+        return MangledTypeName(iface) + "$" + LeafJsName(im.OriginalDefinition);
     }
+
+    /// <summary>The interface member a symbol explicitly implements, or null.</summary>
+    private static ISymbol? ExplicitlyImplementedMember(ISymbol symbol) => symbol switch
+    {
+        IMethodSymbol m when m.ExplicitInterfaceImplementations.Length > 0 => m.ExplicitInterfaceImplementations[0],
+        IPropertySymbol p when p.ExplicitInterfaceImplementations.Length > 0 => p.ExplicitInterfaceImplementations[0],
+        IEventSymbol e when e.ExplicitInterfaceImplementations.Length > 0 => e.ExplicitInterfaceImplementations[0],
+        _ => null,
+    };
+
+    /// <summary>The mangled interface-member slot name (<c>Namespace$IFace$member</c>).</summary>
+    public static string InterfaceMemberName(ISymbol interfaceMember)
+        => MangledTypeName(interfaceMember.ContainingType) + "$" + LeafJsName(interfaceMember.OriginalDefinition);
+
+    /// <summary>The un-mangled JS name of a member (its slot on the declaring class).</summary>
+    public static string LeafMemberName(ISymbol symbol) => LeafJsName(symbol);
+
+    /// <summary>
+    /// The (plainName, mangledInterfaceSlot) aliases a type must publish so that a member
+    /// accessed through one of its interfaces resolves to the implementing member. Covers
+    /// members this type implements *implicitly* — explicit implementations are already
+    /// emitted under the mangled slot, and inherited implementations are aliased by the base
+    /// type. H5's `alias` config installs these on the prototype.
+    /// </summary>
+    public static System.Collections.Generic.List<(string plain, string mangled)> InterfaceAliasPairs(INamedTypeSymbol type)
+    {
+        var pairs = new System.Collections.Generic.List<(string, string)>();
+        var seen = new System.Collections.Generic.HashSet<string>();
+
+        foreach (var iface in type.AllInterfaces)
+        {
+            if (!IsSourceInterface(iface)) continue; // BCL interfaces use plain names (see MemberJsName)
+            foreach (var member in iface.GetMembers())
+            {
+                if (member.IsStatic) continue;
+                if (member is IMethodSymbol { MethodKind: not MethodKind.Ordinary }) continue; // skip accessors
+                if (member is not (IMethodSymbol or IPropertySymbol or IEventSymbol)) continue;
+                if (GetTemplate(member) is not null) continue;   // templated members apply at the call site
+
+                if (type.FindImplementationForInterfaceMember(member) is not { } impl) continue;
+                if (!SymbolEqualityComparer.Default.Equals(impl.ContainingType, type)) continue; // declared here
+                if (ExplicitlyImplementedMember(impl) is not null) continue;                    // already mangled
+
+                var plain = LeafJsName(impl);
+                var mangled = InterfaceMemberName(member);
+                if (plain == mangled) continue;
+                if (seen.Add(plain + "\0" + mangled)) pairs.Add((plain, mangled));
+            }
+        }
+        return pairs;
+    }
+
+    /// <summary>A user-defined (source) interface — its members are dispatched via mangled
+    /// interface slots; BCL interfaces resolve through their implementers' plain names.</summary>
+    private static bool IsSourceInterface(INamedTypeSymbol iface)
+        => iface.TypeKind == TypeKind.Interface && iface.OriginalDefinition.Locations.Any(l => l.IsInSource);
 
     /// <summary>Full type name as a single JS identifier: dotted segments joined by <c>$</c>,
     /// with a generic arity suffix (e.g. <c>System$Collections$Generic$IComparer$1</c>).</summary>

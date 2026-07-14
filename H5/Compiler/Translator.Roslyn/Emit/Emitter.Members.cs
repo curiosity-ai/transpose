@@ -386,6 +386,7 @@ public sealed partial class Emitter
 
     private bool IsEmittableMethod(IMethodSymbol m)
         => m.MethodKind is MethodKind.Ordinary or MethodKind.UserDefinedOperator or MethodKind.Conversion
+               or MethodKind.ExplicitInterfaceImplementation
            && !m.IsAbstract
            && m.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() is BaseMethodDeclarationSyntax d
            && (d.Body is not null || d.ExpressionBody is not null);
