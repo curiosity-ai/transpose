@@ -68,8 +68,8 @@
     H5R.dtSub = function (a, b) { return System.DateTime.subdd(a, b); };
     H5R.dtSubTs = function (a, b) { return System.DateTime.subdt(a, b); };
     H5R.dtAddTs = function (a, b) { return System.DateTime.adddt(a, b); };
-    H5R.tsAdd = function (a, b) { return a.add(b); };
-    H5R.tsSub = function (a, b) { return a.sub(b); };
+    H5R.tsAdd = function (a, b) { return System.TimeSpan.add(a, b); };
+    H5R.tsSub = function (a, b) { return System.TimeSpan.sub(a, b); };
 
     // Iterator (yield) support: a re-enumerable wrapper around a generator function.
     H5R.iter = function (genFn) {
