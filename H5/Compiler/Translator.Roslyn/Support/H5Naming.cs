@@ -77,15 +77,97 @@ internal static class H5Naming
             return symbol.Name; // preserve C# name for user members
         }
 
-        // Library members: [External] types (native JS mappings like System.String)
-        // camelCase every member; other library types camelCase methods but preserve
-        // property/field/event names.
-        if (symbol.Kind == SymbolKind.Method || HasExternalAttribute(symbol.ContainingType))
+        // Library members: names follow the containing type's H5 [Convention].
+        if (symbol is IMethodSymbol lm)
         {
-            return CamelCase(symbol.Name);
+            return Apply(MethodNotation(lm), lm.Name);
         }
-        return symbol.Name;
+
+        // Property / field / event: camelCase only under an [External] type or a
+        // [Convention] covering that member kind; otherwise preserve.
+        var kindFlag = symbol.Kind switch
+        {
+            SymbolKind.Property => ConvProperty,
+            SymbolKind.Field => ConvField,
+            SymbolKind.Event => ConvEvent,
+            _ => ConvAll,
+        };
+        var notation = ResolveNotation(symbol.ContainingType, kindFlag)
+                       ?? (HasExternalAttribute(symbol.ContainingType) ? Notation.CamelCase : Notation.None);
+        return Apply(notation, symbol.Name);
     }
+
+    /// <summary>Notation for a library method: convention, else interface-inherited camelCase, else external, else preserve.</summary>
+    private static Notation MethodNotation(IMethodSymbol method)
+    {
+        var conv = ResolveNotation(method.ContainingType, ConvMethod);
+        if (conv is { } c) return c;
+        if (ImplementsInterfaceMember(method)) return Notation.CamelCase;
+        if (HasExternalAttribute(method.ContainingType)) return Notation.CamelCase;
+        return Notation.None;
+    }
+
+    private static bool ImplementsInterfaceMember(IMethodSymbol method)
+    {
+        var type = method.ContainingType;
+        if (type is null) return false;
+        foreach (var iface in type.AllInterfaces)
+        {
+            foreach (var member in iface.GetMembers().OfType<IMethodSymbol>())
+            {
+                if (type.FindImplementationForInterfaceMember(member) is IMethodSymbol im
+                    && SymbolEqualityComparer.Default.Equals(im.OriginalDefinition, method.OriginalDefinition))
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    // ---- [Convention] resolution ------------------------------------------
+
+    private enum Notation { None = 0, LowerCase = 1, UpperCase = 2, CamelCase = 3, PascalCase = 4 }
+    private const int ConvAll = 0, ConvMethod = 0x1, ConvProperty = 0x2, ConvField = 0x4, ConvEvent = 0x8;
+
+    private static Notation? ResolveNotation(ITypeSymbol? type, int memberKindFlag)
+    {
+        if (type is null) return null;
+        AttributeData? best = null;
+        var bestPriority = int.MinValue;
+        foreach (var a in type.GetAttributes().Where(a => a.AttributeClass?.ToDisplayString() == ConventionAttr))
+        {
+            var member = NamedInt(a, "Member", ConvAll);
+            if (member != ConvAll && (member & memberKindFlag) == 0) continue;
+            var priority = NamedInt(a, "Priority", 0);
+            if (best is null || priority >= bestPriority) { best = a; bestPriority = priority; }
+        }
+        if (best is null) return null;
+        var notation = best.ConstructorArguments.Length > 0 && best.ConstructorArguments[0].Value is int cn
+            ? cn
+            : NamedInt(best, "Notation", (int)Notation.None);
+        return (Notation)notation;
+    }
+
+    private static int NamedInt(AttributeData a, string name, int dflt)
+    {
+        foreach (var na in a.NamedArguments)
+            if (na.Key == name && na.Value.Value is int v) return v;
+        return dflt;
+    }
+
+    private static string Apply(Notation notation, string name)
+    {
+        if (string.IsNullOrEmpty(name)) return name;
+        return notation switch
+        {
+            Notation.CamelCase => char.ToLowerInvariant(name[0]) + name.Substring(1),
+            Notation.PascalCase => char.ToUpperInvariant(name[0]) + name.Substring(1),
+            Notation.LowerCase => name.ToLowerInvariant(),
+            Notation.UpperCase => name.ToUpperInvariant(),
+            _ => name,
+        };
+    }
+
+    public const string ConventionAttr = "H5.ConventionAttribute";
 
     public static string CamelCase(string s)
     {
