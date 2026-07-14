@@ -101,21 +101,21 @@ internal static class H5Naming
         method = method.OriginalDefinition;
         if (_methodCache.TryGetValue(method, out var cached)) return cached;
 
-        // [Name] wins over convention, but suffixing still uses the base name.
-        var explicitName = GetName(method);
         var baseName = JsBaseName(method);
 
-        // External non-interface types skip overload suffixes (h5 does not suffix them).
+        // A canonical name (object-override, explicit/inherited [Name], or an implemented
+        // interface member's name) is used verbatim — no overload suffix (H5 behaviour).
+        // External non-interface types also skip suffixes.
         var declType = method.ContainingType;
-        var skipSuffix = declType is not null && HasExternalAttribute(declType) && declType.TypeKind != TypeKind.Interface;
-        if (skipSuffix || explicitName is not null) return Cache(method, baseName);
+        var external = declType is not null && HasExternalAttribute(declType) && declType.TypeKind != TypeKind.Interface;
+        if (external || HasCanonicalName(method)) return Cache(method, baseName);
 
-        // Overload index via H5's overload-collection ordering (override → base member).
+        // Overload index via H5's overload-collection ordering (override → base member),
+        // grouped by the FINAL JS base name so differently-named overloads don't collide.
         var resolved = ResolveOverrideBase(method);
         var group = OverloadGroup(resolved);
         var index = group.FindIndex(x => SymbolEqualityComparer.Default.Equals(x, resolved));
 
-        // Assign names to the whole group so subsequent lookups hit the cache.
         for (var i = 0; i < group.Count; i++)
         {
             if (_methodCache.ContainsKey(group[i])) continue;
@@ -127,24 +127,74 @@ internal static class H5Naming
         return Cache(method, result);
     }
 
+    // The object-method override signatures (H5 gives these canonical runtime names).
+    private static bool IsObjectToString(IMethodSymbol m) => m is { Name: "ToString", Parameters.Length: 0 };
+    private static bool IsObjectGetHashCode(IMethodSymbol m) => m is { Name: "GetHashCode", Parameters.Length: 0 };
+    private static bool IsObjectEquals(IMethodSymbol m)
+        => m is { Name: "Equals", Parameters.Length: 1 } && m.Parameters[0].Type.SpecialType == SpecialType.System_Object;
+
     /// <summary>
-    /// The un-suffixed JS name for a method: an explicit [Name], else the h5 runtime
-    /// dispatch name for object members (ToString/GetHashCode/Equals are always
-    /// lowercased across all types), else the convention-derived name.
+    /// The un-suffixed JS name for a method, following H5's resolution order:
+    /// object-override runtime names, an explicit [Name], an inherited [Name] (from an
+    /// overridden base or implemented interface member), the implemented interface member's
+    /// own name, then the convention-derived name.
     /// </summary>
     private static string JsBaseName(IMethodSymbol method)
     {
+        if (IsObjectToString(method)) return "toString";
+        if (IsObjectGetHashCode(method)) return "getHashCode";
+        if (IsObjectEquals(method)) return "equals";
         if (GetName(method) is { } explicitName) return explicitName;
-        switch (method.Name)
-        {
-            case "ToString": return "toString";
-            case "GetHashCode": return "getHashCode";
-            case "Equals": return "equals";
-        }
+        if (InheritedName(method) is { } inherited) return inherited;
+        if (ImplementedInterfaceMember(method) is { } im) return JsBaseName(im);
         return Apply(MethodNotation(method), method.Name);
     }
 
+    /// <summary>A resolved name that must be used verbatim (never overload-suffixed).</summary>
+    private static bool HasCanonicalName(IMethodSymbol m)
+        => IsObjectToString(m) || IsObjectGetHashCode(m) || IsObjectEquals(m)
+           || GetName(m) is not null || InheritedName(m) is not null || ImplementedInterfaceMember(m) is not null;
+
+    /// <summary>A [Name] inherited from an overridden base method or an implemented interface member.</summary>
+    private static string? InheritedName(IMethodSymbol method)
+    {
+        for (var b = method.OverriddenMethod; b is not null; b = b.OverriddenMethod)
+            if (GetName(b.OriginalDefinition) is { } n) return n;
+        if (ImplementedInterfaceMember(method) is { } im && GetName(im) is { } inm) return inm;
+        return null;
+    }
+
+    /// <summary>The interface member this method implements (implicitly), or null.</summary>
+    private static IMethodSymbol? ImplementedInterfaceMember(IMethodSymbol method)
+    {
+        var type = method.ContainingType;
+        if (type is null) return null;
+        foreach (var iface in type.AllInterfaces)
+        {
+            foreach (var member in iface.GetMembers().OfType<IMethodSymbol>())
+            {
+                if (type.FindImplementationForInterfaceMember(member) is IMethodSymbol impl
+                    && SymbolEqualityComparer.Default.Equals(impl.OriginalDefinition, method.OriginalDefinition))
+                    return member.OriginalDefinition;
+            }
+        }
+        return null;
+    }
+
     private static string Cache(IMethodSymbol m, string name) { _methodCache[m.OriginalDefinition] = name; return name; }
+
+    /// <summary>
+    /// JS name of a constructor using H5's OverloadsCollection ordering: the first
+    /// constructor is "ctor", the rest "$ctor1", "$ctor2"… This matches the names h5.js
+    /// was generated with, so BCL constructions (e.g. new Guid(string) → $ctor4) resolve.
+    /// </summary>
+    public static string ConstructorName(IMethodSymbol ctor)
+    {
+        ctor = ctor.OriginalDefinition;
+        var group = OverloadGroup(ctor);
+        var index = group.FindIndex(x => SymbolEqualityComparer.Default.Equals(x, ctor));
+        return index <= 0 ? "ctor" : "$ctor" + index;
+    }
 
     private static IMethodSymbol ResolveOverrideBase(IMethodSymbol method)
     {
@@ -185,10 +235,12 @@ internal static class H5Naming
 
     private static System.Collections.Generic.List<IMethodSymbol> OverloadGroup(IMethodSymbol method)
     {
-        var jsBase = GetName(method) ?? method.Name;
+        var jsBase = JsBaseName(method);
         var isStatic = method.IsStatic;
         var kind = method.MethodKind;
 
+        // Constructors are not inherited, so their overload set is the declaring type's own
+        // ctors; ordinary methods fold in base-type members (for override-based numbering).
         var members = new System.Collections.Generic.List<IMethodSymbol>();
         var seen = new System.Collections.Generic.HashSet<IMethodSymbol>(SymbolEqualityComparer.Default);
         for (var t = method.ContainingType; t is not null; t = t.BaseType)
@@ -199,10 +251,11 @@ internal static class H5Naming
                 if (c.MethodKind != kind || c.IsStatic != isStatic) continue;
                 if (c.ExplicitInterfaceImplementations.Length > 0) continue;
                 if (GetTemplate(c) is not null) continue;              // inline methods are excluded
-                if ((GetName(c) ?? c.Name) != jsBase) continue;
+                if (JsBaseName(c) != jsBase) continue;                 // group by final JS name
                 if (c.IsOverride) continue;                            // overrides fold into their base
                 if (seen.Add(c)) members.Add(c);
             }
+            if (kind == MethodKind.Constructor) break;                 // ctors aren't inherited
         }
 
         members.Sort(CompareOverload);
@@ -219,14 +272,18 @@ internal static class H5Naming
         if (i1 && !i2) return -1;
         if (i2 && !i1) return 1;
 
-        if (m1.MethodKind == MethodKind.Constructor && m2.MethodKind != MethodKind.Constructor) return -1;
-        if (m2.MethodKind == MethodKind.Constructor && m1.MethodKind != MethodKind.Constructor) return 1;
+        var c1 = m1.MethodKind == MethodKind.Constructor;
+        var c2 = m2.MethodKind == MethodKind.Constructor;
+        if (c1 && !c2) return -1;
+        if (c2 && !c1) return 1;
+        // Two constructors compare by signature directly (H5 returns here, before accessibility).
+        if (c1 && c2) return string.Compare(MethodToString(m1), MethodToString(m2), System.StringComparison.CurrentCulture);
 
         var a1 = AccessibilityWeight(m1.DeclaredAccessibility);
         var a2 = AccessibilityWeight(m2.DeclaredAccessibility);
         if (a1 != a2) return a1.CompareTo(a2);
 
-        return string.Compare(MethodToString(m1), MethodToString(m2), System.StringComparison.Ordinal);
+        return string.Compare(MethodToString(m1), MethodToString(m2), System.StringComparison.CurrentCulture);
     }
 
     private static bool IsDerivedFrom(ITypeSymbol? derived, ITypeSymbol? base_)

@@ -153,6 +153,10 @@ public sealed partial class Emitter
     private string CtorName(IMethodSymbol ctor)
     {
         ctor = ctor.OriginalDefinition;
+        // BCL (non-source) types were emitted into h5.js with H5's OverloadsCollection ctor
+        // numbering; match it so e.g. new Guid(string) resolves to $ctor4.
+        if (!ctor.ContainingType.Locations.Any(l => l.IsInSource))
+            return H5Naming.ConstructorName(ctor);
         if (_ctorNames.TryGetValue(ctor, out var cached)) return cached;
 
         var ctors = ctor.ContainingType.InstanceConstructors
