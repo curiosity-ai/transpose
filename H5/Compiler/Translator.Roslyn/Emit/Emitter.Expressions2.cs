@@ -1054,6 +1054,60 @@ public sealed partial class Emitter
         _w.Write("]");
     }
 
+    /// <summary>
+    /// C# 12 collection expression `[a, b, ..spread]`. Arrays / spans map directly to a
+    /// JS array literal (spreads become `...`); a List&lt;T&gt; (or other constructible
+    /// collection) is built from that array via its enumerable constructor.
+    /// </summary>
+    private void EmitCollectionExpression(CollectionExpressionSyntax collection)
+    {
+        void EmitArray()
+        {
+            _w.Write("[");
+            for (var i = 0; i < collection.Elements.Count; i++)
+            {
+                if (i > 0) _w.Write(", ");
+                if (collection.Elements[i] is SpreadElementSyntax spread)
+                {
+                    // Arrays spread directly; other enumerables are drained to an array.
+                    if (_model.GetTypeInfo(spread.Expression).Type is IArrayTypeSymbol)
+                    {
+                        _w.Write("...");
+                        EmitExpression(spread.Expression);
+                    }
+                    else
+                    {
+                        _w.Write("...H5R.spread(");
+                        EmitExpression(spread.Expression);
+                        _w.Write(")");
+                    }
+                }
+                else if (collection.Elements[i] is ExpressionElementSyntax elem)
+                {
+                    EmitExpression(elem.Expression);
+                }
+            }
+            _w.Write("]");
+        }
+
+        var target = _model.GetTypeInfo(collection).ConvertedType;
+        // Arrays and spans are represented as plain JS arrays.
+        if (target is IArrayTypeSymbol
+            || target?.OriginalDefinition.ToDisplayString() is "System.Span<T>" or "System.ReadOnlySpan<T>"
+            || target is null)
+        {
+            EmitArray();
+            return;
+        }
+
+        // A concrete collection type (e.g. List<T>) — build a fresh instance and add each
+        // element (works regardless of the type's constructor overload numbering).
+        _w.Write($"(function () {{ var $c = new ({TypeRef(target)})(); ");
+        _w.Write($"var $s = ");
+        EmitArray();
+        _w.Write("; for (var $i = 0; $i < $s.length; $i++) { $c.add($s[$i]); } return $c; })()");
+    }
+
     // ---- lambda ------------------------------------------------------------
 
     private void EmitLambda(IEnumerable<string> parameters, CSharpSyntaxNode body, bool isAsync,

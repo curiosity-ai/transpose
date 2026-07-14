@@ -88,6 +88,9 @@ public sealed partial class Emitter
             case InitializerExpressionSyntax initializer:
                 EmitInitializerArray(initializer);
                 break;
+            case CollectionExpressionSyntax collection:
+                EmitCollectionExpression(collection);
+                break;
             case ParenthesizedLambdaExpressionSyntax lambda:
                 EmitLambda(lambda.ParameterList.Parameters.Select(p => p.Identifier.Text), lambda.Body,
                     lambda.Modifiers.Any(SyntaxKind.AsyncKeyword), lambda.ParameterList.Parameters);

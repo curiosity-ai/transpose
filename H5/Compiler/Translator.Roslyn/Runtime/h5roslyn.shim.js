@@ -35,6 +35,15 @@
     // Delegate / event helpers (multicast combine + remove) over h5.js's H5.fn.
     H5R.combine = function (a, b) { return H5.fn.combine(a, b); };
     H5R.remove = function (a, b) { return H5.fn.remove(a, b); };
+
+    // Spread source → JS array (arrays pass through; other enumerables are drained).
+    H5R.spread = function (x) {
+        if (x == null) { return []; }
+        if (Array.isArray(x)) { return x; }
+        var out = [], e = H5R.getEnumerator(x);
+        while (e.moveNext()) { out.push(e.current); }
+        return out;
+    };
     H5R.formatValue = function (v, fmt) { try { return System.String.format("{0:" + fmt + "}", v); } catch (e) { return H5R.toStr(v); } };
 
     // Date/TimeSpan arithmetic helpers (best-effort; System types come from h5.js).
