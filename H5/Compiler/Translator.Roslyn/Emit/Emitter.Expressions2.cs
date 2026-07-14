@@ -780,6 +780,19 @@ public sealed partial class Emitter
             return;
         }
 
+        // Lifted operators on Nullable<T>: a null operand makes an arithmetic result null
+        // and a relational result false (C# semantics). (Equality is fine with ===/!== since
+        // nullable is represented as value-or-null.)
+        var arith = op is "+" or "-" or "*" or "%";
+        var relational = op is "<" or ">" or "<=" or ">=";
+        if ((arith || relational) && (IsNullableValueType(leftType) || IsNullableValueType(rightType)))
+        {
+            var l = Capture(() => EmitExpression(binary.Left));
+            var r = Capture(() => EmitExpression(binary.Right));
+            _w.Write($"({l} == null || {r} == null ? {(relational ? "false" : "null")} : {l} {op} {r})");
+            return;
+        }
+
         var jsOp = op switch
         {
             "==" => "===",
@@ -791,6 +804,9 @@ public sealed partial class Emitter
         _w.Write($" {jsOp} ");
         EmitExpression(binary.Right);
     }
+
+    private static bool IsNullableValueType(ITypeSymbol? t)
+        => t is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T };
 
     /// <summary>The System.Int64/UInt64 method name for a binary operator, or null.</summary>
     private static string? Long64Op(BinaryExpressionSyntax b) => b.Kind() switch
