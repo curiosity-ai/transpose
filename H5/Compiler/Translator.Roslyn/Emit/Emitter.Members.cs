@@ -144,6 +144,10 @@ public sealed partial class Emitter
         return _ctorNames.TryGetValue(ctor, out var name) ? name : "ctor";
     }
 
+    /// <summary>Ctor name honouring that external (h5) types expose only "ctor".</summary>
+    private string ExternalAwareCtorName(IMethodSymbol ctor)
+        => ctor.ContainingType.Locations.Any(l => l.IsInSource) ? CtorName(ctor) : "ctor";
+
     private void EmitInstanceCtors(INamedTypeSymbol type)
     {
         var ctors = type.InstanceConstructors.Where(c => !c.IsImplicitlyDeclared && c.DeclaringSyntaxReferences.Length > 0).ToList();
@@ -206,7 +210,7 @@ public sealed partial class Emitter
         if (initializer is { RawKind: (int)SyntaxKind.BaseConstructorInitializer }
             && _model.GetSymbolInfo(initializer).Symbol is IMethodSymbol baseCtor)
         {
-            _w.Write($"{TypeRef(baseCtor.ContainingType)}.{CtorName(baseCtor)}.call(this");
+            _w.Write($"{TypeRef(baseCtor.ContainingType)}.{ExternalAwareCtorName(baseCtor)}.call(this");
             if (initializer.ArgumentList.Arguments.Count > 0) { _w.Write(", "); EmitArguments(initializer.ArgumentList, baseCtor); }
             _w.WriteLine(");");
         }
@@ -223,7 +227,7 @@ public sealed partial class Emitter
             && !IsValueTypeBase(baseType) && baseType.TypeKind != TypeKind.Error)
         {
             var baseCtor = baseType.InstanceConstructors.FirstOrDefault(c => c.Parameters.Length == 0);
-            var name = baseCtor is not null ? CtorName(baseCtor) : "ctor";
+            var name = baseCtor is not null ? ExternalAwareCtorName(baseCtor) : "ctor";
             _w.WriteLine($"{TypeRef(baseType)}.{name}.call(this);");
         }
     }
@@ -262,8 +266,58 @@ public sealed partial class Emitter
         var methods = type.GetMembers().OfType<IMethodSymbol>()
             .Where(m => !m.IsStatic && IsEmittableMethod(m))
             .ToList();
-        if (methods.Count == 0) return;
-        EmitMethodMap(methods, TypeRef(type));
+        var indexers = type.GetMembers().OfType<IPropertySymbol>()
+            .Where(p => !p.IsStatic && p.IsIndexer && !p.IsAbstract)
+            .ToList();
+        if (methods.Count == 0 && indexers.Count == 0) return;
+
+        _w.Block(() =>
+        {
+            for (var i = 0; i < methods.Count; i++)
+            {
+                EmitMethodEntry(methods[i]);
+                _w.WriteLine(i < methods.Count - 1 || indexers.Count > 0 ? "," : "");
+            }
+            for (var k = 0; k < indexers.Count; k++)
+            {
+                EmitIndexerEntries(indexers[k], last: k == indexers.Count - 1);
+            }
+        });
+    }
+
+    private void EmitIndexerEntries(IPropertySymbol indexer, bool last)
+    {
+        var accessors = new List<(string name, IMethodSymbol accessor, bool getter)>();
+        if (indexer.GetMethod is not null) accessors.Add(("getItem", indexer.GetMethod, true));
+        if (indexer.SetMethod is not null) accessors.Add(("setItem", indexer.SetMethod, false));
+
+        for (var i = 0; i < accessors.Count; i++)
+        {
+            var (name, accessor, getter) = accessors[i];
+            _w.Write($"{name}: function (");
+            for (var p = 0; p < accessor.Parameters.Length; p++)
+            {
+                if (p > 0) _w.Write(", ");
+                _w.Write(NameMangler.JsIdentifier(accessor.Parameters[p].Name));
+            }
+            _w.Write(") ");
+            EmitAccessorBody(accessor, getter);
+            var isLastEntry = last && i == accessors.Count - 1;
+            _w.WriteLine(isLastEntry ? "" : ",");
+        }
+    }
+
+    private void EmitMethodEntry(IMethodSymbol m)
+    {
+        var decl = (BaseMethodDeclarationSyntax)m.DeclaringSyntaxReferences[0].GetSyntax();
+        var asyncKw = m.IsAsync ? "async " : "";
+        _w.Write($"{H5Naming.MemberJsName(m)}: {asyncKw}function (");
+        EmitParameterList(m);
+        _w.Write(") ");
+        if (decl.Body is not null && IsIteratorBody(decl.Body))
+            EmitIteratorBody(decl.Body, m);
+        else
+            EmitMethodBody(decl.Body, decl.ExpressionBody, m.ReturnsVoid, m);
     }
 
     private void EmitMethodMap(List<IMethodSymbol> methods, string ownerRef)

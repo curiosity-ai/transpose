@@ -131,9 +131,14 @@ public sealed partial class Emitter
             if (!isRoot && child is StatementSyntax) continue;
             if (child is AnonymousFunctionExpressionSyntax or LocalFunctionStatementSyntax) continue;
 
-            if (child is SingleVariableDesignationSyntax { Parent: DeclarationExpressionSyntax or DeclarationPatternSyntax or RecursivePatternSyntax or VarPatternSyntax } single)
+            if (child is SingleVariableDesignationSyntax single)
             {
-                names.Add(single.Identifier.Text);
+                var parent = single.Parent;
+                var include = parent is DeclarationPatternSyntax or RecursivePatternSyntax or VarPatternSyntax
+                    // out-var declarations (not tuple-deconstruction, which declares its own).
+                    || (parent is DeclarationExpressionSyntax { Parent: ArgumentSyntax arg }
+                        && (arg.RefKindKeyword.IsKind(SyntaxKind.OutKeyword) || arg.RefKindKeyword.IsKind(SyntaxKind.RefKeyword)));
+                if (include) names.Add(single.Identifier.Text);
             }
 
             CollectInlineDesignations(child, isRoot: false, names);
