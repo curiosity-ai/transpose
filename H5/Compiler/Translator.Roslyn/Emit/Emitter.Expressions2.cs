@@ -788,9 +788,11 @@ public sealed partial class Emitter
             return;
         }
 
-        // Record / value-equality via Equals for == and !=.
+        // Value equality for == / != on records and non-primitive structs (TimeSpan,
+        // DateTime, DateTimeOffset, Guid, user structs…), which need memberwise/operator
+        // equality rather than JS reference identity.
         if ((binary.IsKind(SyntaxKind.EqualsExpression) || binary.IsKind(SyntaxKind.NotEqualsExpression))
-            && (leftType is { IsRecord: true } || rightType is { IsRecord: true }))
+            && (IsValueEqualityType(leftType) || IsValueEqualityType(rightType)))
         {
             if (binary.IsKind(SyntaxKind.NotEqualsExpression)) _w.Write("!");
             _w.Write("H5R.equals(");
@@ -828,6 +830,21 @@ public sealed partial class Emitter
 
     private static bool IsNullableValueType(ITypeSymbol? t)
         => t is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T };
+
+    /// <summary>
+    /// A type whose == / != is value equality rather than JS reference identity: records and
+    /// non-primitive structs (TimeSpan, DateTime, Guid, user structs…). Primitive numerics,
+    /// bool, char, enums, and the specially-handled long/decimal are excluded.
+    /// </summary>
+    private static bool IsValueEqualityType(ITypeSymbol? t)
+    {
+        if (t is { IsRecord: true }) return true;
+        if (t is not { TypeKind: TypeKind.Struct }) return false;
+        if (t.SpecialType != SpecialType.None) return false; // primitive value types
+        if (Is64BitInteger(t) || IsDecimalType(t)) return false; // handled by their own ops
+        if (t is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T }) return false;
+        return true;
+    }
 
     /// <summary>The System.Int64/UInt64 method name for a binary operator, or null.</summary>
     private static string? Long64Op(BinaryExpressionSyntax b) => b.Kind() switch
