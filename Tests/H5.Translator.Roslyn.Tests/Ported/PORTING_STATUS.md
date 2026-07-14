@@ -7,8 +7,14 @@ diffing output against native .NET — the same contract as the original suite.
 
 ## Current results
 
-- **~194 passing**, ~129 failing, **17 skipped** (`WebApiTests` — need the h5.core browser/DOM
+- **~209 passing**, ~114 failing, **17 skipped** (`WebApiTests` — need the h5.core browser/DOM
   bindings + `Script.Write` JS-interop, out of scope for a runtime-only harness).
+
+Fixed since the re-target: LINQ/extension templates, enum values/ToString, relative external
+templates, non-generic BCL `new`, local functions, `throw`/`checked`, user
+`ToString`/`Equals`/`GetHashCode` override naming, external base-ctor naming, user indexers
+(`getItem`/`setItem`), deconstruction, records (value semantics/`with`/`Deconstruct`), struct
+`$clone`/`getDefaultValue`, `nameof`, and out/ref args inside `[Template]` calls.
 
 The translator emits H5-runtime-format code (`H5.assembly` + `H5.define`) and drives BCL
 interop through H5's `[Template]`/`[Name]`/`[External]`/`[Convention]` attributes read from
@@ -16,10 +22,25 @@ H5.dll, so it composes with the real runtime.
 
 ## Remaining failure categories (long tail)
 
-1. **BCL method/constructor naming mismatches** — a subset of runtime members whose h5.js
-   name isn't reproduced by the current convention heuristic (e.g. some `Random`/`Guid`/
-   `LinkedList`/`Queue`/`DateTimeOffset` members, `TimeSpan` operator helpers). Each is a
-   small, localized fix (add the right `[Template]`/name handling or shim helper).
+1. **H5 member-naming subsystem (largest bucket).** h5's JS member names are produced by a
+   specific system that the current heuristic (library methods → camelCase) only partially
+   matches. Verified against H5.dll / h5.js:
+   - **`[Convention(Notation, Member, …)]`** on a type controls casing per member-kind. e.g.
+     `StringBuilder`/`Console`/`Math` carry `Convention(Member = Method|Field, Notation = CamelCase)`
+     → methods & fields camelCase, **properties preserved**.
+   - **No `[Convention]` ⇒ preserve** (PascalCase): `System.Random.Next` stays `Next`.
+   - **Interface-implementing methods take the (camelCased) interface member name** even without
+     a type convention: `List<T>.Add` → `add` (implements `ICollection<T>.Add`) but the
+     List-specific `AddRange` stays `AddRange`.
+   - **Overload suffixes**: overloaded members get `$1`, `$2`… (`Next`, `Next$1`, `Next$2`),
+     ordered by H5's `OverloadsCollection`.
+   - **Property accessors** vary: `List.Count` is a JS property `.Count`, but `StringBuilder.Length`
+     is `getLength()`/`setLength()` methods.
+   Implementing a faithful `[Convention]` reader + interface-member-name inheritance + overload
+   collection + property-accessor rules is the single change that unlocks the most remaining
+   tests (Random, Guid, Encoding, DateTimeOffset, Queue/LinkedList, and every overloaded BCL call).
+   It is intentionally deferred here because the pieces are coupled and a partial version
+   regresses the currently-passing collection/StringBuilder/Console tests.
 2. **Reflection metadata** — the `H5.setMetadata` block is not emitted, so `GetType()`,
    `typeof` details, `$$fullname`, and enum boxing-based `ToString` in some paths differ.
 3. **Generic type arguments at runtime** — H5 threads type parameters as runtime arguments
