@@ -60,30 +60,14 @@ internal static class H5Naming
     /// </summary>
     public static string MemberJsName(ISymbol symbol)
     {
+        if (symbol is IMethodSymbol m) return MethodJsName(m);
+
         var name = GetName(symbol);
         if (name is not null) return name;
 
-        var inSource = symbol.Locations.Any(l => l.IsInSource);
-        if (inSource)
-        {
-            // Object-method overrides map to h5's lowercase runtime names so the
-            // runtime's dispatch (H5.toString/H5.equals/H5.getHashCode) finds them.
-            if (symbol is IMethodSymbol m)
-            {
-                if (m is { Name: "ToString", Parameters.Length: 0 }) return "toString";
-                if (m is { Name: "GetHashCode", Parameters.Length: 0 }) return "getHashCode";
-                if (m is { Name: "Equals", Parameters.Length: 1 }) return "equals";
-            }
-            return symbol.Name; // preserve C# name for user members
-        }
+        if (symbol.Locations.Any(l => l.IsInSource)) return symbol.Name;
 
-        // Library members: names follow the containing type's H5 [Convention].
-        if (symbol is IMethodSymbol lm)
-        {
-            return Apply(MethodNotation(lm), lm.Name);
-        }
-
-        // Property / field / event: camelCase only under an [External] type or a
+        // Property / field / event: camelCase under an [External] type or a
         // [Convention] covering that member kind; otherwise preserve.
         var kindFlag = symbol.Kind switch
         {
@@ -97,9 +81,62 @@ internal static class H5Naming
         return Apply(notation, symbol.Name);
     }
 
+    private static readonly System.Collections.Generic.Dictionary<ISymbol, string> _methodCache = new(SymbolEqualityComparer.Default);
+
+    private static string MethodJsName(IMethodSymbol method)
+    {
+        method = method.OriginalDefinition;
+        if (_methodCache.TryGetValue(method, out var cached)) return cached;
+
+        var inSource = method.Locations.Any(l => l.IsInSource);
+        if (inSource)
+        {
+            // Object-method overrides map to h5's runtime dispatch names.
+            if (method is { Name: "ToString", Parameters.Length: 0 }) return Cache(method, "toString");
+            if (method is { Name: "GetHashCode", Parameters.Length: 0 }) return Cache(method, "getHashCode");
+            if (method is { Name: "Equals", Parameters.Length: 1 }) return Cache(method, "equals");
+        }
+
+        // [Name] wins over convention, but suffixing still uses the base name.
+        var explicitName = GetName(method);
+        var baseName = explicitName ?? Apply(MethodNotation(method), method.Name);
+
+        // External non-interface types skip overload suffixes (h5 does not suffix them).
+        var declType = method.ContainingType;
+        var skipSuffix = declType is not null && HasExternalAttribute(declType) && declType.TypeKind != TypeKind.Interface;
+        if (skipSuffix || explicitName is not null) return Cache(method, baseName);
+
+        // Overload index via H5's overload-collection ordering (override → base member).
+        var resolved = ResolveOverrideBase(method);
+        var group = OverloadGroup(resolved);
+        var index = group.FindIndex(x => SymbolEqualityComparer.Default.Equals(x, resolved));
+
+        // Assign names to the whole group so subsequent lookups hit the cache.
+        for (var i = 0; i < group.Count; i++)
+        {
+            if (_methodCache.ContainsKey(group[i])) continue;
+            var gBase = GetName(group[i]) ?? Apply(MethodNotation(group[i]), group[i].Name);
+            _methodCache[group[i]] = i == 0 ? gBase : $"{gBase}${i}";
+        }
+
+        var result = index < 0 ? baseName : (index == 0 ? baseName : $"{baseName}${index}");
+        return Cache(method, result);
+    }
+
+    private static string Cache(IMethodSymbol m, string name) { _methodCache[m.OriginalDefinition] = name; return name; }
+
+    private static IMethodSymbol ResolveOverrideBase(IMethodSymbol method)
+    {
+        var m = method;
+        while (m.IsOverride && m.OverriddenMethod is not null && GetTemplate(m) is null)
+            m = m.OverriddenMethod.OriginalDefinition;
+        return m;
+    }
+
     /// <summary>Notation for a library method: convention, else interface-inherited camelCase, else external, else preserve.</summary>
     private static Notation MethodNotation(IMethodSymbol method)
     {
+        if (method.Locations.Any(l => l.IsInSource)) return Notation.None;
         var conv = ResolveNotation(method.ContainingType, ConvMethod);
         if (conv is { } c) return c;
         if (ImplementsInterfaceMember(method)) return Notation.CamelCase;
@@ -121,6 +158,83 @@ internal static class H5Naming
             }
         }
         return false;
+    }
+
+    // ---- overload collection (ported from H5's OverloadsCollection) --------
+
+    private static System.Collections.Generic.List<IMethodSymbol> OverloadGroup(IMethodSymbol method)
+    {
+        var jsBase = GetName(method) ?? method.Name;
+        var isStatic = method.IsStatic;
+        var kind = method.MethodKind;
+
+        var members = new System.Collections.Generic.List<IMethodSymbol>();
+        var seen = new System.Collections.Generic.HashSet<IMethodSymbol>(SymbolEqualityComparer.Default);
+        for (var t = method.ContainingType; t is not null; t = t.BaseType)
+        {
+            foreach (var candidate in t.GetMembers().OfType<IMethodSymbol>())
+            {
+                var c = candidate.OriginalDefinition;
+                if (c.MethodKind != kind || c.IsStatic != isStatic) continue;
+                if (c.ExplicitInterfaceImplementations.Length > 0) continue;
+                if (GetTemplate(c) is not null) continue;              // inline methods are excluded
+                if ((GetName(c) ?? c.Name) != jsBase) continue;
+                if (c.IsOverride) continue;                            // overrides fold into their base
+                if (seen.Add(c)) members.Add(c);
+            }
+        }
+
+        members.Sort(CompareOverload);
+        return members;
+    }
+
+    private static int CompareOverload(IMethodSymbol m1, IMethodSymbol m2)
+    {
+        if (!SymbolEqualityComparer.Default.Equals(m1.ContainingType, m2.ContainingType))
+            return IsDerivedFrom(m1.ContainingType, m2.ContainingType) ? 1 : -1;
+
+        var i1 = ImplementsInterfaceMember(m1);
+        var i2 = ImplementsInterfaceMember(m2);
+        if (i1 && !i2) return -1;
+        if (i2 && !i1) return 1;
+
+        if (m1.MethodKind == MethodKind.Constructor && m2.MethodKind != MethodKind.Constructor) return -1;
+        if (m2.MethodKind == MethodKind.Constructor && m1.MethodKind != MethodKind.Constructor) return 1;
+
+        var a1 = AccessibilityWeight(m1.DeclaredAccessibility);
+        var a2 = AccessibilityWeight(m2.DeclaredAccessibility);
+        if (a1 != a2) return a1.CompareTo(a2);
+
+        return string.Compare(MethodToString(m1), MethodToString(m2), System.StringComparison.Ordinal);
+    }
+
+    private static bool IsDerivedFrom(ITypeSymbol? derived, ITypeSymbol? base_)
+    {
+        for (var t = derived?.BaseType; t is not null; t = t.BaseType)
+            if (SymbolEqualityComparer.Default.Equals(t, base_)) return true;
+        return false;
+    }
+
+    private static int AccessibilityWeight(Accessibility a) => a switch
+    {
+        Accessibility.Public => 1,
+        Accessibility.Internal or Accessibility.ProtectedOrInternal => 2,
+        Accessibility.Protected or Accessibility.ProtectedAndInternal => 3,
+        _ => 4,
+    };
+
+    private static readonly SymbolDisplayFormat FullName = new(
+        typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces,
+        genericsOptions: SymbolDisplayGenericsOptions.IncludeTypeParameters);
+
+    private static string MethodToString(IMethodSymbol m)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.Append(m.ReturnType.ToDisplayString(FullName)).Append(' ');
+        sb.Append(m.Name).Append(' ');
+        sb.Append(m.TypeParameters.Length).Append(' ');
+        foreach (var p in m.Parameters) sb.Append(p.Type.ToDisplayString(FullName)).Append(' ');
+        return sb.ToString();
     }
 
     // ---- [Convention] resolution ------------------------------------------
