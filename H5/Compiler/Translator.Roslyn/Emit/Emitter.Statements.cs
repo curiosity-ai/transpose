@@ -343,13 +343,24 @@ public sealed partial class Emitter
                     // exception filter appended
                 }
 
-                if (condition is null)
+                if (condition is null && katch.Filter is null)
                 {
                     hasCatchAll = true;
-                    EmitCatchBody(katch, first ? null : "else");
+                    if (first)
+                    {
+                        // Only/first clause with no type filter: body runs unconditionally.
+                        EmitCatchBody(katch, null);
+                    }
+                    else
+                    {
+                        _w.Write("else ");
+                        EmitCatchBodyBlock(katch);
+                    }
                 }
                 else
                 {
+                    // A filter-only catch (catch (Exception) when (...)) still needs a guard.
+                    condition ??= "true";
                     _w.Write(first ? "if (" : "else if (");
                     _w.Write(condition);
                     if (katch.Filter is not null)
