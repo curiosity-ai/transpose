@@ -21,6 +21,10 @@ public sealed partial class Emitter
     private SemanticModel _model = null!;
     private readonly string _assemblyName;
 
+    /// <summary>While emitting a primary constructor's own body, its parameters are the JS
+    /// function parameters (raw names); elsewhere captured params read from the instance.</summary>
+    private bool _inPrimaryCtorBody;
+
     public Emitter(CSharpCompilation compilation, string assemblyName = CompilationBuilder.DefaultAssemblyName)
     {
         _compilation = compilation;

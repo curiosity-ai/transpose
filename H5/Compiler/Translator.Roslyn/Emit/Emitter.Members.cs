@@ -185,9 +185,64 @@ public sealed partial class Emitter
     private string ExternalAwareCtorName(IMethodSymbol ctor)
         => ctor.ContainingType.Locations.Any(l => l.IsInSource) ? CtorName(ctor) : "ctor";
 
+    private static bool IsPrimaryCtorSyntax(IMethodSymbol ctor)
+        => ctor.MethodKind == MethodKind.Constructor
+           && ctor.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() is TypeDeclarationSyntax { ParameterList: not null };
+
+    /// <summary>The primary constructor of a non-record class/struct, or null.</summary>
+    private static IMethodSymbol? PrimaryConstructor(INamedTypeSymbol type)
+    {
+        if (type.IsRecord) return null;
+        return type.InstanceConstructors.FirstOrDefault(c =>
+            c.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() is TypeDeclarationSyntax { ParameterList: not null });
+    }
+
+    /// <summary>True for a primary-constructor parameter captured into instance state.</summary>
+    private bool IsCapturedPrimaryCtorParam(IParameterSymbol param)
+        => param.ContainingSymbol is IMethodSymbol { MethodKind: MethodKind.Constructor } ctor
+           && ctor.ContainingType is { IsRecord: false } type
+           && ctor.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() is TypeDeclarationSyntax { ParameterList: not null }
+           && CapturedPrimaryParamNames(type).Contains(param.Name);
+
+    private readonly Dictionary<INamedTypeSymbol, HashSet<string>> _capturedParamCache = new(SymbolEqualityComparer.Default);
+
+    /// <summary>
+    /// Names of primary-ctor parameters used outside the constructor (in a method or
+    /// property body) — these must be stored on the instance. Parameters used only in
+    /// field initializers / base-args are consumed within the constructor.
+    /// </summary>
+    private HashSet<string> CapturedPrimaryParamNames(INamedTypeSymbol type)
+    {
+        if (_capturedParamCache.TryGetValue(type, out var cached)) return cached;
+        var captured = new HashSet<string>();
+        var primary = PrimaryConstructor(type);
+        if (primary is null) { _capturedParamCache[type] = captured; return captured; }
+
+        var paramNames = primary.Parameters.Select(p => p.Name).ToHashSet();
+        foreach (var declRef in type.DeclaringSyntaxReferences)
+        {
+            if (declRef.GetSyntax() is not TypeDeclarationSyntax typeDecl) continue;
+            foreach (var member in typeDecl.Members)
+            {
+                // Method / property / accessor / indexer bodies capture; field initializers do not.
+                foreach (var id in member.DescendantNodes().OfType<IdentifierNameSyntax>())
+                {
+                    if (!paramNames.Contains(id.Identifier.Text)) continue;
+                    if (_model.GetSymbolInfo(id).Symbol is IParameterSymbol p
+                        && SymbolEqualityComparer.Default.Equals(p.ContainingSymbol, primary))
+                        captured.Add(p.Name);
+                }
+            }
+        }
+        _capturedParamCache[type] = captured;
+        return captured;
+    }
+
     private void EmitInstanceCtors(INamedTypeSymbol type)
     {
-        var ctors = type.InstanceConstructors.Where(c => !c.IsImplicitlyDeclared && c.DeclaringSyntaxReferences.Length > 0).ToList();
+        var ctors = type.InstanceConstructors
+            .Where(c => (!c.IsImplicitlyDeclared || IsPrimaryCtorSyntax(c)) && c.DeclaringSyntaxReferences.Length > 0)
+            .ToList();
         var hasExplicit = ctors.Count > 0;
 
         _w.Block(() =>
@@ -210,7 +265,9 @@ public sealed partial class Emitter
             for (var i = 0; i < all.Count; i++)
             {
                 var ctor = all[i];
-                var decl = ctor.DeclaringSyntaxReferences[0].GetSyntax() as ConstructorDeclarationSyntax;
+                var syntax = ctor.DeclaringSyntaxReferences[0].GetSyntax();
+                var decl = syntax as ConstructorDeclarationSyntax;
+                var isPrimary = syntax is TypeDeclarationSyntax { ParameterList: not null };
                 _w.Write($"{CtorName(ctor)}: function (");
                 EmitParameterList(ctor);
                 _w.Write(") ");
@@ -218,11 +275,26 @@ public sealed partial class Emitter
                 {
                     EmitOptionalDefaults(ctor);
                     _w.WriteLine("this.$initialize();");
-                    EmitConstructorChain(ctor, decl!, type);
-                    if (decl?.Body is not null)
-                        foreach (var s in decl.Body.Statements) EmitStatement(s);
-                    else if (decl?.ExpressionBody is not null)
-                        EmitExpressionStatement(decl.ExpressionBody.Expression);
+                    if (isPrimary)
+                    {
+                        // Primary constructor: chain to base, store captured params, run field
+                        // inits. Inside this body, param refs use the raw JS parameter name.
+                        _inPrimaryCtorBody = true;
+                        EmitPrimaryBaseCall(type, syntax as TypeDeclarationSyntax);
+                        var captured = CapturedPrimaryParamNames(type);
+                        foreach (var p in ctor.Parameters.Where(p => captured.Contains(p.Name)))
+                            _w.WriteLine($"this.{NameMangler.JsIdentifier(p.Name)} = {NameMangler.JsIdentifier(p.Name)};");
+                        EmitInstanceFieldInitializers(type);
+                        _inPrimaryCtorBody = false;
+                    }
+                    else
+                    {
+                        EmitConstructorChain(ctor, decl!, type);
+                        if (decl?.Body is not null)
+                            foreach (var s in decl.Body.Statements) EmitStatement(s);
+                        else if (decl?.ExpressionBody is not null)
+                            EmitExpressionStatement(decl.ExpressionBody.Expression);
+                    }
                 });
                 _w.WriteLine(i < all.Count - 1 ? "," : "");
             }
@@ -255,6 +327,20 @@ public sealed partial class Emitter
         {
             EmitImplicitBaseCall(type);
         }
+    }
+
+    /// <summary>Base-constructor call for a primary constructor (honours `: Base(args)`).</summary>
+    private void EmitPrimaryBaseCall(INamedTypeSymbol type, TypeDeclarationSyntax? decl)
+    {
+        var primaryBase = decl?.BaseList?.Types.OfType<PrimaryConstructorBaseTypeSyntax>().FirstOrDefault();
+        if (primaryBase is not null && _model.GetSymbolInfo(primaryBase).Symbol is IMethodSymbol baseCtor)
+        {
+            _w.Write($"{TypeRef(baseCtor.ContainingType)}.{ExternalAwareCtorName(baseCtor)}.call(this");
+            if (primaryBase.ArgumentList.Arguments.Count > 0) { _w.Write(", "); EmitArguments(primaryBase.ArgumentList, baseCtor); }
+            _w.WriteLine(");");
+            return;
+        }
+        EmitImplicitBaseCall(type);
     }
 
     private void EmitImplicitBaseCall(INamedTypeSymbol type)

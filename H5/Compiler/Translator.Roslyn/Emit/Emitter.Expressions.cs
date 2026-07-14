@@ -320,6 +320,14 @@ public sealed partial class Emitter
                 _w.Write(NameMangler.JsIdentifier(local.Name));
                 break;
             case IParameterSymbol param:
+                // A captured primary-constructor parameter referenced from an instance
+                // member is stored on the instance (this.<param>). Inside the primary
+                // ctor's own body the parameter is still the JS function parameter.
+                if (!_inPrimaryCtorBody && IsCapturedPrimaryCtorParam(param))
+                {
+                    _w.Write($"this.{NameMangler.JsIdentifier(param.Name)}");
+                    break;
+                }
                 _w.Write(NameMangler.JsIdentifier(param.Name));
                 // ref/out parameters are holder objects ({ v: ... }) inside the body.
                 if (param.RefKind is RefKind.Ref or RefKind.Out) _w.Write(".v");

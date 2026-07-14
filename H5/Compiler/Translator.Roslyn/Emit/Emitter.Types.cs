@@ -216,7 +216,7 @@ public sealed partial class Emitter
         foreach (var m in type.GetMembers())
         {
             if (m.IsStatic) continue;
-            if (m is IFieldSymbol f && !f.IsConst && f.AssociatedSymbol is null)
+            if (m is IFieldSymbol f && !f.IsConst && f.AssociatedSymbol is null && f.CanBeReferencedByName)
                 yield return (H5Naming.MemberJsName(f), DefaultValueLiteral(f.Type), f);
             else if (m is IPropertySymbol p && !p.IsAbstract && !p.IsIndexer
                      && (IsAutoProperty(p) || (type.IsRecord && p.IsImplicitlyDeclared && p.Name != "EqualityContract")))
