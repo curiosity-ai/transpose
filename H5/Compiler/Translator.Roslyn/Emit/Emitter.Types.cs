@@ -162,7 +162,7 @@ public sealed partial class Emitter
             }
 
             // instance ctors
-            var ctorsBody = Capture(() => EmitInstanceCtors(type));
+            var ctorsBody = Capture(() => { if (!TryEmitRecordCtors(type)) EmitInstanceCtors(type); });
             if (ctorsBody.Trim().Length > 0)
             {
                 sections.Add(() => { _w.Write("ctors: "); _w.Write(ctorsBody); });
@@ -216,7 +216,8 @@ public sealed partial class Emitter
             if (m.IsStatic) continue;
             if (m is IFieldSymbol f && !f.IsConst && f.AssociatedSymbol is null)
                 yield return (H5Naming.MemberJsName(f), DefaultValueLiteral(f.Type), f);
-            else if (m is IPropertySymbol p && !p.IsAbstract && IsAutoProperty(p))
+            else if (m is IPropertySymbol p && !p.IsAbstract && !p.IsIndexer
+                     && (IsAutoProperty(p) || (type.IsRecord && p.IsImplicitlyDeclared && p.Name != "EqualityContract")))
                 yield return (H5Naming.MemberJsName(p), DefaultValueLiteral(p.Type), p);
         }
     }
@@ -256,6 +257,8 @@ public sealed partial class Emitter
     private string DefaultValueLiteral(ITypeSymbol type)
     {
         if (type.TypeKind == TypeKind.Enum) return "0";
+        if (type is INamedTypeSymbol { TypeKind: TypeKind.Struct } st && st.Locations.Any(l => l.IsInSource))
+            return $"{TypeRef(st)}.getDefaultValue()";
         switch (type.SpecialType)
         {
             case SpecialType.System_Boolean: return "false";

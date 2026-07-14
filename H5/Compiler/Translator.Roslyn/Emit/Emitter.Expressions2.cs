@@ -14,6 +14,14 @@ public sealed partial class Emitter
 
     private void EmitInvocation(InvocationExpressionSyntax invocation)
     {
+        // nameof(...) is a compile-time constant string.
+        if (invocation.Expression is IdentifierNameSyntax { Identifier.Text: "nameof" }
+            && _model.GetConstantValue(invocation) is { HasValue: true, Value: string nameofValue })
+        {
+            _w.Write(JsString(nameofValue));
+            return;
+        }
+
         var symbol = _model.GetSymbolInfo(invocation).Symbol as IMethodSymbol;
 
         if (symbol is null)
@@ -438,17 +446,17 @@ public sealed partial class Emitter
             if (argList is not null) EmitArguments(argList, ctor);
             _w.Write(")");
         }
-        else if (type.IsGenericType)
+        else if (type.ToDisplayString() == "System.Exception")
         {
-            // Generic BCL type: new (List$1(Int32)).ctor(args).
-            _w.Write($"new ({typeRef}).{ctorName}(");
+            // System.Exception is collapsed to a single dispatching constructor in h5.
+            _w.Write($"new {typeRef}(");
             if (argList is not null) EmitArguments(argList, ctor);
             _w.Write(")");
         }
         else
         {
-            // Non-generic BCL type: direct new (h5 constructor functions dispatch by arity).
-            _w.Write($"new {typeRef}(");
+            // BCL type: new (TypeRef).ctorName(args) — h5's named-constructor form.
+            _w.Write($"new ({typeRef}).{ctorName}(");
             if (argList is not null) EmitArguments(argList, ctor);
             _w.Write(")");
         }

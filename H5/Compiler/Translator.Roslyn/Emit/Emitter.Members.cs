@@ -31,6 +31,38 @@ public sealed partial class Emitter
 
         var sections = new List<Action>();
 
+        // Structs expose a getDefaultValue() static returning a zero-initialized value.
+        if (type.TypeKind == TypeKind.Struct)
+        {
+            var slots = InstanceFieldSlots(type).ToList();
+            staticMethods = staticMethods; // (no-op, keep ordering)
+            sections.Add(() =>
+            {
+                _w.Write("methods: ");
+                _w.Block(() =>
+                {
+                    _w.Write("getDefaultValue: function () ");
+                    _w.Block(() =>
+                    {
+                        _w.WriteLine("var $ = Object.create(this.prototype);");
+                        foreach (var (name, def, _) in slots) _w.WriteLine($"$.{name} = {def};");
+                        _w.WriteLine("return $;");
+                    });
+                    if (staticMethods.Count > 0)
+                    {
+                        _w.WriteLine(",");
+                        for (var i = 0; i < staticMethods.Count; i++)
+                        {
+                            EmitMethodEntry(staticMethods[i]);
+                            _w.WriteLine(i < staticMethods.Count - 1 ? "," : "");
+                        }
+                    }
+                    else { _w.WriteLine(); }
+                });
+            });
+            staticMethods = new List<IMethodSymbol>(); // consumed above
+        }
+
         if (staticFields.Count > 0)
         {
             sections.Add(() =>
@@ -124,6 +156,7 @@ public sealed partial class Emitter
         if (_ctorNames.TryGetValue(ctor, out var cached)) return cached;
 
         var ctors = ctor.ContainingType.InstanceConstructors
+            .Where(c => !IsRecordCopyCtor(c))
             .OrderBy(c => c.Parameters.Length)
             .ThenBy(c => string.Join(",", c.Parameters.Select(p => p.Type.ToDisplayString())), StringComparer.Ordinal)
             .ToList();
@@ -143,6 +176,10 @@ public sealed partial class Emitter
         }
         return _ctorNames.TryGetValue(ctor, out var name) ? name : "ctor";
     }
+
+    private static bool IsRecordCopyCtor(IMethodSymbol c)
+        => c.ContainingType.IsRecord && c.Parameters.Length == 1
+           && SymbolEqualityComparer.Default.Equals(c.Parameters[0].Type, c.ContainingType);
 
     /// <summary>Ctor name honouring that external (h5) types expose only "ctor".</summary>
     private string ExternalAwareCtorName(IMethodSymbol ctor)
@@ -263,48 +300,44 @@ public sealed partial class Emitter
 
     private void EmitInstanceMethods(INamedTypeSymbol type, IMethodSymbol? entryPoint)
     {
-        var methods = type.GetMembers().OfType<IMethodSymbol>()
-            .Where(m => !m.IsStatic && IsEmittableMethod(m))
-            .ToList();
-        var indexers = type.GetMembers().OfType<IPropertySymbol>()
-            .Where(p => !p.IsStatic && p.IsIndexer && !p.IsAbstract)
-            .ToList();
-        if (methods.Count == 0 && indexers.Count == 0) return;
+        var entries = new List<Action>();
+
+        foreach (var m in type.GetMembers().OfType<IMethodSymbol>().Where(m => !m.IsStatic && IsEmittableMethod(m)))
+        {
+            var method = m;
+            entries.Add(() => EmitMethodEntry(method));
+        }
+        foreach (var indexer in type.GetMembers().OfType<IPropertySymbol>().Where(p => !p.IsStatic && p.IsIndexer && !p.IsAbstract))
+        {
+            var idx = indexer;
+            if (idx.GetMethod is not null) entries.Add(() => EmitAccessorEntry("getItem", idx.GetMethod!, true));
+            if (idx.SetMethod is not null) entries.Add(() => EmitAccessorEntry("setItem", idx.SetMethod!, false));
+        }
+
+        AddValueTypeMethodEntries(type, entries);
+
+        if (entries.Count == 0) return;
 
         _w.Block(() =>
         {
-            for (var i = 0; i < methods.Count; i++)
+            for (var i = 0; i < entries.Count; i++)
             {
-                EmitMethodEntry(methods[i]);
-                _w.WriteLine(i < methods.Count - 1 || indexers.Count > 0 ? "," : "");
-            }
-            for (var k = 0; k < indexers.Count; k++)
-            {
-                EmitIndexerEntries(indexers[k], last: k == indexers.Count - 1);
+                entries[i]();
+                _w.WriteLine(i < entries.Count - 1 ? "," : "");
             }
         });
     }
 
-    private void EmitIndexerEntries(IPropertySymbol indexer, bool last)
+    private void EmitAccessorEntry(string name, IMethodSymbol accessor, bool getter)
     {
-        var accessors = new List<(string name, IMethodSymbol accessor, bool getter)>();
-        if (indexer.GetMethod is not null) accessors.Add(("getItem", indexer.GetMethod, true));
-        if (indexer.SetMethod is not null) accessors.Add(("setItem", indexer.SetMethod, false));
-
-        for (var i = 0; i < accessors.Count; i++)
+        _w.Write($"{name}: function (");
+        for (var p = 0; p < accessor.Parameters.Length; p++)
         {
-            var (name, accessor, getter) = accessors[i];
-            _w.Write($"{name}: function (");
-            for (var p = 0; p < accessor.Parameters.Length; p++)
-            {
-                if (p > 0) _w.Write(", ");
-                _w.Write(NameMangler.JsIdentifier(accessor.Parameters[p].Name));
-            }
-            _w.Write(") ");
-            EmitAccessorBody(accessor, getter);
-            var isLastEntry = last && i == accessors.Count - 1;
-            _w.WriteLine(isLastEntry ? "" : ",");
+            if (p > 0) _w.Write(", ");
+            _w.Write(NameMangler.JsIdentifier(accessor.Parameters[p].Name));
         }
+        _w.Write(") ");
+        EmitAccessorBody(accessor, getter);
     }
 
     private void EmitMethodEntry(IMethodSymbol m)
@@ -413,7 +446,9 @@ public sealed partial class Emitter
     {
         var props = type.GetMembers().OfType<IPropertySymbol>()
             .Where(p => !p.IsStatic && !p.IsAbstract && !p.IsIndexer && !IsAutoProperty(p)
-                        && p.DeclaringSyntaxReferences.Length > 0)
+                        && !p.IsImplicitlyDeclared
+                        && p.DeclaringSyntaxReferences.Length > 0
+                        && p.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() is PropertyDeclarationSyntax)
             .ToList();
         // Indexers → get_Item/set_Item under methods handled separately (skip for now).
         if (props.Count == 0) return;

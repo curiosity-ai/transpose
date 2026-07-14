@@ -16,7 +16,11 @@
     H5R.equals = function (a, b) { return H5.equals ? H5.equals(a, b) : a === b; };
     H5R.idiv = (H5.Int && H5.Int.div) ? function (a, b) { return H5.Int.div(a, b); } : function (a, b) { var r = a / b; return r < 0 ? Math.ceil(r) : Math.floor(r); };
     H5R.trunc = function (x) { return x < 0 ? Math.ceil(x) : Math.floor(x); };
-    H5R.clone = function (o) { return (o && o.$clone) ? o.$clone() : o; };
+    H5R.clone = function (o) {
+        if (!o) { return o; }
+        if (o.$clone) { return o.$clone(); }
+        return Object.assign(Object.create(Object.getPrototypeOf(o)), o);
+    };
     H5R.hash = function (v) { return H5.getHashCode ? H5.getHashCode(v) : 0; };
     H5R.getEnumerator = function (src) {
         if (H5.getEnumerator) {
