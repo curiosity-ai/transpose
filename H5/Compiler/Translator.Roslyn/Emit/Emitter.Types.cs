@@ -219,8 +219,14 @@ public sealed partial class Emitter
             else if (m is IPropertySymbol p && !p.IsAbstract && !p.IsIndexer
                      && (IsAutoProperty(p) || (type.IsRecord && p.IsImplicitlyDeclared && p.Name != "EqualityContract")))
                 yield return (H5Naming.MemberJsName(p), DefaultValueLiteral(p.Type), p);
+            else if (m is IEventSymbol ev && IsFieldLikeEvent(ev))
+                yield return (H5Naming.MemberJsName(ev), "null", ev);
         }
     }
+
+    /// <summary>A field-like event (no explicit add/remove) — backed by a null delegate field.</summary>
+    internal static bool IsFieldLikeEvent(IEventSymbol ev)
+        => ev.AddMethod is null or { IsImplicitlyDeclared: true };
 
     // ---- shared helpers ----------------------------------------------------
 

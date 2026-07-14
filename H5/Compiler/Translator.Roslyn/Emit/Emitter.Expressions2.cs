@@ -33,10 +33,14 @@ public sealed partial class Emitter
             return;
         }
 
-        // Delegate invocation.
+        // Delegate invocation: d(...) or d.Invoke(...) — the delegate is a plain callable.
         if (symbol.MethodKind == MethodKind.DelegateInvoke)
         {
-            EmitExpression(invocation.Expression);
+            // For d.Invoke(...) call the receiver directly, dropping the ".Invoke".
+            if (invocation.Expression is MemberAccessExpressionSyntax { Name.Identifier.Text: "Invoke" } dm)
+                EmitExpression(dm.Expression);
+            else
+                EmitExpression(invocation.Expression);
             _w.Write("(");
             EmitArguments(invocation.ArgumentList, symbol);
             _w.Write(")");
@@ -767,6 +771,20 @@ public sealed partial class Emitter
             EmitArgumentList(ea.ArgumentList);
             _w.Write(", ");
             EmitExpressionConverted(assignment.Right, leftType);
+            _w.Write(")");
+            return;
+        }
+
+        // Delegate / event subscription: d += h, d -= h, ev += h, ev -= h → combine/remove.
+        if ((op == "+=" || op == "-=")
+            && (leftType is { TypeKind: TypeKind.Delegate }
+                || _model.GetSymbolInfo(assignment.Left).Symbol is IEventSymbol))
+        {
+            EmitExpression(assignment.Left);
+            _w.Write($" = H5R.{(op == "+=" ? "combine" : "remove")}(");
+            EmitExpression(assignment.Left);
+            _w.Write(", ");
+            EmitExpression(assignment.Right);
             _w.Write(")");
             return;
         }

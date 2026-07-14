@@ -31,6 +31,10 @@
     };
     H5R.dispose = function (x) { if (x) { if (x.dispose) { x.dispose(); } else if (x.Dispose) { x.Dispose(); } } };
     H5R.array = function (n, d) { var a = new Array(n); for (var i = 0; i < n; i++) { a[i] = d; } return a; };
+
+    // Delegate / event helpers (multicast combine + remove) over h5.js's H5.fn.
+    H5R.combine = function (a, b) { return H5.fn.combine(a, b); };
+    H5R.remove = function (a, b) { return H5.fn.remove(a, b); };
     H5R.formatValue = function (v, fmt) { try { return System.String.format("{0:" + fmt + "}", v); } catch (e) { return H5R.toStr(v); } };
 
     // Date/TimeSpan arithmetic helpers (best-effort; System types come from h5.js).

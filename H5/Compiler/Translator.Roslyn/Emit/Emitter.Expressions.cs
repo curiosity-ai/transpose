@@ -318,6 +318,9 @@ public sealed partial class Emitter
             case IPropertySymbol prop:
                 EmitPropertyAccess(prop, thisTarget: null);
                 break;
+            case IEventSymbol ev:
+                _w.Write(ev.IsStatic ? $"{TypeRef(ev.ContainingType)}.{H5Naming.MemberJsName(ev)}" : $"this.{H5Naming.MemberJsName(ev)}");
+                break;
             case IMethodSymbol { MethodKind: MethodKind.LocalFunction } localFn:
                 _w.Write(NameMangler.JsIdentifier(localFn.Name));
                 break;
@@ -436,6 +439,10 @@ public sealed partial class Emitter
             case IPropertySymbol prop:
                 EmitPropertyAccess(prop, prop.IsStatic ? null : member.Expression);
                 return;
+            case IEventSymbol ev:
+                if (ev.IsStatic) { _w.Write($"{TypeRef(ev.ContainingType)}.{H5Naming.MemberJsName(ev)}"); }
+                else { EmitExpression(member.Expression); _w.Write("." + H5Naming.MemberJsName(ev)); }
+                return;
             case IMethodSymbol method:
                 EmitMethodGroup(method, member.Expression is ThisExpressionSyntax ? null : member.Expression);
                 return;
@@ -503,6 +510,14 @@ public sealed partial class Emitter
                 _w.Write(NameMangler.JsIdentifier(binding.Name.Identifier.Text));
                 break;
             case InvocationExpressionSyntax { Expression: MemberBindingExpressionSyntax mb } inv:
+                // Delegate invoke (event?.Invoke(...)) → optional call, not a member call.
+                if (_model.GetSymbolInfo(inv).Symbol is IMethodSymbol { MethodKind: MethodKind.DelegateInvoke })
+                {
+                    _w.Write("?.(");
+                    EmitArguments(inv.ArgumentList, _model.GetSymbolInfo(inv).Symbol as IMethodSymbol);
+                    _w.Write(")");
+                    break;
+                }
                 _w.Write("?.");
                 _w.Write(NameMangler.JsIdentifier(mb.Name.Identifier.Text));
                 _w.Write("(");
