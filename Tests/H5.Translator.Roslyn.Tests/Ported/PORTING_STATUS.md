@@ -7,7 +7,7 @@ diffing output against native .NET — the same contract as the original suite.
 
 ## Current results
 
-- **~270 passing**, ~53 failing, **17 skipped** (`WebApiTests` — need the h5.core browser/DOM
+- **~273 passing**, ~50 failing, **17 skipped** (`WebApiTests` — need the h5.core browser/DOM
   bindings, out of scope for a runtime-only harness).
 
 Fixed since the re-target: LINQ/extension templates, enum values/ToString, `[Flags]` enums,
@@ -38,20 +38,27 @@ naming now matches h5.js.
 
 64-bit integers (`long`/`ulong`) are now emitted as h5.js `System.Int64`/`UInt64` objects
 (literals, arithmetic/comparison operators, conversions, and constants such as
-`long.MinValue`). `await` now adapts h5.js Tasks via `H5.toPromise`, so ordinary
-async/await and `Task.WhenAll` sequencing work.
+`long.MinValue`).
 
-## Remaining failure categories (long tail, ~53)
+Async constructs are aligned with h5.js's contract: an `async` method/lambda/local
+function emits a plain outer function whose body runs in a native `async` IIFE, and the
+resulting promise is adapted to an h5.js **Task** via `H5R.fromPromise` (a
+`TaskCompletionSource`). So async methods return real Tasks that compose with
+`Task.Run`/`Task.WhenAll`/`ContinueWith` and carry faults through the Task (enabling
+exception aggregation), while `await x` drives any Task or promise through `H5.toPromise`.
+
+## Remaining failure categories (long tail, ~50)
 
 1. **Hand-written BCL runtime quirks.** A few h5.js types are hand-authored (`// @source X.js`)
    and diverge from their C# metadata, so method names computed from metadata don't match:
    e.g. `Guid.ToString(string)` maps to `format(...)` in h5.js, not `toString$1`. Affects
    `Guid`, `Decimal`, `TimeSpan`, `Regex`, `Version`, `DateTimeOffset`, `CultureInfo`.
    These need per-type name maps rather than the generic overload algorithm.
-2. **Task exception aggregation / `ValueTask`** — feeding a native-async lambda into h5.js
-   `Task.Run`/`WhenAll` (whose state-machine model expects h5.js Tasks) leaves throws as
-   unhandled rejections; `async ValueTask` also trips a Roslyn task-like-metadata error
-   from the H5 BCL.
+2. **`async ValueTask` / `goto` across `await`** — `async ValueTask` trips a Roslyn
+   task-like-metadata error from the H5 BCL (H5.dll's `ValueTask` lacks the async
+   method-builder attribute, unfixable without changing the BCL). `goto` between labels
+   that straddle an `await` needs the full step-state-machine lowering that native
+   async/await cannot express.
 3. **Generic type arguments at runtime** — constructs needing `T` as a runtime value
    (`new T()`, `default(T)`, `typeof(T)`, `Enum.IsDefined<T>`) can emit an undefined `T`.
 5. **Reflection metadata** — the `H5.setMetadata` block is not emitted, so richer
