@@ -529,12 +529,36 @@ public sealed partial class Emitter
 
     private void EmitParameterList(IMethodSymbol method)
     {
-        for (var i = 0; i < method.Parameters.Length; i++)
+        var first = true;
+        // A generic method that threads its type arguments receives them as leading
+        // parameters (T, args…), so the body can use typeof(T)/default(T)/new T().
+        if (ThreadsTypeArgs(method))
         {
-            if (i > 0) _w.Write(", ");
-            _w.Write(NameMangler.JsIdentifier(method.Parameters[i].Name));
+            foreach (var tp in method.TypeParameters)
+            {
+                if (!first) _w.Write(", ");
+                _w.Write(tp.Name);
+                first = false;
+            }
+        }
+        foreach (var p in method.Parameters)
+        {
+            if (!first) _w.Write(", ");
+            _w.Write(NameMangler.JsIdentifier(p.Name));
+            first = false;
         }
     }
+
+    /// <summary>
+    /// True if a generic method threads its type arguments at runtime: a source-defined
+    /// generic method not marked [IgnoreGeneric]. Its definition takes the type parameters
+    /// as leading arguments and every call site passes the concrete type arguments, so
+    /// runtime uses of the type parameter (typeof(T), default(T), new T()) resolve.
+    /// </summary>
+    private static bool ThreadsTypeArgs(IMethodSymbol method)
+        => method.IsGenericMethod
+           && method.OriginalDefinition.Locations.Any(l => l.IsInSource)
+           && !method.OriginalDefinition.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "H5.IgnoreGenericAttribute");
 
     private void EmitOptionalDefaults(IMethodSymbol method)
     {

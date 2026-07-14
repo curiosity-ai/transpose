@@ -324,9 +324,10 @@ public sealed partial class Emitter
         _w.Write("var $ret = ");
         EmitCallee(invocation, symbol);
         _w.Write("(");
+        var lead = EmitLeadingTypeArgs(symbol);
         for (var i = 0; i < args.Count; i++)
         {
-            if (i > 0) _w.Write(", ");
+            if (i > 0 || lead) _w.Write(", ");
             if (holders[i] is not null) _w.Write(holders[i]!);
             else EmitExpressionConverted(args[i].Expression, i < symbol.Parameters.Length ? symbol.Parameters[i].Type : null);
         }
@@ -362,9 +363,25 @@ public sealed partial class Emitter
         }
     }
 
+    /// <summary>
+    /// Emits a generic method's type arguments as leading call arguments (matching the
+    /// leading type parameters in its definition). Returns true if anything was written.
+    /// </summary>
+    private bool EmitLeadingTypeArgs(IMethodSymbol? method)
+    {
+        if (method is null || !ThreadsTypeArgs(method) || method.TypeArguments.Length == 0) return false;
+        for (var i = 0; i < method.TypeArguments.Length; i++)
+        {
+            if (i > 0) _w.Write(", ");
+            _w.Write(TypeRef(method.TypeArguments[i]));
+        }
+        return true;
+    }
+
     private void EmitArguments(ArgumentListSyntax argList, IMethodSymbol? method)
     {
         var args = argList.Arguments;
+        var lead = EmitLeadingTypeArgs(method);
 
         // Reorder named arguments to parameter order when we know the method.
         if (method is not null && args.Any(a => a.NameColon is not null))
@@ -390,7 +407,7 @@ public sealed partial class Emitter
             var lastProvided = -1;
             for (var i = 0; i < ordered.Length; i++) if (ordered[i] is not null) lastProvided = i;
 
-            var first = true;
+            var first = !lead;
             for (var i = 0; i <= lastProvided; i++)
             {
                 if (!first) _w.Write(", ");
@@ -410,7 +427,7 @@ public sealed partial class Emitter
         if (method is { Parameters.Length: > 0 } && method.Parameters[^1].IsParams && ShouldWrapParams(method))
         {
             var fixedCount = method.Parameters.Length - 1;
-            var first = true;
+            var first = !lead;
             for (var i = 0; i < fixedCount && i < args.Count; i++)
             {
                 if (!first) _w.Write(", ");
@@ -442,7 +459,7 @@ public sealed partial class Emitter
 
         for (var i = 0; i < args.Count; i++)
         {
-            if (i > 0) _w.Write(", ");
+            if (i > 0 || lead) _w.Write(", ");
             var targetType = method is not null && i < method.Parameters.Length ? method.Parameters[i].Type : null;
             EmitExpressionConverted(args[i].Expression, targetType);
         }
