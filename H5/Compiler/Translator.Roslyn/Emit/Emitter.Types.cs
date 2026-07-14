@@ -69,9 +69,11 @@ public sealed partial class Emitter
     private void EmitEnum(INamedTypeSymbol type)
     {
         _w.Write($"H5.define(\"{_names.TypeFullName(type)}\", ");
+        var isFlags = type.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "System.FlagsAttribute");
         _w.Block(() =>
         {
             _w.WriteLine("$kind: \"enum\",");
+            if (isFlags) _w.WriteLine("$flags: true,");
             _w.Write("statics: ");
             _w.Block(() =>
             {
