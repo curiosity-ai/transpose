@@ -7,7 +7,7 @@ diffing output against native .NET — the same contract as the original suite.
 
 ## Current results
 
-- **301 passing**, 22 failing, **17 skipped** (`WebApiTests` — need the h5.core browser/DOM
+- **302 passing**, 21 failing, **17 skipped** (`WebApiTests` — need the h5.core browser/DOM
   bindings, out of scope for a runtime-only harness).
 
 Fixed since the re-target: LINQ/extension templates, enum values/ToString, `[Flags]` enums,
@@ -64,10 +64,11 @@ overload set (so `Regex.Replace` → `replace`, no suffix), the parameterless ob
 (e.g. `IComparer<T>.Compare` → `compare`). Guid, Regex, Version, CultureInfo and Comparer
 now match h5.js. Exception filters (`when`) bind the catch variable before the guard runs.
 
-## Remaining failure categories (long tail, ~22)
+## Remaining failure categories (long tail, ~21)
 
-1. **Generic method type arguments** — a generic *method* (not class) that uses `T` at
-   runtime (`new T()`, `default(T)`, `typeof(T)`) needs `T` threaded as a call argument.
+1. **Generic method type arguments** — a *source* generic method threads its type
+   parameters (`typeof(T)`/`default(T)`/casts to `T` work). Still open: `new T()` on a
+   *method* type parameter, and BCL/external generic methods that expect threaded type args.
 2. **Reflection metadata** — the `H5.setMetadata` block is not emitted, so richer
    `GetType()` details differ.
 3. **Newer/edge C# forms** — C#14 `extension` members and ref-lambda params,
