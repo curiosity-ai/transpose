@@ -22,7 +22,11 @@ public sealed class RoslynTranslator
     /// untyped JavaScript. CS8830: covariant return types in overrides — no runtime type
     /// check exists in JS, so the override simply works.
     /// </summary>
-    private static readonly HashSet<string> BenignForJs = new() { "CS8830" };
+    private static readonly HashSet<string> BenignForJs = new()
+    {
+        "CS8830", // covariant return types in overrides — no runtime type check in JS
+        "CS5001", // no static Main — library-style snippets simply emit no entry point
+    };
 
     /// <summary>Translate a single source file.</summary>
     public TranslationResult Translate(string source, string path = "App.cs", string assemblyName = CompilationBuilder.DefaultAssemblyName)

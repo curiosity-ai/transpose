@@ -261,6 +261,13 @@ public sealed partial class Emitter
             if (i < symbol.Parameters.Length) byName[symbol.Parameters[i].Name] = val;
         }
 
+        // Bind generic type parameters referenced by the template (e.g. Enum.TryParse<TEnum>).
+        AddTypeArguments(byName, symbol.OriginalDefinition, symbol);
+
+        // Skip write-back for discard targets (out _).
+        for (var i = 0; i < args.Count; i++)
+            if (holders[i] is not null && IsDiscardTarget(args[i].Expression)) holders[i] = null;
+
         _w.Write("var $ret = ");
         _w.Write(SubstituteTemplate(template, symbol.IsStatic ? null : "this", byName, byPos));
         _w.Write("; ");
