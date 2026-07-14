@@ -167,7 +167,12 @@ public sealed partial class Emitter
         }
         else
         {
-            var primary = ctors.FirstOrDefault(c => c.Parameters.Length == 0) ?? ctors[0];
+            // A record's positional primary constructor (declared on the record header) is the
+            // "ctor"; otherwise the parameterless constructor is. (For a `record struct` the
+            // implicit parameterless struct ctor must NOT usurp the positional primary.)
+            var primary = ctors.FirstOrDefault(c => c.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() is RecordDeclarationSyntax)
+                          ?? ctors.FirstOrDefault(c => c.Parameters.Length == 0)
+                          ?? ctors[0];
             var n = 1;
             foreach (var c in ctors)
             {

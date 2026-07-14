@@ -26,7 +26,12 @@ public sealed partial class Emitter
     /// <summary>Appends synthesized value-type methods (struct $clone/equals, record members).</summary>
     private void AddValueTypeMethodEntries(INamedTypeSymbol type, List<Action> entries)
     {
+        // Everything a value-copy must carry: backing fields/auto-props plus (for record
+        // structs) the positional value properties, which are synthesized without slots.
         var fields = InstanceFieldSlots(type).Select(f => f.name).ToList();
+        if (type.IsRecord)
+            foreach (var p in RecordValuePropNames(type))
+                if (!fields.Contains(p)) fields.Add(p);
 
         if (type.TypeKind == TypeKind.Struct)
         {
