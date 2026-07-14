@@ -452,6 +452,20 @@ public sealed partial class Emitter
         {
             _w.WriteLine("catch ($ex) {");
             _w.Indent();
+
+            // Bind each catch variable to $ex up front so it is in scope for exception
+            // filters (`when (...)`), which are evaluated in the guard before the body.
+            var boundNames = new System.Collections.Generic.HashSet<string>(System.StringComparer.Ordinal);
+            foreach (var katch in tryStmt.Catches)
+            {
+                var id = katch.Declaration?.Identifier;
+                if (id is { RawKind: not 0 } token && !string.IsNullOrEmpty(token.Text))
+                {
+                    var jsName = NameMangler.JsIdentifier(token.Text);
+                    if (boundNames.Add(jsName)) _w.WriteLine($"let {jsName} = $ex;");
+                }
+            }
+
             var first = true;
             var hasCatchAll = false;
             foreach (var katch in tryStmt.Catches)
@@ -515,7 +529,7 @@ public sealed partial class Emitter
 
     private void EmitCatchBody(CatchClauseSyntax katch, string? prefix)
     {
-        BindCatchVariable(katch);
+        // The catch variable is bound once at the top of the catch block (see EmitTry).
         foreach (var s in katch.Block.Statements) EmitStatement(s);
     }
 
@@ -523,19 +537,9 @@ public sealed partial class Emitter
     {
         _w.Block(() =>
         {
-            BindCatchVariable(katch);
             foreach (var s in katch.Block.Statements) EmitStatement(s);
         });
         _w.WriteLine();
-    }
-
-    private void BindCatchVariable(CatchClauseSyntax katch)
-    {
-        var id = katch.Declaration?.Identifier;
-        if (id is { RawKind: not 0 } token && !string.IsNullOrEmpty(token.Text))
-        {
-            _w.WriteLine($"let {NameMangler.JsIdentifier(token.Text)} = $ex;");
-        }
     }
 
     private string ExceptionTypeRef(ITypeSymbol type) => _names.TypeReference(type);
