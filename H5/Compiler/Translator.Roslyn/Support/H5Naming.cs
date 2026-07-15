@@ -147,6 +147,23 @@ internal static class H5Naming
         return n == "H5" || (n is not null && n.StartsWith("H5.", System.StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// True if an interface should be listed in a type's <c>inherits</c> so the runtime tracks it
+    /// for <c>is</c>/<c>as</c> and interface dispatch. This is every implemented interface that the
+    /// runtime registers: source/referenced-library interfaces AND the H5 BCL interfaces
+    /// (System.Collections.Generic.IList/ICollection/IEnumerable, IComparable, …) which are real
+    /// H5.define'd types. Only ambient DOM/scoped interfaces are excluded (they are native JS, not
+    /// H5-registered). Omitting the BCL collection interfaces breaks e.g. LINQ over a user
+    /// collection: <c>Enumerable.from(x)</c> tests <c>x is IEnumerable</c> before enumerating it.
+    /// </summary>
+    public static bool IsInheritableInterface(ITypeSymbol? i)
+    {
+        if (i is not { TypeKind: TypeKind.Interface }) return false;
+        if (IsScopedType(i)) return false;                       // DOM / ambient JS — not registered
+        if (IsH5CompiledSource(i)) return true;                  // source or referenced user library
+        return IsH5RuntimeAssembly(i.ContainingAssembly);        // H5 BCL interface (IList, IEnumerable, …)
+    }
+
     /// <summary>True if the type (or an enclosing type) is a [Scope]/[GlobalMethods] binding
     /// projected onto ambient JS (e.g. the DOM types under H5.Core.dom).</summary>
     public static bool IsScopedType(ITypeSymbol? type)
@@ -513,6 +530,13 @@ internal static class H5Naming
         if (MemberConventionNotation(method) is { } mc) return mc;
         var conv = ResolveNotation(method.ContainingType, ConvMethod);
         if (conv is { } c) return c;
+        // A templated member with no [Convention] keeps its raw name — H5 does not camelCase it.
+        // The [Template] drives every call site, so the name is used only for an implementer's
+        // method slot: e.g. IEnumerable.GetEnumerator (templated, no [Convention]) stays
+        // "GetEnumerator", the PascalCase name h5.js's H5.getEnumerator looks up. (Collection
+        // interfaces whose members SHOULD camelCase — ICollection.Add etc. — carry an explicit
+        // type-level [Convention], handled above before this point.)
+        if (GetTemplate(method) is not null) return Notation.None;
         if (ImplementsInterfaceMember(method)) return Notation.CamelCase;
         if (IsExternalType(method.ContainingType)) return Notation.CamelCase;
         return Notation.None;

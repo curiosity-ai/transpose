@@ -219,7 +219,7 @@ public sealed partial class Emitter
         _w.Block(() =>
         {
             _w.Write("$kind: \"interface\"");
-            var bases = type.Interfaces.Where(i => H5Naming.IsH5CompiledSource(i)).ToList();
+            var bases = type.Interfaces.Where(i => H5Naming.IsInheritableInterface(i)).ToList();
             if (bases.Count > 0)
             {
                 _w.WriteLine(",");
@@ -286,7 +286,7 @@ public sealed partial class Emitter
             {
                 inherits.Add(TypeRef(bt));
             }
-            inherits.AddRange(type.Interfaces.Where(i => H5Naming.IsH5CompiledSource(i)).Select(TypeRef));
+            inherits.AddRange(type.Interfaces.Where(i => H5Naming.IsInheritableInterface(i)).Select(TypeRef));
             if (inherits.Count > 0)
             {
                 // Lazy inherits (a function, as the legacy compiler emits): the config object

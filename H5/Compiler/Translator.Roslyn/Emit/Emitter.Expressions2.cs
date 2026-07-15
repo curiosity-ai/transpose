@@ -565,10 +565,11 @@ public sealed partial class Emitter
 
     private void EmitObjectCreation(ObjectCreationExpressionSyntax creation)
     {
-        // new T() on a generic type parameter (new() constraint) → runtime instantiation.
-        // Only a *type* type-parameter is threaded at runtime (via the generic type's
-        // defining function); method type-parameters aren't yet, so fall through for those.
-        if (_model.GetTypeInfo(creation).Type is ITypeParameterSymbol { TypeParameterKind: TypeParameterKind.Type } tp)
+        // new T() on a generic type parameter (new() constraint) → runtime instantiation. Both a
+        // *type* parameter (threaded via the generic type's defining function) and a *method*
+        // parameter (threaded as a leading JS argument of the generic method — the new() constraint
+        // guarantees the method threads T) are in scope as the identifier tp.Name at runtime.
+        if (_model.GetTypeInfo(creation).Type is ITypeParameterSymbol tp)
         {
             _w.Write($"H5.createInstance({tp.Name})");
             return;
