@@ -642,6 +642,16 @@ public sealed partial class Emitter
             return;
         }
 
+        // `new object()` is a plain empty JS object ({}), not an H5 System.Object instance — matching
+        // the legacy compiler. Code commonly uses it as a dynamic property bag whose own keys are
+        // iterated (e.g. a Baklava node's inputs/outputs map); an H5 instance would carry prototype
+        // members that pollute that iteration.
+        if (type.SpecialType == SpecialType.System_Object)
+        {
+            _w.Write("{ }");
+            return;
+        }
+
         // [ObjectLiteral] type → a plain JS object ({}); the initializer sets its members.
         if (type.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "H5.ObjectLiteralAttribute"))
         {
