@@ -30,9 +30,12 @@ public sealed partial class Emitter
                 EmitMemberAccess(member);
                 break;
             case MemberBindingExpressionSyntax binding:
-                // The head of a null-conditional continuation (a?.b.c → `?.` already written,
-                // this emits `b`); the rest of the chain is ordinary member access.
+                // The head of a null-conditional continuation (the `.b` in a?.b), resolved
+                // against the captured receiver; the rest of the chain is ordinary access.
                 EmitMemberBinding(binding);
+                break;
+            case ElementBindingExpressionSyntax elemBinding:
+                EmitElementBinding(elemBinding);
                 break;
             case InvocationExpressionSyntax invocation:
                 EmitInvocation(invocation);
@@ -634,7 +637,12 @@ public sealed partial class Emitter
         // trailing param not supplied); the slot and its leading comma are stripped after.
         const string drop = "￿";
         var posCursor = 0;
-        var result = System.Text.RegularExpressions.Regex.Replace(template, @"\{(\*?[A-Za-z_][A-Za-z0-9_]*|\d+)\}", m =>
+        // {name} / {*name} / {index}, optionally with an H5 modifier ({name:array},
+        // {name:nobox}, {name:raw}, …). The :type and :default modifiers were already
+        // resolved above; the remaining modifiers don't change how the token resolves —
+        // a params argument is captured in array form ("[a, b]") regardless — so the
+        // modifier is accepted and the token is resolved the same as an unmodified one.
+        var result = System.Text.RegularExpressions.Regex.Replace(template, @"\{(\*?[A-Za-z_][A-Za-z0-9_]*|\d+)(?::[A-Za-z_][A-Za-z0-9_]*)?\}", m =>
         {
             var token = m.Groups[1].Value;
             if (token == "this") return receiver ?? "this";
@@ -666,86 +674,62 @@ public sealed partial class Emitter
     }
 
     /// <summary>
-    /// Emits the member name of a binding (the <c>.b</c> in <c>a?.b</c>) without a leading
-    /// connector — the enclosing null-conditional already wrote <c>?.</c> — so a chain like
-    /// <c>a?.classList.add(x)</c> continues as ordinary member access after the head.
+    /// The JS receiver a member/element binding resolves against inside a null-conditional
+    /// continuation — the captured non-null temp (see <see cref="EmitConditionalAccess"/>).
+    /// </summary>
+    private string? _condReceiver;
+
+    /// <summary>
+    /// Emits the head of a null-conditional continuation (the <c>.b</c> in <c>a?.b</c>) against
+    /// the captured receiver, honouring a property's [Template] (e.g. string.Length → x.length).
     /// </summary>
     private void EmitMemberBinding(MemberBindingExpressionSyntax binding)
     {
+        var recv = _condReceiver ?? "this";
         var sym = _model.GetSymbolInfo(binding).Symbol;
-        _w.Write(sym is not null
-            ? H5Naming.MemberJsName(sym)
-            : NameMangler.JsIdentifier(binding.Name.Identifier.Text));
+        if (sym is IPropertySymbol { GetMethod: { } getM } prop
+            && H5Naming.GetTemplate(getM.OriginalDefinition) is { } propTpl)
+        {
+            _w.Write(SubstituteTemplate(propTpl, recv, new(), new(), TemplateTypeArgs(prop)));
+            return;
+        }
+        _w.Write($"{recv}.{(sym is not null ? H5Naming.MemberJsName(sym) : NameMangler.JsIdentifier(binding.Name.Identifier.Text))}");
     }
 
     private void EmitConditionalAccess(ConditionalAccessExpressionSyntax condAccess)
     {
-        // a?.b  =>  (a == null ? null : a.b)  — simplified via JS optional chaining
-        EmitExpression(condAccess.Expression);
-        EmitWhenNotNull(condAccess.WhenNotNull);
+        // a?.CHAIN → (function ($r) { return $r == null ? null : CHAIN($r); })(a), where the
+        // leading member/element binding in CHAIN resolves against $r. A capture (rather than JS
+        // optional chaining) is needed so the receiver can be threaded into an extension method's
+        // static call (a?.Concat(x) → Enumerable.from($r).concat(x)).
+        var temp = NextTemp("$nc");
+        var recv = Capture(() => EmitExpression(condAccess.Expression));
+        // Arrow (not `function`) so `this` inside the continuation is captured lexically.
+        _w.Write($"(({temp}) => {temp} == null ? null : ");
+        var saved = _condReceiver;
+        _condReceiver = temp;
+        EmitExpression(condAccess.WhenNotNull);
+        _condReceiver = saved;
+        _w.Write($")({recv})");
     }
 
-    private void EmitWhenNotNull(ExpressionSyntax whenNotNull)
+    private void EmitElementBinding(ElementBindingExpressionSyntax elemBind)
     {
-        switch (whenNotNull)
+        var recv = _condReceiver ?? "this";
+        if (_model.GetSymbolInfo(elemBind).Symbol is IPropertySymbol { IsIndexer: true } idx
+            && idx.ContainingType.SpecialType != SpecialType.System_String
+            && !H5Naming.IsNativeIndexer(idx))
         {
-            case MemberBindingExpressionSyntax binding:
-                // Honour a property's [Template] (e.g. string.Length → {this}.length).
-                if (_model.GetSymbolInfo(binding).Symbol is IPropertySymbol { GetMethod: { } getM } prop
-                    && H5Naming.GetTemplate(getM.OriginalDefinition) is { } propTpl)
-                {
-                    var sub = SubstituteTemplate(propTpl, "", new(), new());
-                    _w.Write(sub.StartsWith(".") ? "?" + sub : "?." + sub);
-                }
-                else
-                {
-                    _w.Write("?.");
-                    var bsym = _model.GetSymbolInfo(binding).Symbol;
-                    _w.Write(bsym is not null ? H5Naming.MemberJsName(bsym) : NameMangler.JsIdentifier(binding.Name.Identifier.Text));
-                }
-                break;
-            case InvocationExpressionSyntax { Expression: MemberBindingExpressionSyntax mb } inv:
-                // Delegate invoke (event?.Invoke(...)) → optional call, not a member call.
-                if (_model.GetSymbolInfo(inv).Symbol is IMethodSymbol { MethodKind: MethodKind.DelegateInvoke })
-                {
-                    _w.Write("?.(");
-                    EmitArguments(inv.ArgumentList, _model.GetSymbolInfo(inv).Symbol as IMethodSymbol);
-                    _w.Write(")");
-                    break;
-                }
-                _w.Write("?.");
-                _w.Write(NameMangler.JsIdentifier(mb.Name.Identifier.Text));
-                _w.Write("(");
-                EmitArgumentList(inv.ArgumentList);
-                _w.Write(")");
-                break;
-            case ConditionalAccessExpressionSyntax nested:
-                // Chained null-conditional (a?.b()?.c()): the outer WhenNotNull is itself a
-                // conditional access. Continue the chain — emit its head as a binding, then
-                // recurse into its continuation — instead of restarting it as a fresh expression.
-                EmitWhenNotNull(nested.Expression);
-                EmitWhenNotNull(nested.WhenNotNull);
-                break;
-            case ElementBindingExpressionSyntax elemBind:
-                // a?[i] — indexer access on a possibly-null receiver.
-                if (_model.GetSymbolInfo(elemBind).Symbol is IPropertySymbol { IsIndexer: true } idx
-                    && idx.ContainingType.SpecialType != SpecialType.System_String)
-                {
-                    _w.Write("?." + H5Naming.IndexerAccessorName(idx, isGet: true) + "(");
-                    EmitArgumentList(elemBind.ArgumentList);
-                    _w.Write(")");
-                }
-                else
-                {
-                    _w.Write("?.[");
-                    EmitArgumentList(elemBind.ArgumentList);
-                    _w.Write("]");
-                }
-                break;
-            default:
-                _w.Write("?.");
-                EmitExpression(whenNotNull);
-                break;
+            _w.Write($"{recv}.{H5Naming.IndexerAccessorName(idx, isGet: true)}(");
+            EmitArgumentList(elemBind.ArgumentList);
+            _w.Write(")");
+        }
+        else
+        {
+            _w.Write($"{recv}[");
+            EmitArgumentList(elemBind.ArgumentList);
+            _w.Write("]");
         }
     }
+
 }

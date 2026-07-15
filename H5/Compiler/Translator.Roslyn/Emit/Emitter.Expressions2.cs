@@ -33,11 +33,18 @@ public sealed partial class Emitter
             return;
         }
 
+        // Inside a null-conditional continuation, an invocation whose target is a member
+        // binding (a?.M(...)) resolves M against the captured receiver.
+        var condRecv = invocation.Expression is MemberBindingExpressionSyntax && _condReceiver is not null
+            ? _condReceiver : null;
+
         // Delegate invocation: d(...) or d.Invoke(...) — the delegate is a plain callable.
         if (symbol.MethodKind == MethodKind.DelegateInvoke)
         {
             // For d.Invoke(...) call the receiver directly, dropping the ".Invoke".
-            if (invocation.Expression is MemberAccessExpressionSyntax { Name.Identifier.Text: "Invoke" } dm)
+            if (condRecv is not null)
+                _w.Write(condRecv);
+            else if (invocation.Expression is MemberAccessExpressionSyntax { Name.Identifier.Text: "Invoke" } dm)
                 EmitExpression(dm.Expression);
             else
                 EmitExpression(invocation.Expression);
@@ -103,7 +110,7 @@ public sealed partial class Emitter
             var (byName, byPos) = CaptureArguments(invocation.ArgumentList, symbol);
             var receiver = symbol.IsStatic && !symbol.IsExtensionMethod ? null
                 : receiverExpr is not null ? Capture(() => EmitExpression(receiverExpr))
-                : "this";
+                : condRecv ?? "this";
 
             // Reduced extension method: the receiver binds to the original first
             // parameter (e.g. {source}); actual args map to the remaining params.
@@ -142,12 +149,12 @@ public sealed partial class Emitter
         // its *inferred* type arguments (from the constructed symbol) as the leading arguments,
         // then the receiver, then the remaining arguments mapped through the reduced symbol
         // (whose parameters already exclude `this` and preserve params-array collection).
-        if (symbol is { IsExtensionMethod: true, ReducedFrom: { } reducedFrom } && receiverExpr is not null)
+        if (symbol is { IsExtensionMethod: true, ReducedFrom: { } reducedFrom } && (receiverExpr is not null || condRecv is not null))
         {
             _w.Write($"{TypeRef(symbol.ContainingType)}.{H5Naming.MemberJsName(reducedFrom)}(");
             var lead = EmitLeadingTypeArgs(symbol);
             if (lead) _w.Write(", ");
-            EmitExpression(receiverExpr);
+            if (receiverExpr is not null) EmitExpression(receiverExpr); else _w.Write(condRecv!);
             if (invocation.ArgumentList.Arguments.Count > 0)
             {
                 _w.Write(", ");
@@ -166,6 +173,10 @@ public sealed partial class Emitter
         {
             EmitExpression(receiverExpr);
             _w.Write($".{H5Naming.MemberJsName(symbol)}");
+        }
+        else if (condRecv is not null)
+        {
+            _w.Write($"{condRecv}.{H5Naming.MemberJsName(symbol)}");
         }
         else
         {
