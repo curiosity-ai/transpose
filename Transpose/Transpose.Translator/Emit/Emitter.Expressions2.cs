@@ -93,7 +93,9 @@ public sealed partial class Emitter
         {
             var argJs = invocation.ArgumentList.Arguments.Skip(1)
                 .Select(a => Capture(() => EmitExpression(a.Expression))).ToList();
-            _w.Write(SubstituteTemplate(rawJs, null, new(), argJs));
+            // With no substitution arguments the code is injected verbatim — {…} sequences are
+            // literal JS (e.g. regex quantifiers in "/^(.{8})(.{4})…$/"), not {0}/{1} placeholders.
+            _w.Write(argJs.Count == 0 ? rawJs : SubstituteTemplate(rawJs, null, new(), argJs));
             return;
         }
 

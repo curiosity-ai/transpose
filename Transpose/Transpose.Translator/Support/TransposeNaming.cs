@@ -290,7 +290,12 @@ internal static class TransposeNaming
     private static string RawMemberName(ISymbol symbol)
     {
         if (GetName(symbol) is { } name) return name;
-        if (symbol.Locations.Any(l => l.IsInSource)) return symbol.Name;
+        // A compiled type's member keeps its verbatim C# name. An [External] type's member does
+        // NOT short-circuit here even when in source (self-building the BCL): its members bind to
+        // native JS names via [Convention]/casing — e.g. String.Length ([External] +
+        // [Convention(CamelCase)]) must emit `length` to hit the native JS string property.
+        if (symbol.Locations.Any(l => l.IsInSource) && !IsExternalType(symbol.ContainingType))
+            return symbol.Name;
 
         // Property / field / event: camelCase under an [External] type or a
         // [Convention] covering that member kind; otherwise preserve.
