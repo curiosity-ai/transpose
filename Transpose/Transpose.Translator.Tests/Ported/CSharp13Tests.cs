@@ -86,9 +86,8 @@ public class Program
     }
 }
 """;
-            // Lock is a new type in .NET 9.
-            // Transpose might support it via System.Threading.Lock.
-            await RunTest(code, skipRoslyn: true);
+            // System.Threading.Lock (a .NET 9 threading primitive) is not supported in the browser.
+            await RunTestExpectingError(code, "Threading primitives");
         }
 
         [TestMethod]

@@ -84,14 +84,21 @@ public sealed class RoslynTranslator
             preprocessorSymbols: preprocessorSymbols);
 
         var diagnostics = new List<Diagnostic>();
-        diagnostics.AddRange(compilation.GetDiagnostics()
-            .Where(d => d.Severity == DiagnosticSeverity.Error && !BenignForJs.Contains(d.Id)));
-        if (diagnostics.Count > 0)
-            return new AssemblyBuildResult(null, null, null, diagnostics);
+        var roslynErrors = compilation.GetDiagnostics()
+            .Where(d => d.Severity == DiagnosticSeverity.Error && !BenignForJs.Contains(d.Id))
+            .ToList();
 
-        var unsupported = UnsupportedFeatureScanner.Scan(compilation);
+        // Run the unsupported-feature scanner even when Roslyn reported errors: an unsupported
+        // construct (e.g. an [InlineArray] whose attribute the BCL keeps internal) can surface a
+        // Roslyn error first, and we still want the clear "… not supported" message to be reported
+        // alongside it. Scanning a compilation with errors is safe — the scanner tolerates missing
+        // symbols — but guard against an unexpected throw so the Roslyn errors are never lost.
+        IReadOnlyList<Diagnostic> unsupported;
+        try { unsupported = UnsupportedFeatureScanner.Scan(compilation); }
+        catch { unsupported = new List<Diagnostic>(); }
         diagnostics.AddRange(unsupported);
-        if (unsupported.Any(d => d.Severity == DiagnosticSeverity.Error))
+        diagnostics.AddRange(roslynErrors);
+        if (diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error))
             return new AssemblyBuildResult(null, null, null, diagnostics);
 
         // Emit the real .NET assembly (as a library) so referencing projects can bind to its

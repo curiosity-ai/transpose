@@ -25,6 +25,10 @@ public sealed partial class Emitter
                 break;
             case TypeKind.Delegate:
                 break; // delegates map onto plain functions
+            case TypeKind.Extension:
+                Unsupported(type.DeclaringSyntaxReferences[0].GetSyntax(),
+                    "Extension members (C# 14 extension blocks) are not supported");
+                break;
             default:
                 Unsupported(type.DeclaringSyntaxReferences[0].GetSyntax(), $"type kind {type.TypeKind}");
                 break;

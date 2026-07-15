@@ -153,7 +153,8 @@ public class Program
     }
 }
 """;
-            await RunTest(code, skipRoslyn: true); // Roslyn script issues with ref structs/lambdas sometimes
+            // ref/out/in lambda parameters are not supported in the browser environment.
+            await RunTestExpectingError(code, "ref/out/in parameters on lambdas");
         }
 
         [TestMethod]

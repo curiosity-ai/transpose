@@ -535,7 +535,8 @@ public class Program
     }
 }
 """;
-        await RunTest(code);
+        // File I/O (System.IO streams) is not supported in the browser environment.
+        await RunTestExpectingError(code, "File I/O");
     }
 
     [TestMethod]
@@ -562,7 +563,8 @@ public class Program
     }
 }
 """;
-        await RunTest(code);
+        // File I/O (System.IO streams) is not supported in the browser environment.
+        await RunTestExpectingError(code, "File I/O");
     }
 
     [TestMethod]

@@ -452,10 +452,8 @@ public class Program
     }
 }
 """;
-            // Skip Roslyn as nint context might differ
-            var output = await RunTest(code, skipRoslyn: true);
-            Assert.IsTrue(output.Contains("30"));
-            Assert.IsTrue(output.Contains("Int32") || output.Contains("IntPtr"));
+            // Native-sized integers (nint/nuint) are not supported in the browser environment.
+            await RunTestExpectingError(code, "Native-sized integers");
         }
 
 

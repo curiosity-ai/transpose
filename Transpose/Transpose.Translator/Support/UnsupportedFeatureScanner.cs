@@ -151,12 +151,6 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
         base.VisitClassDeclaration(node);
     }
 
-    public override void VisitStructDeclaration(StructDeclarationSyntax node)
-    {
-        CheckUnsafeModifier(node.Modifiers, node);
-        base.VisitStructDeclaration(node);
-    }
-
     public override void VisitFieldDeclaration(FieldDeclarationSyntax node)
     {
         CheckUnsafeModifier(node.Modifiers, node);
@@ -175,6 +169,77 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
                 Report(node, "Native interop (P/Invoke) is not supported in the browser environment.");
             }
         }
+    }
+
+    // ---- Language features not modeled by the runtime ----------------------
+
+    // checked arithmetic: JS numbers do not trap on integer overflow, so an OverflowException
+    // cannot be produced. `unchecked` is fine (it matches JS's wraparound-free default).
+    public override void VisitCheckedStatement(CheckedStatementSyntax node)
+    {
+        if (node.Keyword.IsKind(SyntaxKind.CheckedKeyword))
+            Report(node, "checked arithmetic (overflow checking) is not supported in the browser environment.");
+        base.VisitCheckedStatement(node);
+    }
+
+    public override void VisitCheckedExpression(CheckedExpressionSyntax node)
+    {
+        if (node.Keyword.IsKind(SyntaxKind.CheckedKeyword))
+            Report(node, "checked arithmetic (overflow checking) is not supported in the browser environment.");
+        base.VisitCheckedExpression(node);
+    }
+
+    // Native-sized integers (nint/nuint) have no JS representation distinct from double.
+    public override void VisitIdentifierName(IdentifierNameSyntax node)
+    {
+        if (node.Identifier.Text is "nint" or "nuint"
+            && _model.GetSymbolInfo(node).Symbol is INamedTypeSymbol { IsNativeIntegerType: true })
+        {
+            Report(node, "Native-sized integers (nint/nuint) are not supported in the browser environment.");
+        }
+        var symbol = _model.GetSymbolInfo(node).Symbol;
+        var type = symbol as INamedTypeSymbol ?? symbol?.ContainingType;
+        if (type is not null) CheckDeniedType(type, node);
+        base.VisitIdentifierName(node);
+    }
+
+    // ref/out/in modifiers on a lambda parameter (C# 14) — the runtime models a lambda as a plain
+    // JS closure with no by-ref parameter passing.
+    public override void VisitParenthesizedLambdaExpression(ParenthesizedLambdaExpressionSyntax node)
+    {
+        foreach (var p in node.ParameterList.Parameters)
+            if (p.Modifiers.Any(m => m.IsKind(SyntaxKind.RefKeyword) || m.IsKind(SyntaxKind.OutKeyword) || m.IsKind(SyntaxKind.InKeyword)))
+            {
+                Report(p, "ref/out/in parameters on lambdas are not supported in the browser environment.");
+                break;
+            }
+        base.VisitParenthesizedLambdaExpression(node);
+    }
+
+    // Span/ReadOnlySpan constant-string pattern matching (`span is "literal"`) is not modeled.
+    public override void VisitIsPatternExpression(IsPatternExpressionSyntax node)
+    {
+        if (node.Pattern is ConstantPatternSyntax
+            && _model.GetTypeInfo(node.Expression).Type is INamedTypeSymbol t
+            && t.OriginalDefinition.ToDisplayString() is "System.ReadOnlySpan<T>" or "System.Span<T>")
+        {
+            Report(node, "Span pattern matching is not supported in the browser environment.");
+        }
+        base.VisitIsPatternExpression(node);
+    }
+
+    // Inline arrays ([InlineArray] structs, C# 12) have no JS representation.
+    public override void VisitStructDeclaration(StructDeclarationSyntax node)
+    {
+        CheckUnsafeModifier(node.Modifiers, node);
+        if (node.AttributeLists.SelectMany(a => a.Attributes)
+                .Any(a => a.Name.ToString() is "InlineArray" or "InlineArrayAttribute"
+                    or "System.Runtime.CompilerServices.InlineArray"
+                    or "System.Runtime.CompilerServices.InlineArrayAttribute"))
+        {
+            Report(node, "Inline arrays are not supported in the browser environment.");
+        }
+        base.VisitStructDeclaration(node);
     }
 
     // ---- Runtime APIs that cannot exist in the browser ---------------------
@@ -200,17 +265,6 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
         "System.Threading.CancellationTokenRegistration",
         "System.Threading.Timeout",
     };
-
-    public override void VisitIdentifierName(IdentifierNameSyntax node)
-    {
-        var symbol = _model.GetSymbolInfo(node).Symbol;
-        var type = symbol as INamedTypeSymbol ?? symbol?.ContainingType;
-        if (type is not null)
-        {
-            CheckDeniedType(type, node);
-        }
-        base.VisitIdentifierName(node);
-    }
 
     private readonly HashSet<Location> _reportedApiLocations = new();
 

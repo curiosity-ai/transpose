@@ -81,7 +81,8 @@ public class Program
     }
 }
 """;
-            await RunTest(code);
+            // `checked` overflow trapping cannot be modeled on JS numbers.
+            await RunTestExpectingError(code, "checked arithmetic");
         }
 
         [TestMethod]

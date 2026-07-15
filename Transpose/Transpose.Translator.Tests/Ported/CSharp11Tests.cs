@@ -125,8 +125,8 @@ public class Program
     }
 }
 """;
-            // Need Span support in runtime
-            await RunTest(code, skipRoslyn: true);
+            // Span constant-pattern matching is not supported in the browser environment.
+            await RunTestExpectingError(code, "Span pattern matching");
         }
 
         [TestMethod]

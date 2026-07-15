@@ -31,7 +31,8 @@ public class Program
     }
 }
 """;
-            await RunTest(code, skipRoslyn: true);
+            // C# 14 extension blocks are not supported.
+            await RunTestExpectingError(code, "Extension members");
         }
 
         [TestMethod]
@@ -100,7 +101,8 @@ public class Program
     }
 }
 """;
-            await RunTest(code, skipRoslyn: true);
+            // ref/out/in lambda parameters are not supported in the browser environment.
+            await RunTestExpectingError(code, "ref/out/in parameters on lambdas");
         }
 
         [TestMethod]
