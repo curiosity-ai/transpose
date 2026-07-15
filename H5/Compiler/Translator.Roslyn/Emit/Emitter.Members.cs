@@ -89,9 +89,16 @@ public sealed partial class Emitter
                     _w.Write("init: function () ");
                     _w.Block(() =>
                     {
+                        // For a generic type, the static init runs per closed instantiation with
+                        // `this` bound to that closed type — where its statics live and where
+                        // instances read them (Name$arity(args).Field). Assigning through the
+                        // open generic-definition name (fullName) would set a property nothing
+                        // reads. A non-generic type's static init also runs with `this` = the type,
+                        // so `this` is correct for both.
+                        var staticRef = EffectiveTypeParameters(type).Count > 0 ? "this" : fullName;
                         foreach (var (target, init) in staticInitAssignments)
                         {
-                            _w.Write($"{fullName}.{target} = ");
+                            _w.Write($"{staticRef}.{target} = ");
                             EmitExpression(init);
                             _w.WriteLine(";");
                         }
