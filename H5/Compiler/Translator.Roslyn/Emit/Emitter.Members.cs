@@ -300,7 +300,7 @@ public sealed partial class Emitter
                     {
                         EmitConstructorChain(ctor, decl!, type);
                         if (decl?.Body is not null)
-                            foreach (var s in decl.Body.Statements) EmitStatement(s);
+                            EmitStatements(decl.Body.Statements);
                         else if (decl?.ExpressionBody is not null)
                             EmitExpressionStatement(decl.ExpressionBody.Expression);
                     }

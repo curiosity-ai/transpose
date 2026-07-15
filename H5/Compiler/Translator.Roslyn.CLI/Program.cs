@@ -22,6 +22,7 @@ public static class Program
 
         string? projectArg = null;
         string? outPath = null;
+        string? siteDir = null;
         var withRuntime = false;
         var quiet = false;
         var maxErrors = 40;
@@ -31,6 +32,7 @@ public static class Program
             switch (args[i])
             {
                 case "--out" or "-o": outPath = args[++i]; break;
+                case "--site-dir": siteDir = args[++i]; break;
                 case "--with-runtime": withRuntime = true; break;
                 case "--quiet" or "-q": quiet = true; break;
                 case "--max-errors": maxErrors = int.Parse(args[++i]); break;
@@ -94,15 +96,35 @@ public static class Program
         }
 
         var js = result.Javascript!;
-        if (withRuntime) js = RoslynTranslator.LoadRuntime() + "\n" + js;
+        if (!quiet) ReportDiagnostics(result.Diagnostics, maxErrors); // surface warnings
 
+        // Site build: when the project has an h5.json and no single-file --out was requested,
+        // assemble a runnable output folder (runtime JS + bundle + resources + index.html),
+        // exactly like the existing h5 compiler.
+        var config = H5Json.TryLoad(project.ProjectDir);
+        if (config is not null && outPath is null)
+        {
+            var outDir = siteDir ?? ResolveOutputDir(config, project.ProjectDir);
+            OutputBuilder.Build(project, config, js, outDir);
+            Console.WriteLine($"\nOK — built site in {outDir} ({js.Length:N0} bytes of {config.FileName}) in {sw.ElapsedMilliseconds} ms.");
+            Console.WriteLine($"  index.html: {(config.HtmlDisabled ? "disabled" : "generated")}");
+            return 0;
+        }
+
+        if (withRuntime) js = RoslynTranslator.LoadRuntime() + "\n" + js;
         outPath ??= Path.Combine(project.ProjectDir, "bin", project.AssemblyName + ".js");
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outPath))!);
         File.WriteAllText(outPath, js);
-
-        if (!quiet) ReportDiagnostics(result.Diagnostics, maxErrors); // surface warnings
         Console.WriteLine($"\nOK — wrote {js.Length:N0} bytes to {outPath} in {sw.ElapsedMilliseconds} ms.");
         return 0;
+    }
+
+    /// <summary>Resolves h5.json's output path, expanding the $(OutDir) MSBuild token.</summary>
+    private static string ResolveOutputDir(H5Json config, string projectDir)
+    {
+        var outBase = Path.Combine(projectDir, "bin", "Debug", "netstandard2.0");
+        var raw = (config.Output ?? "$(OutDir)/h5/").Replace("$(OutDir)", outBase).Replace('\\', '/');
+        return Path.GetFullPath(raw);
     }
 
     private static string? LocateProject(string? arg)

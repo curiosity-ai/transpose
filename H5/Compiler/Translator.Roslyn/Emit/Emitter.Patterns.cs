@@ -260,7 +260,7 @@ public sealed partial class Emitter
             return;
         }
 
-        _w.Write($"H5R.is({subject}, {_names.TypeReference(type)})");
+        _w.Write($"H5R.is({subject}, {TypeRef(type)})");
     }
 
     private void EmitDesignationBinding(string subject, VariableDesignationSyntax designation)

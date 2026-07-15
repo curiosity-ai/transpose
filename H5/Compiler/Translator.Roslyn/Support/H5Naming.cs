@@ -15,6 +15,24 @@ internal static class H5Naming
     public const string ExternalAttr = "H5.ExternalAttribute";
     public const string ScriptAttr = "H5.ScriptAttribute";
     public const string EnumAttr = "H5.EnumAttribute";
+    public const string ScopeAttr = "H5.ScopeAttribute";
+    public const string GlobalMethodsAttr = "H5.GlobalMethodsAttribute";
+
+    /// <summary>
+    /// The JS scope prefix for a type marked <c>[Scope]</c>/<c>[GlobalMethods]</c> — the H5
+    /// bindings (e.g. <c>H5.Core.dom</c>) that project onto ambient JS globals. Returns the
+    /// scope's name argument, <c>""</c> for the global scope (no argument), or null when the
+    /// type is not scoped. A scoped type's static members and nested types drop the C#
+    /// type/namespace path and live under this prefix (so <c>dom.window</c> → <c>window</c>).
+    /// </summary>
+    public static string? ScopePrefix(ITypeSymbol? type)
+    {
+        if (type is null) return null;
+        var scope = type.GetAttributes().FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == ScopeAttr);
+        var global = type.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == GlobalMethodsAttr);
+        if (scope is null && !global) return null;
+        return (scope?.ConstructorArguments.FirstOrDefault().Value as string) ?? "";
+    }
 
     /// <summary>
     /// The <c>[Enum(Emit.X)]</c> mode of an enum type (H5's <c>Emit</c> values:
@@ -55,6 +73,28 @@ internal static class H5Naming
     public static string? GetName(ISymbol symbol)
         => GetStringAttr(symbol, NameAttr);
 
+    public const string AccessorsIndexerAttr = "H5.AccessorsIndexerAttribute";
+
+    /// <summary>
+    /// True if an indexer maps to native JS bracket access (<c>obj[key]</c>) rather than
+    /// getItem/setItem accessors — the case for an [External] type's plain indexer (e.g. a DOM
+    /// element's <c>this[string]</c>), unless it opts into accessors via [AccessorsIndexer]/[Name]
+    /// or a [Template].
+    /// </summary>
+    public static bool IsNativeIndexer(IPropertySymbol indexer)
+    {
+        // Native bracket access (obj[key]) is used by an [External] non-interface type — the
+        // native JS objects like a DOM element's this[string]. The [External] BCL *collection
+        // interfaces* (IReadOnlyList/IReadOnlyDictionary) still route through getItem/setItem.
+        if (!indexer.IsIndexer) return false;
+        if (indexer.ContainingType is not { TypeKind: TypeKind.Class } ct || !HasExternalAttribute(ct)) return false;
+        if (indexer.ContainingType.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == AccessorsIndexerAttr)) return false;
+        if (GetName(indexer) is not null) return false;
+        if (GetTemplate(indexer.GetMethod?.OriginalDefinition) is not null) return false;
+        if (GetTemplate(indexer.SetMethod?.OriginalDefinition) is not null) return false;
+        return true;
+    }
+
     /// <summary>
     /// Accessor-method name for an indexer element access. An indexer with a [Name]
     /// (e.g. StringBuilder's [Name("Char")]) maps to get&lt;Name&gt;/set&lt;Name&gt;
@@ -65,6 +105,28 @@ internal static class H5Naming
         var name = GetName(indexer);
         var suffix = name ?? "Item";
         return (isGet ? "get" : "set") + suffix;
+    }
+
+    /// <summary>
+    /// True if the type behaves like an external JS type for naming (no overload suffixes,
+    /// camelCase members): it carries [External], or it is projected onto ambient JS globals
+    /// via a [Scope]/[GlobalMethods] binding (e.g. the DOM types under H5.Core.dom).
+    /// </summary>
+    public static bool IsExternalType(ITypeSymbol? type)
+    {
+        if (HasExternalAttribute(type)) return true;
+        for (var t = type; t is not null; t = t.ContainingType)
+            if (ScopePrefix(t) is not null) return true;
+        return false;
+    }
+
+    /// <summary>True if the type (or an enclosing type) is a [Scope]/[GlobalMethods] binding
+    /// projected onto ambient JS (e.g. the DOM types under H5.Core.dom).</summary>
+    public static bool IsScopedType(ITypeSymbol? type)
+    {
+        for (var t = type; t is not null; t = t.ContainingType)
+            if (ScopePrefix(t) is not null) return true;
+        return false;
     }
 
     /// <summary>True if the type (or an enclosing type) carries the [External] attribute.</summary>
@@ -89,8 +151,9 @@ internal static class H5Naming
         return !symbol.Locations.Any(l => l.IsInSource);
     }
 
-    private static string? GetStringAttr(ISymbol symbol, string attrName)
+    private static string? GetStringAttr(ISymbol? symbol, string attrName)
     {
+        if (symbol is null) return null;
         var attr = symbol.GetAttributes()
             .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == attrName);
         if (attr is null || attr.ConstructorArguments.Length == 0) return null;
@@ -125,9 +188,23 @@ internal static class H5Naming
     {
         if (symbol is IMethodSymbol m) return MethodJsName(m);
 
-        var name = GetName(symbol);
-        if (name is not null) return name;
+        var raw = RawMemberName(symbol);
 
+        // A property/field/event that hides a same-named base member (C# `new`) takes its own
+        // slot via a $N suffix (as H5 does), so the hiding member and the base member don't
+        // collide — and base access (base.X, emitted as this.X) still reaches the base slot.
+        if (GetName(symbol) is null && symbol is IPropertySymbol { IsIndexer: false } or IFieldSymbol or IEventSymbol)
+        {
+            var idx = HidingIndex(symbol, raw);
+            if (idx > 0) return raw + "$" + idx;
+        }
+        return raw;
+    }
+
+    /// <summary>The base JS name of a property/field/event (before any hiding suffix).</summary>
+    private static string RawMemberName(ISymbol symbol)
+    {
+        if (GetName(symbol) is { } name) return name;
         if (symbol.Locations.Any(l => l.IsInSource)) return symbol.Name;
 
         // Property / field / event: camelCase under an [External] type or a
@@ -141,8 +218,26 @@ internal static class H5Naming
         };
         var notation = MemberConventionNotation(symbol)
                        ?? ResolveNotation(symbol.ContainingType, kindFlag)
-                       ?? (HasExternalAttribute(symbol.ContainingType) ? Notation.CamelCase : Notation.None);
+                       ?? (IsExternalType(symbol.ContainingType) ? Notation.CamelCase : Notation.None);
         return Apply(notation, symbol.Name);
+    }
+
+    /// <summary>How many base-type members this member hides (share its slot name). Zero for an
+    /// override (which shares the base slot) or a member that introduces a fresh name.</summary>
+    private static int HidingIndex(ISymbol symbol, string raw)
+    {
+        if (symbol is IPropertySymbol { IsOverride: true } or IEventSymbol { IsOverride: true }) return 0;
+        var count = 0;
+        for (var t = symbol.ContainingType?.BaseType; t is not null; t = t.BaseType)
+        {
+            foreach (var bm in t.GetMembers())
+            {
+                if (bm.IsStatic || bm.Kind != symbol.Kind) continue;
+                if (bm is IPropertySymbol { IsIndexer: true }) continue;
+                if (RawMemberName(bm) == raw) { count++; break; }
+            }
+        }
+        return count;
     }
 
     /// <summary>
@@ -237,7 +332,7 @@ internal static class H5Naming
         // interface member's name) is used verbatim — no overload suffix (H5 behaviour).
         // External non-interface types also skip suffixes.
         var declType = method.ContainingType;
-        var external = declType is not null && HasExternalAttribute(declType) && declType.TypeKind != TypeKind.Interface;
+        var external = declType is not null && IsExternalType(declType) && declType.TypeKind != TypeKind.Interface;
 
         // Extern (no IL body) methods on a non-external type are hand-written-JS backed:
         // H5 excludes them from the overload set, so they carry no suffix.
@@ -359,7 +454,7 @@ internal static class H5Naming
         var conv = ResolveNotation(method.ContainingType, ConvMethod);
         if (conv is { } c) return c;
         if (ImplementsInterfaceMember(method)) return Notation.CamelCase;
-        if (HasExternalAttribute(method.ContainingType)) return Notation.CamelCase;
+        if (IsExternalType(method.ContainingType)) return Notation.CamelCase;
         return Notation.None;
     }
 

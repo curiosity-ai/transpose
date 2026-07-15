@@ -139,7 +139,7 @@ public sealed partial class Emitter
                 EmitConditionalAccess(condAccess);
                 break;
             case TypeOfExpressionSyntax typeOf:
-                _w.Write(_names.TypeReference(_model.GetTypeInfo(typeOf.Type).Type!));
+                _w.Write(TypeRef(_model.GetTypeInfo(typeOf.Type).Type!));
                 break;
             case IsPatternExpressionSyntax isPattern:
                 EmitIsPattern(isPattern);
@@ -395,7 +395,7 @@ public sealed partial class Emitter
                 EmitPropertyAccess(prop, thisTarget: null);
                 break;
             case IEventSymbol ev:
-                _w.Write(ev.IsStatic ? $"{TypeRef(ev.ContainingType)}.{H5Naming.MemberJsName(ev)}" : $"this.{H5Naming.MemberJsName(ev)}");
+                _w.Write(ev.IsStatic ? StaticMemberAccess(ev) : $"this.{H5Naming.MemberJsName(ev)}");
                 break;
             case IMethodSymbol { MethodKind: MethodKind.LocalFunction } localFn:
                 _w.Write(NameMangler.JsIdentifier(localFn.Name));
@@ -422,7 +422,7 @@ public sealed partial class Emitter
         }
         if (field.IsStatic)
         {
-            _w.Write($"{TypeRef(field.ContainingType)}.{H5Naming.MemberJsName(field)}");
+            _w.Write(StaticMemberAccess(field));
             return;
         }
         EmitReceiver(thisTarget);
@@ -444,7 +444,7 @@ public sealed partial class Emitter
         }
         if (prop.IsStatic)
         {
-            _w.Write($"{TypeRef(prop.ContainingType)}.{H5Naming.MemberJsName(prop)}");
+            _w.Write(StaticMemberAccess(prop));
             return;
         }
         EmitReceiver(thisTarget);
@@ -481,7 +481,7 @@ public sealed partial class Emitter
     {
         if (method.IsStatic)
         {
-            _w.Write($"{TypeRef(method.ContainingType)}.{H5Naming.MemberJsName(method)}");
+            _w.Write(StaticMemberAccess(method));
         }
         else
         {
@@ -547,7 +547,7 @@ public sealed partial class Emitter
                 EmitPropertyAccess(prop, prop.IsStatic ? null : member.Expression);
                 return;
             case IEventSymbol ev:
-                if (ev.IsStatic) { _w.Write($"{TypeRef(ev.ContainingType)}.{H5Naming.MemberJsName(ev)}"); }
+                if (ev.IsStatic) { _w.Write(StaticMemberAccess(ev)); }
                 else { EmitExpression(member.Expression); _w.Write("." + H5Naming.MemberJsName(ev)); }
                 return;
             case IMethodSymbol method:

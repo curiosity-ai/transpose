@@ -18,6 +18,10 @@ internal sealed class ResolvedProject
     public required List<string> ReferencePaths { get; init; }
     public required List<string> DefineConstants { get; init; }
     public required LanguageVersion LanguageVersion { get; init; }
+
+    /// <summary>Directories of every project in the closure — the root first, then the
+    /// referenced projects it pulls in (each may contribute h5.json resources).</summary>
+    public required List<string> ProjectDirs { get; init; }
 }
 
 internal static class ProjectResolver
@@ -39,8 +43,15 @@ internal static class ProjectResolver
 
         var lang = ParseLangVersion(Property(doc, "LangVersion"));
 
-        var sources = ResolveSources(doc, projectDir);
-        var references = ResolveReferences(doc);
+        // Gather sources + package references across this project and its ProjectReferences,
+        // transitively. H5 compiles each assembly separately, but for a runnable bundle we
+        // translate the whole closure of source projects together into one JS output.
+        var sources = new List<(string, string)>();
+        var references = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var visitedProjects = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var projectDirs = new List<string>();
+        var roots = NuGetRoots().Where(Directory.Exists).ToList();
+        CollectProject(csprojPath, sources, references, visitedProjects, projectDirs, roots);
 
         return new ResolvedProject
         {
@@ -48,10 +59,40 @@ internal static class ProjectResolver
             ProjectDir = projectDir,
             AssemblyName = assemblyName,
             Sources = sources,
-            ReferencePaths = references,
+            ReferencePaths = references.Values.ToList(),
             DefineConstants = defines,
             LanguageVersion = lang,
+            ProjectDirs = projectDirs,
         };
+    }
+
+    /// <summary>Adds a project's sources and package references, then recurses into its ProjectReferences.</summary>
+    private static void CollectProject(
+        string csprojPath,
+        List<(string, string)> sources,
+        Dictionary<string, string> references,
+        HashSet<string> visited,
+        List<string> projectDirs,
+        List<string> roots)
+    {
+        csprojPath = Path.GetFullPath(csprojPath);
+        if (!visited.Add(csprojPath) || !File.Exists(csprojPath)) return;
+
+        var doc = XDocument.Load(csprojPath);
+        var projectDir = Path.GetDirectoryName(csprojPath)!;
+        projectDirs.Add(projectDir);
+
+        sources.AddRange(ResolveSources(doc, projectDir));
+        foreach (var (name, path) in ResolvePackageReferenceDlls(doc, roots))
+            references.TryAdd(name, path);
+
+        foreach (var pr in doc.Descendants().Where(e => e.Name.LocalName == "ProjectReference"))
+        {
+            var include = pr.Attribute("Include")?.Value;
+            if (string.IsNullOrWhiteSpace(include)) continue;
+            var refPath = Path.GetFullPath(Path.Combine(projectDir, include!.Replace('\\', '/')));
+            CollectProject(refPath, sources, references, visited, projectDirs, roots);
+        }
     }
 
     private static List<(string path, string text)> ResolveSources(XDocument doc, string projectDir)
@@ -100,9 +141,8 @@ internal static class ProjectResolver
 
     // ---- reference resolution (NuGet global-packages cache) -----------------
 
-    private static List<string> ResolveReferences(XDocument doc)
+    private static IEnumerable<(string name, string path)> ResolvePackageReferenceDlls(XDocument doc, List<string> roots)
     {
-        var roots = NuGetRoots().Where(Directory.Exists).ToList();
         var resolved = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); // asmName → dll path
         var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);             // pkgId@version
 
@@ -114,7 +154,7 @@ internal static class ProjectResolver
             ResolvePackage(roots, id!, version!, resolved, visited);
         }
 
-        return resolved.Values.ToList();
+        return resolved.Select(kv => (kv.Key, kv.Value));
     }
 
     private static void ResolvePackage(

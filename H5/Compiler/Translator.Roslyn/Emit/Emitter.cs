@@ -93,17 +93,56 @@ public sealed partial class Emitter
             }
         }
 
+        // Emit each type after every source type it depends on (base class + implemented/
+        // extended interfaces), so the runtime's H5.define never sees an undefined reference
+        // in `inherits`. Dependency depth gives such an order (the graph is acyclic).
+        var depthCache = new Dictionary<INamedTypeSymbol, int>(SymbolEqualityComparer.Default);
         return declared
-            .OrderBy(t => t.TypeKind == TypeKind.Interface ? 0 : 1)
-            .ThenBy(InheritanceDepth)
+            .OrderBy(t => DependencyDepth(t, depthCache))
+            .ThenBy(t => t.TypeKind == TypeKind.Interface ? 0 : 1)
             .ToList();
     }
 
-    private static int InheritanceDepth(INamedTypeSymbol type)
+    /// <summary>
+    /// The longest chain of source-type dependencies (base class and implemented/extended
+    /// interfaces) below <paramref name="type"/>. Types with a greater depth are emitted later,
+    /// guaranteeing a type's dependencies are defined first. Non-source dependencies live in
+    /// the runtime (loaded before the bundle) and contribute no ordering constraint.
+    /// </summary>
+    private int DependencyDepth(INamedTypeSymbol type, Dictionary<INamedTypeSymbol, int> cache)
     {
+        type = (INamedTypeSymbol)type.OriginalDefinition;
+        if (cache.TryGetValue(type, out var cached)) return cached;
+        cache[type] = 0; // guard against unexpected cycles
+
         var depth = 0;
-        for (var b = type.BaseType; b is not null; b = b.BaseType) depth++;
+        foreach (var dep in Dependencies(type))
+            depth = Math.Max(depth, DependencyDepth(dep, cache) + 1);
+
+        cache[type] = depth;
         return depth;
+    }
+
+    private static IEnumerable<INamedTypeSymbol> Dependencies(INamedTypeSymbol type)
+    {
+        // A type's `inherits` names its base class and interfaces *including their generic
+        // type arguments* (e.g. LayerHost : ComponentBase<Layer, …> references Layer), and all
+        // of those source types must already be defined when the lazy inherits runs.
+        if (type.BaseType is { } bt)
+            foreach (var d in SourceTypesIn(bt)) yield return d;
+        foreach (var iface in type.Interfaces)
+            foreach (var d in SourceTypesIn(iface)) yield return d;
+    }
+
+    /// <summary>The source named types within a type reference — the type itself and, recursively,
+    /// its generic type arguments.</summary>
+    private static IEnumerable<INamedTypeSymbol> SourceTypesIn(ITypeSymbol type)
+    {
+        if (type is not INamedTypeSymbol named) yield break;
+        if (named.Locations.Any(l => l.IsInSource))
+            yield return (INamedTypeSymbol)named.OriginalDefinition;
+        foreach (var arg in named.TypeArguments)
+            foreach (var d in SourceTypesIn(arg)) yield return d;
     }
 
     // ---- helpers -----------------------------------------------------------

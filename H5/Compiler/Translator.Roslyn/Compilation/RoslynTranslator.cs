@@ -112,9 +112,12 @@ public sealed class RoslynTranslator
     /// </summary>
     public static string LoadRuntime()
     {
-        _shim ??= ReadShim();
-        return H5Assemblies.RuntimeJs + "\n" + _shim;
+        return H5Assemblies.RuntimeJs + "\n" + RuntimeShim;
     }
+
+    /// <summary>The thin H5R shim (the emitter's language-level helpers over h5.js primitives),
+    /// loaded once. A site build ships this as its own script after h5.js and before the bundle.</summary>
+    public static string RuntimeShim => _shim ??= ReadShim();
 
     private static string ReadShim()
     {

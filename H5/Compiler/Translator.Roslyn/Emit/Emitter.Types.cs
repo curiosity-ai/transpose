@@ -52,6 +52,10 @@ public sealed partial class Emitter
                 return _names.TypeFullName(named);
             }
 
+            // External type living under a [Scope]/[GlobalMethods] binding (e.g. H5.Core.dom's
+            // HTMLElement) → the ambient JS global, with the C# type/namespace path dropped.
+            if (ScopedExternalName(named) is { } scoped) return scoped;
+
             // External BCL type — dotted metadata name; generics as Name$arity(typeArgs).
             var ns = named.ContainingNamespace?.ToDisplayString();
             var simple = named.MetadataName; // includes `arity
@@ -72,6 +76,41 @@ public sealed partial class Emitter
     {
         var i = name.IndexOf('`');
         return i >= 0 ? name.Substring(0, i) : name;
+    }
+
+    /// <summary>
+    /// The JS name of an external type nested under a <c>[Scope]</c>/<c>[GlobalMethods]</c>
+    /// binding: the scope prefix (empty for a global scope) plus the type names between the
+    /// scope and this type — so <c>H5.Core.dom.HTMLElement</c> becomes <c>HTMLElement</c>.
+    /// Null when no enclosing scope applies.
+    /// </summary>
+    /// <summary>
+    /// A static member reference: for a <c>[Scope]</c>/<c>[GlobalMethods]</c> binding it is the
+    /// bare (or scope-prefixed) member — <c>dom.window</c> → <c>window</c>, <c>dom.alert(…)</c>
+    /// → <c>alert(…)</c> — otherwise the qualified <c>Type.member</c>.
+    /// </summary>
+    private string StaticMemberAccess(ISymbol member)
+    {
+        var name = H5Naming.MemberJsName(member);
+        var prefix = H5Naming.ScopePrefix(member.ContainingType);
+        if (prefix is null) return $"{TypeRef(member.ContainingType)}.{name}";
+        return prefix.Length == 0 ? name : $"{prefix}.{name}";
+    }
+
+    private string? ScopedExternalName(INamedTypeSymbol named)
+    {
+        var names = new List<string>();
+        for (INamedTypeSymbol? t = named; t is not null; t = t.ContainingType)
+        {
+            if (H5Naming.ScopePrefix(t) is { } prefix)
+            {
+                if (names.Count == 0) return null; // referencing the scope type itself — not a member
+                var path = string.Join(".", names);
+                return string.IsNullOrEmpty(prefix) ? path : prefix + "." + path;
+            }
+            names.Insert(0, H5Naming.GetName(t) ?? StripArity(t.Name));
+        }
+        return null;
     }
 
     private void EmitEnum(INamedTypeSymbol type)
@@ -119,7 +158,7 @@ public sealed partial class Emitter
             if (bases.Count > 0)
             {
                 _w.WriteLine(",");
-                _w.WriteLine($"inherits: [{string.Join(", ", bases.Select(TypeRef))}]");
+                _w.WriteLine($"inherits: function () {{ return [{string.Join(", ", bases.Select(TypeRef))}]; }}");
             }
             else
             {
@@ -163,7 +202,10 @@ public sealed partial class Emitter
             inherits.AddRange(type.Interfaces.Where(i => i.Locations.Any(l => l.IsInSource)).Select(TypeRef));
             if (inherits.Count > 0)
             {
-                sections.Add(() => _w.Write($"inherits: [{string.Join(", ", inherits)}]"));
+                // Lazy inherits (a function, as the legacy compiler emits): the config object
+                // is built before H5.define runs, so evaluating an eager array would resolve a
+                // self/forward reference (e.g. class C : IFoo<C>) before the type is registered.
+                sections.Add(() => _w.Write($"inherits: function () {{ return [{string.Join(", ", inherits)}]; }}"));
             }
 
             // alias: maps each implicitly-implemented interface member's plain slot to the

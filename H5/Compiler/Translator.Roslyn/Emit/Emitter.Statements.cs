@@ -176,9 +176,16 @@ public sealed partial class Emitter
             return;
         }
 
+        // C# local functions are hoisted (callable before their textual position), so emit
+        // them first (as arrow closures) at the top of the block.
+        if (start == 0)
+            foreach (var fn in statements.OfType<LocalFunctionStatementSyntax>())
+                EmitLocalFunction(fn);
+
         for (var i = start; i < statements.Count; i++)
         {
             var s = statements[i];
+            if (s is LocalFunctionStatementSyntax) continue; // already hoisted above
             if (s is LocalDeclarationStatementSyntax { UsingKeyword.RawKind: not 0 } u)
             {
                 var resources = new List<string>();
@@ -578,7 +585,7 @@ public sealed partial class Emitter
         _w.WriteLine();
     }
 
-    private string ExceptionTypeRef(ITypeSymbol type) => _names.TypeReference(type);
+    private string ExceptionTypeRef(ITypeSymbol type) => TypeRef(type);
 
     private void EmitUsing(UsingStatementSyntax usingStmt)
     {
@@ -742,9 +749,11 @@ public sealed partial class Emitter
     {
         var symbol = _model.GetDeclaredSymbol(localFn) as IMethodSymbol;
         var isAsync = localFn.Modifiers.Any(SyntaxKind.AsyncKeyword);
-        _w.Write($"function {NameMangler.JsIdentifier(localFn.Identifier.Text)}(");
+        // Arrow function so `this` is captured lexically (C# local functions close over `this`);
+        // the `var` binding keeps the name in scope for recursion.
+        _w.Write($"var {NameMangler.JsIdentifier(localFn.Identifier.Text)} = (");
         if (symbol is not null) EmitParameterList(symbol);
-        _w.Write(") ");
+        _w.Write(") => ");
         _w.Block(() =>
         {
             if (symbol is not null) EmitOptionalDefaults(symbol);
@@ -761,6 +770,6 @@ public sealed partial class Emitter
                 }
             });
         });
-        _w.WriteLine();
+        _w.WriteLine(";");
     }
 }
