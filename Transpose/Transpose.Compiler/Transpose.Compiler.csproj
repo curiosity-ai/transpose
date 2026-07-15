@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Transpose.Compiler</RootNamespace>
+    <AssemblyName>tps</AssemblyName>
+    <StartupObject>Transpose.Compiler.Program</StartupObject>
+
+    <!-- Packable as a dotnet global/local tool: `tps` is the compiler command the
+         Transpose.Build.Target SDK invokes. -->
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>tps</ToolCommandName>
+    <PackageId>Transpose.Compiler</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>Curiosity GmbH</Authors>
+    <Company>Curiosity GmbH</Company>
+    <Description>Transpose — Roslyn-based C# to JavaScript compiler.</Description>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/curiosity-ai/transpose</PackageProjectUrl>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Using Include="Transpose.Translator" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Transpose.Translator\Transpose.Translator.csproj" />
+    <PackageReference Include="Mono.Cecil" Version="0.11.6" />
+  </ItemGroup>
+
+</Project>

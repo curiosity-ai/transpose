@@ -1,0 +1,37 @@
+﻿<Project Sdk="Transpose.Build.Target/25.11.62725">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <AssemblyName>Transpose.Newtonsoft.Json</AssemblyName>
+    <DebugType>None</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="tps" Version="26.2.64514" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\logo\transpose.png" Link="transpose.png" Pack="true" PackagePath="\" />
+  </ItemGroup>
+  
+  <PropertyGroup>
+    <PackageOutputPath>./nupkg</PackageOutputPath>
+    <IncludeSymbols>false</IncludeSymbols>
+    <PackageIcon>transpose.png</PackageIcon>
+    <LangVersion>7.2</LangVersion>
+    <PackageId>tps.Newtonsoft.Json</PackageId>
+    <Authors>Curiosity GmbH, Object.NET, Inc.</Authors>
+    <Company>Curiosity GmbH, Object.NET, Inc.</Company>
+    <Description>Json library used by the C# to JavaScript compiler 🚀</Description>
+    <Copyright>Copyright (c) 2008-2019, Object.NET, Inc. Copyright (c) 2019-2022, Curiosity GmbH. All rights reserved.</Copyright>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <Version>0.0.42</Version>
+    <IncludeReferencedProjects>true</IncludeReferencedProjects>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsPackable>true</IsPackable>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/curiosity-ai/transpose</PackageProjectUrl>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,40 @@
+<Project Sdk="Transpose.Build.Target/25.11.62725">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <AssemblyName>Transpose</AssemblyName>
+    <DebugType>None</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <DefineConstants>CORE;TRACE</DefineConstants>
+    <NoWarn>1591, 0626, 0824, 0660, 0661</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <IncludeSymbols>false</IncludeSymbols>
+    <PackageIcon>transpose.png</PackageIcon>
+    <PackageId>tps</PackageId>
+    <LangVersion>7.2</LangVersion>
+    <Authors>Curiosity GmbH, Object.NET, Inc.</Authors>
+    <Company>Curiosity GmbH, Object.NET, Inc.</Company>
+    <Description>Base library used by the C# to JavaScript compiler 🚀</Description>
+    <Copyright>Copyright (c) 2008-2019, Object.NET, Inc. Copyright (c) 2019-2022, Curiosity GmbH. All rights reserved.</Copyright>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <Version>0.0.42</Version>
+    <IncludeReferencedProjects>true</IncludeReferencedProjects>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsPackable>true</IsPackable>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/curiosity-ai/transpose</PackageProjectUrl>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\logo\transpose.png" Link="transpose.png" Pack="true" PackagePath="\" />
+  </ItemGroup>
+  
+  <ItemGroup>
+    <Compile Remove="shared\System\DateTime.cs" />
+    <Compile Remove="shared\System\Globalization\InternalGlobalizationHelper.cs" />
+    <Compile Remove="shared\System\Reflection\MethodInfo.cs" />
+    <Compile Remove="shared\System\Resources\RuntimeResourceSet.cs" />
+  </ItemGroup>
+</Project>
