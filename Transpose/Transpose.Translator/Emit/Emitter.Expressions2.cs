@@ -64,6 +64,17 @@ public sealed partial class Emitter
             return;
         }
 
+        // ToDynamic() — a dynamic-cast window. Static [GlobalTarget] form (Transpose.Script.ToDynamic())
+        // is the JS global root: emit the target name (member access on it is handled where it is the
+        // receiver of a member access). Instance form (view.ToDynamic()) is an identity cast: emit the
+        // receiver directly, dropping the call (view.ToDynamic().setInt16 → view.setInt16).
+        if (TransposeNaming.IsDynamicCast(symbol))
+        {
+            if (TransposeNaming.GlobalTargetName(symbol) is { } gt) { _w.Write(gt); return; }
+            if (invocation.Expression is MemberAccessExpressionSyntax { Expression: { } dynRecv })
+            { EmitReceiverExpr(dynRecv); return; }
+        }
+
         // enum.ToString() → System.Enum.toString(EnumType, value)
         if (symbol is { Name: "ToString", Parameters.Length: 0 }
             && invocation.Expression is MemberAccessExpressionSyntax { Expression: { } enumRecv }

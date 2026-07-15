@@ -503,7 +503,15 @@ internal static class TransposeNaming
     /// </summary>
     public static bool HasNoBody(IMethodSymbol method)
     {
-        if (method.Locations.Any(l => l.IsInSource)) return false;
+        if (method.Locations.Any(l => l.IsInSource))
+        {
+            // Self-building the BCL (--build-runtime): the runtime types are in source, but their
+            // `extern` members are hand-written-JS backed exactly as when referenced from metadata,
+            // so exclude them from overload numbering too. Without this the extern overloads inflate
+            // the group and shift the emittable overloads' $N suffixes off the call-site numbering
+            // (e.g. Console.WriteLine(object) → WriteLine$5 instead of the [Name]-fixed WriteLine).
+            return method.ContainingAssembly?.Name == "Transpose" && method.IsExtern;
+        }
         if (method.ContainingAssembly?.Name != "Transpose") return false;
         return TransposeAssemblies.NoBodyMethodTokens.Contains(method.OriginalDefinition.MetadataToken);
     }
@@ -716,12 +724,22 @@ internal static class TransposeNaming
         if (type is null) return null;
         AttributeData? best = null;
         var bestPriority = int.MinValue;
+        var bestSpecific = -1;
         foreach (var a in type.GetAttributes().Where(a => a.AttributeClass?.ToDisplayString() == ConventionAttr))
         {
             var member = NamedInt(a, "Member", ConvAll);
             if (member != ConvAll && (member & memberKindFlag) == 0) continue;
             var priority = NamedInt(a, "Priority", 0);
-            if (best is null || priority >= bestPriority) { best = a; bestPriority = priority; }
+            // A convention that explicitly targets this member kind (Member != All) is more
+            // specific than a catch-all one and wins at equal priority, regardless of declaration
+            // order — e.g. Console carries both [Convention(PascalCase)] (All) and
+            // [Convention(Member = Field | Method, CamelCase)]; its methods must be camelCase.
+            var specific = member != ConvAll ? 1 : 0;
+            if (best is null || priority > bestPriority
+                || (priority == bestPriority && specific >= bestSpecific))
+            {
+                best = a; bestPriority = priority; bestSpecific = specific;
+            }
         }
         if (best is null) return null;
         var notation = best.ConstructorArguments.Length > 0 && best.ConstructorArguments[0].Value is int cn
@@ -751,6 +769,25 @@ internal static class TransposeNaming
     }
 
     public const string ConventionAttr = "Transpose.ConventionAttribute";
+
+    /// <summary>
+    /// The <c>[GlobalTarget(name)]</c> value for a method, or null. Such a method is a typed
+    /// window onto the JS global scope: <c>Transpose.Script.ToDynamic()</c> returns the global
+    /// root, so <c>ToDynamic().Transpose.global.console</c> resolves to <c>Transpose.global.console</c>.
+    /// </summary>
+    public static string? GlobalTargetName(IMethodSymbol? method)
+    {
+        if (method is null) return null;
+        var a = method.OriginalDefinition.GetAttributes()
+            .FirstOrDefault(x => x.AttributeClass?.ToDisplayString() == "Transpose.GlobalTargetAttribute");
+        return a?.ConstructorArguments.Length > 0 ? a.ConstructorArguments[0].Value as string : null;
+    }
+
+    /// <summary>True if a method is a dynamic-cast identity (<c>ToDynamic()</c>) — the call is
+    /// elided and its receiver used directly (e.g. <c>view.ToDynamic().setInt16(…)</c> →
+    /// <c>view.setInt16(…)</c>).</summary>
+    public static bool IsDynamicCast(IMethodSymbol? method)
+        => method is { Name: "ToDynamic", Parameters.Length: 0 };
 
     public static string CamelCase(string s)
     {

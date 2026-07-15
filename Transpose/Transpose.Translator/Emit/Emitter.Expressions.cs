@@ -561,6 +561,17 @@ public sealed partial class Emitter
 
     private void EmitMemberAccess(MemberAccessExpressionSyntax member)
     {
+        // `Transpose.Script.ToDynamic().Transpose.global.console` — ToDynamic() is the JS global
+        // root ([GlobalTarget]); a member access on it is a plain global reference, so drop the
+        // elided call and its dot and emit the member as a root identifier (→ Transpose.global.console).
+        if (member.Expression is InvocationExpressionSyntax inv
+            && _model.GetSymbolInfo(inv).Symbol is IMethodSymbol dynM
+            && TransposeNaming.IsDynamicCast(dynM) && TransposeNaming.GlobalTargetName(dynM) is not null)
+        {
+            _w.Write(NameMangler.JsIdentifier(member.Name.Identifier.Text));
+            return;
+        }
+
         var symbol = _model.GetSymbolInfo(member).Symbol;
 
         // Nullable<T> — represented as the value itself or null.
