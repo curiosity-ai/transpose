@@ -187,9 +187,10 @@ public sealed partial class Emitter
         // $utype: System.String so the runtime treats its members as strings (this is what makes
         // `x === "top"`-style comparisons against enum members work).
         var stringMode = mode is 3 or 4 or 5 or 6;
+        var enumNested = type.ContainingType is not null ? "nested " : "";
         _w.Block(() =>
         {
-            _w.WriteLine("$kind: \"enum\",");
+            _w.WriteLine($"$kind: \"{enumNested}enum\",");
             if (isFlags) _w.WriteLine("$flags: true,");
             _w.Write("statics: ");
             _w.Block(() =>
@@ -224,22 +225,25 @@ public sealed partial class Emitter
         var isGeneric = typeParams.Count > 0;
         var fullName = type.Arity > 0 ? _names.TypeFullName(type) + "$" + type.Arity : _names.TypeFullName(type);
 
-        _w.Write($"Transpose.define(\"{fullName}\", ");
-        if (isGeneric) _w.Write($"function ({string.Join(", ", UniqueTypeParamNames(typeParams))}) {{ return ");
         // $variance records each OWN type parameter's variance so the runtime can model
-        // covariant/contravariant interface assignability: 2 = covariant (out), 1 = contravariant
+        // covariant/contravariant interface assignability: 1 = covariant (out), 2 = contravariant
         // (in), 0 = invariant. Only emitted when at least one parameter is variant (as Transpose does).
         var variances = type.TypeParameters.Select(p => p.Variance switch
         {
-            VarianceKind.Out => 2,
-            VarianceKind.In => 1,
+            VarianceKind.Out => 1,
+            VarianceKind.In => 2,
             _ => 0,
         }).ToList();
         var hasVariance = variances.Any(v => v != 0);
 
+        // A variant generic interface is registered with Transpose.definei (the runtime needs the
+        // variance model to resolve assignability); all other interfaces use Transpose.define.
+        _w.Write($"Transpose.{(hasVariance ? "definei" : "define")}(\"{fullName}\", ");
+        if (isGeneric) _w.Write($"function ({string.Join(", ", UniqueTypeParamNames(typeParams))}) {{ return ");
+
         _w.Block(() =>
         {
-            _w.Write("$kind: \"interface\"");
+            _w.Write($"$kind: \"{(type.ContainingType is not null ? "nested " : "")}interface\"");
             var bases = type.Interfaces.Where(i => TransposeNaming.IsInheritableInterface(i)).ToList();
             if (bases.Count > 0)
             {
@@ -284,11 +288,13 @@ public sealed partial class Emitter
         {
             var sections = new List<Action>();
 
-            // $kind for structs.
+            // $kind for structs, and for any nested type (a nested class needs "nested class";
+            // a top-level class needs no $kind, since class is the runtime default).
+            var nested = type.ContainingType is not null;
             if (type.TypeKind == TypeKind.Struct)
-            {
-                sections.Add(() => _w.Write("$kind: \"struct\""));
-            }
+                sections.Add(() => _w.Write($"$kind: \"{(nested ? "nested " : "")}struct\""));
+            else if (nested)
+                sections.Add(() => _w.Write("$kind: \"nested class\""));
 
             // $literal marks an [ObjectLiteral] type: instances are plain JS objects (construction
             // emits {} + initializer), and the runtime treats the type as a literal for is/as/typeof

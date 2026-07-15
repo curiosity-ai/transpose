@@ -109,7 +109,7 @@ public sealed partial class Emitter
         {
             var (byName, byPos) = CaptureArguments(invocation.ArgumentList, symbol);
             var receiver = symbol.IsStatic && !symbol.IsExtensionMethod ? null
-                : receiverExpr is not null ? Capture(() => EmitExpression(receiverExpr))
+                : receiverExpr is not null ? Capture(() => EmitReceiverExpr(receiverExpr))
                 : condRecv ?? "this";
 
             // Reduced extension method: the receiver binds to the original first
@@ -171,7 +171,7 @@ public sealed partial class Emitter
         }
         else if (receiverExpr is not null)
         {
-            EmitExpression(receiverExpr);
+            EmitReceiverExpr(receiverExpr);
             _w.Write($".{TransposeNaming.MemberJsName(symbol)}");
         }
         else if (condRecv is not null)
@@ -1082,6 +1082,16 @@ public sealed partial class Emitter
         if (op == "=" && _model.GetSymbolInfo(assignment.Left).Symbol is IDiscardSymbol)
         {
             EmitExpression(assignment.Right);
+            return;
+        }
+
+        // `this = expr` inside a struct member (JS cannot assign `this`): copy the value's fields
+        // onto the current instance, matching C# struct value-replacement semantics.
+        if (op == "=" && assignment.Left is ThisExpressionSyntax)
+        {
+            _w.Write("Object.assign(this, ");
+            EmitExpression(assignment.Right);
+            _w.Write(")");
             return;
         }
 

@@ -68,7 +68,12 @@ public sealed class NameMangler
                 var tail = parts.Select(JsIdentifier);
                 return string.Join(".", new[] { enclosing }.Concat(tail));
             }
-            parts.Insert(0, t.Name);
+            // Enclosing generic types keep their arity suffix in the nested name
+            // (Dictionary<K,V>.Enumerator → Dictionary$2.Enumerator); the leaf type's own arity is
+            // appended by the caller.
+            parts.Insert(0, SymbolEqualityComparer.Default.Equals(t, type) || t.Arity == 0
+                ? t.Name
+                : t.Name + "$" + t.Arity);
         }
 
         var ns = type.ContainingNamespace;

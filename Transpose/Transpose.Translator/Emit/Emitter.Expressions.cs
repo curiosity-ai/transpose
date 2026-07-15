@@ -16,6 +16,18 @@ public sealed partial class Emitter
         _w.WriteLine(";");
     }
 
+    /// <summary>True if the expression is a call whose [Template] is a comment-only no-op
+    /// (starts with <c>0 /*</c>) — e.g. the code-contract helpers Contract.Ensures/Result. Such a
+    /// statement is elided (the reference runtime emits nothing), which also avoids the illegal
+    /// nested block comments that would form when the condition itself contains such a template.</summary>
+    private bool IsElidedNoOpCall(ExpressionSyntax expr)
+    {
+        if (expr is not InvocationExpressionSyntax inv) return false;
+        if (_model.GetSymbolInfo(inv).Symbol is not IMethodSymbol m) return false;
+        var t = TransposeNaming.GetTemplate(m);
+        return t is not null && t.TrimStart().StartsWith("0 /*", System.StringComparison.Ordinal);
+    }
+
     private void EmitExpression(ExpressionSyntax expr)
     {
         switch (expr)
@@ -509,13 +521,28 @@ public sealed partial class Emitter
     private void EmitReceiver(ExpressionSyntax? thisTarget)
     {
         if (thisTarget is null) { _w.Write("this."); }
-        else { EmitExpression(thisTarget); _w.Write("."); }
+        else { EmitReceiverExpr(thisTarget); _w.Write("."); }
     }
 
     private void EmitReceiverExpr(ExpressionSyntax? thisTarget)
     {
-        if (thisTarget is null) _w.Write("this");
+        if (thisTarget is null) { _w.Write("this"); return; }
+        // A numeric-constant receiver must be parenthesized: `0.toString()` is a JS syntax error
+        // (the `.` parses as a decimal point), so emit `(0).toString()`.
+        if (NeedsReceiverParens(thisTarget))
+        {
+            _w.Write("("); EmitExpression(thisTarget); _w.Write(")");
+        }
         else EmitExpression(thisTarget);
+    }
+
+    /// <summary>True if the receiver would emit a bare numeric literal (integer constant), which is
+    /// an invalid member-access target in JS without parentheses.</summary>
+    private bool NeedsReceiverParens(ExpressionSyntax expr)
+    {
+        var cv = _model.GetConstantValue(expr);
+        if (!cv.HasValue || cv.Value is null) return false;
+        return cv.Value is int or long or short or byte or sbyte or uint or ulong or ushort or char;
     }
 
     private void EmitMemberAccess(MemberAccessExpressionSyntax member)
@@ -652,9 +679,13 @@ public sealed partial class Emitter
         // resolved above; the remaining modifiers don't change how the token resolves —
         // a params argument is captured in array form ("[a, b]") regardless — so the
         // modifier is accepted and the token is resolved the same as an unmodified one.
-        var result = System.Text.RegularExpressions.Regex.Replace(template, @"\{(\*?[A-Za-z_][A-Za-z0-9_]*|\d+)(?::[A-Za-z_][A-Za-z0-9_]*)?\}", m =>
+        var result = System.Text.RegularExpressions.Regex.Replace(template, @"\{(\*?[A-Za-z_][A-Za-z0-9_]*|\d+)(?::([A-Za-z_][A-Za-z0-9_]*))?\}", m =>
         {
             var token = m.Groups[1].Value;
+            var modifier = m.Groups[2].Success ? m.Groups[2].Value : null;
+            // {param:version} — the assembly/compiler version string (used by the SystemAssembly
+            // version-marker template). Resolved to the version this build was invoked with.
+            if (modifier == "version") return "\"" + AssemblyVersion + "\"";
             if (token == "this") return receiver ?? "this";
             if (token.StartsWith("*"))
             {

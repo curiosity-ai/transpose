@@ -215,11 +215,14 @@ public static class Program
         var genRoot = Path.Combine(project.ProjectDir, "Resources", ".generated");
         if (Directory.Exists(genRoot)) Directory.Delete(genRoot, recursive: true);
         Directory.CreateDirectory(genRoot);
-        foreach (var (rel, js) in result.ClassPath!.Files)
+        // Group types that share a ClassPath file (same simple name across generic arities, e.g.
+        // ValueTuple + ValueTuple$1..$8, or all the nested Enumerator types) so they are concatenated
+        // into one file rather than overwriting each other.
+        foreach (var grp in result.ClassPath!.Files.GroupBy(f => f.relPath))
         {
-            var dest = Path.Combine(genRoot, rel.Replace('/', Path.DirectorySeparatorChar));
+            var dest = Path.Combine(genRoot, grp.Key.Replace('/', Path.DirectorySeparatorChar));
             Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-            File.WriteAllText(dest, js);
+            File.WriteAllText(dest, string.Join("\n", grp.Select(g => g.js)));
         }
         if (result.ClassPath.MetaBlock is not null)
             File.WriteAllText(Path.Combine(genRoot, project.AssemblyName + ".meta.js"), result.ClassPath.MetaBlock);

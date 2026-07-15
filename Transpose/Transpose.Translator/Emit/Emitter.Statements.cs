@@ -27,7 +27,13 @@ public sealed partial class Emitter
                 EmitLocalDeclaration(local);
                 break;
             case ExpressionStatementSyntax expr:
-                if (expr.Expression is AssignmentExpressionSyntax da && IsDeconstruction(da))
+                if (IsElidedNoOpCall(expr.Expression))
+                {
+                    // A call whose [Template] is a comment-only no-op (e.g. Contract.Ensures /
+                    // Contract.Result, [Template("0 /*{condition}*/")]) is elided entirely — matching
+                    // the reference runtime, and avoiding illegally nested block comments.
+                }
+                else if (expr.Expression is AssignmentExpressionSyntax da && IsDeconstruction(da))
                 {
                     EmitDeconstruction(da);
                 }

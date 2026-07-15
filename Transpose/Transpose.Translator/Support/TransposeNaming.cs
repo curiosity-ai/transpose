@@ -135,8 +135,14 @@ internal static class TransposeNaming
     public static bool IsTransposeCompiledSource(ITypeSymbol? type)
     {
         if (type is null) return false;
+        // Runtime/BCL types (assembly "Transpose" / "Transpose.*") always use the fixed library
+        // naming conventions (camelCase interface members, etc.) — whether they are referenced OR
+        // in-source (when self-building the base runtime). This keeps a self-built tps.js consistent
+        // with the hand-written primitives and with how user code calls the referenced BCL.
+        if (IsTransposeRuntimeAssembly(type.ContainingAssembly)) return false;
+        if (IsExternalType(type)) return false;
         if (type.Locations.Any(l => l.IsInSource)) return true;
-        return !IsExternalType(type) && !IsTransposeRuntimeAssembly(type.ContainingAssembly);
+        return true; // referenced user library (compiled with --emit-package)
     }
 
     /// <summary>An Transpose runtime/BCL package (Transpose.dll, Transpose.Core.dll, Transpose.Newtonsoft.Json.dll, …) whose
