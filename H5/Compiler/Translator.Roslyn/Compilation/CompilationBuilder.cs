@@ -27,8 +27,13 @@ public static class CompilationBuilder
         if (preprocessorSymbols is not null)
             parseOptions = parseOptions.WithPreprocessorSymbols(preprocessorSymbols);
 
+        // Give each source text an explicit encoding: emitting the assembly with embedded debug
+        // information (as the package build does) requires it — Roslyn otherwise reports CS8055
+        // ("Cannot emit debug information for a source text without encoding").
         var trees = sources
-            .Select(s => CSharpSyntaxTree.ParseText(s.text, parseOptions, path: s.path))
+            .Select(s => CSharpSyntaxTree.ParseText(
+                Microsoft.CodeAnalysis.Text.SourceText.From(s.text, System.Text.Encoding.UTF8),
+                parseOptions, path: s.path))
             .ToList();
 
         // Nullable reference types only exist from C# 8; enabling the annotations context

@@ -19,6 +19,19 @@ internal static class ResourceEmbedder
     private const string ManifestName = "H5.Resources.json";
     private static readonly UTF8Encoding Utf8NoBom = new(false);
 
+    /// <summary>True if the assembly already carries the embedded H5 resource manifest — i.e. it
+    /// was produced as an H5 package (with its JS embedded), not a plain csc build. Used to decide
+    /// whether a referenced project's DLL needs to be (re)built by the translator.</summary>
+    public static bool HasManifest(string assemblyPath)
+    {
+        try
+        {
+            using var asm = AssemblyDefinition.ReadAssembly(assemblyPath);
+            return asm.MainModule.Resources.Any(r => r.Name == ManifestName);
+        }
+        catch { return false; }
+    }
+
     public static void Embed(string assemblyPath, IReadOnlyList<EmbeddedItem> items)
     {
         // Read → modify → write back the assembly in place (ReadWrite so we can overwrite it).
