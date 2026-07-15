@@ -116,16 +116,17 @@ public sealed partial class Emitter
     }
 
     /// <summary>
-    /// Declares block-scoped variables introduced inline by the statement's own
-    /// expressions (out-var declarations, is-pattern variables) before the statement.
-    /// Does not descend into nested statements/blocks or lambdas — those manage their own.
+    /// Declares block-scoped variables introduced inline by a statement's — or an
+    /// expression-bodied member's / lambda's — own expressions (out-var declarations, is-pattern
+    /// variables) at the top of the current JS block. Does not descend into nested
+    /// statements/blocks or lambdas — those manage their own.
     /// </summary>
-    private void PredeclareInlineVars(StatementSyntax statement)
+    private void PredeclareInlineVars(SyntaxNode scope)
     {
         // A local declaration's own initializer may contain out-vars, but its declared
         // variables are emitted normally; only collect designation-introduced names.
         var names = new List<string>();
-        CollectInlineDesignations(statement, isRoot: true, names);
+        CollectInlineDesignations(scope, isRoot: true, names);
 
         foreach (var name in names.Distinct())
         {

@@ -353,12 +353,28 @@ public sealed partial class Emitter
         }
 
         _w.Write("var $ret = ");
-        EmitCallee(invocation, symbol);
+        // An extension method with a by-ref/out parameter (e.g. IComponent.Var<T>(this T, out T))
+        // is still a static call: emit ExtClass.Method(typeArgs, receiver, args…), not
+        // receiver.Method(args…) — the receiver is the reduced method's first argument.
+        var reduced = symbol.IsExtensionMethod ? symbol.ReducedFrom : null;
+        var extReceiver = reduced is not null && invocation.Expression is MemberAccessExpressionSyntax ma ? ma.Expression : null;
+        if (extReceiver is not null)
+            _w.Write($"{TypeRef(symbol.ContainingType)}.{H5Naming.MemberJsName(reduced!)}");
+        else
+            EmitCallee(invocation, symbol);
         _w.Write("(");
         var lead = EmitLeadingTypeArgs(symbol);
+        var first = !lead;
+        if (extReceiver is not null)
+        {
+            if (!first) _w.Write(", ");
+            EmitExpression(extReceiver);
+            first = false;
+        }
         for (var i = 0; i < args.Count; i++)
         {
-            if (i > 0 || lead) _w.Write(", ");
+            if (!first) _w.Write(", ");
+            first = false;
             if (holders[i] is not null) _w.Write(holders[i]!);
             else EmitExpressionConverted(args[i].Expression, i < symbol.Parameters.Length ? symbol.Parameters[i].Type : null);
         }
@@ -1486,6 +1502,9 @@ public sealed partial class Emitter
                 }
                 else if (body is ExpressionSyntax exprBody)
                 {
+                    // Hoist out-var / is-pattern variables the body introduces (e.g.
+                    // `p => dict.TryGetValue(p, out var i) ? i : 0`) before returning it.
+                    PredeclareInlineVars(exprBody);
                     // If the lambda's body has a value, return it.
                     _w.Write("return ");
                     EmitExpression(exprBody);
