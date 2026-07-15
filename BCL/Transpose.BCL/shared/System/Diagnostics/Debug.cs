@@ -10,7 +10,7 @@ namespace System.Diagnostics
     /// <summary>
     /// Provides a set of properties and methods for debugging code.
     /// </summary>
-    [H5.Reflectable(false)]
+    [Transpose.Reflectable(false)]
     public static partial class Debug
     {
         private static readonly object s_lock = new object();
@@ -316,7 +316,7 @@ namespace System.Diagnostics
             return s_indentString = new string(' ', indentCount);
         }
 
-        [H5.Reflectable(false)]
+        [Transpose.Reflectable(false)]
         private sealed class DebugAssertException : Exception
         {
             internal DebugAssertException(string message, string detailMessage, string stackTrace) :

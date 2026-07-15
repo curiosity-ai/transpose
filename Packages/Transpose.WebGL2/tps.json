@@ -18,15 +18,15 @@
   "combineScripts": false,
   "resources": [
     {
-      "name": "h5.js",
+      "name": "tps.js",
       "extract": false
     },
     {
-      "name": "h5.meta.js",
+      "name": "tps.meta.js",
       "extract": false
     },
     {
-      "name": "h5.console.js",
+      "name": "tps.console.js",
       "extract": false
     },
     {

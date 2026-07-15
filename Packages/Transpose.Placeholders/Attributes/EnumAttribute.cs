@@ -1,7 +1,7 @@
-// Original: H5/H5/Attributes/EnumAttribute.cs
+// Original: Transpose/Transpose/Attributes/EnumAttribute.cs
 using System;
 
-namespace H5
+namespace Transpose
 {
     [AttributeUsage(AttributeTargets.Enum)]
     public class EnumAttribute : Attribute

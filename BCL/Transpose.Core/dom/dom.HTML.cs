@@ -1,16 +1,16 @@
 ﻿// Decompiled with JetBrains decompiler
-// Type: H5.dom
-// Assembly: H5.dom, Version=2.8.2.0, Culture=neutral, PublicKeyToken=null
+// Type: Transpose.dom
+// Assembly: Transpose.dom, Version=2.8.2.0, Culture=neutral, PublicKeyToken=null
 // MVID: 57CCBF73-D494-47BA-ACF8-95E65E795865
-// Assembly location: C:\work\curiosity\tesserae\Tesserae\bin\Debug\net461\H5.dom.dll
+// Assembly location: C:\work\curiosity\tesserae\Tesserae\bin\Debug\net461\Transpose.dom.dll
 
-using H5;
-using H5.Core;
+using Transpose;
+using Transpose.Core;
 using System;
 using System.Collections;
 using System.Collections.Generic;
 
-namespace H5.Core
+namespace Transpose.Core
 {
     public static partial class dom
     {
@@ -1585,7 +1585,7 @@ namespace H5.Core
         [IgnoreCast]
         [Virtual]
         [FormerInterface]
-        public abstract class HTMLCollectionBase : IEnumerable<dom.Element>, IEnumerable, IH5Class, IObject
+        public abstract class HTMLCollectionBase : IEnumerable<dom.Element>, IEnumerable, ITransposeClass, IObject
         {
             public abstract uint length { get; }
 
@@ -1593,10 +1593,10 @@ namespace H5.Core
 
             public virtual extern dom.Element this[uint index] { get; set; }
 
-            [Template("H5.getEnumerator({this}, {T})")]
+            [Template("Transpose.getEnumerator({this}, {T})")]
             extern IEnumerator<dom.Element> IEnumerable<dom.Element>.GetEnumerator();
 
-            [Template("H5.getEnumerator({this})")]
+            [Template("Transpose.getEnumerator({this})")]
             extern IEnumerator IEnumerable.GetEnumerator();
         }
 
@@ -1622,7 +1622,7 @@ namespace H5.Core
         [Virtual]
         [FormerInterface]
         [Where("T", typeof(dom.Element), EnableImplicitConversion = true)]
-        public abstract class HTMLCollectionOf<T> : dom.HTMLCollectionBase, IEnumerable<T>, IEnumerable, IH5Class
+        public abstract class HTMLCollectionOf<T> : dom.HTMLCollectionBase, IEnumerable<T>, IEnumerable, ITransposeClass
         {
             public abstract T item(double index);
 
@@ -1630,7 +1630,7 @@ namespace H5.Core
 
             public virtual extern T this[double index] { get; set; }
 
-            [Template("H5.getEnumerator({this}, {T})")]
+            [Template("Transpose.getEnumerator({this}, {T})")]
             extern IEnumerator<T> IEnumerable<T>.GetEnumerator();
         }
 
@@ -6838,9 +6838,9 @@ namespace H5.Core
 
             public virtual extern void pause();
 
-            public virtual extern es5.Promise<H5.Core.Void> play();
+            public virtual extern es5.Promise<Transpose.Core.Void> play();
 
-            public virtual extern es5.Promise<H5.Core.Void> setMediaKeys(
+            public virtual extern es5.Promise<Transpose.Core.Void> setMediaKeys(
               dom.MediaKeys mediaKeys);
 
             public virtual ushort HAVE_CURRENT_DATA

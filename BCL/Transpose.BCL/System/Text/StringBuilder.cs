@@ -1,9 +1,9 @@
 namespace System.Text
 {
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.External]
-    [H5.Reflectable]
-    public class StringBuilder : H5.IH5Class
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.External]
+    [Transpose.Reflectable]
+    public class StringBuilder : Transpose.ITransposeClass
     {
         public extern StringBuilder();
 
@@ -15,7 +15,7 @@ namespace System.Text
 
         public extern StringBuilder(string value, int capacity);
 
-        [H5.Template("new System.Text.StringBuilder(\"\", {capacity})")]
+        [Transpose.Template("new System.Text.StringBuilder(\"\", {capacity})")]
         public extern StringBuilder(int capacity);
 
         public override extern string ToString();
@@ -27,17 +27,17 @@ namespace System.Text
         /// </summary>
         public extern int Length
         {
-            [H5.Template("getLength()")]
+            [Transpose.Template("getLength()")]
             get;
-            [H5.Template("setLength({0})")]
+            [Transpose.Template("setLength({0})")]
             set;
         }
 
         public extern int Capacity
         {
-            [H5.Template("getCapacity()")]
+            [Transpose.Template("getCapacity()")]
             get;
-            [H5.Template("setCapacity({0})")]
+            [Transpose.Template("setCapacity({0})")]
             set;
         }
 
@@ -45,7 +45,7 @@ namespace System.Text
 
         public extern StringBuilder Append(byte value);
 
-        [H5.Template("append(String.fromCharCode({value}))")]
+        [Transpose.Template("append(String.fromCharCode({value}))")]
         public extern StringBuilder Append(char value);
 
         public extern StringBuilder Append(decimal value);
@@ -56,7 +56,7 @@ namespace System.Text
 
         public extern StringBuilder Append(int value);
 
-        [H5.Template("{this}.append({value}.toString())")]
+        [Transpose.Template("{this}.append({value}.toString())")]
         public extern StringBuilder Append(long value);
 
         public extern StringBuilder Append(object value);
@@ -66,11 +66,11 @@ namespace System.Text
         
         public extern StringBuilder Append(uint value);
 
-        [H5.Template("{this}.append({value}.toString())")]
+        [Transpose.Template("{this}.append({value}.toString())")]
         
         public extern StringBuilder Append(ulong value);
 
-        [H5.Template("append(String.fromCharCode({value}), {repeatCount})")]
+        [Transpose.Template("append(String.fromCharCode({value}), {repeatCount})")]
         public extern StringBuilder Append(char value, int repeatCount);
 
         public extern StringBuilder Append(string value, int startIndex, int count);
@@ -87,7 +87,7 @@ namespace System.Text
 
         public extern StringBuilder Insert(int index, bool value);
 
-        [H5.Template("insert({index}, String.fromCharCode({value}))")]
+        [Transpose.Template("insert({index}, String.fromCharCode({value}))")]
         public extern StringBuilder Insert(int index, char value);
 
         public extern StringBuilder Insert(int index, decimal value);
@@ -98,7 +98,7 @@ namespace System.Text
 
         public extern StringBuilder Insert(int index, int value);
 
-        [H5.Template("{this}.insert({index}, {value}.toString())")]
+        [Transpose.Template("{this}.insert({index}, {value}.toString())")]
         public extern StringBuilder Insert(int index, long value);
 
         public extern StringBuilder Insert(int index, object value);
@@ -108,7 +108,7 @@ namespace System.Text
         
         public extern StringBuilder Insert(int index, uint value);
 
-        [H5.Template("{this}.insert({index}, {value}.toString())")]
+        [Transpose.Template("{this}.insert({index}, {value}.toString())")]
         
         public extern StringBuilder Insert(int index, ulong value);
 
@@ -116,18 +116,18 @@ namespace System.Text
 
         public extern StringBuilder Remove(int startIndex, int length);
 
-        [H5.Template("replace(String.fromCharCode({oldChar}), String.fromCharCode({newChar}))")]
+        [Transpose.Template("replace(String.fromCharCode({oldChar}), String.fromCharCode({newChar}))")]
         public extern StringBuilder Replace(char oldChar, char newChar);
 
         public extern StringBuilder Replace(string oldValue, string newValue);
 
-        [H5.Template("replace(String.fromCharCode({oldChar}), String.fromCharCode({newChar}), {startIndex}, {count})")]
+        [Transpose.Template("replace(String.fromCharCode({oldChar}), String.fromCharCode({newChar}), {startIndex}, {count})")]
         public extern StringBuilder Replace(char oldChar, char newChar, int startIndex, int count);
 
         public extern StringBuilder Replace(string oldValue, string newValue, int startIndex, int count);
 
-        [H5.Name("Char")]
-        [H5.AccessorsIndexer]
+        [Transpose.Name("Char")]
+        [Transpose.AccessorsIndexer]
         public extern char this[int index]
         {
             get;

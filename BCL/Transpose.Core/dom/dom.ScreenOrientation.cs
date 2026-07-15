@@ -1,7 +1,7 @@
-using H5;
-using H5.Core;
+using Transpose;
+using Transpose.Core;
 
-namespace H5.Core
+namespace Transpose.Core
 {
     public static partial class dom
     {
@@ -17,7 +17,7 @@ namespace H5.Core
 
             public virtual dom.ScreenOrientation.onchangeFn onchange { get; set; }
 
-            public virtual extern es5.Promise<H5.Core.Void> @lock(dom.ScreenOrientationLockType orientation);
+            public virtual extern es5.Promise<Transpose.Core.Void> @lock(dom.ScreenOrientationLockType orientation);
 
             public virtual extern void unlock();
 

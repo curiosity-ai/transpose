@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace H5
+namespace Transpose
 {
     /// <summary>
     /// The option to manage JavaScript output folders and files.

@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace H5
+namespace Transpose
 {
     /// <summary>
     /// Specifies full path name of the entity (namespace+entity), when emitting JavaScript-equivalent

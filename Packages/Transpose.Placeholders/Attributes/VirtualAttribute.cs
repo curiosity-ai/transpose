@@ -1,7 +1,7 @@
-// Original: H5/H5/Attributes/VirtualAttribute.cs
+// Original: Transpose/Transpose/Attributes/VirtualAttribute.cs
 using System;
 
-namespace H5
+namespace Transpose
 {
     [AttributeUsage(AttributeTargets.Assembly | AttributeTargets.Class | AttributeTargets.Struct | AttributeTargets.Enum | AttributeTargets.Interface | AttributeTargets.Delegate, AllowMultiple = false)]
     public sealed class VirtualAttribute : Attribute

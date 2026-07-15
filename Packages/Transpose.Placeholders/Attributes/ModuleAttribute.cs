@@ -1,7 +1,7 @@
-// Original: H5/H5/Attributes/ModuleAttribute.cs
+// Original: Transpose/Transpose/Attributes/ModuleAttribute.cs
 using System;
 
-namespace H5
+namespace Transpose
 {
     [AttributeUsage(AttributeTargets.Assembly | AttributeTargets.Class | AttributeTargets.Enum | AttributeTargets.Struct | AttributeTargets.Interface)]
     public sealed class ModuleAttribute : Attribute

@@ -14,7 +14,7 @@
 
 namespace System.Diagnostics.CodeAnalysis
 {
-    [H5.NonScriptable]
+    [Transpose.NonScriptable]
     [AttributeUsage(
      AttributeTargets.All,
      Inherited = false,

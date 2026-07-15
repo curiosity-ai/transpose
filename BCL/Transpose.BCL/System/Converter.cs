@@ -7,8 +7,8 @@
     /// <typeparam name="TOutput">The type the input object is to be converted to.</typeparam>
     /// <param name="input">The object to convert.</param>
     /// <returns>The TOutput that represents the converted TInput.</returns>
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.External]
-    [H5.Name("Converter")]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.External]
+    [Transpose.Name("Converter")]
     public delegate TOutput Converter<in TInput, out TOutput>(TInput input);
 }

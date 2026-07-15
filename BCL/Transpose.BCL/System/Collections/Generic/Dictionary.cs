@@ -1,6 +1,6 @@
 namespace System.Collections.Generic
 {
-    using H5;
+    using Transpose;
     using System;
     using System.Collections;
     //using System.Diagnostics.Contracts;
@@ -147,12 +147,12 @@ namespace System.Collections.Generic
             }
         }
 
-        [H5.Template("{obj}[{key}]")]
-        [H5.External]
+        [Transpose.Template("{obj}[{key}]")]
+        [Transpose.External]
         public static extern int GetBucket(object obj, TKey key);
 
-        [H5.Template("{obj}[{key}] = {value}")]
-        [H5.External]
+        [Transpose.Template("{obj}[{key}] = {value}")]
+        [Transpose.External]
         public static extern void SetBucket(object obj, TKey key, int value);
 
         public void Add(TKey key, TValue value)

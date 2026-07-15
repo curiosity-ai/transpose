@@ -1,7 +1,7 @@
-// Original: H5/H5/Attributes/NamespaceAttribute.cs
+// Original: Transpose/Transpose/Attributes/NamespaceAttribute.cs
 using System;
 
-namespace H5
+namespace Transpose
 {
     [AttributeUsage(AttributeTargets.Enum | AttributeTargets.Class | AttributeTargets.Struct | AttributeTargets.Interface)]
     public sealed class NamespaceAttribute : Attribute

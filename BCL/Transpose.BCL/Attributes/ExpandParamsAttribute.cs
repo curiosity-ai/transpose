@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace H5
+namespace Transpose
 {
     /// <summary>
     /// This attribute can be applied to a method with a "params" parameter to make the param array be expanded in script (eg. given 'void F(int a, params int[] b)', the invocation 'F(1, 2, 3)' will be translated to 'F(1, [2, 3])' without this attribute, but 'F(1, 2, 3)' with this attribute.

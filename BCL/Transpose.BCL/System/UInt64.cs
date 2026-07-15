@@ -1,8 +1,8 @@
 namespace System
 {
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.External]
-    [H5.Reflectable]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.External]
+    [Transpose.Reflectable]
     public struct UInt64 : IComparable, IComparable<ulong>, IEquatable<ulong>, IFormattable
     {
         private extern UInt64(int i);
@@ -13,11 +13,11 @@ namespace System
         
         public const ulong MaxValue = 18446744073709551615;
 
-        [H5.Template("System.UInt64.parse({s})")]
+        [Transpose.Template("System.UInt64.parse({s})")]
         
         public static extern ulong Parse(string s);
 
-        [H5.Template("System.UInt64.tryParse({s}, {result})")]
+        [Transpose.Template("System.UInt64.tryParse({s}, {result})")]
         
         public static extern bool TryParse(string s, out ulong result);
 

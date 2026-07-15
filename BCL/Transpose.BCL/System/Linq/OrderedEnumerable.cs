@@ -2,28 +2,28 @@ using System.Collections.Generic;
 
 namespace System.Linq
 {
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.External]
-    [H5.IgnoreGeneric]
-    [H5.Convention(Target = H5.ConventionTarget.Member, Member = H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.External]
+    [Transpose.IgnoreGeneric]
+    [Transpose.Convention(Target = Transpose.ConventionTarget.Member, Member = Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
     public interface IOrderedEnumerable<TSource> : IEnumerable<TSource>
     {
-        [H5.Template("thenBy({keySelector})")]
+        [Transpose.Template("thenBy({keySelector})")]
         IOrderedEnumerable<TSource> ThenBy<TKey>(Func<TSource, TKey> keySelector);
 
-        [H5.Template("thenBy({keySelector}, {comparer})")]
+        [Transpose.Template("thenBy({keySelector}, {comparer})")]
         IOrderedEnumerable<TSource> ThenBy<TKey>(Func<TSource, TKey> keySelector, IComparer<TKey> comparer);
 
-        [H5.Template("thenByDescending({keySelector})")]
+        [Transpose.Template("thenByDescending({keySelector})")]
         IOrderedEnumerable<TSource> ThenByDescending<TKey>(Func<TSource, TKey> keySelector);
 
-        [H5.Template("thenByDescending({keySelector}, {comparer})")]
+        [Transpose.Template("thenByDescending({keySelector}, {comparer})")]
         IOrderedEnumerable<TSource> ThenByDescending<TKey>(Func<TSource, TKey> keySelector, IComparer<TKey> comparer);
     }
 
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.External]
-    [H5.IgnoreGeneric]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.External]
+    [Transpose.IgnoreGeneric]
     public class OrderedEnumerable<TElement> : EnumerableInstance<TElement>, IOrderedEnumerable<TElement>
     {
         internal extern OrderedEnumerable();

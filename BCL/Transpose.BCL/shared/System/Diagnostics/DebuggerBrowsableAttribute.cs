@@ -14,7 +14,7 @@ namespace System.Diagnostics
 
     //  Please also change the code which validates DebuggerBrowsableState variable (in this file)
     //  if you change this enum.
-    [H5.NonScriptable]
+    [Transpose.NonScriptable]
     public enum DebuggerBrowsableState
     {
         Never = 0,
@@ -27,7 +27,7 @@ namespace System.Diagnostics
 
     // the one currently supported with the csee.dat
     // (mcee.dat, autoexp.dat) file.
-    [H5.NonScriptable]
+    [Transpose.NonScriptable]
     [AttributeUsage(AttributeTargets.Field | AttributeTargets.Property, AllowMultiple = false)]
     public sealed class DebuggerBrowsableAttribute : Attribute
     {

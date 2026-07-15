@@ -1,7 +1,7 @@
 namespace System
 {
-    [H5.External]
-    [H5.Reflectable]
+    [Transpose.External]
+    [Transpose.Reflectable]
     public interface IDisposable
     {
         void Dispose();

@@ -1,4 +1,4 @@
-    H5.define("System.Text.RegularExpressions.Match", {
+    Transpose.define("System.Text.RegularExpressions.Match", {
         inherits: function () {
             return [System.Text.RegularExpressions.Group];
         },
@@ -156,7 +156,7 @@
         }
     });
 
-    H5.define("System.Text.RegularExpressions.MatchSparse", {
+    Transpose.define("System.Text.RegularExpressions.MatchSparse", {
         inherits: function () {
             return [System.Text.RegularExpressions.Match];
         },

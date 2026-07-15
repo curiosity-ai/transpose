@@ -2,48 +2,48 @@ using System.ComponentModel;
 
 namespace System
 {
-    [H5.External]
+    [Transpose.External]
     public abstract class ValueType
     {
     }
 
     [EditorBrowsable(EditorBrowsableState.Never)]
-    [H5.External]
-    [H5.NonScriptable]
+    [Transpose.External]
+    [Transpose.NonScriptable]
     public struct IntPtr
     {
     }
 
     [EditorBrowsable(EditorBrowsableState.Never)]
-    [H5.External]
-    [H5.NonScriptable]
+    [Transpose.External]
+    [Transpose.NonScriptable]
     public struct UIntPtr
     {
     }
 
     [EditorBrowsable(EditorBrowsableState.Never)]
-    [H5.External]
-    [H5.NonScriptable]
+    [Transpose.External]
+    [Transpose.NonScriptable]
     public class ParamArrayAttribute
     {
     }
 
     [EditorBrowsable(EditorBrowsableState.Never)]
-    [H5.External]
-    [H5.NonScriptable]
+    [Transpose.External]
+    [Transpose.NonScriptable]
     public struct RuntimeTypeHandle
     {
     }
 
     [EditorBrowsable(EditorBrowsableState.Never)]
-    [H5.External]
-    [H5.NonScriptable]
+    [Transpose.External]
+    [Transpose.NonScriptable]
     public struct RuntimeFieldHandle
     {
     }
 
     [EditorBrowsable(EditorBrowsableState.Never)]
-    [H5.NonScriptable]
+    [Transpose.NonScriptable]
     public struct RuntimeMethodHandle
     {
     }

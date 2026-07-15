@@ -13,7 +13,7 @@ namespace System.IO
     // Note these values currently match the values for FILE_SHARE_READ,
     // FILE_SHARE_WRITE, and FILE_SHARE_DELETE in winnt.h
     //
-    [H5.Enum(H5.Emit.Value)]
+    [Transpose.Enum(Transpose.Emit.Value)]
     [Flags]
     public enum FileShare
     {

@@ -1,16 +1,16 @@
 namespace System.Collections.Generic
 {
-    [H5.External]
-    [H5.Reflectable]
-    [H5.Convention(Target = H5.ConventionTarget.Member, Member = H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    public interface ICollection<T> : IEnumerable<T>, H5.IH5Class
+    [Transpose.External]
+    [Transpose.Reflectable]
+    [Transpose.Convention(Target = Transpose.ConventionTarget.Member, Member = Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    public interface ICollection<T> : IEnumerable<T>, Transpose.ITransposeClass
     {
         /// <summary>
         /// Gets the number of elements contained in the ICollection.
         /// </summary>
         int Count
         {
-            [H5.Template("System.Array.getCount({this}, {T})")]
+            [Transpose.Template("System.Array.getCount({this}, {T})")]
             get;
         }
 
@@ -19,7 +19,7 @@ namespace System.Collections.Generic
         /// </summary>
         bool IsReadOnly
         {
-            [H5.Template("System.Array.getIsReadOnly({this}, {T})")]
+            [Transpose.Template("System.Array.getIsReadOnly({this}, {T})")]
             get;
         }
 
@@ -27,7 +27,7 @@ namespace System.Collections.Generic
         /// Adds an item to the ICollection.
         /// </summary>
         /// <param name="item">The object to add to the ICollection</param>
-        [H5.Template("System.Array.add({this}, {item}, {T})")]
+        [Transpose.Template("System.Array.add({this}, {item}, {T})")]
         void Add(T item);
 
         /// <summary>
@@ -35,13 +35,13 @@ namespace System.Collections.Generic
         /// </summary>
         /// <param name="array">The one-dimensional Array that is the destination of the elements copied from ICollection.</param>
         /// <param name="arrayIndex">The zero-based index in array at which copying begins.</param>
-        [H5.Template("System.Array.copyTo({this}, {array}, {arrayIndex}, {T})")]
+        [Transpose.Template("System.Array.copyTo({this}, {array}, {arrayIndex}, {T})")]
         void CopyTo(T[] array, int arrayIndex);
 
         /// <summary>
         /// Removes all items from the ICollection.
         /// </summary>
-        [H5.Template("System.Array.clear({this}, {T})")]
+        [Transpose.Template("System.Array.clear({this}, {T})")]
         void Clear();
 
         /// <summary>
@@ -49,7 +49,7 @@ namespace System.Collections.Generic
         /// </summary>
         /// <param name="item">The object to locate in the ICollection.</param>
         /// <returns>true if item is found in the ICollection; otherwise, false.</returns>
-        [H5.Template("System.Array.contains({this}, {item}, {T})")]
+        [Transpose.Template("System.Array.contains({this}, {item}, {T})")]
         bool Contains(T item);
 
         /// <summary>
@@ -57,7 +57,7 @@ namespace System.Collections.Generic
         /// </summary>
         /// <param name="item">The object to remove from the ICollection.</param>
         /// <returns>true if item was successfully removed from the ICollection; otherwise, false. This method also returns false if item is not found in the original ICollection.</returns>
-        [H5.Template("System.Array.remove({this}, {item}, {T})")]
+        [Transpose.Template("System.Array.remove({this}, {item}, {T})")]
         bool Remove(T item);
     }
 }

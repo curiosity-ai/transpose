@@ -1,5 +1,5 @@
 
-    H5.define("H5.Int", {
+    Transpose.define("Transpose.Int", {
         inherits: [System.IComparable, System.IFormattable],
         statics: {
             $number: true,
@@ -531,7 +531,7 @@
             parseFloat: function (s, provider) {
                 var res = { };
 
-                H5.Int.tryParseFloat(s, provider, res, false);
+                Transpose.Int.tryParseFloat(s, provider, res, false);
 
                 return res.v;
             },
@@ -718,8 +718,8 @@
             },
 
             trunc: function (num) {
-                if (!H5.isNumber(num)) {
-                    return H5.Int.isInfinite(num) ? num : null;
+                if (!Transpose.isNumber(num)) {
+                    return Transpose.Int.isInfinite(num) ? num : null;
                 }
 
                 return num > 0 ? Math.floor(num) : Math.ceil(num);
@@ -756,7 +756,7 @@
                     return System.Decimal.toInt(x, type);
                 }
 
-                if (H5.isNumber(x)) {
+                if (Transpose.isNumber(x)) {
                     if (System.Int64.is64BitType(type)) {
                         if (type === System.UInt64 && x < 0) {
                             throw new System.OverflowException();
@@ -768,7 +768,7 @@
                     }
                 }
 
-                if (H5.Int.isInfinite(x) || isNaN(x)) {
+                if (Transpose.Int.isInfinite(x) || isNaN(x)) {
                     if (System.Int64.is64BitType(type)) {
                         return type.MinValue;
                     }
@@ -780,43 +780,43 @@
             },
 
             sxb: function (x) {
-                return H5.isNumber(x) ? (x | (x & 0x80 ? 0xffffff00 : 0)) : ((H5.Int.isInfinite(x) || isNaN(x)) ? System.SByte.min : null);
+                return Transpose.isNumber(x) ? (x | (x & 0x80 ? 0xffffff00 : 0)) : ((Transpose.Int.isInfinite(x) || isNaN(x)) ? System.SByte.min : null);
             },
 
             sxs: function (x) {
-                return H5.isNumber(x) ? (x | (x & 0x8000 ? 0xffff0000 : 0)) : ((H5.Int.isInfinite(x) || isNaN(x)) ? System.Int16.min : null);
+                return Transpose.isNumber(x) ? (x | (x & 0x8000 ? 0xffff0000 : 0)) : ((Transpose.Int.isInfinite(x) || isNaN(x)) ? System.Int16.min : null);
             },
 
             clip8: function (x) {
-                return H5.isNumber(x) ? H5.Int.sxb(x & 0xff) : ((H5.Int.isInfinite(x) || isNaN(x)) ? System.SByte.min : null);
+                return Transpose.isNumber(x) ? Transpose.Int.sxb(x & 0xff) : ((Transpose.Int.isInfinite(x) || isNaN(x)) ? System.SByte.min : null);
             },
 
             clipu8: function (x) {
-                return H5.isNumber(x) ? x & 0xff : ((H5.Int.isInfinite(x) || isNaN(x)) ? System.Byte.min : null);
+                return Transpose.isNumber(x) ? x & 0xff : ((Transpose.Int.isInfinite(x) || isNaN(x)) ? System.Byte.min : null);
             },
 
             clip16: function (x) {
-                return H5.isNumber(x) ? H5.Int.sxs(x & 0xffff) : ((H5.Int.isInfinite(x) || isNaN(x)) ? System.Int16.min : null);
+                return Transpose.isNumber(x) ? Transpose.Int.sxs(x & 0xffff) : ((Transpose.Int.isInfinite(x) || isNaN(x)) ? System.Int16.min : null);
             },
 
             clipu16: function (x) {
-                return H5.isNumber(x) ? x & 0xffff : ((H5.Int.isInfinite(x) || isNaN(x)) ? System.UInt16.min : null);
+                return Transpose.isNumber(x) ? x & 0xffff : ((Transpose.Int.isInfinite(x) || isNaN(x)) ? System.UInt16.min : null);
             },
 
             clip32: function (x) {
-                return H5.isNumber(x) ? x | 0 : ((H5.Int.isInfinite(x) || isNaN(x)) ? System.Int32.min : null);
+                return Transpose.isNumber(x) ? x | 0 : ((Transpose.Int.isInfinite(x) || isNaN(x)) ? System.Int32.min : null);
             },
 
             clipu32: function (x) {
-                return H5.isNumber(x) ? x >>> 0 : ((H5.Int.isInfinite(x) || isNaN(x)) ? System.UInt32.min : null);
+                return Transpose.isNumber(x) ? x >>> 0 : ((Transpose.Int.isInfinite(x) || isNaN(x)) ? System.UInt32.min : null);
             },
 
             clip64: function (x) {
-                return H5.isNumber(x) ? System.Int64(H5.Int.trunc(x)) : ((H5.Int.isInfinite(x) || isNaN(x)) ? System.Int64.MinValue : null);
+                return Transpose.isNumber(x) ? System.Int64(Transpose.Int.trunc(x)) : ((Transpose.Int.isInfinite(x) || isNaN(x)) ? System.Int64.MinValue : null);
             },
 
             clipu64: function (x) {
-                return H5.isNumber(x) ? System.UInt64(H5.Int.trunc(x)) : ((H5.Int.isInfinite(x) || isNaN(x)) ? System.UInt64.MinValue : null);
+                return Transpose.isNumber(x) ? System.UInt64(Transpose.Int.trunc(x)) : ((Transpose.Int.isInfinite(x) || isNaN(x)) ? System.UInt64.MinValue : null);
             },
 
             sign: function (x) {
@@ -828,7 +828,7 @@
                     return -1;
                 }
 
-                return H5.isNumber(x) ? (x === 0 ? 0 : (x < 0 ? -1 : 1)) : null;
+                return Transpose.isNumber(x) ? (x === 0 ? 0 : (x < 0 ? -1 : 1)) : null;
             },
 
             $mul: Math.imul || function (a, b) {
@@ -846,10 +846,10 @@
                 }
 
                 if (overflow) {
-                    H5.Int.check(a * b, System.Int32)
+                    Transpose.Int.check(a * b, System.Int32)
                 }
 
-                return H5.Int.$mul(a, b);
+                return Transpose.Int.$mul(a, b);
             },
 
             umul: function (a, b, overflow) {
@@ -858,10 +858,10 @@
                 }
 
                 if (overflow) {
-                    H5.Int.check(a * b, System.UInt32)
+                    Transpose.Int.check(a * b, System.UInt32)
                 }
 
-                return H5.Int.$mul(a, b) >>> 0;
+                return Transpose.Int.$mul(a, b) >>> 0;
             },
 
             bitIncrement: function (x) {
@@ -877,16 +877,16 @@
                 return System.BitConverter.int32BitsToSingle(bits);
             },
 
-            bitDecrement: function (x) { return -H5.Int.bitIncrement(-x); },
+            bitDecrement: function (x) { return -Transpose.Int.bitIncrement(-x); },
         }
     });
 
-    H5.Int.$kind = "";
-    H5.Class.addExtend(H5.Int, [System.IComparable$1(H5.Int), System.IEquatable$1(H5.Int)]);
+    Transpose.Int.$kind = "";
+    Transpose.Class.addExtend(Transpose.Int, [System.IComparable$1(Transpose.Int), System.IEquatable$1(Transpose.Int)]);
 
     (function () {
         var createIntType = function (name, min, max, precision, toUnsign) {
-            var type = H5.define(name, {
+            var type = Transpose.define(name, {
                 inherits: [System.IComparable, System.IFormattable],
 
                 statics: {
@@ -903,35 +903,35 @@
                         return 0;
                     },
                     parse: function (s, radix) {
-                        return H5.Int.parseInt(s, min, max, radix);
+                        return Transpose.Int.parseInt(s, min, max, radix);
                     },
                     tryParse: function (s, result, radix) {
-                        return H5.Int.tryParseInt(s, result, min, max, radix);
+                        return Transpose.Int.tryParseInt(s, result, min, max, radix);
                     },
                     format: function (number, format, provider) {
-                        return H5.Int.format(number, format, provider, type, toUnsign);
+                        return Transpose.Int.format(number, format, provider, type, toUnsign);
                     },
                     equals: function (v1, v2) {
-                        if (H5.is(v1, type) && H5.is(v2, type)) {
-                            return H5.unbox(v1, true) === H5.unbox(v2, true);
+                        if (Transpose.is(v1, type) && Transpose.is(v2, type)) {
+                            return Transpose.unbox(v1, true) === Transpose.unbox(v2, true);
                         }
 
                         return false;
                     },
                     equalsT: function (v1, v2) {
-                        return H5.unbox(v1, true) === H5.unbox(v2, true);
+                        return Transpose.unbox(v1, true) === Transpose.unbox(v2, true);
                     }
                 }
             });
 
             type.$kind = "";
-            H5.Class.addExtend(type, [System.IComparable$1(type), System.IEquatable$1(type)]);
+            Transpose.Class.addExtend(type, [System.IComparable$1(type), System.IEquatable$1(type)]);
         };
 
         createIntType("System.Byte", 0, 255, 3);
-        createIntType("System.SByte", -128, 127, 3, H5.Int.clipu8);
-        createIntType("System.Int16", -32768, 32767, 5, H5.Int.clipu16);
+        createIntType("System.SByte", -128, 127, 3, Transpose.Int.clipu8);
+        createIntType("System.Int16", -32768, 32767, 5, Transpose.Int.clipu16);
         createIntType("System.UInt16", 0, 65535, 5);
-        createIntType("System.Int32", -2147483648, 2147483647, 10, H5.Int.clipu32);
+        createIntType("System.Int32", -2147483648, 2147483647, 10, Transpose.Int.clipu32);
         createIntType("System.UInt32", 0, 4294967295, 10);
     })();

@@ -5,12 +5,12 @@ namespace System.ComponentModel.DataAnnotations
     /// property (such as <see cref="System.ComponentModel.DataAnnotations.DataType.PhoneNumber" />
     /// or <see cref="System.ComponentModel.DataAnnotations.DataType.Url" />)
     /// </summary>
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
     [AttributeUsage(
         AttributeTargets.Property | AttributeTargets.Field | AttributeTargets.Method | AttributeTargets.Parameter,
         AllowMultiple = false)]
-    [H5.External]
-    [H5.NonScriptable]
+    [Transpose.External]
+    [Transpose.NonScriptable]
     public class DataTypeAttribute : ValidationAttribute
     {
         /// <summary>

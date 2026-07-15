@@ -1,7 +1,7 @@
-// Original: H5/H5/Attributes/ReadyAttribute.cs
+// Original: Transpose/Transpose/Attributes/ReadyAttribute.cs
 using System;
 
-namespace H5
+namespace Transpose
 {
     public class ReadyAttribute : AdapterAttribute
     {

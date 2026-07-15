@@ -1,4 +1,4 @@
-    H5.define("System.Text.RegularExpressions.RegexParser", {
+    Transpose.define("System.Text.RegularExpressions.RegexParser", {
         statics: {
             _Q: 5, // quantifier
             _S: 4, // ordinary stopper

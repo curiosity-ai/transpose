@@ -1,8 +1,8 @@
-namespace H5
+namespace Transpose
 {
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
     [External]
-    [Name("H5.Browser")]
+    [Name("Transpose.Browser")]
     public sealed class Browser
     {
         public static readonly bool IsStrict;

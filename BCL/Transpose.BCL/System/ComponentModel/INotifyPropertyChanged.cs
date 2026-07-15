@@ -1,17 +1,17 @@
 namespace System.ComponentModel
 {
-    [H5.External]
-    public interface INotifyPropertyChanged : H5.IH5Class
+    [Transpose.External]
+    public interface INotifyPropertyChanged : Transpose.ITransposeClass
     {
         event PropertyChangedEventHandler PropertyChanged;
     }
 
-    [H5.Name("Function")]
+    [Transpose.Name("Function")]
     public delegate void PropertyChangedEventHandler(object sender, PropertyChangedEventArgs e);
 
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.External]
-    public class PropertyChangedEventArgs : H5.IH5Class
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.External]
+    public class PropertyChangedEventArgs : Transpose.ITransposeClass
     {
         public PropertyChangedEventArgs(string propertyName)
         {

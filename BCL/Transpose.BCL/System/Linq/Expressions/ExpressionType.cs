@@ -1,7 +1,7 @@
 namespace System.Linq.Expressions
 {
-    [H5.External]
-    [H5.Enum(H5.Emit.Value)]
+    [Transpose.External]
+    [Transpose.Enum(Transpose.Emit.Value)]
     public enum ExpressionType
     {
         Add,

@@ -1,4 +1,4 @@
-    H5.define("System.Text.RegularExpressions.GroupCollection", {
+    Transpose.define("System.Text.RegularExpressions.GroupCollection", {
         inherits: function () {
             return [System.Collections.ICollection];
         },
@@ -144,7 +144,7 @@
         }
     });
 
-    H5.define("System.Text.RegularExpressions.GroupEnumerator", {
+    Transpose.define("System.Text.RegularExpressions.GroupEnumerator", {
         inherits: function () {
             return [System.Collections.IEnumerator];
         },

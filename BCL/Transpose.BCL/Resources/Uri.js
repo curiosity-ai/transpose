@@ -1,7 +1,7 @@
-    H5.assembly("System", {}, function ($asm, globals) {
+    Transpose.assembly("System", {}, function ($asm, globals) {
         "use strict";
 
-        H5.define("System.Uri", {
+        Transpose.define("System.Uri", {
             statics: {
                 methods: {
                     equals: function (uri1, uri2) {
@@ -40,7 +40,7 @@
             },
 
             equals: function (uri) {
-                if (uri == null || !H5.is(uri, System.Uri)) {
+                if (uri == null || !Transpose.is(uri, System.Uri)) {
                     return false;
                 }
 

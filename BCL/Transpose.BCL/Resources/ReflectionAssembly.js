@@ -1,44 +1,44 @@
-    H5.assemblyVersion = function (assemblyName, version) {
-        System.Reflection.Assembly.versions[assemblyName || "H5.$Unknown"] = version;
+    Transpose.assemblyVersion = function (assemblyName, version) {
+        System.Reflection.Assembly.versions[assemblyName || "Transpose.$Unknown"] = version;
     };
 
-    H5.assembly = function (assemblyName, res, callback, restore) {
+    Transpose.assembly = function (assemblyName, res, callback, restore) {
         if (!callback) {
             callback = res;
             res = {};
         }
 
-        assemblyName = assemblyName || "H5.$Unknown";
+        assemblyName = assemblyName || "Transpose.$Unknown";
 
         var asm = System.Reflection.Assembly.assemblies[assemblyName];
 
         if (!asm) {
             asm = new System.Reflection.Assembly(assemblyName, res);
         } else {
-            H5.apply(asm.res, res || {});
+            Transpose.apply(asm.res, res || {});
         }
 
-        var oldAssembly = H5.$currentAssembly;
+        var oldAssembly = Transpose.$currentAssembly;
 
-        H5.$currentAssembly = asm;
+        Transpose.$currentAssembly = asm;
 
         if (callback) {
-            var old = H5.Class.staticInitAllow;
-            H5.Class.staticInitAllow = false;
+            var old = Transpose.Class.staticInitAllow;
+            Transpose.Class.staticInitAllow = false;
 
-            callback.call(H5.global, asm, H5.global);
+            callback.call(Transpose.global, asm, Transpose.global);
 
-            H5.Class.staticInitAllow = old;
+            Transpose.Class.staticInitAllow = old;
         }
 
-        H5.init();
+        Transpose.init();
 
         if (restore) {
-            H5.$currentAssembly = oldAssembly;
+            Transpose.$currentAssembly = oldAssembly;
         }
     };
 
-    H5.define("System.Reflection.Assembly", {
+    Transpose.define("System.Reflection.Assembly", {
         statics: {
             assemblies: {},
             versions: {}
@@ -73,7 +73,7 @@
             }
 
             if (type) {
-                name = H5.Reflection.getTypeNamespace(type) + "." + name;
+                name = Transpose.Reflection.getTypeNamespace(type) + "." + name;
             }
 
             return this.res[name] || null;
@@ -86,7 +86,7 @@
             }
 
             if (type) {
-                name = H5.Reflection.getTypeNamespace(type) + '.' + name;
+                name = Transpose.Reflection.getTypeNamespace(type) + '.' + name;
             }
 
             var r = this.res[name];
@@ -95,9 +95,9 @@
         },
 
         getCustomAttributes: function (attributeType) {
-            if (this.attr && attributeType && !H5.isBoolean(attributeType)) {
+            if (this.attr && attributeType && !Transpose.isBoolean(attributeType)) {
                 return this.attr.filter(function (a) {
-                    return H5.is(a, attributeType);
+                    return Transpose.is(a, attributeType);
                 });
             }
 
@@ -105,9 +105,9 @@
         }
     });
 
-    H5.$currentAssembly = new System.Reflection.Assembly("mscorlib");
-    H5.SystemAssembly = H5.$currentAssembly;
-    H5.SystemAssembly.$types["System.Reflection.Assembly"] = System.Reflection.Assembly;
-    System.Reflection.Assembly.$assembly = H5.SystemAssembly;
+    Transpose.$currentAssembly = new System.Reflection.Assembly("mscorlib");
+    Transpose.SystemAssembly = Transpose.$currentAssembly;
+    Transpose.SystemAssembly.$types["System.Reflection.Assembly"] = System.Reflection.Assembly;
+    System.Reflection.Assembly.$assembly = Transpose.SystemAssembly;
 
-    var $asm = H5.$currentAssembly;
+    var $asm = Transpose.$currentAssembly;

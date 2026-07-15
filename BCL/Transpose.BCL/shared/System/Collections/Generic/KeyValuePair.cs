@@ -22,7 +22,7 @@ namespace System.Collections.Generic
     // A KeyValuePair holds a key and a value from a dictionary.
     // It is used by the IEnumerable<T> implementation for both IDictionary<TKey, TValue>
     // and IReadOnlyDictionary<TKey, TValue>.
-    [H5.Immutable]
+    [Transpose.Immutable]
     [Serializable]
     public struct KeyValuePair<TKey, TValue>
     {
@@ -35,19 +35,19 @@ namespace System.Collections.Generic
             this.value = value;
         }
 
-        [H5.Convention(H5.Notation.CamelCase)]
+        [Transpose.Convention(Transpose.Notation.CamelCase)]
         public TKey Key
         {
             get { return key; }
         }
 
-        [H5.Convention(H5.Notation.CamelCase)]
+        [Transpose.Convention(Transpose.Notation.CamelCase)]
         public TValue Value
         {
             get { return value; }
         }
 
-        [H5.Convention(H5.Notation.CamelCase)]
+        [Transpose.Convention(Transpose.Notation.CamelCase)]
         public override string ToString()
         {
             StringBuilder s = StringBuilderCache.Acquire();

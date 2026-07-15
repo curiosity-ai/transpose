@@ -3,8 +3,8 @@
     /// <summary>
     /// Provides enumerated values to use to set regular expression options.
     /// </summary>
-    [H5.External]
-    [H5.Enum(H5.Emit.Value)]
+    [Transpose.External]
+    [Transpose.Enum(Transpose.Emit.Value)]
     [Flags]
     public enum RegexOptions
     {

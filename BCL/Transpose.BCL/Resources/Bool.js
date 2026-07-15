@@ -1,4 +1,4 @@
-    H5.define("System.Boolean", {
+    Transpose.define("System.Boolean", {
         inherits: [System.IComparable],
 
         statics: {
@@ -22,7 +22,7 @@
             },
 
             parse: function (value) {
-                if (!H5.hasValue(value)) {
+                if (!Transpose.hasValue(value)) {
                     throw new System.ArgumentNullException.$ctor1("value");
                 }
 
@@ -40,7 +40,7 @@
             tryParse: function (value, result) {
                 result.v = false;
 
-                if (!H5.hasValue(value)) {
+                if (!Transpose.hasValue(value)) {
                     return false;
                 }
 
@@ -93,4 +93,4 @@
     });
 
     System.Boolean.$kind = "";
-    H5.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), System.IEquatable$1(System.Boolean)]);
+    Transpose.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), System.IEquatable$1(System.Boolean)]);

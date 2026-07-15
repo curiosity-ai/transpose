@@ -3,8 +3,8 @@
     /// <summary>
     /// Options to use with a <see cref="ClientWebSocket"/> object.
     /// </summary>
-    [H5.External]
-    [H5.Reflectable]
+    [Transpose.External]
+    [Transpose.Reflectable]
     public class ClientWebSocketOptions
     {
         /// <summary>

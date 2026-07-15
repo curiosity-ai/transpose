@@ -5,9 +5,9 @@ namespace System.Text.RegularExpressions
     /// <summary>
     /// Represents the set of captures made by a single capturing group.
     /// </summary>
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.External]
-    [H5.Reflectable]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.External]
+    [Transpose.Reflectable]
     public class CaptureCollection : ICollection
     {
         internal extern CaptureCollection();
@@ -17,7 +17,7 @@ namespace System.Text.RegularExpressions
         /// </summary>
         public extern object SyncRoot
         {
-            [H5.Template("getSyncRoot()")]
+            [Transpose.Template("getSyncRoot()")]
             get;
         }
 
@@ -26,7 +26,7 @@ namespace System.Text.RegularExpressions
         /// </summary>
         public extern bool IsSynchronized
         {
-            [H5.Template("getIsSynchronized()")]
+            [Transpose.Template("getIsSynchronized()")]
             get;
         }
 
@@ -35,7 +35,7 @@ namespace System.Text.RegularExpressions
         /// </summary>
         public extern bool IsReadOnly
         {
-            [H5.Template("getIsReadOnly()")]
+            [Transpose.Template("getIsReadOnly()")]
             get;
         }
 
@@ -44,7 +44,7 @@ namespace System.Text.RegularExpressions
         /// </summary>
         public extern int Count
         {
-            [H5.Template("getCount()")]
+            [Transpose.Template("getCount()")]
             get;
         }
 
@@ -54,7 +54,7 @@ namespace System.Text.RegularExpressions
 
         public extern Capture this[int i]
         {
-            [H5.Template("get({0})")]
+            [Transpose.Template("get({0})")]
             get;
         }
 
@@ -66,7 +66,7 @@ namespace System.Text.RegularExpressions
         /// <summary>
         /// Provides an enumerator that iterates through the collection.
         /// </summary>
-        [H5.Convention(H5.Notation.None)]
+        [Transpose.Convention(Transpose.Notation.None)]
         public extern IEnumerator GetEnumerator();
     }
 }

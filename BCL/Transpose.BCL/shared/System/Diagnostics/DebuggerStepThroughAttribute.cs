@@ -8,7 +8,7 @@ namespace System.Diagnostics
     // Used by the IL2IL toolchain to mark generated code to control debugger stepping policy
     [System.Runtime.CompilerServices.DependencyReductionRoot]
 #endif
-    [H5.NonScriptable]
+    [Transpose.NonScriptable]
     [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct | AttributeTargets.Method | AttributeTargets.Constructor, Inherited = false)]
     public sealed class DebuggerStepThroughAttribute : Attribute
     {

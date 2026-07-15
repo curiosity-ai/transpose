@@ -1,4 +1,4 @@
-    H5.define("System.Diagnostics.Stopwatch", {
+    Transpose.define("System.Diagnostics.Stopwatch", {
         ctor: function () {
             this.$initialize();
             this.reset();
@@ -138,7 +138,7 @@ if (typeof window !== 'undefined' && window.performance && window.performance.no
                 throw new System.ArgumentNullException.$ctor1("predicate");
             }
 
-            var enumerator = H5.getEnumerator(collection);
+            var enumerator = Transpose.getEnumerator(collection);
 
             try {
                 while (enumerator.moveNext()) {
@@ -174,7 +174,7 @@ if (typeof window !== 'undefined' && window.performance && window.performance.no
                 throw new System.ArgumentNullException.$ctor1("predicate");
             }
 
-            var enumerator = H5.getEnumerator(collection);
+            var enumerator = Transpose.getEnumerator(collection);
 
             try {
                 while (enumerator.moveNext()) {
@@ -190,7 +190,7 @@ if (typeof window !== 'undefined' && window.performance && window.performance.no
         }
     };
 
-    H5.define("System.Diagnostics.Contracts.ContractFailureKind", {
+    Transpose.define("System.Diagnostics.Contracts.ContractFailureKind", {
         $kind: "enum",
         $statics: {
             precondition: 0,
@@ -202,7 +202,7 @@ if (typeof window !== 'undefined' && window.performance && window.performance.no
         }
     });
 
-    H5.define("System.Diagnostics.Contracts.ContractException", {
+    Transpose.define("System.Diagnostics.Contracts.ContractException", {
         inherits: [System.Exception],
 
         config: {

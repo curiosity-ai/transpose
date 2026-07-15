@@ -1,7 +1,7 @@
-// Original: H5/H5/Attributes/GlobalMethodsAttribute.cs
+// Original: Transpose/Transpose/Attributes/GlobalMethodsAttribute.cs
 using System;
 
-namespace H5
+namespace Transpose
 {
     [AttributeUsage(AttributeTargets.Class, Inherited = false, AllowMultiple = true)]
     public sealed class GlobalMethodsAttribute : Attribute

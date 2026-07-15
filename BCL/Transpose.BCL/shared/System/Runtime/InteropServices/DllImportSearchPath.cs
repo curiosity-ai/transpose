@@ -4,7 +4,7 @@
 
 namespace System.Runtime.InteropServices
 {
-    [H5.NonScriptable]
+    [Transpose.NonScriptable]
     [Flags]
     public enum DllImportSearchPath
     {

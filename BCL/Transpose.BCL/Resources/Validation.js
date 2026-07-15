@@ -1,22 +1,22 @@
     var validation = {
         isNull: function (value) {
-            return !H5.isDefined(value, true);
+            return !Transpose.isDefined(value, true);
         },
 
         isEmpty: function (value) {
-            return value == null || value.length === 0 || H5.is(value, System.Collections.ICollection) ? value.getCount() === 0 : false;
+            return value == null || value.length === 0 || Transpose.is(value, System.Collections.ICollection) ? value.getCount() === 0 : false;
         },
 
         isNotEmptyOrWhitespace: function (value) {
-            return H5.isDefined(value, true) && !(/^$|\s+/.test(value));
+            return Transpose.isDefined(value, true) && !(/^$|\s+/.test(value));
         },
 
         isNotNull: function (value) {
-            return H5.isDefined(value, true);
+            return Transpose.isDefined(value, true);
         },
 
         isNotEmpty: function (value) {
-            return !H5.Validation.isEmpty(value);
+            return !Transpose.Validation.isEmpty(value);
         },
 
         email: function (value) {
@@ -106,4 +106,4 @@
         }
     };
 
-    H5.Validation = validation;
+    Transpose.Validation = validation;

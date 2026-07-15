@@ -1,8 +1,8 @@
-namespace H5
+namespace Transpose
 {
     [Name("System.Object")]
     [External]
-    public interface IH5Class
+    public interface ITransposeClass
     {
     }
 }

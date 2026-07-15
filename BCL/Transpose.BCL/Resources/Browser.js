@@ -1,16 +1,16 @@
     var check = function (regex) {
-        return H5.global.navigator && regex.test(H5.global.navigator.userAgent.toLowerCase());
+        return Transpose.global.navigator && regex.test(Transpose.global.navigator.userAgent.toLowerCase());
     },
 
-    isStrict = H5.global.document && H5.global.document.compatMode === "CSS1Compat",
+    isStrict = Transpose.global.document && Transpose.global.document.compatMode === "CSS1Compat",
 
     version = function (is, regex) {
         var m;
 
-        return H5.global.navigator && (is && (m = regex.exec(navigator.userAgent.toLowerCase()))) ? parseFloat(m[1]) : 0;
+        return Transpose.global.navigator && (is && (m = regex.exec(navigator.userAgent.toLowerCase()))) ? parseFloat(m[1]) : 0;
     },
 
-    docMode = H5.global.document ? H5.global.document.documentMode : null,
+    docMode = Transpose.global.document ? Transpose.global.document.documentMode : null,
     isOpera = check(/opera/),
     isOpera10_5 = isOpera && check(/version\/10\.5/),
     isChrome = check(/\bchrome\b/),
@@ -46,12 +46,12 @@
     operaVersion = version(isOpera, /version\/(\d+\.\d+)/),
     safariVersion = version(isSafari, /version\/(\d+\.\d+)/),
     webKitVersion = version(isWebKit, /webkit\/(\d+\.\d+)/),
-    isSecure = H5.global.location ? /^https/i.test(H5.global.location.protocol) : false,
-    isiPhone = H5.global.navigator && /iPhone/i.test(H5.global.navigator.platform),
-    isiPod = H5.global.navigator && /iPod/i.test(H5.global.navigator.platform),
-    isiPad = H5.global.navigator && /iPad/i.test(H5.global.navigator.userAgent),
-    isBlackberry = H5.global.navigator && /Blackberry/i.test(H5.global.navigator.userAgent),
-    isAndroid = H5.global.navigator && /Android/i.test(H5.global.navigator.userAgent),
+    isSecure = Transpose.global.location ? /^https/i.test(Transpose.global.location.protocol) : false,
+    isiPhone = Transpose.global.navigator && /iPhone/i.test(Transpose.global.navigator.platform),
+    isiPod = Transpose.global.navigator && /iPod/i.test(Transpose.global.navigator.platform),
+    isiPad = Transpose.global.navigator && /iPad/i.test(Transpose.global.navigator.userAgent),
+    isBlackberry = Transpose.global.navigator && /Blackberry/i.test(Transpose.global.navigator.userAgent),
+    isAndroid = Transpose.global.navigator && /Android/i.test(Transpose.global.navigator.userAgent),
     isDesktop = isMac || isWindows || (isLinux && !isAndroid),
     isTablet = isiPad,
     isPhone = !isDesktop && !isTablet;
@@ -116,7 +116,7 @@
         isTablet: isTablet,
         isPhone: isPhone,
         iOS: isiPhone || isiPad || isiPod,
-        standalone: H5.global.navigator ? !!H5.global.navigator.standalone : false
+        standalone: Transpose.global.navigator ? !!Transpose.global.navigator.standalone : false
     };
 
-    H5.Browser = browser;
+    Transpose.Browser = browser;

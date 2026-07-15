@@ -2,8 +2,8 @@ using System.ComponentModel;
 
 namespace System.Threading
 {
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.External]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.External]
     public sealed class Thread
     {
         //public extern int ManagedThreadId
@@ -22,7 +22,7 @@ namespace System.Threading
         /// Please note maximum 1e7 iterations
         /// </summary>
         /// <param name="millisecondsTimeout">The number of milliseconds for which the thread is suspended. Should be positive or -1. -1 works the same as 0 (not Infinite)</param>
-        [H5.Template("H5.sleep({millisecondsTimeout})")]
+        [Transpose.Template("Transpose.sleep({millisecondsTimeout})")]
         public extern static void Sleep(int millisecondsTimeout);
 
         /// <summary>
@@ -31,7 +31,7 @@ namespace System.Threading
         /// Please note maximum 1e7 iterations
         /// </summary>
         /// <param name="timeout">The amount of time for which the thread is suspended. Should be positive or -1. -1 works the same as 0 (not Infinite)</param>
-        [H5.Template("H5.sleep(null, {timeout})")]
+        [Transpose.Template("Transpose.sleep(null, {timeout})")]
         public extern static void Sleep(TimeSpan timeout);
     }
 }

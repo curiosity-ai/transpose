@@ -4,7 +4,7 @@
 
 namespace System.Runtime.InteropServices
 {
-    [H5.NonScriptable]
+    [Transpose.NonScriptable]
     public struct HandleRef
     {
         // ! Do not add or rearrange fields as the EE depends on this layout.

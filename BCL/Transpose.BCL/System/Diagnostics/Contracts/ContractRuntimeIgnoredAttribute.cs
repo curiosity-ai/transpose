@@ -5,7 +5,7 @@ namespace System.Diagnostics.Contracts
     /// </summary>
     [Conditional("CONTRACTS_FULL")]
     [AttributeUsage(AttributeTargets.Method | AttributeTargets.Property, AllowMultiple = false, Inherited = true)]
-    [H5.External]
+    [Transpose.External]
     public sealed class ContractRuntimeIgnoredAttribute : Attribute
     {
     }

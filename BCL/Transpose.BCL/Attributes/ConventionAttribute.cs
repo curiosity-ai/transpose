@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace H5
+namespace Transpose
 {
     /// <summary>
     /// Controls a type or type members case notation in the script output.

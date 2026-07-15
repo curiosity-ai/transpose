@@ -3,15 +3,15 @@ namespace System
     /// <summary>
     /// Represents the standard input, output, and error streams for console applications.
     /// </summary>
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.Unbox(false)]
-    [H5.Convention(H5.Notation.PascalCase)]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.Unbox(false)]
+    [Transpose.Convention(Transpose.Notation.PascalCase)]
     public sealed partial class Console
     {
         #region Read and ReadLine
 
         /// <returns>result is a string containing the text entered by the user, or the value null.</returns>
-        [H5.Template("prompt()")]
+        [Transpose.Template("prompt()")]
         public static extern string ReadLine();
 
         /// <summary>
@@ -19,7 +19,7 @@ namespace System
         /// </summary>
         /// <param name="text">text is a string of text to display to the user. This parameter is optional and can be omitted if there is nothing to show in the prompt window.</param>
         /// <returns>result is a string containing the text entered by the user, or the value null.</returns>
-        [H5.Template("prompt({text})")]
+        [Transpose.Template("prompt({text})")]
         public static extern string ReadLine(string text);
 
         /// <summary>
@@ -28,14 +28,14 @@ namespace System
         /// <param name="text">text is a string of text to display to the user. This parameter is optional and can be omitted if there is nothing to show in the prompt window.</param>
         /// <param name="value">value is a string containing the default value displayed in the text input field. It is an optional parameter. Note that in Internet Explorer 7 and 8, if you do not provide this parameter, the string "undefined" is the default value.</param>
         /// <returns>result is a string containing the text entered by the user, or the value null.</returns>
-        [H5.Template("prompt({text}, {value})")]
+        [Transpose.Template("prompt({text}, {value})")]
         public static extern string ReadLine(string text, string value);
 
         /// <summary>
         /// Read uses the native JavaScript prompt() to display a dialog with an optional message prompting the user to input some text.
         /// </summary>
         /// <returns>result is a string containing the text entered by the user, or the value null.</returns>
-        [H5.Template("prompt()")]
+        [Transpose.Template("prompt()")]
         public static extern string Read();
 
         #endregion Read and ReadLine
@@ -46,7 +46,7 @@ namespace System
         /// Writes the text representation of the specified Boolean value to the standard output stream.
         /// </summary>
         /// <param name="value">The value to write.</param>
-        [H5.Template("System.Console.Write(System.Boolean.toString({value}))")]
+        [Transpose.Template("System.Console.Write(System.Boolean.toString({value}))")]
         public static extern void Write(bool value);
 
         /// <summary>
@@ -65,49 +65,49 @@ namespace System
         /// Writes the specified Unicode character value to the standard output stream.
         /// </summary>
         /// <param name="value">The value to write.</param>
-        [H5.Template("System.Console.Write(String.fromCharCode({value}))")]
+        [Transpose.Template("System.Console.Write(String.fromCharCode({value}))")]
         public static extern void Write(char value);
 
         /// <summary>
         /// Writes the text representation of the specified Decimal value to the standard output stream.
         /// </summary>
         /// <param name="value">The value to write.</param>
-        [H5.Template("System.Console.Write({value}.toString(\"G\"))")]
+        [Transpose.Template("System.Console.Write({value}.toString(\"G\"))")]
         public static extern void Write(decimal value);
 
         /// <summary>
         /// Writes the text representation of the specified double-precision floating-point value to the standard output stream.
         /// </summary>
         /// <param name="value">The value to write.</param>
-        [H5.Template("System.Console.Write(System.Double.format({value}))")]
+        [Transpose.Template("System.Console.Write(System.Double.format({value}))")]
         public static extern void Write(double value);
 
         /// <summary>
         /// Writes the text representation of the specified 32-bit signed integer value to the standard output stream.
         /// </summary>
         /// <param name="value">The value to write.</param>
-        [H5.Name("Write")]
+        [Transpose.Name("Write")]
         public static extern void Write(int value);
 
         /// <summary>
         /// Writes the text representation of the specified 64-bit signed integer value to the standard output stream.
         /// </summary>
         /// <param name="value">The value to write.</param>
-        [H5.Name("Write")]
+        [Transpose.Name("Write")]
         public static extern void Write(long value);
 
         /// <summary>
         /// Writes the text representation of the specified object to the standard output stream.
         /// </summary>
         /// <param name="value">The value to write.</param>
-        [H5.Name("Write")]
+        [Transpose.Name("Write")]
         public static void Write(object value)
         {
-            var con = H5.Script.ToDynamic().H5.global.console;
+            var con = Transpose.Script.ToDynamic().Transpose.global.console;
 
             if (con && con.log)
             {
-                if (!H5.Script.IsDefined(value))
+                if (!Transpose.Script.IsDefined(value))
                 {
                     con.log("");
                     return;
@@ -115,9 +115,9 @@ namespace System
 
                 var d = value.As<dynamic>();
 
-                if (H5.Script.IsDefined(d.constructor) &&
-                    H5.Script.IsDefined(d.constructor["$$name"]) &&
-                    H5.Script.IsDefined(d.toString))
+                if (Transpose.Script.IsDefined(d.constructor) &&
+                    Transpose.Script.IsDefined(d.constructor["$$name"]) &&
+                    Transpose.Script.IsDefined(d.toString))
                 {
                     con.log(value.ToString());
                 }
@@ -132,14 +132,14 @@ namespace System
         /// Writes the text representation of the specified single-precision floating-point value to the standard output stream.
         /// </summary>
         /// <param name="value">The value to write.</param>
-        [H5.Name("Write")]
+        [Transpose.Name("Write")]
         public static extern void Write(float value);
 
         /// <summary>
         /// Writes the specified string value to the standard output stream.
         /// </summary>
         /// <param name="value">The value to write.</param>
-        [H5.Name("Write")]
+        [Transpose.Name("Write")]
         public static extern void Write(string value);
 
         /// <summary>
@@ -147,7 +147,7 @@ namespace System
         /// </summary>
         /// <param name="format">A composite format string.</param>
         /// <param name="arg0">The first object to write using format.</param>
-        [H5.Template("System.Console.Write(System.String.format({format}, {arg0}))")]
+        [Transpose.Template("System.Console.Write(System.String.format({format}, {arg0}))")]
         public static extern void Write(string format, object arg0);
 
         /// <summary>
@@ -156,7 +156,7 @@ namespace System
         /// <param name="format">A composite format string.</param>
         /// <param name="arg0">The first object to write using format.</param>
         /// <param name="arg1">The second object to write using format.</param>
-        [H5.Template("System.Console.Write(System.String.format({format}, {arg0}, {arg1}))")]
+        [Transpose.Template("System.Console.Write(System.String.format({format}, {arg0}, {arg1}))")]
         public static extern void Write(string format, object arg0, object arg1);
 
         /// <summary>
@@ -166,7 +166,7 @@ namespace System
         /// <param name="arg0">The first object to write using format.</param>
         /// <param name="arg1">The second object to write using format.</param>
         /// <param name="arg2">The third object to write using format.</param>
-        [H5.Template("System.Console.Write(System.String.format({format}, {arg0}, {arg1}, {arg2}))")]
+        [Transpose.Template("System.Console.Write(System.String.format({format}, {arg0}, {arg1}, {arg2}))")]
         public static extern void Write(string format, object arg0, object arg1, object arg2);
 
         /// <summary>
@@ -177,7 +177,7 @@ namespace System
         /// <param name="arg1">The second object to write using format.</param>
         /// <param name="arg2">The third object to write using format.</param>
         /// <param name="arg3">The fourth object to write using format.</param>
-        [H5.Template("System.Console.Write(System.String.format({format}, [{arg0}, {arg1}, {arg2}, {arg3}]))")]
+        [Transpose.Template("System.Console.Write(System.String.format({format}, [{arg0}, {arg1}, {arg2}, {arg3}]))")]
         public static extern void Write(string format, object arg0, object arg1, object arg2, object arg3);
 
         /// <summary>
@@ -185,14 +185,14 @@ namespace System
         /// </summary>
         /// <param name="format">A composite format string.</param>
         /// <param name="arg">An array of objects to write using format.</param>
-        [H5.Template("System.Console.Write(System.String.format({format}, {arg}))")]
+        [Transpose.Template("System.Console.Write(System.String.format({format}, {arg}))")]
         public static extern void Write(string format, params object[] arg);
 
         /// <summary>
         /// Writes the text representation of the specified 32-bit unsigned integer value to the standard output stream.
         /// </summary>
         /// <param name="value">The value to write.</param>
-        [H5.Name("Write")]
+        [Transpose.Name("Write")]
         
         public static extern void Write(uint value);
 
@@ -200,7 +200,7 @@ namespace System
         /// Writes the text representation of the specified 64-bit unsigned integer value to the standard output stream.
         /// </summary>
         /// <param name="value">The value to write.</param>
-        [H5.Name("Write")]
+        [Transpose.Name("Write")]
         
         public static extern void Write(ulong value);
 
@@ -208,7 +208,7 @@ namespace System
         /// Writes the specified array of Unicode characters to the standard output stream.
         /// </summary>
         /// <param name="buffer">An array of Unicode characters.</param>
-        [H5.Template("System.Console.Write(System.Console.TransformChars({buffer}, 1))")]
+        [Transpose.Template("System.Console.Write(System.Console.TransformChars({buffer}, 1))")]
         public static extern void Write(char[] buffer);
 
         /// <summary>
@@ -217,7 +217,7 @@ namespace System
         /// <param name="buffer">An array of Unicode characters.</param>
         /// <param name="index">The starting position in buffer.</param>
         /// <param name="count">The number of characters to write. </param>
-        [H5.Template("System.Console.Write(System.Console.TransformChars({buffer}, 0, {index}, {count}))")]
+        [Transpose.Template("System.Console.Write(System.Console.TransformChars({buffer}, 0, {index}, {count}))")]
         public static extern void Write(char[] buffer, int index, int count);
 
         #endregion Write
@@ -227,14 +227,14 @@ namespace System
         /// <summary>
         /// Writes the current line terminator to the standard output stream.
         /// </summary>
-        [H5.Name("WriteLine")]
+        [Transpose.Name("WriteLine")]
         public static extern void WriteLine();
 
         /// <summary>
         /// Writes the text representation of the specified Boolean value, followed by the current line terminator, to the standard output stream.
         /// </summary>
         /// <param name="value">The value to write.</param>
-        [H5.Template("System.Console.WriteLine(System.Boolean.toString({value}))")]
+        [Transpose.Template("System.Console.WriteLine(System.Boolean.toString({value}))")]
         public static extern void WriteLine(bool value);
 
         /// <summary>
@@ -253,49 +253,49 @@ namespace System
         /// Writes the specified Unicode character, followed by the current line terminator, value to the standard output stream.
         /// </summary>
         /// <param name="value">The value to write.</param>
-        [H5.Template("System.Console.WriteLine(String.fromCharCode({value}))")]
+        [Transpose.Template("System.Console.WriteLine(String.fromCharCode({value}))")]
         public static extern void WriteLine(char value);
 
         /// <summary>
         /// Writes the text representation of the specified Decimal value, followed by the current line terminator, to the standard output stream.
         /// </summary>
         /// <param name="value">The value to write.</param>
-        [H5.Template("System.Console.WriteLine({value}.toString(\"G\"))")]
+        [Transpose.Template("System.Console.WriteLine({value}.toString(\"G\"))")]
         public static extern void WriteLine(decimal value);
 
         /// <summary>
         /// Writes the text representation of the specified double-precision floating-point value, followed by the current line terminator, to the standard output stream.
         /// </summary>
         /// <param name="value">The value to write.</param>
-        [H5.Template("System.Console.WriteLine(System.Double.format({value}))")]
+        [Transpose.Template("System.Console.WriteLine(System.Double.format({value}))")]
         public static extern void WriteLine(double value);
 
         /// <summary>
         /// Writes the text representation of the specified 32-bit signed integer value, followed by the current line terminator, to the standard output stream.
         /// </summary>
         /// <param name="value">The value to write.</param>
-        [H5.Name("WriteLine")]
+        [Transpose.Name("WriteLine")]
         public static extern void WriteLine(int value);
 
         /// <summary>
         /// Writes the text representation of the specified 64-bit signed integer value, followed by the current line terminator, to the standard output stream.
         /// </summary>
         /// <param name="value">The value to write.</param>
-        [H5.Template("System.Console.WriteLine({value}.toString())")]
+        [Transpose.Template("System.Console.WriteLine({value}.toString())")]
         public static extern void WriteLine(long value);
 
         /// <summary>
         /// Writes the text representation of the specified object, followed by the current line terminator, to the standard output stream.
         /// </summary>
         /// <param name="value">The value to write.</param>
-        [H5.Name("WriteLine")]
+        [Transpose.Name("WriteLine")]
         public static void WriteLine(object value)
         {
-            var con = H5.Script.ToDynamic().H5.global.console;
+            var con = Transpose.Script.ToDynamic().Transpose.global.console;
 
             if (con && con.log)
             {
-                if (!H5.Script.IsDefined(value))
+                if (!Transpose.Script.IsDefined(value))
                 {
                     con.log("");
                     return;
@@ -303,9 +303,9 @@ namespace System
 
                 var d = value.As<dynamic>();
 
-                if (H5.Script.IsDefined(d.constructor) &&
-                    H5.Script.IsDefined(d.constructor["$$name"]) &&
-                    H5.Script.IsDefined(d.toString))
+                if (Transpose.Script.IsDefined(d.constructor) &&
+                    Transpose.Script.IsDefined(d.constructor["$$name"]) &&
+                    Transpose.Script.IsDefined(d.toString))
                 {
                     con.log(value.ToString());
                 }
@@ -320,10 +320,10 @@ namespace System
         /// Dump the object to the console
         /// </summary>
         /// <param name="value">The value to write.</param>
-        [H5.Name("Log")]
+        [Transpose.Name("Log")]
         public static void Log(object value)
         {
-            var con = H5.Script.ToDynamic().H5.global.console;
+            var con = Transpose.Script.ToDynamic().Transpose.global.console;
 
             if (con && con.log)
             {
@@ -335,21 +335,21 @@ namespace System
         /// Writes the text representation of the specified Type, followed by the current line terminator, to the standard output stream.
         /// </summary>
         /// <param name="value">The value to write.</param>
-        [H5.Template("System.Console.WriteLine(H5.getTypeName({value}))")]
+        [Transpose.Template("System.Console.WriteLine(Transpose.getTypeName({value}))")]
         public static extern void WriteLine(Type value);
 
         /// <summary>
         /// Writes the text representation of the specified single-precision floating-point value, followed by the current line terminator, to the standard output stream.
         /// </summary>
         /// <param name="value">The value to write.</param>
-        [H5.Template("System.Console.WriteLine(System.Single.format({value}))")]
+        [Transpose.Template("System.Console.WriteLine(System.Single.format({value}))")]
         public static extern void WriteLine(float value);
 
         /// <summary>
         /// Writes the specified string value, followed by the current line terminator, to the standard output stream.
         /// </summary>
         /// <param name="value">The value to write.</param>
-        [H5.Name("WriteLine")]
+        [Transpose.Name("WriteLine")]
         public static extern void WriteLine(string value);
 
         /// <summary>
@@ -357,7 +357,7 @@ namespace System
         /// </summary>
         /// <param name="format">A composite format string.</param>
         /// <param name="arg0">The first object to write using format.</param>
-        [H5.Template("System.Console.WriteLine(System.String.format({format}, {arg0}))")]
+        [Transpose.Template("System.Console.WriteLine(System.String.format({format}, {arg0}))")]
         public static extern void WriteLine(string format, object arg0);
 
         /// <summary>
@@ -366,7 +366,7 @@ namespace System
         /// <param name="format">A composite format string.</param>
         /// <param name="arg0">The first object to write using format.</param>
         /// <param name="arg1">The second object to write using format.</param>
-        [H5.Template("System.Console.WriteLine(System.String.format({format}, {arg0}, {arg1}))")]
+        [Transpose.Template("System.Console.WriteLine(System.String.format({format}, {arg0}, {arg1}))")]
         public static extern void WriteLine(string format, object arg0, object arg1);
 
         /// <summary>
@@ -376,7 +376,7 @@ namespace System
         /// <param name="arg0">The first object to write using format.</param>
         /// <param name="arg1">The second object to write using format.</param>
         /// <param name="arg2">The third object to write using format.</param>
-        [H5.Template("System.Console.WriteLine(System.String.format({format}, {arg0}, {arg1}, {arg2}))")]
+        [Transpose.Template("System.Console.WriteLine(System.String.format({format}, {arg0}, {arg1}, {arg2}))")]
         public static extern void WriteLine(string format, object arg0, object arg1, object arg2);
 
         /// <summary>
@@ -387,7 +387,7 @@ namespace System
         /// <param name="arg1">The second object to write using format.</param>
         /// <param name="arg2">The third object to write using format.</param>
         /// <param name="arg3">The fourth object to write using format.</param>
-        [H5.Template("System.Console.WriteLine(System.String.format({format}, [{arg0}, {arg1}, {arg2}, {arg3}]))")]
+        [Transpose.Template("System.Console.WriteLine(System.String.format({format}, [{arg0}, {arg1}, {arg2}, {arg3}]))")]
         public static extern void WriteLine(string format, object arg0, object arg1, object arg2, object arg3);
 
         /// <summary>
@@ -395,14 +395,14 @@ namespace System
         /// </summary>
         /// <param name="format">A composite format string.</param>
         /// <param name="arg">An array of objects to write using format.</param>
-        [H5.Template("System.Console.WriteLine(System.String.format({format}, {arg}))")]
+        [Transpose.Template("System.Console.WriteLine(System.String.format({format}, {arg}))")]
         public static extern void WriteLine(string format, params object[] arg);
 
         /// <summary>
         /// Writes the text representation of the specified 32-bit unsigned integer value, followed by the current line terminator, to the standard output stream.
         /// </summary>
         /// <param name="value">The value to write.</param>
-        [H5.Name("WriteLine")]
+        [Transpose.Name("WriteLine")]
         
         public static extern void WriteLine(uint value);
 
@@ -410,14 +410,14 @@ namespace System
         /// Writes the text representation of the specified 64-bit unsigned integer value, followed by the current line terminator, to the standard output stream.
         /// </summary>
         /// <param name="value">The value to write.</param>
-        [H5.Template("System.Console.WriteLine({value}.toString())")]
+        [Transpose.Template("System.Console.WriteLine({value}.toString())")]
         public static extern void WriteLine(ulong value);
 
         /// <summary>
         /// Writes the specified array of Unicode characters, followed by the current line terminator, to the standard output stream.
         /// </summary>
         /// <param name="buffer">An array of Unicode characters.</param>
-        [H5.Template("System.Console.WriteLine(System.Console.TransformChars({buffer}, 1))")]
+        [Transpose.Template("System.Console.WriteLine(System.Console.TransformChars({buffer}, 1))")]
         public static extern void WriteLine(char[] buffer);
 
         /// <summary>
@@ -426,21 +426,21 @@ namespace System
         /// <param name="buffer">An array of Unicode characters.</param>
         /// <param name="index">The starting position in buffer.</param>
         /// <param name="count">The number of characters to write. </param>
-        [H5.Template("System.Console.WriteLine(System.Console.TransformChars({buffer}, 0, {index}, {count}))")]
+        [Transpose.Template("System.Console.WriteLine(System.Console.TransformChars({buffer}, 0, {index}, {count}))")]
         public static extern void WriteLine(char[] buffer, int index, int count);
 
         /// <summary>
         /// Writes the text representation of the specified nullable decimal, followed by the current line terminator, to the standard output stream.
         /// </summary>
         /// <param name="value">The value to write.</param>
-        [H5.Template("System.Console.WriteLine({value} && {value}.toString(\"G\"))")]
+        [Transpose.Template("System.Console.WriteLine({value} && {value}.toString(\"G\"))")]
         public static extern void WriteLine(decimal? value);
 
         #endregion WriteLine
 
         #region Utils
 
-        [H5.Name("TransformChars")]
+        [Transpose.Name("TransformChars")]
         private static string TransformChars(char[] buffer, int all, int index, int count)
         {
             if (all != 1)
@@ -487,10 +487,10 @@ namespace System
         /// <summary>
         /// Clears the console buffer and corresponding console window of display information.
         /// </summary>
-        [H5.Name("Clear")]
+        [Transpose.Name("Clear")]
         public static void Clear()
         {
-            var con = H5.Script.ToDynamic().H5.global.console;
+            var con = Transpose.Script.ToDynamic().Transpose.global.console;
 
             if (con && con.clear)
             {

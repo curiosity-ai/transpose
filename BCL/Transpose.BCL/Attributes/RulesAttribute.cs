@@ -1,15 +1,15 @@
 ﻿using System;
 
-#if H5_COMPILER
-namespace H5.Contract
+#if TRANSPOSE_COMPILER
+namespace Transpose.Contract
 #else
-namespace H5
+namespace Transpose
 #endif
 {
     /// <summary>
     /// Allow to control some aspects of generated code
     /// </summary>
-#if H5_COMPILER
+#if TRANSPOSE_COMPILER
     public class CompilerRule
     {
         public static CompilerRule DefaultIfNotH5()
@@ -35,7 +35,7 @@ namespace H5
     {
 #endif
         public
-#if  H5_COMPILER
+#if  TRANSPOSE_COMPILER
             LambdaRule?
 #else
             LambdaRule
@@ -44,7 +44,7 @@ namespace H5
         { get; set; }
 
         public
-#if H5_COMPILER
+#if TRANSPOSE_COMPILER
             BoxingRule?
 #else
             BoxingRule
@@ -53,7 +53,7 @@ namespace H5
         { get; set; }
 
         public
-#if H5_COMPILER
+#if TRANSPOSE_COMPILER
             ArrayIndexRule?
 #else
             ArrayIndexRule
@@ -62,7 +62,7 @@ namespace H5
         { get; set; }
 
         public
-#if H5_COMPILER
+#if TRANSPOSE_COMPILER
             IntegerRule?
 #else
             IntegerRule
@@ -71,7 +71,7 @@ namespace H5
         { get; set; }
 
         public
-#if H5_COMPILER
+#if TRANSPOSE_COMPILER
             AnonymousTypeRule?
 #else
             AnonymousTypeRule
@@ -80,7 +80,7 @@ namespace H5
         { get; set; }
 
         public
-#if H5_COMPILER
+#if TRANSPOSE_COMPILER
             bool?
 #else
             bool
@@ -89,7 +89,7 @@ namespace H5
         { get; set; }
 
         public
-#if H5_COMPILER
+#if TRANSPOSE_COMPILER
             AutoPropertyRule?
 #else
             AutoPropertyRule
@@ -98,7 +98,7 @@ namespace H5
         { get; set; }
 
         public
-#if H5_COMPILER
+#if TRANSPOSE_COMPILER
             InlineCommentRule?
 #else
             InlineCommentRule
@@ -107,7 +107,7 @@ namespace H5
         { get; set; }
 
         public
-#if H5_COMPILER
+#if TRANSPOSE_COMPILER
             ExternalCastRule?
 #else
             ExternalCastRule
@@ -115,12 +115,12 @@ namespace H5
         ExternalCast
         { get; set; }
 
-#if H5_COMPILER
+#if TRANSPOSE_COMPILER
         public CompilerRuleLevel Level { get; set; }
 #endif
     }
 
-#if !H5_COMPILER
+#if !TRANSPOSE_COMPILER
     [NonScriptable]
 #endif
     public enum LambdaRule
@@ -129,7 +129,7 @@ namespace H5
         Plain = 1
     }
 
-#if !H5_COMPILER
+#if !TRANSPOSE_COMPILER
     [NonScriptable]
 #endif
     public enum BoxingRule
@@ -138,7 +138,7 @@ namespace H5
         Plain = 1
     }
 
-#if !H5_COMPILER
+#if !TRANSPOSE_COMPILER
     [NonScriptable]
 #endif
     public enum ArrayIndexRule
@@ -147,7 +147,7 @@ namespace H5
         Plain = 1
     }
 
-#if !H5_COMPILER
+#if !TRANSPOSE_COMPILER
     [NonScriptable]
 #endif
     public enum IntegerRule
@@ -156,7 +156,7 @@ namespace H5
         Plain = 1
     }
 
-#if !H5_COMPILER
+#if !TRANSPOSE_COMPILER
     [NonScriptable]
 #endif
     public enum AnonymousTypeRule
@@ -165,7 +165,7 @@ namespace H5
         Plain = 1
     }
 
-#if !H5_COMPILER
+#if !TRANSPOSE_COMPILER
     [NonScriptable]
 #endif
     public enum AutoPropertyRule
@@ -174,7 +174,7 @@ namespace H5
         Plain = 1
     }
 
-#if !H5_COMPILER
+#if !TRANSPOSE_COMPILER
     [NonScriptable]
 #endif
     public enum InlineCommentRule
@@ -183,7 +183,7 @@ namespace H5
         Plain = 1
     }
 
-#if !H5_COMPILER
+#if !TRANSPOSE_COMPILER
     [NonScriptable]
 #endif
     public enum ExternalCastRule

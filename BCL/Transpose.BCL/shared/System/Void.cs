@@ -10,7 +10,7 @@
 namespace System
 {
     // This class represents the void return type
-    [H5.IgnoreCast]
+    [Transpose.IgnoreCast]
     public struct Void
     {
     }

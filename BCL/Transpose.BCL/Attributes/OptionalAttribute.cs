@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace H5
+namespace Transpose
 {
     /// <summary>
     /// Attribute modifies the generated .d.ts to include the TypeScript ? optional modifier.

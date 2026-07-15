@@ -1,7 +1,7 @@
-// Original: H5/H5/Attributes/ReflectableAttribute.cs
+// Original: Transpose/Transpose/Attributes/ReflectableAttribute.cs
 using System;
 
-namespace H5
+namespace Transpose
 {
     [AttributeUsage(AttributeTargets.All, AllowMultiple = true)]
     public sealed class ReflectableAttribute : Attribute

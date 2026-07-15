@@ -3,11 +3,11 @@
     /// <summary>
     /// Delimits a section of a one-dimensional array.
     /// </summary>
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.External]
-    [H5.IgnoreGeneric]
-    [H5.Name("System.ArraySegment")]
-    [H5.Reflectable]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.External]
+    [Transpose.IgnoreGeneric]
+    [Transpose.Name("System.ArraySegment")]
+    [Transpose.Reflectable]
     public struct ArraySegment<T>
     {
         public extern ArraySegment(T[] array);
@@ -19,7 +19,7 @@
         /// </summary>
         public extern T[] Array
         {
-            [H5.Template("getArray()")]
+            [Transpose.Template("getArray()")]
             get;
         }
 
@@ -28,7 +28,7 @@
         /// </summary>
         public extern int Count
         {
-            [H5.Template("getCount()")]
+            [Transpose.Template("getCount()")]
             get;
         }
 
@@ -38,7 +38,7 @@
         /// </summary>
         public extern int Offset
         {
-            [H5.Template("getOffset()")]
+            [Transpose.Template("getOffset()")]
             get;
         }
     }

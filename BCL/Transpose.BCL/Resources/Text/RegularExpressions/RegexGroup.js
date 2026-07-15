@@ -1,4 +1,4 @@
-    H5.define("System.Text.RegularExpressions.Group", {
+    Transpose.define("System.Text.RegularExpressions.Group", {
         inherits: function () {
             return [System.Text.RegularExpressions.Capture];
         },

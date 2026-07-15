@@ -4,7 +4,7 @@
 
 namespace System.Runtime.InteropServices
 {
-    [H5.NonScriptable]
+    [Transpose.NonScriptable]
     [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, Inherited = false)]
     public sealed class StructLayoutAttribute : Attribute
     {

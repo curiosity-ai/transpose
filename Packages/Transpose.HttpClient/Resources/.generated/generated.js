@@ -1,4 +1,4 @@
-    H5.define("System.Net.Http.HttpMessageHandler", {
+    Transpose.define("System.Net.Http.HttpMessageHandler", {
         ctors: {
             ctor: function () {
                 this.$initialize();
@@ -6,7 +6,7 @@
         }
     });
 
-    H5.define("System.Net.Http.HttpContent", {
+    Transpose.define("System.Net.Http.HttpContent", {
         fields: {
             _request: null,
             _headers: null
@@ -38,18 +38,18 @@
                 return this._request.responseText;
             },
             ReadAsArrayBuffer: function () {
-                return H5.unbox(this._request.response);
+                return Transpose.unbox(this._request.response);
             },
             ReadAsBlob: function () {
-                return H5.unbox(this._request.response);
+                return Transpose.unbox(this._request.response);
             },
             ReadAsObjectLiteral: function (T) {
-                return H5.unbox(this._request.response);
+                return Transpose.unbox(this._request.response);
             }
         }
     });
 
-    H5.define("System.Net.Http.Headers.HttpHeaders", {
+    Transpose.define("System.Net.Http.Headers.HttpHeaders", {
         inherits: [System.Collections.Generic.IEnumerable$1(System.Collections.Generic.KeyValuePair$2(System.String,System.String))],
         fields: {
             _headerStore: null,
@@ -74,7 +74,7 @@
         methods: {
             Add: function (descriptor, value) {
                 //TODO: How to handle the case where we override something?
-                if (H5.is(this._request, System.Object)) {
+                if (Transpose.is(this._request, System.Object)) {
                     this._request.setRequestHeader(descriptor, value);
                 } else {
                     if (this._headerStore == null) {
@@ -90,17 +90,17 @@
                 return this._headerStore != null && this._headerStore.containsKey(descriptor);
             },
             GetHeaderString: function (descriptor) {
-                if (H5.is(this._request, System.Object)) {
+                if (Transpose.is(this._request, System.Object)) {
                     return this._request.getResponseHeader(descriptor);
                 }
-                if (H5.is(this._headerStore, System.Object)) {
+                if (Transpose.is(this._headerStore, System.Object)) {
                     var val = { };
                     return this._headerStore.tryGetValue(descriptor, val) ? val.v : "";
                 }
                 return "";
             },
             GetEnumerator: function () {
-                return this._headerStore != null && this._headerStore.Count > 0 ? this.GetEnumeratorCore() : H5.getEnumerator(H5.cast(System.Array.init([], System.Collections.Generic.KeyValuePair$2(System.String,System.String)), System.Collections.Generic.IEnumerable$1(System.Collections.Generic.KeyValuePair$2(System.String,System.String))), System.Collections.Generic.KeyValuePair$2(System.String,System.String));
+                return this._headerStore != null && this._headerStore.Count > 0 ? this.GetEnumeratorCore() : Transpose.getEnumerator(Transpose.cast(System.Array.init([], System.Collections.Generic.KeyValuePair$2(System.String,System.String)), System.Collections.Generic.IEnumerable$1(System.Collections.Generic.KeyValuePair$2(System.String,System.String))), System.Collections.Generic.KeyValuePair$2(System.String,System.String));
             },
             System$Collections$IEnumerable$GetEnumerator: function () {
                 return this.GetEnumerator();
@@ -113,12 +113,12 @@
                     header,
                     $ae;
 
-                var $en = new (H5.GeneratorEnumerator$1(System.Collections.Generic.KeyValuePair$2(System.String,System.String)))(H5.fn.bind(this, function () {
+                var $en = new (Transpose.GeneratorEnumerator$1(System.Collections.Generic.KeyValuePair$2(System.String,System.String)))(Transpose.fn.bind(this, function () {
                     try {
                         for (;;) {
                             switch ($s) {
                                 case 0: {
-                                    $t = H5.getEnumerator(this._headerStore);
+                                    $t = Transpose.getEnumerator(this._headerStore);
                                         $s = 1;
                                         continue;
                                 }
@@ -175,14 +175,14 @@
             },
             AddHeaders: function (sourceHeaders) {
                 var $t;
-                $t = H5.getEnumerator(sourceHeaders);
+                $t = Transpose.getEnumerator(sourceHeaders);
                 try {
                     while ($t.moveNext()) {
                         var kv = $t.Current;
                         this.Add(kv.key, kv.value);
                     }
                 } finally {
-                    if (H5.is($t, System.IDisposable)) {
+                    if (Transpose.is($t, System.IDisposable)) {
                         $t.System$IDisposable$Dispose();
                     }
                 }
@@ -190,7 +190,7 @@
         }
     });
 
-    H5.define("System.Net.Http.HttpMessageInvoker", {
+    Transpose.define("System.Net.Http.HttpMessageInvoker", {
         inherits: [System.IDisposable],
         fields: {
             _handler: null
@@ -217,7 +217,7 @@
         }
     });
 
-    H5.define("System.Net.Http.HttpMethod", {
+    Transpose.define("System.Net.Http.HttpMethod", {
         inherits: function () { return [System.IEquatable$1(System.Net.Http.HttpMethod)]; },
         statics: {
             fields: {
@@ -286,7 +286,7 @@
             },
             methods: {
                 op_Equality: function (left, right) {
-                    return System.Net.Http.HttpMethod.op_Equality(left, null) || System.Net.Http.HttpMethod.op_Equality(right, null) ? H5.referenceEquals(left, right) : left.equalsT(right);
+                    return System.Net.Http.HttpMethod.op_Equality(left, null) || System.Net.Http.HttpMethod.op_Equality(right, null) ? Transpose.referenceEquals(left, right) : left.equalsT(right);
                 },
                 op_Inequality: function (left, right) {
                     return !(System.Net.Http.HttpMethod.op_Equality(left, right));
@@ -305,7 +305,7 @@
             },
             MustHaveRequestBody: {
                 get: function () {
-                    return !H5.referenceEquals(this, System.Net.Http.HttpMethod.Get) && !H5.referenceEquals(this, System.Net.Http.HttpMethod.Head) && !H5.referenceEquals(this, System.Net.Http.HttpMethod.Options) && !H5.referenceEquals(this, System.Net.Http.HttpMethod.Delete);
+                    return !Transpose.referenceEquals(this, System.Net.Http.HttpMethod.Get) && !Transpose.referenceEquals(this, System.Net.Http.HttpMethod.Head) && !Transpose.referenceEquals(this, System.Net.Http.HttpMethod.Options) && !Transpose.referenceEquals(this, System.Net.Http.HttpMethod.Delete);
                 }
             }
         },
@@ -325,7 +325,7 @@
                 return System.String.equals(this._method, other._method, 5);
             },
             equals: function (obj) {
-                return this.equalsT(H5.as(obj, System.Net.Http.HttpMethod));
+                return this.equalsT(Transpose.as(obj, System.Net.Http.HttpMethod));
             },
             getHashCode: function () {
                 if (this._hashcode === 0) {
@@ -340,7 +340,7 @@
         }
     });
 
-    H5.define("System.Net.Http.HttpParseResult", {
+    Transpose.define("System.Net.Http.HttpParseResult", {
         $kind: "enum",
         statics: {
             fields: {
@@ -351,7 +351,7 @@
         }
     });
 
-    H5.define("System.Net.Http.HttpRequestException", {
+    Transpose.define("System.Net.Http.HttpRequestException", {
         inherits: [System.Exception],
         props: {
             StatusCode: null
@@ -377,7 +377,7 @@
         }
     });
 
-    H5.define("System.Net.Http.HttpRequestMessage", {
+    Transpose.define("System.Net.Http.HttpRequestMessage", {
         inherits: [System.IDisposable],
         statics: {
             fields: {
@@ -522,21 +522,21 @@
             },
             CheckDisposed: function () {
                 if (this._disposed) {
-                    throw new System.ObjectDisposedException.$ctor1(H5.getTypeName(H5.getType(this)));
+                    throw new System.ObjectDisposedException.$ctor1(Transpose.getTypeName(Transpose.getType(this)));
                 }
             }
         }
     });
 
-    H5.ns("System.Net.Http.HttpRequestMessage", $asm.$);
+    Transpose.ns("System.Net.Http.HttpRequestMessage", $asm.$);
 
-    H5.apply($asm.$.System.Net.Http.HttpRequestMessage, {
+    Transpose.apply($asm.$.System.Net.Http.HttpRequestMessage, {
         f1: function () {
             throw new System.ArgumentNullException.$ctor1("method");
         }
     });
 
-    H5.define("System.Net.Http.HttpRequestOptions", {
+    Transpose.define("System.Net.Http.HttpRequestOptions", {
         inherits: [System.Collections.Generic.IDictionary$2(System.String,System.Object)],
         props: {
             Options: null,
@@ -557,7 +557,7 @@
             },
             System$Collections$Generic$ICollection$1$System$Collections$Generic$KeyValuePair$2$System$String$System$Object$IsReadOnly: {
                 get: function () {
-                    return System.Array.getIsReadOnly(H5.cast(this.Options, System.Collections.Generic.IDictionary$2(System.String,System.Object)), System.Collections.Generic.KeyValuePair$2(System.String,System.Object));
+                    return System.Array.getIsReadOnly(Transpose.cast(this.Options, System.Collections.Generic.IDictionary$2(System.String,System.Object)), System.Collections.Generic.KeyValuePair$2(System.String,System.Object));
                 }
             }
         },
@@ -581,31 +581,31 @@
                 this.Options.add(key, value);
             },
             System$Collections$Generic$ICollection$1$System$Collections$Generic$KeyValuePair$2$System$String$System$Object$add: function (item) {
-                System.Array.add(H5.cast(this.Options, System.Collections.Generic.IDictionary$2(System.String,System.Object)), item, System.Collections.Generic.KeyValuePair$2(System.String,System.Object));
+                System.Array.add(Transpose.cast(this.Options, System.Collections.Generic.IDictionary$2(System.String,System.Object)), item, System.Collections.Generic.KeyValuePair$2(System.String,System.Object));
             },
             System$Collections$Generic$ICollection$1$System$Collections$Generic$KeyValuePair$2$System$String$System$Object$clear: function () {
                 this.Options.clear();
             },
             System$Collections$Generic$ICollection$1$System$Collections$Generic$KeyValuePair$2$System$String$System$Object$contains: function (item) {
-                return System.Array.contains(H5.cast(this.Options, System.Collections.Generic.IDictionary$2(System.String,System.Object)), item, System.Collections.Generic.KeyValuePair$2(System.String,System.Object));
+                return System.Array.contains(Transpose.cast(this.Options, System.Collections.Generic.IDictionary$2(System.String,System.Object)), item, System.Collections.Generic.KeyValuePair$2(System.String,System.Object));
             },
             System$Collections$Generic$IDictionary$2$System$String$System$Object$containsKey: function (key) {
                 return this.Options.containsKey(key);
             },
             System$Collections$Generic$ICollection$1$System$Collections$Generic$KeyValuePair$2$System$String$System$Object$copyTo: function (array, arrayIndex) {
-                System.Array.copyTo(H5.cast(this.Options, System.Collections.Generic.IDictionary$2(System.String,System.Object)), array, arrayIndex, System.Collections.Generic.KeyValuePair$2(System.String,System.Object));
+                System.Array.copyTo(Transpose.cast(this.Options, System.Collections.Generic.IDictionary$2(System.String,System.Object)), array, arrayIndex, System.Collections.Generic.KeyValuePair$2(System.String,System.Object));
             },
             System$Collections$Generic$IEnumerable$1$System$Collections$Generic$KeyValuePair$2$System$String$System$Object$GetEnumerator: function () {
                 return this.Options.GetEnumerator().$clone();
             },
             System$Collections$IEnumerable$GetEnumerator: function () {
-                return H5.getEnumerator(H5.cast(this.Options, System.Collections.IEnumerable));
+                return Transpose.getEnumerator(Transpose.cast(this.Options, System.Collections.IEnumerable));
             },
             System$Collections$Generic$IDictionary$2$System$String$System$Object$remove: function (key) {
                 return this.Options.remove(key);
             },
             System$Collections$Generic$ICollection$1$System$Collections$Generic$KeyValuePair$2$System$String$System$Object$remove: function (item) {
-                return System.Array.remove(H5.cast(this.Options, System.Collections.Generic.IDictionary$2(System.String,System.Object)), item, System.Collections.Generic.KeyValuePair$2(System.String,System.Object));
+                return System.Array.remove(Transpose.cast(this.Options, System.Collections.Generic.IDictionary$2(System.String,System.Object)), item, System.Collections.Generic.KeyValuePair$2(System.String,System.Object));
             },
             System$Collections$Generic$IDictionary$2$System$String$System$Object$tryGetValue: function (key, value) {
                 return this.Options.tryGetValue(key, value);
@@ -613,12 +613,12 @@
             TryGetValue: function (TValue, key, value) {
                 var _value = { };
                 var tvalue;
-                if (this.Options.tryGetValue(key.Key, _value) && ((tvalue = H5.as(_value.v, TValue))) != null) {
+                if (this.Options.tryGetValue(key.Key, _value) && ((tvalue = Transpose.as(_value.v, TValue))) != null) {
                     value.v = tvalue;
                     return true;
                 }
 
-                value.v = H5.getDefaultValue(TValue);
+                value.v = Transpose.getDefaultValue(TValue);
                 return false;
             },
             Set: function (TValue, key, value) {
@@ -627,7 +627,7 @@
         }
     });
 
-    H5.define("System.Net.Http.HttpRequestOptionsKey$1", function (TValue) { return {
+    Transpose.define("System.Net.Http.HttpRequestOptionsKey$1", function (TValue) { return {
         $kind: "struct",
         statics: {
             methods: {
@@ -648,20 +648,20 @@
         },
         methods: {
             getHashCode: function () {
-                var h = H5.addHash([8758703446, this.Key]);
+                var h = Transpose.addHash([8758703446, this.Key]);
                 return h;
             },
             equals: function (o) {
-                if (!H5.is(o, System.Net.Http.HttpRequestOptionsKey$1(TValue))) {
+                if (!Transpose.is(o, System.Net.Http.HttpRequestOptionsKey$1(TValue))) {
                     return false;
                 }
-                return H5.equals(this.Key, o.Key);
+                return Transpose.equals(this.Key, o.Key);
             },
             $clone: function (to) { return this; }
         }
     }; });
 
-    H5.define("System.Net.Http.HttpResponseMessage", {
+    Transpose.define("System.Net.Http.HttpResponseMessage", {
         inherits: [System.IDisposable],
         statics: {
             fields: {
@@ -770,14 +770,14 @@
             },
             EnsureSuccessStatusCode: function () {
                 if (!this.IsSuccessStatusCode) {
-                    throw new System.Net.Http.HttpRequestException.$ctor3(System.String.format("Response status code does not indicate success: {0} ({1}).", H5.box(this._statusCode, System.Int32), this.ReasonPhrase), null, this._statusCode);
+                    throw new System.Net.Http.HttpRequestException.$ctor3(System.String.format("Response status code does not indicate success: {0} ({1}).", Transpose.box(this._statusCode, System.Int32), this.ReasonPhrase), null, this._statusCode);
                 }
 
                 return this;
             },
             ContainsNewLineCharacter: function (value) {
                 var $t;
-                $t = H5.getEnumerator(value);
+                $t = Transpose.getEnumerator(value);
                 try {
                     while ($t.moveNext()) {
                         var character = $t.Current;
@@ -786,7 +786,7 @@
                         }
                     }
                 } finally {
-                    if (H5.is($t, System.IDisposable)) {
+                    if (Transpose.is($t, System.IDisposable)) {
                         $t.System$IDisposable$Dispose();
                     }
                 }
@@ -798,13 +798,13 @@
             },
             CheckDisposed: function () {
                 if (this._disposed) {
-                    throw new System.ObjectDisposedException.$ctor1(H5.getTypeName(H5.getType(this)));
+                    throw new System.ObjectDisposedException.$ctor1(Transpose.getTypeName(Transpose.getType(this)));
                 }
             }
         }
     });
 
-    H5.define("System.Net.HttpStatusCode", {
+    Transpose.define("System.Net.HttpStatusCode", {
         $kind: "enum",
         statics: {
             fields: {
@@ -878,7 +878,7 @@
         }
     });
 
-    H5.define("System.Net.HttpStatusDescription", {
+    Transpose.define("System.Net.HttpStatusDescription", {
         statics: {
             methods: {
                 Get$1: function (code) {
@@ -1014,7 +1014,7 @@
         }
     });
 
-    H5.define("System.Net.Http.BrowserHttpHandler", {
+    Transpose.define("System.Net.Http.BrowserHttpHandler", {
         inherits: [System.Net.Http.HttpMessageHandler],
         props: {
             AllowAutoRedirect: false,
@@ -1044,7 +1044,7 @@
                     stringContent, 
                     formContent, 
                     $ae, 
-                    $asyncBody = H5.fn.bind(this, function () {
+                    $asyncBody = Transpose.fn.bind(this, function () {
                         try {
                             for (;;) {
                                 $s = System.Array.min([0,1], $s);
@@ -1071,7 +1071,7 @@
 
                                         tcs = new System.Threading.Tasks.TaskCompletionSource();
 
-                                        requestObject.onreadystatechange = H5.fn.bind(this, function (e) {
+                                        requestObject.onreadystatechange = Transpose.fn.bind(this, function (e) {
                                             if (requestObject.readyState === 0) {
                                                 tcs.trySetCanceled();
                                                 tcs = null;
@@ -1082,7 +1082,7 @@
                                                 if (requestObject.status === 302) {
                                                     if (redirectCount > 0) {
                                                         redirectCount = (redirectCount - 1) | 0;
-                                                        System.Threading.Tasks.Task.run(H5.fn.bind(this, function () {
+                                                        System.Threading.Tasks.Task.run(Transpose.fn.bind(this, function () {
                                                             var $s = 0,
                                                                 $t1, 
                                                                 $tr1, 
@@ -1094,7 +1094,7 @@
                                                                 E, 
                                                                 $ae, 
                                                                 $ae1, 
-                                                                $asyncBody = H5.fn.bind(this, function () {
+                                                                $asyncBody = Transpose.fn.bind(this, function () {
                                                                     try {
                                                                         for (;;) {
                                                                             $s = System.Array.min([1,2,3,4], $s);
@@ -1163,11 +1163,11 @@
                                             }
                                         });
 
-                                        if (H5.is(request.Content, System.Object)) {
-                                            if (((stringContent = H5.as(request.Content, System.Net.Http.StringContent))) != null) {
+                                        if (Transpose.is(request.Content, System.Object)) {
+                                            if (((stringContent = Transpose.as(request.Content, System.Net.Http.StringContent))) != null) {
                                                 requestObject.send(stringContent.Content);
                                             } else {
-                                                if (((formContent = H5.as(request.Content, System.Net.Http.FormContent))) != null) {
+                                                if (((formContent = Transpose.as(request.Content, System.Net.Http.FormContent))) != null) {
                                                     requestObject.send(formContent.Content);
                                                 }
                                             }
@@ -1206,7 +1206,7 @@
         }
     });
 
-    H5.define("System.Net.Http.BrowserHttpHandler.BrowserHttpContent", {
+    Transpose.define("System.Net.Http.BrowserHttpHandler.BrowserHttpContent", {
         inherits: [System.Net.Http.HttpContent],
         $kind: "nested class",
         ctors: {
@@ -1217,11 +1217,11 @@
         }
     });
 
-    H5.define("System.Net.Http.EmptyContent", {
+    Transpose.define("System.Net.Http.EmptyContent", {
         inherits: [System.Net.Http.HttpContent]
     });
 
-    H5.define("System.Net.Http.FormContent", {
+    Transpose.define("System.Net.Http.FormContent", {
         inherits: [System.Net.Http.HttpContent],
         props: {
             Content: null
@@ -1235,7 +1235,7 @@
         }
     });
 
-    H5.define("System.Net.Http.Headers.HttpContentHeaders", {
+    Transpose.define("System.Net.Http.Headers.HttpContentHeaders", {
         inherits: [System.Net.Http.Headers.HttpHeaders],
         fields: {
             _parent: null
@@ -1249,7 +1249,7 @@
         }
     });
 
-    H5.define("System.Net.Http.Headers.HttpRequestHeaders", {
+    Transpose.define("System.Net.Http.Headers.HttpRequestHeaders", {
         inherits: [System.Net.Http.Headers.HttpHeaders],
         ctors: {
             ctor: function (request) {
@@ -1264,7 +1264,7 @@
         }
     });
 
-    H5.define("System.Net.Http.Headers.HttpResponseHeaders", {
+    Transpose.define("System.Net.Http.Headers.HttpResponseHeaders", {
         inherits: [System.Net.Http.Headers.HttpHeaders],
         ctors: {
             ctor: function (request) {
@@ -1279,7 +1279,7 @@
         }
     });
 
-    H5.define("System.Net.Http.HttpClient", {
+    Transpose.define("System.Net.Http.HttpClient", {
         inherits: [System.Net.Http.HttpMessageInvoker],
         statics: {
             fields: {
@@ -1301,7 +1301,7 @@
             },
             methods: {
                 IsAbsoluteUri: function (uri) {
-                    return System.Net.Http.HttpClient._absoluteUrl.isMatch(H5.toString(uri));
+                    return System.Net.Http.HttpClient._absoluteUrl.isMatch(Transpose.toString(uri));
                 },
                 ThrowForNullResponse: function (response) {
                     if (response == null) {
@@ -1346,7 +1346,7 @@
                 },
                 set: function (value) {
                     // It's OK to not have a base address specified, but if one is, it needs to be absolute.
-                    if (H5.is(value, System.Object) && !System.Net.Http.HttpClient.IsAbsoluteUri(value)) {
+                    if (Transpose.is(value, System.Object) && !System.Net.Http.HttpClient.IsAbsoluteUri(value)) {
                         throw new System.ArgumentException.$ctor3("The base address must be an absolute URI.", "value");
                     }
 
@@ -1412,7 +1412,7 @@
                     response, 
                     $ae, 
                     $ae1, 
-                    $asyncBody = H5.fn.bind(this, function () {
+                    $asyncBody = Transpose.fn.bind(this, function () {
                         try {
                             for (;;) {
                                 $s = System.Array.min([0,1,2,3,4], $s);
@@ -1421,7 +1421,7 @@
                                         cts = { };
                                         disposeCts = { };
                                         pendingRequestsCts = { };
-                                        H5.Deconstruct(this.PrepareCancellationTokenSource(cancellationToken).$clone(), cts, disposeCts, pendingRequestsCts);
+                                        Transpose.Deconstruct(this.PrepareCancellationTokenSource(cancellationToken).$clone(), cts, disposeCts, pendingRequestsCts);
                                         response = null;
                                         $s = 1;
                                         continue;
@@ -1455,7 +1455,7 @@
                                         } else if ($ae) {
                                             $tcs.setException($ae);
                                             return;
-                                        } else if (H5.isDefined($rv)) {
+                                        } else if (Transpose.isDefined($rv)) {
                                             $tcs.setResult($rv);
                                             return;
                                         }
@@ -1516,7 +1516,7 @@
                     response, 
                     $ae, 
                     $ae1, 
-                    $asyncBody = H5.fn.bind(this, function () {
+                    $asyncBody = Transpose.fn.bind(this, function () {
                         try {
                             for (;;) {
                                 $s = System.Array.min([0,1,2,3,4], $s);
@@ -1525,7 +1525,7 @@
                                         cts = { };
                                         disposeCts = { };
                                         pendingRequestsCts = { };
-                                        H5.Deconstruct(this.PrepareCancellationTokenSource(cancellationToken).$clone(), cts, disposeCts, pendingRequestsCts);
+                                        Transpose.Deconstruct(this.PrepareCancellationTokenSource(cancellationToken).$clone(), cts, disposeCts, pendingRequestsCts);
                                         response = null;
                                         $s = 1;
                                         continue;
@@ -1559,7 +1559,7 @@
                                         } else if ($ae) {
                                             $tcs.setException($ae);
                                             return;
-                                        } else if (H5.isDefined($rv)) {
+                                        } else if (Transpose.isDefined($rv)) {
                                             $tcs.setResult($rv);
                                             return;
                                         }
@@ -1620,7 +1620,7 @@
                     response, 
                     $ae, 
                     $ae1, 
-                    $asyncBody = H5.fn.bind(this, function () {
+                    $asyncBody = Transpose.fn.bind(this, function () {
                         try {
                             for (;;) {
                                 $s = System.Array.min([0,1,2,3,4], $s);
@@ -1629,7 +1629,7 @@
                                         cts = { };
                                         disposeCts = { };
                                         pendingRequestsCts = { };
-                                        H5.Deconstruct(this.PrepareCancellationTokenSource(cancellationToken).$clone(), cts, disposeCts, pendingRequestsCts);
+                                        Transpose.Deconstruct(this.PrepareCancellationTokenSource(cancellationToken).$clone(), cts, disposeCts, pendingRequestsCts);
                                         response = null;
                                         $s = 1;
                                         continue;
@@ -1663,7 +1663,7 @@
                                         } else if ($ae) {
                                             $tcs.setException($ae);
                                             return;
-                                        } else if (H5.isDefined($rv)) {
+                                        } else if (Transpose.isDefined($rv)) {
                                             $tcs.setResult($rv);
                                             return;
                                         }
@@ -1724,7 +1724,7 @@
                     response, 
                     $ae, 
                     $ae1, 
-                    $asyncBody = H5.fn.bind(this, function () {
+                    $asyncBody = Transpose.fn.bind(this, function () {
                         try {
                             for (;;) {
                                 $s = System.Array.min([0,1,2,3,4], $s);
@@ -1733,7 +1733,7 @@
                                         cts = { };
                                         disposeCts = { };
                                         pendingRequestsCts = { };
-                                        H5.Deconstruct(this.PrepareCancellationTokenSource(cancellationToken).$clone(), cts, disposeCts, pendingRequestsCts);
+                                        Transpose.Deconstruct(this.PrepareCancellationTokenSource(cancellationToken).$clone(), cts, disposeCts, pendingRequestsCts);
                                         response = null;
                                         $s = 1;
                                         continue;
@@ -1767,7 +1767,7 @@
                                         } else if ($ae) {
                                             $tcs.setException($ae);
                                             return;
-                                        } else if (H5.isDefined($rv)) {
+                                        } else if (Transpose.isDefined($rv)) {
                                             $tcs.setResult($rv);
                                             return;
                                         }
@@ -1874,8 +1874,8 @@
                 var cts = { };
                 var disposeCts = { };
                 var pendingRequestsCts = { };
-                H5.Deconstruct(this.PrepareCancellationTokenSource(cancellationToken).$clone(), cts, disposeCts, pendingRequestsCts);
-                Core = H5.fn.bind(this, function () {
+                Transpose.Deconstruct(this.PrepareCancellationTokenSource(cancellationToken).$clone(), cts, disposeCts, pendingRequestsCts);
+                Core = Transpose.fn.bind(this, function () {
                     var $s = 0,
                         $t1, 
                         $tr1, 
@@ -1885,7 +1885,7 @@
                         response, 
                         $ae, 
                         $ae1, 
-                        $asyncBody = H5.fn.bind(this, function () {
+                        $asyncBody = Transpose.fn.bind(this, function () {
                             try {
                                 for (;;) {
                                     $s = System.Array.min([1,2,3,4], $s);
@@ -1918,7 +1918,7 @@
                                             } else if ($ae) {
                                                 $tcs.setException($ae);
                                                 return;
-                                            } else if (H5.isDefined($rv)) {
+                                            } else if (Transpose.isDefined($rv)) {
                                                 $tcs.setResult($rv);
                                                 return;
                                             }
@@ -2006,7 +2006,7 @@
             },
             CheckDisposed: function () {
                 if (this._disposed) {
-                    throw new System.ObjectDisposedException.$ctor1(H5.getTypeName(H5.getType(this)));
+                    throw new System.ObjectDisposedException.$ctor1(Transpose.getTypeName(Transpose.getType(this)));
                 }
             },
             PrepareRequestMessage: function (request) {
@@ -2022,7 +2022,7 @@
                         if (System.Uri.equals(this._baseAddress, null)) {
                             throw new System.InvalidOperationException.$ctor1("An invalid request URI was provided. Either the request URI must be an absolute URI or BaseAddress must be set.");
                         } else {
-                            requestUri = new System.Uri((H5.toString(this._baseAddress) || "") + (H5.toString(request.RequestUri) || ""));
+                            requestUri = new System.Uri((Transpose.toString(this._baseAddress) || "") + (Transpose.toString(request.RequestUri) || ""));
                         }
                     }
                 }
@@ -2071,7 +2071,7 @@
         }
     });
 
-    H5.define("System.Net.Http.HttpClientHandler", {
+    Transpose.define("System.Net.Http.HttpClientHandler", {
         inherits: [System.Net.Http.HttpMessageHandler],
         fields: {
             _underlyingHandler: null
@@ -2111,7 +2111,7 @@
         }
     });
 
-    H5.define("System.Net.Http.StringContent", {
+    Transpose.define("System.Net.Http.StringContent", {
         inherits: [System.Net.Http.HttpContent],
         statics: {
             fields: {

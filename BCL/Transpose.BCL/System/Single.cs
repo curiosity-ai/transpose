@@ -1,61 +1,61 @@
 namespace System
 {
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.External]
-    [H5.Reflectable]
-    [H5.Constructor("Number")]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.External]
+    [Transpose.Reflectable]
+    [Transpose.Constructor("Number")]
     public struct Single : IComparable, IComparable<float>, IEquatable<float>, IFormattable
     {
         private extern Single(int i);
 
-        [H5.InlineConst]
+        [Transpose.InlineConst]
         public const float MaxValue = (float)3.40282346638528859e+38;
 
-        [H5.InlineConst]
+        [Transpose.InlineConst]
         public const float MinValue = (float)-3.40282346638528859e+38;
 
-        [H5.InlineConst]
+        [Transpose.InlineConst]
         public const float Epsilon = (float)1.4e-45;
 
-        [H5.Template("Number.NaN")]
+        [Transpose.Template("Number.NaN")]
         public const float NaN = 0f / 0f;
 
-        [H5.Template("Number.NEGATIVE_INFINITY")]
+        [Transpose.Template("Number.NEGATIVE_INFINITY")]
         public const float NegativeInfinity = -1f / 0f;
 
-        [H5.Template("Number.POSITIVE_INFINITY")]
+        [Transpose.Template("Number.POSITIVE_INFINITY")]
         public const float PositiveInfinity = 1f / 0f;
 
-        [H5.Template("System.Single.format({this}, {format})")]
+        [Transpose.Template("System.Single.format({this}, {format})")]
         public extern string Format(string format);
 
-        [H5.Template("System.Single.format({this}, {format}, {provider})")]
+        [Transpose.Template("System.Single.format({this}, {format}, {provider})")]
         public extern string Format(string format, IFormatProvider provider);
 
         public extern string ToString(int radix);
 
-        [H5.Template("System.Single.format({this}, {format})")]
+        [Transpose.Template("System.Single.format({this}, {format})")]
         public extern string ToString(string format);
 
-        [H5.Template("System.Single.format({this}, {format}, {provider})")]
+        [Transpose.Template("System.Single.format({this}, {format}, {provider})")]
         public extern string ToString(string format, IFormatProvider provider);
 
-        [H5.Template(Fn = "System.Single.format")]
+        [Transpose.Template(Fn = "System.Single.format")]
         public override extern string ToString();
 
-        [H5.Template("System.Single.format({this}, \"G\", {provider})")]
+        [Transpose.Template("System.Single.format({this}, \"G\", {provider})")]
         public extern string ToString(IFormatProvider provider);
 
-        [H5.Template("System.Single.parse({s})")]
+        [Transpose.Template("System.Single.parse({s})")]
         public static extern float Parse(string s);
 
-        [H5.Template("System.Single.parse({s}, {provider})")]
+        [Transpose.Template("System.Single.parse({s}, {provider})")]
         public static extern float Parse(string s, IFormatProvider provider);
 
-        [H5.Template("System.Single.tryParse({s}, null, {result})")]
+        [Transpose.Template("System.Single.tryParse({s}, null, {result})")]
         public static extern bool TryParse(string s, out float result);
 
-        [H5.Template("System.Single.tryParse({s}, {provider}, {result})")]
+        [Transpose.Template("System.Single.tryParse({s}, {provider}, {result})")]
         public static extern bool TryParse(string s, IFormatProvider provider, out float result);
 
         public extern string ToExponential();
@@ -70,34 +70,34 @@ namespace System
 
         public extern string ToPrecision(int precision);
 
-        [H5.Template("({d} === Number.POSITIVE_INFINITY)")]
+        [Transpose.Template("({d} === Number.POSITIVE_INFINITY)")]
         public static extern bool IsPositiveInfinity(float d);
 
-        [H5.Template("({d} === Number.NEGATIVE_INFINITY)")]
+        [Transpose.Template("({d} === Number.NEGATIVE_INFINITY)")]
         public static extern bool IsNegativeInfinity(float d);
 
-        [H5.Template("(Math.abs({d}) === Number.POSITIVE_INFINITY)")]
+        [Transpose.Template("(Math.abs({d}) === Number.POSITIVE_INFINITY)")]
         public static extern bool IsInfinity(float d);
 
-        [H5.Template("isFinite({d})")]
+        [Transpose.Template("isFinite({d})")]
         public static extern bool IsFinite(float d);
 
-        [H5.Template("isNaN({d})")]
+        [Transpose.Template("isNaN({d})")]
         public static extern bool IsNaN(float d);
 
-        [H5.Template("H5.compare({this}, {other})")]
+        [Transpose.Template("Transpose.compare({this}, {other})")]
         public extern int CompareTo(float other);
 
-        [H5.Template("H5.compare({this}, {obj})")]
+        [Transpose.Template("Transpose.compare({this}, {obj})")]
         public extern int CompareTo(object obj);
 
-        [H5.Template("{this} === {other}")]
+        [Transpose.Template("{this} === {other}")]
         public extern bool Equals(float other);
 
-        [H5.Template("System.Single.equals({this}, {other})")]
+        [Transpose.Template("System.Single.equals({this}, {other})")]
         public override extern bool Equals(object other);
 
-        [H5.Template(Fn = "System.Single.getHashCode")]
+        [Transpose.Template(Fn = "System.Single.getHashCode")]
         public override extern int GetHashCode();
     }
 }

@@ -1,26 +1,26 @@
-﻿<Project Sdk="h5.Target/25.11.62725">
+﻿<Project Sdk="Transpose.Build.Target/25.11.62725">
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
-    <AssemblyName>H5.Newtonsoft.Json</AssemblyName>
+    <AssemblyName>Transpose.Newtonsoft.Json</AssemblyName>
     <DebugType>None</DebugType>
     <DebugSymbols>false</DebugSymbols>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="h5" Version="26.2.64514" />
+    <PackageReference Include="tps" Version="26.2.64514" />
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="..\..\logo\h5.png" Link="h5.png" Pack="true" PackagePath="\" />
+    <None Include="..\..\logo\transpose.png" Link="transpose.png" Pack="true" PackagePath="\" />
   </ItemGroup>
   
   <PropertyGroup>
     <PackageOutputPath>./nupkg</PackageOutputPath>
     <IncludeSymbols>false</IncludeSymbols>
-    <PackageIcon>h5.png</PackageIcon>
+    <PackageIcon>transpose.png</PackageIcon>
     <LangVersion>7.2</LangVersion>
-    <PackageId>h5.Newtonsoft.Json</PackageId>
+    <PackageId>tps.Newtonsoft.Json</PackageId>
     <Authors>Curiosity GmbH, Object.NET, Inc.</Authors>
     <Company>Curiosity GmbH, Object.NET, Inc.</Company>
     <Description>Json library used by the C# to JavaScript compiler 🚀</Description>
@@ -31,7 +31,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <IsPackable>true</IsPackable>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/curiosity-ai/h5</PackageProjectUrl>
+    <PackageProjectUrl>https://github.com/curiosity-ai/transpose</PackageProjectUrl>
   </PropertyGroup>
 
 </Project>

@@ -1,10 +1,10 @@
 using System;
 
-namespace H5
+namespace Transpose
 {
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
     [External]
-    [Name("H5.Validation")]
+    [Name("Transpose.Validation")]
     public sealed class Validation
     {
         public static extern bool IsNull(object value);

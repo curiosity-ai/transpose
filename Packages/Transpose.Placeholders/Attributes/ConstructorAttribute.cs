@@ -1,7 +1,7 @@
-// Original: H5/H5/Attributes/ConstructorAttribute.cs
+// Original: Transpose/Transpose/Attributes/ConstructorAttribute.cs
 using System;
 
-namespace H5
+namespace Transpose
 {
     [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct)]
     public sealed class ConstructorAttribute : Attribute

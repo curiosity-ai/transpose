@@ -1,8 +1,8 @@
-H5.define("System.ValueType", {
+Transpose.define("System.ValueType", {
     statics: {
         methods: {
             $is: function (obj) {
-                return H5.Reflection.isValueType(H5.getType(obj));
+                return Transpose.Reflection.isValueType(Transpose.getType(obj));
             }
         }
     }

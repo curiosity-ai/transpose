@@ -4,10 +4,10 @@ namespace System.ComponentModel.DataAnnotations
     /// Sets the display column, the sort column, and the sort order for when a table is used as a parent table in FK
     /// relationships.
     /// </summary>
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
     [AttributeUsage(AttributeTargets.Class, Inherited = true, AllowMultiple = false)]
-    [H5.External]
-    [H5.NonScriptable]
+    [Transpose.External]
+    [Transpose.NonScriptable]
     public class DisplayColumnAttribute : Attribute
     {
         public extern DisplayColumnAttribute(string displayColumn);

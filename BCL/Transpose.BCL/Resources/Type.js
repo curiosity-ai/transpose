@@ -1,4 +1,4 @@
-﻿H5.define("System.Type", {
+﻿Transpose.define("System.Type", {
 
     statics: {
         $is: function (instance) {

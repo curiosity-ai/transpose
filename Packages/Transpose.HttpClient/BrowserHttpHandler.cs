@@ -6,8 +6,8 @@ using System.IO;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
-using static H5.Core.dom;
-using static H5.Core.es5;
+using static Transpose.Core.dom;
+using static Transpose.Core.es5;
 
 namespace System.Net.Http
 {

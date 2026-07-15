@@ -1,20 +1,20 @@
 namespace System.Collections
 {
-    [H5.External]
-    [H5.Convention(Target = H5.ConventionTarget.Member, Member = H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.Reflectable]
-    public interface ICollection : IEnumerable, H5.IH5Class
+    [Transpose.External]
+    [Transpose.Convention(Target = Transpose.ConventionTarget.Member, Member = Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.Reflectable]
+    public interface ICollection : IEnumerable, Transpose.ITransposeClass
     {
         /// <summary>
         /// Gets the number of elements contained in the ICollection.
         /// </summary>
         int Count
         {
-            [H5.Template("System.Array.getCount({this})")]
+            [Transpose.Template("System.Array.getCount({this})")]
             get;
         }
 
-        [H5.Template("System.Array.copyTo({this}, {array}, {arrayIndex})")]
+        [Transpose.Template("System.Array.copyTo({this}, {array}, {arrayIndex})")]
         void CopyTo(Array array, int arrayIndex);
 
         /// <summary>

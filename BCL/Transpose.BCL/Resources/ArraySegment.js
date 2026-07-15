@@ -1,4 +1,4 @@
-    H5.define("System.ArraySegment", {
+    Transpose.define("System.ArraySegment", {
         $kind: "struct",
 
         statics: {
@@ -24,7 +24,7 @@
 
             this.array = array;
 
-            if (H5.isNumber(offset)) {
+            if (Transpose.isNumber(offset)) {
                 if (offset < 0) {
                     throw new System.ArgumentOutOfRangeException.$ctor1("offset");
                 }
@@ -34,7 +34,7 @@
                 this.offset = 0;
             }
 
-            if (H5.isNumber(count)) {
+            if (Transpose.isNumber(count)) {
                 if (count < 0) {
                     throw new System.ArgumentOutOfRangeException.$ctor1("count");
                 }
@@ -62,17 +62,17 @@
         },
 
         getHashCode: function () {
-            var h = H5.addHash([5322976039, this.array, this.count, this.offset]);
+            var h = Transpose.addHash([5322976039, this.array, this.count, this.offset]);
 
             return h;
         },
 
         equals: function (o) {
-            if (!H5.is(o, System.ArraySegment)) {
+            if (!Transpose.is(o, System.ArraySegment)) {
                 return false;
             }
 
-            return H5.equals(this.array, o.array) && H5.equals(this.count, o.count) && H5.equals(this.offset, o.offset);
+            return Transpose.equals(this.array, o.array) && Transpose.equals(this.count, o.count) && Transpose.equals(this.offset, o.offset);
         },
 
         $clone: function (to) { return this; }

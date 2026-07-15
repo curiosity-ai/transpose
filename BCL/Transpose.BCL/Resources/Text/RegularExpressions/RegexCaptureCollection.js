@@ -1,4 +1,4 @@
-    H5.define("System.Text.RegularExpressions.CaptureCollection", {
+    Transpose.define("System.Text.RegularExpressions.CaptureCollection", {
         inherits: function () {
             return [System.Collections.ICollection];
         },
@@ -107,7 +107,7 @@
         }
     });
 
-    H5.define("System.Text.RegularExpressions.CaptureEnumerator", {
+    Transpose.define("System.Text.RegularExpressions.CaptureEnumerator", {
         inherits: function () {
             return [System.Collections.IEnumerator];
         },

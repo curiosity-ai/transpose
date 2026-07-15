@@ -2,13 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 
-namespace H5
+namespace Transpose
 {
     [External]
-    [Name("H5")]
+    [Name("Transpose")]
     public static class Module
     {
-        [Template("H5.loadModule({type:module})")]
+        [Template("Transpose.loadModule({type:module})")]
         public static extern Task Load(params Type[] type);
     }
 }

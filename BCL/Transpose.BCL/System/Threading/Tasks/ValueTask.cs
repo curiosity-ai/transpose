@@ -2,9 +2,9 @@ using System.Runtime.CompilerServices;
 
 namespace System.Threading.Tasks
 {
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.External]
-    [H5.Reflectable]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.External]
+    [Transpose.Reflectable]
     public readonly struct ValueTask
     {
         public ValueTask(bool completedSynchronously)
@@ -22,9 +22,9 @@ namespace System.Threading.Tasks
         public TaskAwaiter GetAwaiter() => throw new NotImplementedException();
     }
 
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.External]
-    [H5.Reflectable]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.External]
+    [Transpose.Reflectable]
     public readonly struct ValueTask<TResult>
     {
         public ValueTask(TResult result)

@@ -3,10 +3,10 @@ namespace System.Globalization
     /// <summary>
     /// Provides information about a specific culture (called a locale for unmanaged code development). The information includes the names for the culture, the writing system, the calendar used, the sort order of strings, and formatting for dates and numbers.
     /// </summary>
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.External]
-    [H5.Reflectable]
-    public class CultureInfo : ICloneable, IFormatProvider, H5.IH5Class
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.External]
+    [Transpose.Reflectable]
+    public class CultureInfo : ICloneable, IFormatProvider, Transpose.ITransposeClass
     {
         /// <summary>
         /// Initializes a new instance of the CultureInfo class based on the culture specified by name.
@@ -19,7 +19,7 @@ namespace System.Globalization
         /// </summary>
         /// <param name="name">The name of a culture. name is not case-sensitive.</param>
         /// <returns>A read-only CultureInfo object.</returns>
-        [H5.Name("getCultureInfo")]
+        [Transpose.Name("getCultureInfo")]
         public static extern CultureInfo GetCultureInfo(string name);
 
         /// <summary>
@@ -27,7 +27,7 @@ namespace System.Globalization
         /// </summary>
         /// <param name="name">A predefined CultureInfo name or the name of an existing CultureInfo object. name is not case-sensitive.</param>
         /// <returns>A CultureInfo object</returns>
-        [H5.Name("getCultureInfo")]
+        [Transpose.Name("getCultureInfo")]
         public static extern CultureInfo CreateSpecificCulture(string name);
 
         public static extern CultureInfo[] GetCultures();
@@ -37,16 +37,16 @@ namespace System.Globalization
         /// </summary>
         public static extern CultureInfo CurrentCulture
         {
-            [H5.Template("{this}.getCurrentCulture()")]
+            [Transpose.Template("{this}.getCurrentCulture()")]
             get;
-            [H5.Template("{this}.setCurrentCulture({0})")]
+            [Transpose.Template("{this}.setCurrentCulture({0})")]
             set;
         }
 
         /// <summary>
         /// Gets or sets a DateTimeFormatInfo that defines the culturally appropriate format of displaying dates and times.
         /// </summary>
-        [H5.Convention(H5.Notation.CamelCase)]
+        [Transpose.Convention(Transpose.Notation.CamelCase)]
         public extern DateTimeFormatInfo DateTimeFormat
         {
             get;
@@ -56,7 +56,7 @@ namespace System.Globalization
         /// <summary>
         /// Gets the CultureInfo object that is culture-independent (invariant).
         /// </summary>
-        [H5.Convention(H5.Notation.CamelCase)]
+        [Transpose.Convention(Transpose.Notation.CamelCase)]
         public static extern CultureInfo InvariantCulture
         {
             get;
@@ -65,7 +65,7 @@ namespace System.Globalization
         /// <summary>
         /// Gets the culture name in the format languagecode2-country/regioncode2.
         /// </summary>
-        [H5.Convention(H5.Notation.CamelCase)]
+        [Transpose.Convention(Transpose.Notation.CamelCase)]
         public extern string Name
         {
             get;
@@ -74,7 +74,7 @@ namespace System.Globalization
         /// <summary>
         /// Gets the culture name in the format languagefull [country/regionfull] in English.
         /// </summary>
-        [H5.Convention(H5.Notation.CamelCase)]
+        [Transpose.Convention(Transpose.Notation.CamelCase)]
         public extern string EnglishName
         {
             get;
@@ -84,7 +84,7 @@ namespace System.Globalization
         /// <summary>
         /// Gets the culture name, consisting of the language, the country/region, and the optional script, that the culture is set to display.
         /// </summary>
-        [H5.Convention(H5.Notation.CamelCase)]
+        [Transpose.Convention(Transpose.Notation.CamelCase)]
         public extern string NativeName
         {
             get;
@@ -94,7 +94,7 @@ namespace System.Globalization
         /// <summary>
         /// Gets or sets a NumberFormatInfo that defines the culturally appropriate format of displaying numbers, currency, and percentage.
         /// </summary>
-        [H5.Convention(H5.Notation.CamelCase)]
+        [Transpose.Convention(Transpose.Notation.CamelCase)]
         public NumberFormatInfo NumberFormat
         {
             get;

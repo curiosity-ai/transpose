@@ -4,7 +4,7 @@
 
 namespace System.Runtime.InteropServices
 {
-    [H5.NonScriptable]
+    [Transpose.NonScriptable]
     [AttributeUsage(AttributeTargets.Assembly | AttributeTargets.Method, AllowMultiple = false)]
     public sealed class DefaultDllImportSearchPathsAttribute : Attribute
     {

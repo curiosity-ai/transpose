@@ -1,7 +1,7 @@
-<Project Sdk="h5.Target/25.11.62725">
+<Project Sdk="Transpose.Build.Target/25.11.62725">
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
-    <AssemblyName>H5.webgl2</AssemblyName>
+    <AssemblyName>Transpose.WebGL2</AssemblyName>
     <DebugType>None</DebugType>
     <DebugSymbols>false</DebugSymbols>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
@@ -13,23 +13,23 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="h5" Version="26.2.64514" />
-    <PackageReference Include="h5.core" Version="26.4.580" />
+    <PackageReference Include="tps" Version="26.2.64514" />
+    <PackageReference Include="tps.core" Version="26.4.580" />
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="..\..\..\logo\h5.png" Link="h5.png" Pack="true" PackagePath="\" />
+    <None Include="..\..\..\logo\transpose.png" Link="transpose.png" Pack="true" PackagePath="\" />
   </ItemGroup>
   
   <PropertyGroup>
     <PackageOutputPath>./nupkg</PackageOutputPath>
     <IncludeSymbols>false</IncludeSymbols>
-    <PackageIcon>h5.png</PackageIcon>
+    <PackageIcon>transpose.png</PackageIcon>
     <LangVersion>7.2</LangVersion>
-    <PackageId>h5.webgl2</PackageId>
+    <PackageId>tps.webgl2</PackageId>
     <Authors>Curiosity GmbH, Object.NET, Inc.</Authors>
     <Company>Curiosity GmbH, Object.NET, Inc.</Company>
-    <Description>WebGL2 support for H5, the C# to JavaScript compiler 🚀</Description>
+    <Description>WebGL2 support for Transpose, the C# to JavaScript compiler 🚀</Description>
     <Copyright>Copyright (c) 2008-2019, Object.NET, Inc. Copyright (c) 2019-2022, Curiosity GmbH. All rights reserved.</Copyright>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
     <Version>0.0.42</Version>
@@ -37,13 +37,13 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <IsPackable>true</IsPackable>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/curiosity-ai/h5</PackageProjectUrl>
+    <PackageProjectUrl>https://github.com/curiosity-ai/transpose</PackageProjectUrl>
   </PropertyGroup>
 
   <ItemGroup>
-    <AssemblyAttribute Include="H5.ExternalAttribute" />
-    <AssemblyAttribute Include="H5.ExternalInterfaceAttribute" />
-    <AssemblyAttribute Include="H5.VirtualAttribute" />
+    <AssemblyAttribute Include="Transpose.ExternalAttribute" />
+    <AssemblyAttribute Include="Transpose.ExternalInterfaceAttribute" />
+    <AssemblyAttribute Include="Transpose.VirtualAttribute" />
   </ItemGroup>
 
   <PropertyGroup>

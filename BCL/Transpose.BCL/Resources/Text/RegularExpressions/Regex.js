@@ -1,4 +1,4 @@
-    H5.define("System.Text.RegularExpressions.Regex", {
+    Transpose.define("System.Text.RegularExpressions.Regex", {
         statics: {
             _cacheSize: 15,
             _defaultMatchTimeout: System.TimeSpan.fromMilliseconds(-1),
@@ -35,11 +35,11 @@
             isMatch: function (input, pattern, options, matchTimeout) {
                 var scope = System.Text.RegularExpressions;
 
-                if (!H5.isDefined(options)) {
+                if (!Transpose.isDefined(options)) {
                     options = scope.RegexOptions.None;
                 }
 
-                if (!H5.isDefined(matchTimeout)) {
+                if (!Transpose.isDefined(matchTimeout)) {
                     matchTimeout = scope.Regex._defaultMatchTimeout;
                 }
 
@@ -51,11 +51,11 @@
             match: function (input, pattern, options, matchTimeout) {
                 var scope = System.Text.RegularExpressions;
 
-                if (!H5.isDefined(options)) {
+                if (!Transpose.isDefined(options)) {
                     options = scope.RegexOptions.None;
                 }
 
-                if (!H5.isDefined(matchTimeout)) {
+                if (!Transpose.isDefined(matchTimeout)) {
                     matchTimeout = scope.Regex._defaultMatchTimeout;
                 }
 
@@ -67,11 +67,11 @@
             matches: function (input, pattern, options, matchTimeout) {
                 var scope = System.Text.RegularExpressions;
 
-                if (!H5.isDefined(options)) {
+                if (!Transpose.isDefined(options)) {
                     options = scope.RegexOptions.None;
                 }
 
-                if (!H5.isDefined(matchTimeout)) {
+                if (!Transpose.isDefined(matchTimeout)) {
                     matchTimeout = scope.Regex._defaultMatchTimeout;
                 }
 
@@ -83,11 +83,11 @@
             replace: function (input, pattern, replacement, options, matchTimeout) {
                 var scope = System.Text.RegularExpressions;
 
-                if (!H5.isDefined(options)) {
+                if (!Transpose.isDefined(options)) {
                     options = scope.RegexOptions.None;
                 }
 
-                if (!H5.isDefined(matchTimeout)) {
+                if (!Transpose.isDefined(matchTimeout)) {
                     matchTimeout = scope.Regex._defaultMatchTimeout;
                 }
 
@@ -99,11 +99,11 @@
             split: function (input, pattern, options, matchTimeout) {
                 var scope = System.Text.RegularExpressions;
 
-                if (!H5.isDefined(options)) {
+                if (!Transpose.isDefined(options)) {
                     options = scope.RegexOptions.None;
                 }
 
-                if (!H5.isDefined(matchTimeout)) {
+                if (!Transpose.isDefined(matchTimeout)) {
                     matchTimeout = scope.Regex._defaultMatchTimeout;
                 }
 
@@ -130,15 +130,15 @@
         ctor: function (pattern, options, matchTimeout, useCache) {
             this.$initialize();
 
-            if (!H5.isDefined(options)) {
+            if (!Transpose.isDefined(options)) {
                 options = System.Text.RegularExpressions.RegexOptions.None;
             }
 
-            if (!H5.isDefined(matchTimeout)) {
+            if (!Transpose.isDefined(matchTimeout)) {
                 matchTimeout = System.TimeSpan.fromMilliseconds(-1);
             }
 
-            if (!H5.isDefined(useCache)) {
+            if (!Transpose.isDefined(useCache)) {
                 useCache = false;
             }
 
@@ -205,7 +205,7 @@
                 throw new System.ArgumentNullException.$ctor1("input");
             }
 
-            if (!H5.isDefined(startat)) {
+            if (!Transpose.isDefined(startat)) {
                 startat = this.getRightToLeft() ? input.length : 0;
             }
 
@@ -226,7 +226,7 @@
                 beginning = startat;
                 length = arg3;
                 startat = this.getRightToLeft() ? beginning + length : beginning;
-            } else if (!H5.isDefined(startat)) {
+            } else if (!Transpose.isDefined(startat)) {
                 startat = this.getRightToLeft() ? length : 0;
             }
 
@@ -238,7 +238,7 @@
                 throw new System.ArgumentNullException.$ctor1("input");
             }
 
-            if (!H5.isDefined(startat)) {
+            if (!Transpose.isDefined(startat)) {
                 startat = this.getRightToLeft() ? input.length : 0;
             }
 
@@ -362,11 +362,11 @@
                 throw new System.ArgumentNullException.$ctor1("input");
             }
 
-            if (!H5.isDefined(count)) {
+            if (!Transpose.isDefined(count)) {
                 count = -1;
             }
 
-            if (!H5.isDefined(startat)) {
+            if (!Transpose.isDefined(startat)) {
                 startat = this.getRightToLeft() ? input.length : 0;
             }
 
@@ -374,7 +374,7 @@
                 throw new System.ArgumentNullException.$ctor1("evaluator");
             }
 
-            if (H5.isFunction(evaluator)) {
+            if (Transpose.isFunction(evaluator)) {
                 return System.Text.RegularExpressions.RegexReplacement.replace(evaluator, this, input, count, startat);
             }
 
@@ -389,11 +389,11 @@
                 throw new System.ArgumentNullException.$ctor1("input");
             }
 
-            if (!H5.isDefined(count)) {
+            if (!Transpose.isDefined(count)) {
                 count = 0;
             }
 
-            if (!H5.isDefined(startat)) {
+            if (!Transpose.isDefined(startat)) {
                 startat = this.getRightToLeft() ? input.length : 0;
             }
 

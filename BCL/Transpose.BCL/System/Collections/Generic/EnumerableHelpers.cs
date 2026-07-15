@@ -5,7 +5,7 @@
 namespace System.Collections.Generic
 {
     /// <summary>Internal helper functions for working with enumerables.</summary>
-    [H5.Namespace("H5.Collections")]
+    [Transpose.Namespace("Transpose.Collections")]
     internal static class EnumerableHelpers
     {
         /// <summary>Converts an enumerable to an array using the same logic as does List{T}.</summary>

@@ -1,20 +1,20 @@
 namespace System
 {
-    [H5.External]
-    [H5.Convention(Target = H5.ConventionTarget.Member, Member = H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.Reflectable]
-    public interface IComparable : H5.IH5Class
+    [Transpose.External]
+    [Transpose.Convention(Target = Transpose.ConventionTarget.Member, Member = Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.Reflectable]
+    public interface IComparable : Transpose.ITransposeClass
     {
-        [H5.Template("H5.compare({this}, {obj})")]
+        [Transpose.Template("Transpose.compare({this}, {obj})")]
         int CompareTo(object obj);
     }
 
-    [H5.External]
-    [H5.Convention(Target = H5.ConventionTarget.Member, Member = H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.Reflectable]
-    public interface IComparable<in T> : H5.IH5Class
+    [Transpose.External]
+    [Transpose.Convention(Target = Transpose.ConventionTarget.Member, Member = Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.Reflectable]
+    public interface IComparable<in T> : Transpose.ITransposeClass
     {
-        [H5.Template("H5.compare({this}, {other}, false, {T})")]
+        [Transpose.Template("Transpose.compare({this}, {other}, false, {T})")]
         int CompareTo(T other);
     }
 }

@@ -1,16 +1,16 @@
 ﻿// Decompiled with JetBrains decompiler
-// Type: H5.dom
-// Assembly: H5.dom, Version=2.8.2.0, Culture=neutral, PublicKeyToken=null
+// Type: Transpose.dom
+// Assembly: Transpose.dom, Version=2.8.2.0, Culture=neutral, PublicKeyToken=null
 // MVID: 57CCBF73-D494-47BA-ACF8-95E65E795865
-// Assembly location: C:\work\curiosity\tesserae\Tesserae\bin\Debug\net461\H5.dom.dll
+// Assembly location: C:\work\curiosity\tesserae\Tesserae\bin\Debug\net461\Transpose.dom.dll
 
-using H5;
-using H5.Core;
+using Transpose;
+using Transpose.Core;
 using System;
 using System.Collections;
 using System.Collections.Generic;
 
-namespace H5.Core
+namespace Transpose.Core
 {
     public static partial class dom
     {
@@ -7081,7 +7081,7 @@ namespace H5.Core
 
         [CombinedClass]
         [FormerInterface]
-        public class SVGLengthList : IEnumerable<dom.SVGLength>, IEnumerable, IH5Class, IObject
+        public class SVGLengthList : IEnumerable<dom.SVGLength>, IEnumerable, ITransposeClass, IObject
         {
 
             public static dom.SVGLengthList prototype
@@ -7109,10 +7109,10 @@ namespace H5.Core
 
             public virtual extern dom.SVGLength replaceItem(dom.SVGLength newItem, uint index);
 
-            [Template("H5.getEnumerator({this}, {T})")]
+            [Template("Transpose.getEnumerator({this}, {T})")]
             extern IEnumerator<dom.SVGLength> IEnumerable<dom.SVGLength>.GetEnumerator();
 
-            [Template("H5.getEnumerator({this})")]
+            [Template("Transpose.getEnumerator({this})")]
             extern IEnumerator IEnumerable.GetEnumerator();
         }
 
@@ -7781,7 +7781,7 @@ namespace H5.Core
 
         [CombinedClass]
         [FormerInterface]
-        public class SVGNumberList : IEnumerable<dom.SVGNumber>, IEnumerable, IH5Class, IObject
+        public class SVGNumberList : IEnumerable<dom.SVGNumber>, IEnumerable, ITransposeClass, IObject
         {
 
             public static dom.SVGNumberList prototype
@@ -7809,10 +7809,10 @@ namespace H5.Core
 
             public virtual extern dom.SVGNumber replaceItem(dom.SVGNumber newItem, uint index);
 
-            [Template("H5.getEnumerator({this}, {T})")]
+            [Template("Transpose.getEnumerator({this}, {T})")]
             extern IEnumerator<dom.SVGNumber> IEnumerable<dom.SVGNumber>.GetEnumerator();
 
-            [Template("H5.getEnumerator({this})")]
+            [Template("Transpose.getEnumerator({this})")]
             extern IEnumerator IEnumerable.GetEnumerator();
         }
 
@@ -8782,7 +8782,7 @@ namespace H5.Core
 
         [CombinedClass]
         [FormerInterface]
-        public class SVGPathSegList : IEnumerable<dom.SVGPathSeg>, IEnumerable, IH5Class, IObject
+        public class SVGPathSegList : IEnumerable<dom.SVGPathSeg>, IEnumerable, ITransposeClass, IObject
         {
 
             public static dom.SVGPathSegList prototype
@@ -8810,10 +8810,10 @@ namespace H5.Core
 
             public virtual extern dom.SVGPathSeg replaceItem(dom.SVGPathSeg newItem, double index);
 
-            [Template("H5.getEnumerator({this}, {T})")]
+            [Template("Transpose.getEnumerator({this}, {T})")]
             extern IEnumerator<dom.SVGPathSeg> IEnumerable<dom.SVGPathSeg>.GetEnumerator();
 
-            [Template("H5.getEnumerator({this})")]
+            [Template("Transpose.getEnumerator({this})")]
             extern IEnumerator IEnumerable.GetEnumerator();
         }
 
@@ -9052,7 +9052,7 @@ namespace H5.Core
 
         [CombinedClass]
         [FormerInterface]
-        public class SVGPointList : IEnumerable<dom.SVGPoint>, IEnumerable, IH5Class, IObject
+        public class SVGPointList : IEnumerable<dom.SVGPoint>, IEnumerable, ITransposeClass, IObject
         {
 
             public static dom.SVGPointList prototype
@@ -9080,10 +9080,10 @@ namespace H5.Core
 
             public virtual extern dom.SVGPoint replaceItem(dom.SVGPoint newItem, uint index);
 
-            [Template("H5.getEnumerator({this}, {T})")]
+            [Template("Transpose.getEnumerator({this}, {T})")]
             extern IEnumerator<dom.SVGPoint> IEnumerable<dom.SVGPoint>.GetEnumerator();
 
-            [Template("H5.getEnumerator({this})")]
+            [Template("Transpose.getEnumerator({this})")]
             extern IEnumerator IEnumerable.GetEnumerator();
         }
 
@@ -10344,7 +10344,7 @@ namespace H5.Core
 
         [CombinedClass]
         [FormerInterface]
-        public class SVGStringList : IEnumerable<string>, IEnumerable, IH5Class, IObject
+        public class SVGStringList : IEnumerable<string>, IEnumerable, ITransposeClass, IObject
         {
 
             public static dom.SVGStringList prototype
@@ -10372,10 +10372,10 @@ namespace H5.Core
 
             public virtual extern string replaceItem(string newItem, uint index);
 
-            [Template("H5.getEnumerator({this}, {T})")]
+            [Template("Transpose.getEnumerator({this}, {T})")]
             extern IEnumerator<string> IEnumerable<string>.GetEnumerator();
 
-            [Template("H5.getEnumerator({this})")]
+            [Template("Transpose.getEnumerator({this})")]
             extern IEnumerator IEnumerable.GetEnumerator();
         }
 
@@ -11383,7 +11383,7 @@ namespace H5.Core
 
         [CombinedClass]
         [FormerInterface]
-        public class SVGTransformList : IEnumerable<dom.SVGTransform>, IEnumerable, IH5Class, IObject
+        public class SVGTransformList : IEnumerable<dom.SVGTransform>, IEnumerable, ITransposeClass, IObject
         {
 
             public static dom.SVGTransformList prototype
@@ -11417,10 +11417,10 @@ namespace H5.Core
 
             public virtual extern dom.SVGTransform replaceItem(dom.SVGTransform newItem, uint index);
 
-            [Template("H5.getEnumerator({this}, {T})")]
+            [Template("Transpose.getEnumerator({this}, {T})")]
             extern IEnumerator<dom.SVGTransform> IEnumerable<dom.SVGTransform>.GetEnumerator();
 
-            [Template("H5.getEnumerator({this})")]
+            [Template("Transpose.getEnumerator({this})")]
             extern IEnumerator IEnumerable.GetEnumerator();
         }
 

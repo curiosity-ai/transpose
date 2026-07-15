@@ -49,7 +49,7 @@ namespace System
             return resourceString;
         }
 
-        // TODO: Revised H5 [not required until InternalGetResourceString supported fully]
+        // TODO: Revised Transpose [not required until InternalGetResourceString supported fully]
         //private static List<string> _currentlyLoading;
         //private static int _infinitelyRecursingCount;
         //private static bool _resourceManagerInited = false;

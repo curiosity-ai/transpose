@@ -4,9 +4,9 @@ namespace System.Collections
     /// Represents a non-generic collection of objects that can be individually accessed
     /// by index.
     /// </summary>
-    [H5.External]
-    [H5.Convention(Target = H5.ConventionTarget.Member, Member = H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.Reflectable]
+    [Transpose.External]
+    [Transpose.Convention(Target = Transpose.ConventionTarget.Member, Member = Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.Reflectable]
     public interface IList : ICollection, IEnumerable
     {
         /// <summary>
@@ -24,12 +24,12 @@ namespace System.Collections
         /// <exception cref="System.NotSupportedException">
         /// The property is set and the System.Collections.IList is read-only.
         /// </exception>
-        [H5.Unbox(false)]
+        [Transpose.Unbox(false)]
         object this[int index]
         {
-            [H5.Template("System.Array.getItem({this}, {index})")]
+            [Transpose.Template("System.Array.getItem({this}, {index})")]
             get;
-            [H5.Template("System.Array.setItem({this}, {index}, {value})")]
+            [Transpose.Template("System.Array.setItem({this}, {index}, {value})")]
             set;
         }
 
@@ -41,7 +41,7 @@ namespace System.Collections
         /// </returns>
         bool IsReadOnly
         {
-            [H5.Template("System.Array.getIsReadOnly({this}, Object)")]
+            [Transpose.Template("System.Array.getIsReadOnly({this}, Object)")]
             get;
         }
 
@@ -53,7 +53,7 @@ namespace System.Collections
         /// </returns>
         bool IsFixedSize
         {
-            [H5.Template("System.Array.isFixedSize({this})")]
+            [Transpose.Template("System.Array.isFixedSize({this})")]
             get;
         }
 
@@ -71,8 +71,8 @@ namespace System.Collections
         /// The System.Collections.IList is read-only.-or- The System.Collections.IList has
         /// a fixed size.
         /// </exception>
-        [H5.Template("System.Array.add({this}, {value}, Object)")]
-        [H5.Unbox(false)]
+        [Transpose.Template("System.Array.add({this}, {value}, Object)")]
+        [Transpose.Unbox(false)]
         int Add(object value);
 
         /// <summary>
@@ -81,7 +81,7 @@ namespace System.Collections
         /// <exception cref="System.NotSupportedException">
         /// The System.Collections.IList is read-only.
         /// </exception>
-        [H5.Template("System.Array.clear({this}, Object)")]
+        [Transpose.Template("System.Array.clear({this}, Object)")]
         void Clear();
 
         /// <summary>
@@ -94,7 +94,7 @@ namespace System.Collections
         /// true if the System.Object is found in the System.Collections.IList; otherwise,
         /// false.
         /// </returns>
-        [H5.Template("System.Array.contains({this}, {value})")]
+        [Transpose.Template("System.Array.contains({this}, {value})")]
         bool Contains(object value);
 
         /// <summary>
@@ -106,7 +106,7 @@ namespace System.Collections
         /// <returns>
         /// The index of value if found in the list; otherwise, -1.
         /// </returns>
-        [H5.Template("System.Array.indexOf({this}, {value}, 0, null)")]
+        [Transpose.Template("System.Array.indexOf({this}, {value}, 0, null)")]
         int IndexOf(object value);
 
         /// <summary>
@@ -128,8 +128,8 @@ namespace System.Collections
         /// <exception cref="System.NullReferenceException">
         /// value is null reference in the System.Collections.IList.
         /// </exception>
-        [H5.Template("System.Array.insert({this}, {index}, {value}, Object)")]
-        [H5.Unbox(false)]
+        [Transpose.Template("System.Array.insert({this}, {index}, {value}, Object)")]
+        [Transpose.Unbox(false)]
         void Insert(int index, object value);
 
         /// <summary>
@@ -142,7 +142,7 @@ namespace System.Collections
         /// The System.Collections.IList is read-only.-or- The System.Collections.IList has
         /// a fixed size.
         /// </exception>
-        [H5.Template("System.Array.remove({this}, {value}, Object)")]
+        [Transpose.Template("System.Array.remove({this}, {value}, Object)")]
         void Remove(object value);
 
         /// <summary>
@@ -156,9 +156,9 @@ namespace System.Collections
         /// </exception>
         /// <exception cref="System.NotSupportedException">
         /// The System.Collections.IList is read-only.-or- The System.Collections.IList has
-        /// a fixed size.        [H5.Template("System.Array.removeAt({this}, {index})")]
+        /// a fixed size.        [Transpose.Template("System.Array.removeAt({this}, {index})")]
         /// </exception>
-        [H5.Template("System.Array.removeAt({this}, {index}, Object)")]
+        [Transpose.Template("System.Array.removeAt({this}, {index}, Object)")]
         void RemoveAt(int index);
     }
 }

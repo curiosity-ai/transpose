@@ -7,7 +7,7 @@
 
 using System;
 
-namespace H5.Core
+namespace Transpose.Core
 {
     [Scope]
     [Name("p2")]

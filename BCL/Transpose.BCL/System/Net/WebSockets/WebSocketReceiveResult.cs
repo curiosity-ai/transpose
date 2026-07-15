@@ -3,9 +3,9 @@
     /// <summary>
     /// An instance of this class represents the result of performing a single ReceiveAsync operation on a WebSocket.
     /// </summary>
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.External]
-    [H5.Reflectable]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.External]
+    [Transpose.Reflectable]
     public class WebSocketReceiveResult
     {
         public extern WebSocketReceiveResult(int count, WebSocketMessageType messageType, bool endOfMessage);
@@ -18,7 +18,7 @@
         /// </summary>
         public extern int Count
         {
-            [H5.Template("getCount()")]
+            [Transpose.Template("getCount()")]
             get;
         }
 
@@ -27,7 +27,7 @@
         /// </summary>
         public extern bool EndOfMessage
         {
-            [H5.Template("getEndOfMessage()")]
+            [Transpose.Template("getEndOfMessage()")]
             get;
         }
 
@@ -36,7 +36,7 @@
         /// </summary>
         public extern WebSocketMessageType MessageType
         {
-            [H5.Template("getMessageType()")]
+            [Transpose.Template("getMessageType()")]
             get;
         }
 
@@ -45,7 +45,7 @@
         /// </summary>
         public extern WebSocketCloseStatus? CloseStatus
         {
-            [H5.Template("getCloseStatus()")]
+            [Transpose.Template("getCloseStatus()")]
             get;
         }
 
@@ -54,7 +54,7 @@
         /// </summary>
         public extern string CloseStatusDescription
         {
-            [H5.Template("getCloseStatusDescription()")]
+            [Transpose.Template("getCloseStatusDescription()")]
             get;
         }
     }

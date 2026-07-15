@@ -1,7 +1,7 @@
-// Original: H5/H5/Attributes/ObjectLiteralAttribute.cs
+// Original: Transpose/Transpose/Attributes/ObjectLiteralAttribute.cs
 using System;
 
-namespace H5
+namespace Transpose
 {
     [AttributeUsage(AttributeTargets.Enum | AttributeTargets.Class | AttributeTargets.Struct | AttributeTargets.Interface)]
     public sealed class ObjectLiteralAttribute : Attribute

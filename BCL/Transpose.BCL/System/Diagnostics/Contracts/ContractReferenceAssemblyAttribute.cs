@@ -4,7 +4,7 @@ namespace System.Diagnostics.Contracts
     /// Attribute that specifies that an assembly is a reference assembly with contracts.
     /// </summary>
     [AttributeUsage(AttributeTargets.Assembly)]
-    [H5.External]
+    [Transpose.External]
     public sealed class ContractReferenceAssemblyAttribute : Attribute
     {
     }

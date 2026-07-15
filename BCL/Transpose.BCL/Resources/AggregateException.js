@@ -1,14 +1,14 @@
-    H5.define("System.AggregateException", {
+    Transpose.define("System.AggregateException", {
         inherits: [System.Exception],
 
         ctor: function (message, innerExceptions) {
             this.$initialize();
-            this.innerExceptions = new(System.Collections.ObjectModel.ReadOnlyCollection$1(System.Exception))(H5.hasValue(innerExceptions) ? H5.toArray(innerExceptions) : []);
+            this.innerExceptions = new(System.Collections.ObjectModel.ReadOnlyCollection$1(System.Exception))(Transpose.hasValue(innerExceptions) ? Transpose.toArray(innerExceptions) : []);
             System.Exception.ctor.call(this, message || 'One or more errors occurred.', this.innerExceptions.Count > 0 ? this.innerExceptions.getItem(0) : null);
         },
 
         handle: function (predicate) {
-            if (!H5.hasValue(predicate)) {
+            if (!Transpose.hasValue(predicate)) {
                 throw new System.ArgumentNullException.$ctor1("predicate");
             }
 
@@ -33,7 +33,7 @@
             while (backAsAggregate != null && backAsAggregate.innerExceptions.Count === 1)
             {
                 back = back.InnerException;
-                backAsAggregate = H5.as(back, System.AggregateException);
+                backAsAggregate = Transpose.as(back, System.AggregateException);
             }
 
             return back;
@@ -42,7 +42,7 @@
         hasTaskCanceledException: function () {
             for (var i = 0; i < this.innerExceptions.Count; i++) {
                 var e = this.innerExceptions.getItem(i);
-                if (H5.is(e, System.Threading.Tasks.TaskCanceledException) || (H5.is(e, System.AggregateException) && e.hasTaskCanceledException())) {
+                if (Transpose.is(e, System.Threading.Tasks.TaskCanceledException) || (Transpose.is(e, System.AggregateException) && e.hasTaskCanceledException())) {
                     return true;
                 }
             }
@@ -67,15 +67,15 @@
                 for (var i = 0; i < count; i++) {
                     var currentInnerException = currentInnerExceptions.getItem(i);
 
-                    if (!H5.hasValue(currentInnerException)) {
+                    if (!Transpose.hasValue(currentInnerException)) {
                         continue;
                     }
 
-                    var currentInnerAsAggregate = H5.as(currentInnerException, System.AggregateException);
+                    var currentInnerAsAggregate = Transpose.as(currentInnerException, System.AggregateException);
 
                     // If this exception is an aggregate, keep it around for later.  Otherwise,
                     // simply add it to the list of flattened exceptions to be returned.
-                    if (H5.hasValue(currentInnerAsAggregate)) {
+                    if (Transpose.hasValue(currentInnerAsAggregate)) {
                         exceptionsToFlatten.add(currentInnerAsAggregate);
                     } else {
                         flattenedExceptions.add(currentInnerException);

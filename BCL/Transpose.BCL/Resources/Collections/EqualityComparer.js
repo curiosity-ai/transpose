@@ -1,4 +1,4 @@
-    H5.define("System.Collections.Generic.EqualityComparer$1", function (T) {
+    Transpose.define("System.Collections.Generic.EqualityComparer$1", function (T) {
         return {
             inherits: [System.Collections.Generic.IEqualityComparer$1(T)],
 
@@ -12,25 +12,25 @@
 
             config: {
                 alias: [
-                    "equals2", ["System$Collections$Generic$IEqualityComparer$1$" + H5.getTypeAlias(T) + "$equals2", "System$Collections$Generic$IEqualityComparer$1$equals2"],
-                    "getHashCode2", ["System$Collections$Generic$IEqualityComparer$1$" + H5.getTypeAlias(T) + "$getHashCode2", "System$Collections$Generic$IEqualityComparer$1$getHashCode2"]
+                    "equals2", ["System$Collections$Generic$IEqualityComparer$1$" + Transpose.getTypeAlias(T) + "$equals2", "System$Collections$Generic$IEqualityComparer$1$equals2"],
+                    "getHashCode2", ["System$Collections$Generic$IEqualityComparer$1$" + Transpose.getTypeAlias(T) + "$getHashCode2", "System$Collections$Generic$IEqualityComparer$1$getHashCode2"]
                 ]
             },
 
             equals2: function (x, y) {
-                if (!H5.isDefined(x, true)) {
-                    return !H5.isDefined(y, true);
-                } else if (H5.isDefined(y, true)) {
+                if (!Transpose.isDefined(x, true)) {
+                    return !Transpose.isDefined(y, true);
+                } else if (Transpose.isDefined(y, true)) {
                     var isH5 = x && x.$$name;
 
-                    if (H5.isFunction(x) && H5.isFunction(y)) {
-                        return H5.fn.equals.call(x, y);
+                    if (Transpose.isFunction(x) && Transpose.isFunction(y)) {
+                        return Transpose.fn.equals.call(x, y);
                     } else if (!isH5 || x && x.$boxed || y && y.$boxed) {
-                        return H5.equals(x, y);
-                    } else if (H5.isFunction(x.equalsT)) {
-                        return H5.equalsT(x, y);
-                    } else if (H5.isFunction(x.equals)) {
-                        return H5.equals(x, y);
+                        return Transpose.equals(x, y);
+                    } else if (Transpose.isFunction(x.equalsT)) {
+                        return Transpose.equalsT(x, y);
+                    } else if (Transpose.isFunction(x.equals)) {
+                        return Transpose.equals(x, y);
                     }
 
                     return x === y;
@@ -40,7 +40,7 @@
             },
 
             getHashCode2: function (obj) {
-                return H5.isDefined(obj, true) ? H5.getHashCode(obj) : 0;
+                return Transpose.isDefined(obj, true) ? Transpose.getHashCode(obj) : 0;
             }
         };
     });

@@ -1,7 +1,7 @@
 namespace System.Diagnostics
 {
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.External]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.External]
     public class Stopwatch
     {
         public static readonly long Frequency = 0;
@@ -11,23 +11,23 @@ namespace System.Diagnostics
 
         public extern TimeSpan Elapsed
         {
-            [H5.Template("timeSpan()")]
+            [Transpose.Template("timeSpan()")]
             get;
         }
 
         public extern long ElapsedMilliseconds
         {
-            [H5.Template("milliseconds()")]
+            [Transpose.Template("milliseconds()")]
             get;
         }
 
         public extern long ElapsedTicks
         {
-            [H5.Template("ticks()")]
+            [Transpose.Template("ticks()")]
             get;
         }
 
-        [H5.Convention(H5.Notation.CamelCase)]
+        [Transpose.Convention(Transpose.Notation.CamelCase)]
         public extern bool IsRunning
         {
             get;

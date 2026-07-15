@@ -52,7 +52,7 @@ namespace System {
     // http://serendipity.nofadz.com/hermetic/cal_stud.htm.
     //
     //
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.None)]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.None)]
     [StructLayout(LayoutKind.Auto)]
     [Serializable]
     public struct DateTime : IComparable, IFormattable, IConvertible, ISerializable, IComparable<DateTime>,IEquatable<DateTime> {
@@ -588,7 +588,7 @@ namespace System {
         // is equal to the value of this DateTime. Returns false
         // otherwise.
         //
-        [H5.Convention(Notation = H5.Notation.CamelCase)]
+        [Transpose.Convention(Notation = Transpose.Notation.CamelCase)]
         public override bool Equals(Object value) {
             if (value is DateTime) {
                 return InternalTicks == ((DateTime)value).InternalTicks;
@@ -862,7 +862,7 @@ namespace System {
 
         // Returns the hash code for this DateTime.
         //
-        [H5.Convention(Notation = H5.Notation.CamelCase)]
+        [Transpose.Convention(Notation = Transpose.Notation.CamelCase)]
         public override int GetHashCode() {
             Int64 ticks = InternalTicks;
             return unchecked((int)ticks) ^ (int)(ticks >> 32);
@@ -1213,7 +1213,7 @@ namespace System {
             //return DateTimeFormat.Format(this, "t", DateTimeFormatInfo.CurrentInfo);
         }
 
-        [H5.Convention(Notation = H5.Notation.CamelCase)]
+        [Transpose.Convention(Notation = Transpose.Notation.CamelCase)]
         public override String ToString() {
             Contract.Ensures(Contract.Result<String>() != null);
             return this.ToString(null, DateTimeFormatInfo.CurrentInfo);
@@ -1238,7 +1238,7 @@ namespace System {
         public String ToString(String format, IFormatProvider provider) {
             Contract.Ensures(Contract.Result<String>() != null);
             /*@
-                return H5.DateTimeHelpers.format(this, format, provider);
+                return Transpose.DateTimeHelpers.format(this, format, provider);
              */
                 return format;
             // TODO: NotSupported

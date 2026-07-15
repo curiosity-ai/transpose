@@ -4,7 +4,7 @@
         if (System.String.startsWith(type.$$name, "System.Collections.Generic.IList")) {
             interfaceType = type;
         } else {
-            var interfaces = H5.Reflection.getInterfaces(type);
+            var interfaces = Transpose.Reflection.getInterfaces(type);
 
             for (var j = 0; j < interfaces.length; j++) {
                 if (System.String.startsWith(interfaces[j].$$name, "System.Collections.Generic.IList")) {
@@ -15,5 +15,5 @@
             }
         }
 
-        return interfaceType ? H5.Reflection.getGenericArguments(interfaceType)[0] : null;
+        return interfaceType ? Transpose.Reflection.getGenericArguments(interfaceType)[0] : null;
     };

@@ -1,7 +1,7 @@
 namespace System.Threading.Tasks
 {
-    [H5.External]
-    [H5.Enum(H5.Emit.Name)]
+    [Transpose.External]
+    [Transpose.Enum(Transpose.Emit.Name)]
     public enum TaskStatus
     {
         /// <summary>

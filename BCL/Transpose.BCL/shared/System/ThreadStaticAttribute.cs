@@ -17,7 +17,7 @@ using System;
 
 namespace System
 {
-    [H5.NonScriptable]
+    [Transpose.NonScriptable]
     [AttributeUsage(AttributeTargets.Field, Inherited = false)]
     public class ThreadStaticAttribute : Attribute
     {

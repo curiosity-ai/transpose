@@ -1,4 +1,4 @@
-    H5.define("System.Text.RegularExpressions.RegexEngineParser", {
+    Transpose.define("System.Text.RegularExpressions.RegexEngineParser", {
         statics: {
             _hexSymbols: "0123456789abcdefABCDEF",
             _octSymbols: "01234567",

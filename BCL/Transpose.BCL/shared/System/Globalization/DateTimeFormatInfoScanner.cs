@@ -29,7 +29,7 @@ namespace System.Globalization
     //
     //; IFORMATFLAGS
     //;       Parsing/formatting flags.
-    [H5.Enum(H5.Emit.Value)]
+    [Transpose.Enum(Transpose.Emit.Value)]
     internal enum FORMATFLAGS
     {
         None = 0x00000000,
@@ -41,8 +41,8 @@ namespace System.Globalization
         UseDigitPrefixInTokens = 0x00000020,   // Has token starting with numbers.
     }
 
-    // TODO: Revised H5
-    [H5.Enum(H5.Emit.Value)]
+    // TODO: Revised Transpose
+    [Transpose.Enum(Transpose.Emit.Value)]
     internal enum CalendarId : ushort
     {
         UNINITIALIZED_VALUE = 0,

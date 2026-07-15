@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace H5
+namespace Transpose
 {
     [NonScriptable]
     [AttributeUsage(AttributeTargets.Class, Inherited = false, AllowMultiple = false)]

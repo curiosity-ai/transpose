@@ -3,7 +3,7 @@
 
 using System.Collections;
 using System.Collections.Generic;
-using static H5.Core.dom;
+using static Transpose.Core.dom;
 
 namespace System.Net.Http.Headers
 {

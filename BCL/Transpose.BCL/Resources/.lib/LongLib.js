@@ -75,7 +75,7 @@
      * @expose
      * @private
      */
-    global.H5.$Long = Long;
+    global.Transpose.$Long = Long;
     Long.__isLong__;
 
     Object.defineProperty(Long.prototype, "__isLong__", {
@@ -512,7 +512,7 @@
                     rem1 = div.mul(radixLong).sub(this);
                 return div.toString(radix) + rem1.toInt().toString(radix);
             } else {
-                //H5 fix - only numbers in radix 10 can have "-" in string representation
+                //Transpose fix - only numbers in radix 10 can have "-" in string representation
                 return (((typeof radix === "undefined") || (radix === 10)) ? "-" : "") + this.neg().toString(radix);
             }
         }
@@ -1212,4 +1212,4 @@
             return this;
         return fromBits(this.low, this.high, true);
     };
-})(H5.global);
+})(Transpose.global);

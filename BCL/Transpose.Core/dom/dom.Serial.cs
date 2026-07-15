@@ -1,7 +1,7 @@
-using H5;
-using H5.Core;
+using Transpose;
+using Transpose.Core;
 
-namespace H5.Core
+namespace Transpose.Core
 {
     public static partial class dom
     {
@@ -34,9 +34,9 @@ namespace H5.Core
             public virtual bool writable { get; }
 
             public virtual extern dom.SerialPortInfo getInfo();
-            public virtual extern es5.Promise<H5.Core.Void> open(dom.SerialOptions options);
-            public virtual extern es5.Promise<H5.Core.Void> close();
-            public virtual extern es5.Promise<H5.Core.Void> setSignals(dom.SerialOutputSignals signals);
+            public virtual extern es5.Promise<Transpose.Core.Void> open(dom.SerialOptions options);
+            public virtual extern es5.Promise<Transpose.Core.Void> close();
+            public virtual extern es5.Promise<Transpose.Core.Void> setSignals(dom.SerialOutputSignals signals);
             public virtual extern es5.Promise<dom.SerialInputSignals> getSignals();
 
             // ReadableStream and WritableStream properties logic is complex in binding if types are generic in .NET but not in TS/JS binding context sometimes.

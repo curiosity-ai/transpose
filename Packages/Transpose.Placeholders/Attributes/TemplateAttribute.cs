@@ -1,7 +1,7 @@
-// Original: H5/H5/Attributes/TemplateAttribute.cs
+// Original: Transpose/Transpose/Attributes/TemplateAttribute.cs
 using System;
 
-namespace H5
+namespace Transpose
 {
     [AttributeUsage(AttributeTargets.Method | AttributeTargets.Field | AttributeTargets.Constructor)]
     public sealed class TemplateAttribute : Attribute

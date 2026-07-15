@@ -24,7 +24,7 @@ namespace System.Resources
        Note this data must be included in any documentation describing the
        internals of .resources files.
     */
-    [H5.NonScriptable]
+    [Transpose.NonScriptable]
     internal enum ResourceTypeCode
     {
         // Primitives

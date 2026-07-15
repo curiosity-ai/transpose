@@ -1,4 +1,4 @@
-    H5.define("System.Threading.Tasks.Task", {
+    Transpose.define("System.Threading.Tasks.Task", {
         inherits: [System.IDisposable, System.IAsyncResult],
 
         config: {
@@ -44,7 +44,7 @@
 
             schedule: function (fn) {
                 System.Threading.Tasks.Task.queue.push(fn);
-                H5.setImmediate(System.Threading.Tasks.Task.runQueue);
+                Transpose.setImmediate(System.Threading.Tasks.Task.runQueue);
             },
 
             delay: function (delay, state) {
@@ -52,7 +52,7 @@
                     token,
                     cancelCallback = false;
 
-                if (H5.is(state, System.Threading.CancellationToken)) {
+                if (Transpose.is(state, System.Threading.CancellationToken)) {
                     token = state;
                     state = undefined;
                 }
@@ -69,7 +69,7 @@
                 }
 
                 var ms = delay;
-                if (H5.is(delay, System.TimeSpan)) {
+                if (Transpose.is(delay, System.TimeSpan)) {
                     ms = delay.getTotalMilliseconds();
                 }
 
@@ -81,7 +81,7 @@
                 }, ms);
 
                 if (token && token.getIsCancellationRequested()) {
-                    H5.setImmediate(token.cancelWasRequested);
+                    Transpose.setImmediate(token.cancelWasRequested);
                 }
 
                 return tcs.task;
@@ -112,7 +112,7 @@
                     try {
                         var result = fn();
 
-                        if (H5.is(result, System.Threading.Tasks.Task)) {
+                        if (Transpose.is(result, System.Threading.Tasks.Task)) {
                             result.continueWith(function () {
                                 if (result.isFaulted() || result.isCanceled()) {
                                     tcs.setException(result.exception.innerExceptions.Count > 0 ? result.exception.innerExceptions.getItem(0) : result.exception);
@@ -139,9 +139,9 @@
                     exceptions = [],
                     i;
 
-                if (H5.is(tasks, System.Collections.IEnumerable)) {
-                    tasks = H5.toArray(tasks);
-                } else if (!H5.isArray(tasks)) {
+                if (Transpose.is(tasks, System.Collections.IEnumerable)) {
+                    tasks = Transpose.toArray(tasks);
+                } else if (!Transpose.isArray(tasks)) {
                     tasks = Array.prototype.slice.call(arguments, 0);
                 }
 
@@ -188,9 +188,9 @@
             },
 
             whenAny: function (tasks) {
-                if (H5.is(tasks, System.Collections.IEnumerable)) {
-                    tasks = H5.toArray(tasks);
-                } else if (!H5.isArray(tasks)) {
+                if (Transpose.is(tasks, System.Collections.IEnumerable)) {
+                    tasks = Transpose.toArray(tasks);
+                } else if (!Transpose.isArray(tasks)) {
                     tasks = Array.prototype.slice.call(arguments, 0);
                 }
 
@@ -281,7 +281,7 @@
                 promise.then(function () {
                     tcs.setResult(handler ? handler.apply(null, arguments) : Array.prototype.slice.call(arguments, 0));
                 }, function () {
-                    tcs.setException(errorHandler ? errorHandler.apply(null, arguments) : new H5.PromiseException(Array.prototype.slice.call(arguments, 0)));
+                    tcs.setException(errorHandler ? errorHandler.apply(null, arguments) : new Transpose.PromiseException(Array.prototype.slice.call(arguments, 0)));
                 }, progressHandler);
 
                 return tcs.task;
@@ -307,7 +307,7 @@
                 };
             }
 
-            if (H5.is(timeout, System.TimeSpan)) {
+            if (Transpose.is(timeout, System.TimeSpan)) {
                 ms = timeout.getTotalMilliseconds();
             }
 
@@ -520,7 +520,7 @@
 
     });
 
-    H5.define("System.Threading.Tasks.Task$1", function (T) {
+    Transpose.define("System.Threading.Tasks.Task$1", function (T) {
         return {
             inherits: [System.Threading.Tasks.Task],
             ctor: function (action, state) {
@@ -530,7 +530,7 @@
         };
     });
 
-    H5.define("System.Threading.Tasks.TaskStatus", {
+    Transpose.define("System.Threading.Tasks.TaskStatus", {
         $kind: "enum",
         $statics: {
             created: 0,
@@ -544,7 +544,7 @@
         }
     });
 
-    H5.define("System.Threading.Tasks.TaskCompletionSource", {
+    Transpose.define("System.Threading.Tasks.TaskCompletionSource", {
         ctor: function (state) {
             this.$initialize();
             this.task = new System.Threading.Tasks.Task(null, state);
@@ -590,7 +590,7 @@
         },
 
         trySetException: function (exception) {
-            if (H5.is(exception, System.Exception)) {
+            if (Transpose.is(exception, System.Exception)) {
                 exception = [exception];
             }
 
@@ -604,7 +604,7 @@
         }
     });
 
-    H5.define("System.Threading.CancellationTokenSource", {
+    Transpose.define("System.Threading.CancellationTokenSource", {
         inherits: [System.IDisposable],
 
         config: {
@@ -615,7 +615,7 @@
 
         ctor: function (delay) {
             this.$initialize();
-            this.timeout = typeof delay === "number" && delay >= 0 ? setTimeout(H5.fn.bind(this, this.cancel), delay, -1) : null;
+            this.timeout = typeof delay === "number" && delay >= 0 ? setTimeout(Transpose.fn.bind(this, this.cancel), delay, -1) : null;
             this.isCancellationRequested = false;
             this.token = new System.Threading.CancellationToken(this);
             this.handlers = [];
@@ -660,7 +660,7 @@
                 clearTimeout(this.timeout);
             }
 
-            this.timeout = setTimeout(H5.fn.bind(this, this.cancel), delay, -1);
+            this.timeout = setTimeout(Transpose.fn.bind(this, this.cancel), delay, -1);
         },
 
         register: function (f, s) {
@@ -715,7 +715,7 @@
 
                 cts.links = [];
 
-                var d = H5.fn.bind(cts, cts.cancel);
+                var d = Transpose.fn.bind(cts, cts.cancel);
 
                 for (var i = 0; i < arguments.length; i++) {
                     cts.links.push(arguments[i].register(d));
@@ -726,13 +726,13 @@
         }
     });
 
-    H5.define("System.Threading.CancellationToken", {
+    Transpose.define("System.Threading.CancellationToken", {
          $kind: "struct",
 
         ctor: function (source) {
             this.$initialize();
 
-            if (!H5.is(source, System.Threading.CancellationTokenSource)) {
+            if (!Transpose.is(source, System.Threading.CancellationTokenSource)) {
                 source = source ? System.Threading.CancellationToken.sourceTrue : System.Threading.CancellationToken.sourceFalse;
             }
 
@@ -762,7 +762,7 @@
         },
 
         getHashCode: function () {
-            return H5.getHashCode(this.source);
+            return Transpose.getHashCode(this.source);
         },
 
         equals: function (other) {
@@ -797,7 +797,7 @@
 
     System.Threading.CancellationToken.none = new System.Threading.CancellationToken();
 
-    H5.define("System.Threading.CancellationTokenRegistration", {
+    Transpose.define("System.Threading.CancellationTokenRegistration", {
         inherits: function () {
             return [System.IDisposable, System.IEquatable$1(System.Threading.CancellationTokenRegistration)];
         },
@@ -838,7 +838,7 @@
         }
     });
 
-    H5.toPromise = function (awaitable) {
+    Transpose.toPromise = function (awaitable) {
         if (!awaitable) {
             return Promise.resolve(awaitable);
         }
@@ -847,7 +847,7 @@
             return awaitable;
         }
 
-        if (H5.is(awaitable, System.Threading.Tasks.Task) || (awaitable && typeof awaitable.continueWith === 'function')) {
+        if (Transpose.is(awaitable, System.Threading.Tasks.Task) || (awaitable && typeof awaitable.continueWith === 'function')) {
             return new Promise(function (resolve, reject) {
                 awaitable.continueWith(function (t) {
                     if (t.isFaulted()) {

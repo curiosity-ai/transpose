@@ -196,7 +196,7 @@ namespace System.ComponentModel
             }
         }
 
-        [H5.Convention(H5.Notation.CamelCase)]
+        [Transpose.Convention(Transpose.Notation.CamelCase)]
         public override bool Equals(object obj)
         {
             if (obj == this)
@@ -219,7 +219,7 @@ namespace System.ComponentModel
             return false;
         }
 
-        [H5.Convention(H5.Notation.CamelCase)]
+        [Transpose.Convention(Transpose.Notation.CamelCase)]
         public override int GetHashCode()
         {
             return base.GetHashCode();

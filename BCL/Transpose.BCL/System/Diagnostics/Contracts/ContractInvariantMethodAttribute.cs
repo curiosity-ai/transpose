@@ -10,7 +10,7 @@ namespace System.Diagnostics.Contracts
     /// </summary>
     [Conditional("CONTRACTS_FULL")]
     [AttributeUsage(AttributeTargets.Method, AllowMultiple = false, Inherited = false)]
-    [H5.External]
+    [Transpose.External]
     public sealed class ContractInvariantMethodAttribute : Attribute
     {
     }

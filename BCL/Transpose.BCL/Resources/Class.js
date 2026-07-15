@@ -35,7 +35,7 @@
                         d,
                         cfg;
 
-                    if (v != null && H5.isPlainObject(v) && (!v.get || !v.set)) {
+                    if (v != null && Transpose.isPlainObject(v) && (!v.get || !v.set)) {
                         for (var k = 0; k < descriptors.length; k++) {
                             if (descriptors[k].name === name) {
                                 d = descriptors[k];
@@ -51,7 +51,7 @@
                         }
                     }
 
-                    cfg = H5.property(statics ? scope : prototype, name, v, statics, cls);
+                    cfg = Transpose.property(statics ? scope : prototype, name, v, statics, cls);
                     cfg.name = name;
                     cfg.cls = cls;
 
@@ -61,7 +61,7 @@
 
             if (config.events) {
                 for (name in config.events) {
-                    H5.event(scope, name, config.events[name], statics);
+                    Transpose.event(scope, name, config.events[name], statics);
                 }
             }
 
@@ -103,7 +103,7 @@
                                     }
                                 }
 
-                                if (!H5.isFunction(m)) {
+                                if (!Transpose.isFunction(m)) {
                                     descriptor = {
                                         get: function () {
                                             return this[name];
@@ -160,11 +160,11 @@
                 }
 
                 if (obj.fields) {
-                    H5.apply(to, obj.fields);
+                    Transpose.apply(to, obj.fields);
                 }
 
                 if (obj.methods) {
-                    H5.apply(to, obj.methods);
+                    Transpose.apply(to, obj.methods);
                 }
 
                 var config = {},
@@ -195,7 +195,7 @@
                         delete obj.ctors.init;
                     }
 
-                    H5.apply(to, obj.ctors);
+                    Transpose.apply(to, obj.ctors);
                 }
 
                 if (write) {
@@ -227,7 +227,7 @@
                 gscope = { $kind: "interface" };
             }
 
-            var c = H5.define(className, gscope, prop);
+            var c = Transpose.define(className, gscope, prop);
 
             c.$kind = "interface";
             c.$isInterface = true;
@@ -242,22 +242,22 @@
             if (prop === true) {
                 isGenericInstance = true;
                 prop = gscope;
-                gscope = H5.global;
+                gscope = Transpose.global;
             } else if (!prop) {
                 prop = gscope;
-                gscope = H5.global;
+                gscope = Transpose.global;
             }
 
             var fn;
 
-            if (H5.isFunction(prop)) {
+            if (Transpose.isFunction(prop)) {
                 fn = function () {
                     var args,
                         key,
                         obj,
                         c;
 
-                    key = H5.Class.getCachedType(fn, arguments);
+                    key = Transpose.Class.getCachedType(fn, arguments);
 
                     if (key) {
                         return key.type;
@@ -265,22 +265,22 @@
 
                     args = Array.prototype.slice.call(arguments);
                     obj = prop.apply(null, args);
-                    c = H5.define(H5.Class.genericName(className, args), obj, true, { fn: fn, args: args });
+                    c = Transpose.define(Transpose.Class.genericName(className, args), obj, true, { fn: fn, args: args });
 
-                    if (!H5.Class.staticInitAllow && !H5.Class.queueIsBlocked) {
-                        H5.Class.$queue.push(c);
+                    if (!Transpose.Class.staticInitAllow && !Transpose.Class.queueIsBlocked) {
+                        Transpose.Class.$queue.push(c);
                     }
 
-                    return H5.get(c);
+                    return Transpose.get(c);
                 };
 
                 fn.$cache = [];
 
-                return H5.Class.generic(className, gscope, fn, prop);
+                return Transpose.Class.generic(className, gscope, fn, prop);
             }
 
             if (!isGenericInstance) {
-                H5.Class.staticInitAllow = false;
+                Transpose.Class.staticInitAllow = false;
             }
 
             prop = prop || {};
@@ -298,22 +298,22 @@
             }
 
             var rNames = ["fields", "events", "props", "ctors", "methods"],
-                defaultScheme = H5.isFunction(prop.main) ? 0 : 1,
+                defaultScheme = Transpose.isFunction(prop.main) ? 0 : 1,
                 check = function (scope) {
-                    if (scope.config && H5.isPlainObject(scope.config) ||
-                        scope.$main && H5.isFunction(scope.$main) ||
-                        scope.hasOwnProperty("ctor") && H5.isFunction(scope.ctor)) {
+                    if (scope.config && Transpose.isPlainObject(scope.config) ||
+                        scope.$main && Transpose.isFunction(scope.$main) ||
+                        scope.hasOwnProperty("ctor") && Transpose.isFunction(scope.ctor)) {
                         defaultScheme = 1;
 
                         return false;
                     }
 
-                    if (scope.alias && H5.isArray(scope.alias) && scope.alias.length > 0 && scope.alias.length % 2 === 0) {
+                    if (scope.alias && Transpose.isArray(scope.alias) && scope.alias.length > 0 && scope.alias.length % 2 === 0) {
                         return true;
                     }
 
                     for (var j = 0; j < rNames.length; j++) {
-                        if (scope[rNames[j]] && H5.isPlainObject(scope[rNames[j]])) {
+                        if (scope[rNames[j]] && Transpose.isPlainObject(scope[rNames[j]])) {
                             return true;
                         }
                     }
@@ -331,7 +331,7 @@
             }
 
             if (alternateScheme) {
-                prop = H5.Class.convertScheme(prop);
+                prop = Transpose.Class.convertScheme(prop);
             }
 
             var extend = prop.$inherits || prop.inherits,
@@ -339,8 +339,8 @@
                 isEntryPoint = prop.$entryPoint,
                 base,
                 prototype,
-                scope = prop.$scope || gscope || H5.global,
-                objectType = H5.global.System && H5.global.System.Object || Object,
+                scope = prop.$scope || gscope || Transpose.global,
+                objectType = Transpose.global.System && Transpose.global.System.Object || Object,
                 i,
                 v,
                 isCtor,
@@ -367,7 +367,7 @@
                 delete prop.$entryPoint;
             }
 
-            if (H5.isFunction(statics)) {
+            if (Transpose.isFunction(statics)) {
                 statics = null;
             } else if (prop.$statics) {
                 delete prop.$statics;
@@ -397,7 +397,7 @@
 
                             if (Class.$base.ctor) {
                                 Class.$base.ctor.call(this);
-                            } else if (H5.isFunction(Class.$base.constructor)) {
+                            } else if (Transpose.isFunction(Class.$base.constructor)) {
                                 Class.$base.constructor.call(this);
                             }
                         }
@@ -425,7 +425,7 @@
             }
 
             if (!isGenericInstance && registerT) {
-                scope = H5.Class.set(scope, className, Class);
+                scope = Transpose.Class.set(scope, className, Class);
             }
 
             if (gCfg) {
@@ -453,12 +453,12 @@
             if (gCfg && isGenericInstance) {
                 Class.$genericTypeDefinition = gCfg.fn;
                 Class.$typeArguments = gCfg.args;
-                Class.$assembly = gCfg.fn.$assembly || H5.$currentAssembly;
+                Class.$assembly = gCfg.fn.$assembly || Transpose.$currentAssembly;
 
-                var result = H5.Reflection.getTypeFullName(gCfg.fn);
+                var result = Transpose.Reflection.getTypeFullName(gCfg.fn);
 
                 for (i = 0; i < gCfg.args.length; i++) {
-                    result += (i === 0 ? "[" : ",") + "[" + H5.Reflection.getTypeQName(gCfg.args[i]) + "]";
+                    result += (i === 0 ? "[" : ",") + "[" + Transpose.Reflection.getTypeQName(gCfg.args[i]) + "]";
                 }
 
                 result += "]";
@@ -468,11 +468,11 @@
                 Class.$$fullname = Class.$$name;
             }
 
-            if (extend && H5.isFunction(extend)) {
+            if (extend && Transpose.isFunction(extend)) {
                 extend = extend();
             }
 
-            H5.Class.createInheritors(Class, extend);
+            Transpose.Class.createInheritors(Class, extend);
 
             var noBase = extend ? extend[0].$kind === "interface" : true;
 
@@ -488,7 +488,7 @@
                 var $$initCtor = function () { };
                 $$initCtor.prototype = cls.prototype;
                 $$initCtor.prototype.constructor = cls;
-                $$initCtor.prototype.$$fullname = H5.Reflection.getTypeFullName(cls);
+                $$initCtor.prototype.$$fullname = Transpose.Reflection.getTypeFullName(cls);
 
                 prototype = new $$initCtor();
             }
@@ -504,8 +504,8 @@
             if (statics) {
                 var staticsConfig = statics.$config || statics.config;
 
-                if (staticsConfig && !H5.isFunction(staticsConfig)) {
-                    H5.Class.initConfig(extend, base, staticsConfig, true, Class);
+                if (staticsConfig && !Transpose.isFunction(staticsConfig)) {
+                    Transpose.Class.initConfig(extend, base, staticsConfig, true, Class);
 
                     if (statics.$config) {
                         delete statics.$config;
@@ -517,8 +517,8 @@
 
             var instanceConfig = prop.$config || prop.config;
 
-            if (instanceConfig && !H5.isFunction(instanceConfig)) {
-                H5.Class.initConfig(extend, base, instanceConfig, false, prop, prototype);
+            if (instanceConfig && !Transpose.isFunction(instanceConfig)) {
+                Transpose.Class.initConfig(extend, base, instanceConfig, false, prop, prototype);
 
                 if (prop.$config) {
                     delete prop.$config;
@@ -531,7 +531,7 @@
                 };
             }
 
-            prop.$initialize = H5.Class._initialize;
+            prop.$initialize = Transpose.Class._initialize;
 
             var keys = [];
 
@@ -546,7 +546,7 @@
                 isCtor = name === "ctor";
                 ctorName = name;
 
-                if (H5.isFunction(v) && (isCtor || name.match("^\\$ctor") !== null)) {
+                if (Transpose.isFunction(v) && (isCtor || name.match("^\\$ctor") !== null)) {
                     isCtor = true;
                 }
 
@@ -565,7 +565,7 @@
             prototype.$$name = className;
 
             if (!prototype.toJSON) {
-                prototype.toJSON = H5.Class.toJSON;
+                prototype.toJSON = Transpose.Class.toJSON;
             }
 
             if (statics) {
@@ -575,7 +575,7 @@
                     if (name === "ctor") {
                         Class["$ctor"] = member;
                     } else {
-                        if (prop.$kind === "enum" && !H5.isFunction(member) && name.charAt(0) !== "$") {
+                        if (prop.$kind === "enum" && !Transpose.isFunction(member) && name.charAt(0) !== "$") {
                             Class.$names = Class.$names || [];
                             Class.$names.push({name: name, value: member});
                         }
@@ -586,7 +586,7 @@
 
                 if (prop.$kind === "enum" && Class.$names) {
                     Class.$names = Class.$names.sort(function (i1, i2) {
-                        if (H5.isFunction(i1.value.eq)) {
+                        if (Transpose.isFunction(i1.value.eq)) {
                             return i1.value.sub(i2.value).sign();
                         }
 
@@ -601,10 +601,10 @@
                 extend = [objectType].concat(Class.$interfaces);
             }
 
-            H5.Class.setInheritors(Class, extend);
+            Transpose.Class.setInheritors(Class, extend);
 
             fn = function () {
-                if (H5.Class.staticInitAllow && !Class.$isGenericTypeDefinition) {
+                if (Transpose.Class.staticInitAllow && !Class.$isGenericTypeDefinition) {
                     Class.$staticInit = null;
 
                     if (Class.$initMembers) {
@@ -617,7 +617,7 @@
                 }
             };
 
-            if (isEntryPoint || H5.isFunction(prototype.$main)) {
+            if (isEntryPoint || Transpose.isFunction(prototype.$main)) {
                 if (prototype.$main) {
                     var entryName = prototype.$main.name || "Main";
 
@@ -626,17 +626,17 @@
                     }
                 }
 
-                H5.Class.$queueEntry.push(Class);
+                Transpose.Class.$queueEntry.push(Class);
             }
 
             Class.$staticInit = fn;
 
             if (!isGenericInstance && registerT) {
-                H5.Class.registerType(className, Class);
+                Transpose.Class.registerType(className, Class);
             }
 
-            if (H5.Reflection) {
-                Class.$getMetadata = H5.Reflection.getMetadata;
+            if (Transpose.Reflection) {
+                Class.$getMetadata = Transpose.Reflection.getMetadata;
             }
 
             if (Class.$kind === "enum") {
@@ -670,7 +670,7 @@
 
             if (Class.$kind === "interface") {
                 if (Class.prototype.$variance) {
-                    Class.isAssignableFrom = H5.Class.varianceAssignable;
+                    Class.isAssignableFrom = Transpose.Class.varianceAssignable;
                 }
 
                 Class.$isInterface = true;
@@ -680,7 +680,7 @@
         },
 
         toCtorString: function () {
-            return H5.Reflection.getTypeName(this);
+            return Transpose.Reflection.getTypeName(this);
         },
 
         createInheritors: function (cls, extend) {
@@ -731,7 +731,7 @@
 
         toJSON: function () {
             var obj = {},
-                t = H5.getType(this),
+                t = Transpose.getType(this),
                 descriptors = t.$descriptors || [];
 
             for (var key in this) {
@@ -779,11 +779,11 @@
                         var v = target.prototype.$variance[i], t = target.$typeArguments[i], s = type.$typeArguments[i];
 
                         switch (v) {
-                            case 1: if (!H5.Reflection.isAssignableFrom(t, s))
+                            case 1: if (!Transpose.Reflection.isAssignableFrom(t, s))
                                 return false;
 
                                 break;
-                            case 2: if (!H5.Reflection.isAssignableFrom(s, t))
+                            case 2: if (!Transpose.Reflection.isAssignableFrom(s, t))
                                 return false;
 
                                 break;
@@ -802,7 +802,7 @@
                 return true;
             }
 
-            var ifs = H5.Reflection.getInterfaces(source);
+            var ifs = Transpose.Reflection.getInterfaces(source);
 
             for (var i = 0; i < ifs.length; i++) {
                 if (ifs[i] === this || check(this, ifs[i])) {
@@ -814,9 +814,9 @@
         },
 
         registerType: function (className, cls) {
-            if (H5.$currentAssembly) {
-                H5.$currentAssembly.$types[className] = cls;
-                cls.$assembly = H5.$currentAssembly;
+            if (Transpose.$currentAssembly) {
+                Transpose.$currentAssembly.$types[className] = cls;
+                cls.$assembly = Transpose.$currentAssembly;
             }
         },
 
@@ -885,12 +885,12 @@
                         (function (cls, key, o) {
                             Object.defineProperty(cls, key, {
                                 get: function () {
-                                    if (H5.Class.staticInitAllow) {
+                                    if (Transpose.Class.staticInitAllow) {
                                         if (o.$staticInit) {
                                             o.$staticInit();
                                         }
 
-                                        H5.Class.defineProperty(cls, key, o);
+                                        Transpose.Class.defineProperty(cls, key, o);
                                     }
 
                                     return o;
@@ -913,12 +913,12 @@
                 (function (scope, name, cls) {
                     Object.defineProperty(scope, name, {
                         get: function () {
-                            if (H5.Class.staticInitAllow) {
+                            if (Transpose.Class.staticInitAllow) {
                                 if (cls.$staticInit) {
                                     cls.$staticInit();
                                 }
 
-                                H5.Class.defineProperty(scope, name, cls);
+                                Transpose.Class.defineProperty(scope, name, cls);
                             }
 
                             return cls;
@@ -954,7 +954,7 @@
             for (var i = 0; i < typeArguments.length; i++) {
                 var ta = typeArguments[i];
 
-                gName += "$" + (ta.$$name || H5.getTypeName(ta));
+                gName += "$" + (ta.$$name || Transpose.getTypeName(ta));
             }
 
             return gName;
@@ -994,41 +994,41 @@
             fn.$$name = className;
             fn.$kind = "class";
 
-            H5.Class.set(scope, className, fn, true);
-            H5.Class.registerType(className, fn);
+            Transpose.Class.set(scope, className, fn, true);
+            Transpose.Class.registerType(className, fn);
 
             fn.$typeArgumentCount = prop.length;
             fn.$isGenericTypeDefinition = true;
-            fn.$getMetadata = H5.Reflection.getMetadata;
+            fn.$getMetadata = Transpose.Reflection.getMetadata;
 
             fn.$staticInit = function () {
-                fn.$typeArguments = H5.Reflection.createTypeParams(prop);
+                fn.$typeArguments = Transpose.Reflection.createTypeParams(prop);
 
-                var old = H5.Class.staticInitAllow,
-                    oldIsBlocked = H5.Class.queueIsBlocked;
+                var old = Transpose.Class.staticInitAllow,
+                    oldIsBlocked = Transpose.Class.queueIsBlocked;
 
-                H5.Class.staticInitAllow = false;
-                H5.Class.queueIsBlocked = true;
+                Transpose.Class.staticInitAllow = false;
+                Transpose.Class.queueIsBlocked = true;
 
                 var cfg = prop.apply(null, fn.$typeArguments),
                     extend = cfg.$inherits || cfg.inherits;
 
-                H5.Class.staticInitAllow = old;
-                H5.Class.queueIsBlocked = oldIsBlocked;
+                Transpose.Class.staticInitAllow = old;
+                Transpose.Class.queueIsBlocked = oldIsBlocked;
 
-                if (extend && H5.isFunction(extend)) {
+                if (extend && Transpose.isFunction(extend)) {
                     extend = extend();
                 }
 
-                H5.Class.createInheritors(fn, extend);
+                Transpose.Class.createInheritors(fn, extend);
 
-                var objectType = H5.global.System && H5.global.System.Object || Object;
+                var objectType = Transpose.global.System && Transpose.global.System.Object || Object;
 
                 if (!extend) {
                     extend = [objectType].concat(fn.$interfaces);
                 }
 
-                H5.Class.setInheritors(fn, extend);
+                Transpose.Class.setInheritors(fn, extend);
 
                 var prototype = extend ? (extend[0].$$initCtor ? new extend[0].$$initCtor() : new extend[0]()) : new objectType();
 
@@ -1041,43 +1041,43 @@
                 }
             };
 
-            H5.Class.$queue.push(fn);
+            Transpose.Class.$queue.push(fn);
 
             return fn;
         },
 
         init: function (fn) {
-            if (H5.Reflection) {
-                var metas = H5.Reflection.deferredMeta,
+            if (Transpose.Reflection) {
+                var metas = Transpose.Reflection.deferredMeta,
                     len = metas.length;
 
                 if (len > 0) {
-                    H5.Reflection.deferredMeta = [];
+                    Transpose.Reflection.deferredMeta = [];
 
                     for (var i = 0; i < len; i++) {
                         var item = metas[i];
 
-                        H5.setMetadata(item.typeName, item.metadata, item.ns);
+                        Transpose.setMetadata(item.typeName, item.metadata, item.ns);
                     }
                 }
             }
 
             if (fn) {
-                var old = H5.Class.staticInitAllow;
+                var old = Transpose.Class.staticInitAllow;
 
-                H5.Class.staticInitAllow = true;
+                Transpose.Class.staticInitAllow = true;
                 fn();
-                H5.Class.staticInitAllow = old;
+                Transpose.Class.staticInitAllow = old;
 
                 return;
             }
 
-            H5.Class.staticInitAllow = true;
+            Transpose.Class.staticInitAllow = true;
 
-            var queue = H5.Class.$queue.concat(H5.Class.$queueEntry);
+            var queue = Transpose.Class.$queue.concat(Transpose.Class.$queueEntry);
 
-            H5.Class.$queue.length = 0;
-            H5.Class.$queueEntry.length = 0;
+            Transpose.Class.$queue.length = 0;
+            Transpose.Class.$queueEntry.length = 0;
 
             for (var i = 0; i < queue.length; i++) {
                 var t = queue[i];
@@ -1088,7 +1088,7 @@
 
                 if (t.prototype.$main) {
                     (function (cls, name) {
-                        H5.ready(function () {
+                        Transpose.ready(function () {
                             var task = cls[name]();
 
                             if (task && task.continueWith) {
@@ -1107,15 +1107,15 @@
         }
     };
 
-    H5.Class = base;
-    H5.Class.$queue = [];
-    H5.Class.$queueEntry = [];
-    H5.define = H5.Class.define;
-    H5.definei = H5.Class.definei;
-    H5.init = H5.Class.init;
+    Transpose.Class = base;
+    Transpose.Class.$queue = [];
+    Transpose.Class.$queueEntry = [];
+    Transpose.define = Transpose.Class.define;
+    Transpose.definei = Transpose.Class.definei;
+    Transpose.init = Transpose.Class.init;
 
     function TCS() { return new System.Threading.Tasks.TaskCompletionSource(); }
     function STEP(steps, currentStep) { return System.Array.min(steps, currentStep); }
 
-    H5.TCS = TCS;
-    H5.STEP = STEP;
+    Transpose.TCS = TCS;
+    Transpose.STEP = STEP;

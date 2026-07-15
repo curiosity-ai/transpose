@@ -4,7 +4,7 @@
 
 namespace System.Globalization
 {
-    [H5.Enum(H5.Emit.Value)]
+    [Transpose.Enum(Transpose.Emit.Value)]
     internal enum BidiCategory
     {
         LeftToRight = 0,

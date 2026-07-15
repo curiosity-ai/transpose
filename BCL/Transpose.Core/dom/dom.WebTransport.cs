@@ -1,7 +1,7 @@
-using H5;
-using H5.Core;
+using Transpose;
+using Transpose.Core;
 
-namespace H5.Core
+namespace Transpose.Core
 {
     public static partial class dom
     {
@@ -13,7 +13,7 @@ namespace H5.Core
             public extern WebTransport(string url, dom.WebTransportOptions options);
             public static dom.WebTransport prototype { get; set; }
 
-            public virtual es5.Promise<H5.Core.Void> ready { get; }
+            public virtual es5.Promise<Transpose.Core.Void> ready { get; }
             public virtual es5.Promise<dom.WebTransportCloseInfo> closed { get; }
             public virtual dom.WebTransportDatagramDuplexStream datagrams { get; }
 

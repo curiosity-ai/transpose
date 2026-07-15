@@ -17,7 +17,7 @@ using System;
 
 namespace System.Resources
 {
-    [H5.NonScriptable]
+    [Transpose.NonScriptable]
     public enum UltimateResourceFallbackLocation
     {
         MainAssembly,

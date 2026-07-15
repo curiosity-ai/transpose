@@ -5,12 +5,12 @@ namespace System.ComponentModel.DataAnnotations
     /// <summary>
     /// Used to mark an Entity member as an association
     /// </summary>
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
     [AttributeUsage(AttributeTargets.Field | AttributeTargets.Property, AllowMultiple = false,
         Inherited = true)]
     [Obsolete("This attribute is no longer in use and will be ignored if applied.")]
-    [H5.External]
-    [H5.NonScriptable]
+    [Transpose.External]
+    [Transpose.NonScriptable]
     public sealed class AssociationAttribute : Attribute
     {
         /// <summary>

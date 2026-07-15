@@ -1,4 +1,4 @@
-    H5.define("System.Text.RegularExpressions.MatchCollection", {
+    Transpose.define("System.Text.RegularExpressions.MatchCollection", {
         inherits: function () {
             return [System.Collections.ICollection];
         },
@@ -130,7 +130,7 @@
         }
     });
 
-    H5.define("System.Text.RegularExpressions.MatchEnumerator", {
+    Transpose.define("System.Text.RegularExpressions.MatchEnumerator", {
         inherits: function () {
             return [System.Collections.IEnumerator];
         },

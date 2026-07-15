@@ -4,7 +4,7 @@
 
 namespace System.Globalization
 {
-    [H5.Enum(H5.Emit.Value)]
+    [Transpose.Enum(Transpose.Emit.Value)]
     public enum CalendarWeekRule
     {
         FirstDay = 0,           // Week 1 begins on the first day of the year

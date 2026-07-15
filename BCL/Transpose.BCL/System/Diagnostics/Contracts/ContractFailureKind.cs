@@ -1,7 +1,7 @@
 namespace System.Diagnostics.Contracts
 {
-    [H5.Enum(H5.Emit.Name)]
-    [H5.External]
+    [Transpose.Enum(Transpose.Emit.Name)]
+    [Transpose.External]
     public enum ContractFailureKind
     {
         Precondition,

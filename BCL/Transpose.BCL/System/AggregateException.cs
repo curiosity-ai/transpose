@@ -3,27 +3,27 @@ using System.Collections.ObjectModel;
 
 namespace System
 {
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.External]
-    [H5.Reflectable]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.External]
+    [Transpose.Reflectable]
     public class AggregateException : Exception
     {
         public extern AggregateException();
 
-        [H5.Template("new System.AggregateException(null, {innerExceptions})")]
+        [Transpose.Template("new System.AggregateException(null, {innerExceptions})")]
         public extern AggregateException(IEnumerable<Exception> innerExceptions);
 
-        [H5.Template("new System.AggregateException(null, {innerExceptions:array})")]
+        [Transpose.Template("new System.AggregateException(null, {innerExceptions:array})")]
         public extern AggregateException(params Exception[] innerExceptions);
 
         public extern AggregateException(string message);
 
         public extern AggregateException(string message, IEnumerable<Exception> innerExceptions);
 
-        [H5.Template("new System.AggregateException({message}, {innerExceptions:array})")]
+        [Transpose.Template("new System.AggregateException({message}, {innerExceptions:array})")]
         public extern AggregateException(string message, params Exception[] innerExceptions);
 
-        [H5.Convention(H5.Notation.CamelCase)]
+        [Transpose.Convention(Transpose.Notation.CamelCase)]
         public extern ReadOnlyCollection<Exception> InnerExceptions
         {
             get;

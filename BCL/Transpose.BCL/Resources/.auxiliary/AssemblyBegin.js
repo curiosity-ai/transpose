@@ -1,3 +1,3 @@
-H5.assembly("H5", function ($asm, globals) {
+Transpose.assembly("Transpose", function ($asm, globals) {
     "use strict";
 

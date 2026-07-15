@@ -4,7 +4,7 @@
 
 namespace System.Reflection
 {
-    [H5.NonScriptable]
+    [Transpose.NonScriptable]
     // This Enum matchs the CorMethodImpl defined in CorHdr.h
     public enum MethodImplAttributes
     {

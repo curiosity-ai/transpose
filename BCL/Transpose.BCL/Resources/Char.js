@@ -1,4 +1,4 @@
-    H5.define("System.Char", {
+    Transpose.define("System.Char", {
         inherits: [System.IComparable, System.IFormattable],
         $kind: "struct",
         statics: {
@@ -15,7 +15,7 @@
             },
 
             parse: function (s) {
-                if (!H5.hasValue(s)) {
+                if (!Transpose.hasValue(s)) {
                     throw new System.ArgumentNullException.$ctor1("s");
                 }
 
@@ -35,7 +35,7 @@
             },
 
             format: function (number, format, provider) {
-                return H5.Int.format(number, format, provider);
+                return Transpose.Int.format(number, format, provider);
             },
 
             charCodeAt: function (str, index) {
@@ -175,19 +175,19 @@
                     }
                 }
 
-                return H5.isUpper(c);
+                return Transpose.isUpper(c);
             },
 
             equals: function (v1, v2) {
-                if (H5.is(v1, System.Char) && H5.is(v2, System.Char)) {
-                    return H5.unbox(v1, true) === H5.unbox(v2, true);
+                if (Transpose.is(v1, System.Char) && Transpose.is(v2, System.Char)) {
+                    return Transpose.unbox(v1, true) === Transpose.unbox(v2, true);
                 }
 
                 return false;
             },
 
             equalsT: function (v1, v2) {
-                return H5.unbox(v1, true) === H5.unbox(v2, true);
+                return Transpose.unbox(v1, true) === Transpose.unbox(v2, true);
             },
 
             getHashCode: function (v) {
@@ -196,4 +196,4 @@
         }
     });
 
-    H5.Class.addExtend(System.Char, [System.IComparable$1(System.Char), System.IEquatable$1(System.Char)]);
+    Transpose.Class.addExtend(System.Char, [System.IComparable$1(System.Char), System.IEquatable$1(System.Char)]);

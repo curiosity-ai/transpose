@@ -1,7 +1,7 @@
-// Original: H5/H5/Attributes/AdapterAttribute.cs
+// Original: Transpose/Transpose/Attributes/AdapterAttribute.cs
 using System;
 
-namespace H5
+namespace Transpose
 {
     [AttributeUsage(AttributeTargets.Method, AllowMultiple = true)]
     public abstract class AdapterAttribute : Attribute

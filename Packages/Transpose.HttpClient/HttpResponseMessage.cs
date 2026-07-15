@@ -96,11 +96,11 @@ namespace System.Net.Http
             get { return ((int)_statusCode >= 200) && ((int)_statusCode <= 299); }
         }
 
-        public HttpResponseMessage(H5.Core.dom.XMLHttpRequest requestObject) : this(DefaultStatusCode, requestObject)
+        public HttpResponseMessage(Transpose.Core.dom.XMLHttpRequest requestObject) : this(DefaultStatusCode, requestObject)
         {
         }
 
-        public HttpResponseMessage(HttpStatusCode statusCode, H5.Core.dom.XMLHttpRequest requestObject)
+        public HttpResponseMessage(HttpStatusCode statusCode, Transpose.Core.dom.XMLHttpRequest requestObject)
         {
             if (((int)statusCode < 0) || ((int)statusCode > 999))
             {

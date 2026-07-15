@@ -6,7 +6,7 @@ namespace System.IO
 {
     // Provides seek reference points.  To seek to the end of a stream,
     // call stream.Seek(0, SeekOrigin.End).
-    [H5.Enum(H5.Emit.Value)]
+    [Transpose.Enum(Transpose.Emit.Value)]
     public enum SeekOrigin
     {
         // These constants match Win32's FILE_BEGIN, FILE_CURRENT, and FILE_END

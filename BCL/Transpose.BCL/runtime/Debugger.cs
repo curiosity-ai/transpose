@@ -1,9 +1,9 @@
 namespace System.Diagnostics
 {
-    [H5.Reflectable(false)]
+    [Transpose.Reflectable(false)]
     public static class Debugger
     {
-        [H5.Template("debugger")]
+        [Transpose.Template("debugger")]
         public static extern void Break();
 
         public static readonly string DefaultCategory;

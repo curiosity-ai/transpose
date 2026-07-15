@@ -1,7 +1,7 @@
-using H5;
-using H5.Core;
+using Transpose;
+using Transpose.Core;
 
-namespace H5.Core
+namespace Transpose.Core
 {
     public static partial class dom
     {
@@ -36,10 +36,10 @@ namespace H5.Core
             public virtual string productName { get; }
             public virtual dom.HIDCollectionInfo[] collections { get; }
 
-            public virtual extern es5.Promise<H5.Core.Void> open();
-            public virtual extern es5.Promise<H5.Core.Void> close();
-            public virtual extern es5.Promise<H5.Core.Void> sendReport(byte reportId, es5.ArrayBufferView data);
-            public virtual extern es5.Promise<H5.Core.Void> sendFeatureReport(byte reportId, es5.ArrayBufferView data);
+            public virtual extern es5.Promise<Transpose.Core.Void> open();
+            public virtual extern es5.Promise<Transpose.Core.Void> close();
+            public virtual extern es5.Promise<Transpose.Core.Void> sendReport(byte reportId, es5.ArrayBufferView data);
+            public virtual extern es5.Promise<Transpose.Core.Void> sendFeatureReport(byte reportId, es5.ArrayBufferView data);
             public virtual extern es5.Promise<es5.DataView> receiveFeatureReport(byte reportId);
 
             public virtual dom.HIDDevice.oninputreportFn oninputreport { get; set; }

@@ -20,7 +20,7 @@
   "resources": [
     {
       // File paths relative to project root
-      "name": "h5.js",
+      "name": "tps.js",
       "header": "Resources/.auxiliary/Header.js",
       "remark": "\n    // @source {name}\n",
         "files": [
@@ -31,7 +31,7 @@
             "Resources/ReflectionAssembly.js",
             "Resources/Object.js",
             "Resources/.generated/System/Void.js",
-            "Resources/.generated/H5/Utils/SystemAssemblyVersion.js",
+            "Resources/.generated/Transpose/Utils/SystemAssemblyVersion.js",
             "Resources/Reflection.js",
             "Resources/Interfaces.js",
             "Resources/ValueType.js",
@@ -39,7 +39,7 @@
             "Resources/Nullable.js",
             "Resources/Char.js",
 
-            "Resources/.generated/H5/Ref.js",
+            "Resources/.generated/Transpose/Ref.js",
             "Resources/.generated/System/IConvertible.js",
             "Resources/.generated/System/HResults.js",
             "Resources/Exception.js",
@@ -73,7 +73,7 @@
             "Resources/Date.js",
             "Resources/TimeSpan.js",
             "Resources/Text/StringBuilder.js",
-            "Resources/Text/H5Regex.js",
+            "Resources/Text/TransposeRegex.js",
             "Resources/.generated/System/Diagnostics/Debug/DebugAssertException.js",
             "Resources/.generated/System/Diagnostics/Debug.js",
             "Resources/.generated/System/Diagnostics/Debugger.js",
@@ -382,11 +382,11 @@
         ]
     },
     {
-      "name": "h5.meta.js",
+      "name": "tps.meta.js",
       "header": "Resources/.auxiliary/Header.js",
       "extract": false,
       "files": [
-        "Resources/.generated/H5.meta.js"
+        "Resources/.generated/Transpose.meta.js"
       ]
     }
   ]

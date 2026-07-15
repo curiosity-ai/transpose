@@ -4,7 +4,7 @@
 
 namespace System.Runtime.InteropServices
 {
-    [H5.NonScriptable]
+    [Transpose.NonScriptable]
     [AttributeUsage(AttributeTargets.Method, Inherited = false)]
     public sealed class DllImportAttribute : Attribute
     {

@@ -4,7 +4,7 @@
 
 namespace System
 {
-    [H5.Enum(H5.Emit.Value)]
+    [Transpose.Enum(Transpose.Emit.Value)]
     public enum StringComparison
     {
         CurrentCulture = 0,

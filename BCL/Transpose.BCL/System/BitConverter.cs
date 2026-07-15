@@ -3,7 +3,7 @@
     /// <summary>
     /// Converts base data types to an array of bytes, and an array of bytes to base data types.
     /// </summary>
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
     public static class BitConverter
     {
         /// <summary>
@@ -403,7 +403,7 @@
             var view = View(8).ToDynamic();
             view.setFloat64(0, value);
 
-            return H5.Script.Write<dynamic>("new System.Int64([view.getInt32(4), view.getInt32(0)])");
+            return Transpose.Script.Write<dynamic>("new System.Int64([view.getInt32(4), view.getInt32(0)])");
         }
 
         /// <summary>
@@ -467,14 +467,14 @@
             {
                 for (int i = count - 1; i >= 0; i--)
                 {
-                    H5.Script.Write("r[System.Array.index(i, r)] = view.getUint8(H5.identity(startIndex, (startIndex = (startIndex + 1) | 0)));");
+                    Transpose.Script.Write("r[System.Array.index(i, r)] = view.getUint8(Transpose.identity(startIndex, (startIndex = (startIndex + 1) | 0)));");
                 }
             }
             else
             {
                 for (int i = 0; i < count; i++)
                 {
-                    H5.Script.Write("r[System.Array.index(i1, r)] = view.getUint8(H5.identity(startIndex, (startIndex = (startIndex + 1) | 0)));");
+                    Transpose.Script.Write("r[System.Array.index(i1, r)] = view.getUint8(Transpose.identity(startIndex, (startIndex = (startIndex + 1) | 0)));");
                 }
             }
 
@@ -492,22 +492,22 @@
             {
                 for (int i = count - 1; i >= 0; i--)
                 {
-                    H5.Script.Write("view.setUint8(i, value[System.Array.index(H5.identity(startIndex, (startIndex = (startIndex + 1) | 0)), value)]);");
+                    Transpose.Script.Write("view.setUint8(i, value[System.Array.index(Transpose.identity(startIndex, (startIndex = (startIndex + 1) | 0)), value)]);");
                 }
             }
             else
             {
                 for (int i = 0; i < count; i++)
                 {
-                    H5.Script.Write("view.setUint8(i1, value[System.Array.index(H5.identity(startIndex, (startIndex = (startIndex + 1) | 0)), value)]);");
+                    Transpose.Script.Write("view.setUint8(i1, value[System.Array.index(Transpose.identity(startIndex, (startIndex = (startIndex + 1) | 0)), value)]);");
                 }
             }
         }
 
         private static object View(int length)
         {
-            var buffer = H5.Script.Write<dynamic>("new ArrayBuffer(length)");
-            var view = H5.Script.Write<dynamic>("new DataView(buffer)");
+            var buffer = Transpose.Script.Write<dynamic>("new ArrayBuffer(length)");
+            var view = Transpose.Script.Write<dynamic>("new DataView(buffer)");
 
             return view;
         }
@@ -516,15 +516,15 @@
         {
             var view = View(8);
 
-            if(H5.Script.Write<bool>("value.value"))
+            if(Transpose.Script.Write<bool>("value.value"))
             {
-                H5.Script.Write("view.setInt32(4, value.value.low);");
-                H5.Script.Write("view.setInt32(0, value.value.high);");
+                Transpose.Script.Write("view.setInt32(4, value.value.low);");
+                Transpose.Script.Write("view.setInt32(0, value.value.high);");
             }
             else
             {
-                H5.Script.Write("view.setInt32(4, value.low);");
-                H5.Script.Write("view.setInt32(0, value.high);");
+                Transpose.Script.Write("view.setInt32(4, value.low);");
+                Transpose.Script.Write("view.setInt32(0, value.high);");
             }
 
             return view;
@@ -564,16 +564,16 @@
             }
         }
 
-        [H5.Template("{0}.value.high")]
+        [Transpose.Template("{0}.value.high")]
         private static extern int GetLongHigh(long value);
 
-        [H5.Template("{0}.value.low")]
+        [Transpose.Template("{0}.value.low")]
         private static extern int GetLongLow(long value);
 
-        [H5.Template("System.Int64([{0}, {1}])")]
+        [Transpose.Template("System.Int64([{0}, {1}])")]
         private static extern long CreateLong(int low, int high);
 
-        [H5.Template("System.UInt64([{0}, {1}])")]
+        [Transpose.Template("System.UInt64([{0}, {1}])")]
         private static extern ulong CreateULong(int low, int high);
     }
 }

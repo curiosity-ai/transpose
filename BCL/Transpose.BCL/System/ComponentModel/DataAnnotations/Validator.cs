@@ -6,9 +6,9 @@ namespace System.ComponentModel.DataAnnotations
     /// Helper class to validate objects, properties and other values using their associated
     /// <see cref="ValidationAttribute" /> custom attributes.
     /// </summary>
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.External]
-    [H5.NonScriptable]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.External]
+    [Transpose.NonScriptable]
     public static class Validator
     {
         /// <summary>

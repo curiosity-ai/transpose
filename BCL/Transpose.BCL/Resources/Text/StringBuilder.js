@@ -1,4 +1,4 @@
-    H5.define("System.Text.StringBuilder", {
+    Transpose.define("System.Text.StringBuilder", {
         ctor: function () {
             this.$initialize();
             this.buffer = [],

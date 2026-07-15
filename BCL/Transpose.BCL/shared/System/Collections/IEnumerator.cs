@@ -17,7 +17,7 @@ namespace System.Collections
         // element of the enumeration, and the first call to MoveNext
         // brings the first element of the enumeration into view.
         //
-        [H5.Convention(H5.Notation.CamelCase)]
+        [Transpose.Convention(Transpose.Notation.CamelCase)]
         bool MoveNext();
 
         // Returns the current element of the enumeration. The returned value is
@@ -37,7 +37,7 @@ namespace System.Collections
         // IEnumerator will be invalid, just as it would have been if you had called
         // MoveNext or Current.
         //
-        [H5.Convention(H5.Notation.CamelCase)]
+        [Transpose.Convention(Transpose.Notation.CamelCase)]
         void Reset();
     }
 }

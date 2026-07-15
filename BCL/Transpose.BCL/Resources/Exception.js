@@ -1,4 +1,4 @@
-    H5.define("System.Exception", {
+    Transpose.define("System.Exception", {
         config: {
             properties: {
                 Message: {
@@ -38,7 +38,7 @@
 
         ctor: function (message, innerException) {
             this.$initialize();
-            this.message = message ? message : ("Exception of type '" + H5.getTypeName(this) + "' was thrown.");
+            this.message = message ? message : ("Exception of type '" + Transpose.getTypeName(this) + "' was thrown.");
             this.innerException = innerException ? innerException : null;
             this.errorStack = new Error(this.message);
             this.data = new (System.Collections.Generic.Dictionary$2(System.Object, System.Object))();
@@ -57,7 +57,7 @@
         },
 
         toString: function () {
-            var builder = H5.getTypeName(this);
+            var builder = Transpose.getTypeName(this);
 
             if (this.Message != null) {
                 builder += ": " + this.Message + "\n";
@@ -74,7 +74,7 @@
 
         statics: {
             create: function (error) {
-                if (H5.is(error, System.Exception)) {
+                if (Transpose.is(error, System.Exception)) {
                     return error;
                 }
 

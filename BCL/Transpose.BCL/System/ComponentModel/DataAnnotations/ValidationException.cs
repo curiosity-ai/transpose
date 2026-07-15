@@ -3,10 +3,10 @@ namespace System.ComponentModel.DataAnnotations
     /// <summary>
     /// Exception used for validation using <see cref="ValidationAttribute" />.
     /// </summary>
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
     [Serializable]
-    [H5.External]
-    [H5.NonScriptable]
+    [Transpose.External]
+    [Transpose.NonScriptable]
     public class ValidationException : Exception
     {
         /// <summary>

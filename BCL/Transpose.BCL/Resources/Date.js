@@ -1,4 +1,4 @@
-    H5.define("System.DateTime", {
+    Transpose.define("System.DateTime", {
         inherits: function () { return [System.IComparable, System.IComparable$1(System.DateTime), System.IEquatable$1(System.DateTime), System.IFormattable]; },
         $kind: "struct",
         fields: {
@@ -56,7 +56,7 @@
             },
 
             $is: function (instance) {
-                return H5.isDate(instance);
+                return Transpose.isDate(instance);
             },
 
             getDefaultValue: function () {
@@ -583,7 +583,7 @@
                     format = ["G", "g", "F", "f", "D", "d", "R", "r", "s", "S", "U", "u", "O", "o", "Y", "y", "M", "m", "T", "t"];
                 }
 
-                if (H5.isArray(format)) {
+                if (Transpose.isArray(format)) {
                     var j = 0,
                         d;
 
@@ -602,7 +602,7 @@
                     throw new System.FormatException.$ctor1("String does not contain a valid string representation of a date and time.");
                 } else {
                     // TODO: The code below assumes that there are no quotation marks around the UTC/Z format token (the format patterns
-                    // used by H5 appear to use quotation marks throughout (see universalSortableDateTimePattern), including
+                    // used by Transpose appear to use quotation marks throughout (see universalSortableDateTimePattern), including
                     // in the recent Newtonsoft.Json.JsonConvert release).
                     // Until the above is sorted out, manually remove quotation marks to get UTC times parsed correctly.
                     format = format.replace("'Z'", "Z");

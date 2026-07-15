@@ -1,4 +1,4 @@
-    H5.define("System.Net.WebSockets.ClientWebSocket", {
+    Transpose.define("System.Net.WebSockets.ClientWebSocket", {
         inherits: [System.IDisposable],
 
         ctor: function () {
@@ -184,7 +184,7 @@
             var task,
                 tcs = new System.Threading.Tasks.TaskCompletionSource(),
                 self = this,
-                asyncBody = H5.fn.bind(this, function () {
+                asyncBody = Transpose.fn.bind(this, function () {
                     try {
                         if (cancellationToken.getIsCancellationRequested()) {
                             tcs.setException(new System.Threading.Tasks.TaskCanceledException("Receive has been cancelled.", tcs.task));
@@ -315,7 +315,7 @@
         }
     });
 
-    H5.define("System.Net.WebSockets.ClientWebSocketOptions", {
+    Transpose.define("System.Net.WebSockets.ClientWebSocketOptions", {
         ctor: function () {
             this.$initialize();
             this.isReadOnly = false;
@@ -343,7 +343,7 @@
         }
     });
 
-    H5.define("System.Net.WebSockets.WebSocketReceiveResult", {
+    Transpose.define("System.Net.WebSockets.WebSocketReceiveResult", {
         ctor: function (count, messageType, endOfMessage, closeStatus, closeStatusDescription) {
             this.$initialize();
             this.count = count;

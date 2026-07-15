@@ -1,4 +1,4 @@
-    H5.define("System.RegexMatchTimeoutException", {
+    Transpose.define("System.RegexMatchTimeoutException", {
         inherits: [System.TimeoutException],
 
         _regexInput: "",

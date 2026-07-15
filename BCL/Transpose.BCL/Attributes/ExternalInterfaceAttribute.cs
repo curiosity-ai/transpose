@@ -1,9 +1,9 @@
 ﻿using System;
 
-namespace H5
+namespace Transpose
 {
     /// <summary>
-    /// Applies to interface if it's implementation is done outside H5 type system (class implementation doesn't provide aliases for interface members implementations)
+    /// Applies to interface if it's implementation is done outside Transpose type system (class implementation doesn't provide aliases for interface members implementations)
     /// </summary>
     [NonScriptable]
     [AttributeUsage(AttributeTargets.Assembly | AttributeTargets.Interface)]

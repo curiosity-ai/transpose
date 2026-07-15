@@ -1,24 +1,24 @@
 namespace System
 {
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.External]
-    [H5.Name("Math")]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.External]
+    [Transpose.Name("Math")]
     public static class Math
     {
-        [H5.Convention]
+        [Transpose.Convention]
         public const double E = 2.7182818284590452354;
 
-        [H5.Convention]
+        [Transpose.Convention]
         public const double PI = 3.14159265358979323846;
 
         public static extern int Abs(int x);
 
         public static extern double Abs(double x);
 
-        [H5.Template("{l}.abs()")]
+        [Transpose.Template("{l}.abs()")]
         public static extern long Abs(long l);
 
-        [H5.Template("{l}.abs()")]
+        [Transpose.Template("{l}.abs()")]
         public static extern decimal Abs(decimal l);
 
         /// <summary>
@@ -94,7 +94,7 @@ namespace System
         /// <param name="val1">The first of two 64-bit signed integers to compare.</param>
         /// <param name="val2">The second of two 64-bit signed integers to compare.</param>
         /// <returns>Parameter val1 or val2, whichever is larger.</returns>
-        [H5.Template("System.Int64.max({val1}, {val2})")]
+        [Transpose.Template("System.Int64.max({val1}, {val2})")]
         public static extern long Max(long val1, long val2);
 
         /// <summary>
@@ -103,7 +103,7 @@ namespace System
         /// <param name="val1">The first of two 64-bit unsigned integers to compare.</param>
         /// <param name="val2">The second of two 64-bit unsigned integers to compare.</param>
         /// <returns>Parameter val1 or val2, whichever is larger.</returns>
-        [H5.Template("System.UInt64.max({val1}, {val2})")]
+        [Transpose.Template("System.UInt64.max({val1}, {val2})")]
         
         public static extern ulong Max(ulong val1, ulong val2);
 
@@ -113,7 +113,7 @@ namespace System
         /// <param name="val1">The first of two decimal numbers to compare.</param>
         /// <param name="val2">The second of two decimal numbers to compare.</param>
         /// <returns>Parameter val1 or val2, whichever is larger.</returns>
-        [H5.Template("System.Decimal.max({val1}, {val2})")]
+        [Transpose.Template("System.Decimal.max({val1}, {val2})")]
         public static extern decimal Max(decimal val1, decimal val2);
 
         /// <summary>
@@ -189,7 +189,7 @@ namespace System
         /// <param name="val1">The first of two 64-bit signed integers to compare.</param>
         /// <param name="val2">The second of two 64-bit signed integers to compare.</param>
         /// <returns>Parameter val1 or val2, whichever is smaller.</returns>
-        [H5.Template("System.Int64.min({val1}, {val2})")]
+        [Transpose.Template("System.Int64.min({val1}, {val2})")]
         public static extern long Min(long val1, long val2);
 
         /// <summary>
@@ -198,7 +198,7 @@ namespace System
         /// <param name="val1">The first of two 64-bit unsigned integers to compare.</param>
         /// <param name="val2">The second of two 64-bit unsigned integers to compare.</param>
         /// <returns>Parameter val1 or val2, whichever is smaller.</returns>
-        [H5.Template("System.UInt64.min({val1}, {val2})")]
+        [Transpose.Template("System.UInt64.min({val1}, {val2})")]
         
         public static extern ulong Min(ulong val1, ulong val2);
 
@@ -208,69 +208,69 @@ namespace System
         /// <param name="val1">The first of two decimal numbers to compare.</param>
         /// <param name="val2">The second of two decimal numbers to compare.</param>
         /// <returns>Parameter val1 or val2, whichever is smaller.</returns>
-        [H5.Template("System.Decimal.min({val1}, {val2})")]
+        [Transpose.Template("System.Decimal.min({val1}, {val2})")]
         public static extern decimal Min(decimal val1, decimal val2);
 
         public static extern double Random();
 
         public static extern double Sqrt(double x);
 
-        [H5.Template("{d}.ceil()")]
+        [Transpose.Template("{d}.ceil()")]
         public static extern decimal Ceiling(decimal d);
 
-        [H5.Name("ceil")]
+        [Transpose.Name("ceil")]
         public static extern double Ceiling(double d);
 
         public static extern double Floor(double x);
 
-        [H5.Template("{d}.floor()")]
+        [Transpose.Template("{d}.floor()")]
         public static extern decimal Floor(decimal d);
 
-        [H5.Template("System.Decimal.round({x}, 6)")]
+        [Transpose.Template("System.Decimal.round({x}, 6)")]
         public static extern decimal Round(decimal x);
 
-        [H5.Template("H5.Math.round({d}, 0, 6)")]
+        [Transpose.Template("Transpose.Math.round({d}, 0, 6)")]
         public static extern double Round(double d);
 
-        [H5.Template("Math.round({d})")]
+        [Transpose.Template("Math.round({d})")]
         public static extern double JsRound(double d);
 
-        [H5.Template("System.Decimal.toDecimalPlaces({d}, {digits}, 6)")]
+        [Transpose.Template("System.Decimal.toDecimalPlaces({d}, {digits}, 6)")]
         public static extern decimal Round(decimal d, int digits);
 
-        [H5.Template("H5.Math.round({d}, {digits}, 6)")]
+        [Transpose.Template("Transpose.Math.round({d}, {digits}, 6)")]
         public static extern double Round(double d, int digits);
 
-        [H5.Template("System.Decimal.round({d}, {method})")]
+        [Transpose.Template("System.Decimal.round({d}, {method})")]
         public static extern decimal Round(decimal d, MidpointRounding method);
 
-        [H5.Template("H5.Math.round({d}, 0, {method})")]
+        [Transpose.Template("Transpose.Math.round({d}, 0, {method})")]
         public static extern double Round(double d, MidpointRounding method);
 
-        [H5.Template("System.Decimal.toDecimalPlaces({d}, {digits}, {method})")]
+        [Transpose.Template("System.Decimal.toDecimalPlaces({d}, {digits}, {method})")]
         public static extern decimal Round(decimal d, int digits, MidpointRounding method);
 
-        [H5.Template("H5.Math.round({d}, {digits}, {method})")]
+        [Transpose.Template("Transpose.Math.round({d}, {digits}, {method})")]
         public static extern double Round(double d, int digits, MidpointRounding method);
 
-        [H5.Template("H5.Math.IEEERemainder({x}, {y})")]
+        [Transpose.Template("Transpose.Math.IEEERemainder({x}, {y})")]
         public static extern double IEEERemainder(double x, double y);
 
         public static extern double Exp(double x);
 
-        [H5.Template("{x}.exponential()")]
+        [Transpose.Template("{x}.exponential()")]
         public static extern decimal Exp(decimal x);
 
-        [H5.Template("H5.Math.log({x})")]
+        [Transpose.Template("Transpose.Math.log({x})")]
         public static extern double Log(double x);
 
-        [H5.Template("H5.Math.logWithBase({x}, {logBase})")]
+        [Transpose.Template("Transpose.Math.logWithBase({x}, {logBase})")]
         public static extern double Log(double x, double logBase);
 
-        [H5.Template("H5.Math.logWithBase({x}, 10.0)")]
+        [Transpose.Template("Transpose.Math.logWithBase({x}, 10.0)")]
         public static extern double Log10(double x);
 
-        [H5.Template("{x}.pow({y})")]
+        [Transpose.Template("{x}.pow({y})")]
         public static extern decimal Pow(decimal x, decimal y);
 
         public static extern double Pow(double x, double y);
@@ -291,111 +291,111 @@ namespace System
 
         public static extern double Tan(double x);
 
-        [H5.Template("H5.Int.trunc({d})")]
+        [Transpose.Template("Transpose.Int.trunc({d})")]
         public static extern double Truncate(double d);
 
-        [H5.Template("{d}.trunc()")]
+        [Transpose.Template("{d}.trunc()")]
         public static extern decimal Truncate(decimal d);
 
-        [H5.Template("H5.Int.sign({value})")]
+        [Transpose.Template("Transpose.Int.sign({value})")]
         public static extern int Sign(double value);
 
-        [H5.Template("{value}.sign()")]
+        [Transpose.Template("{value}.sign()")]
         public static extern int Sign(decimal value);
 
-        [H5.Template("H5.Math.divRem({a}, {b}, {result})")]
+        [Transpose.Template("Transpose.Math.divRem({a}, {b}, {result})")]
         public static extern int DivRem(int a, int b, out int result);
 
-        [H5.Template("System.Int64.divRem({a}, {b}, {result})")]
+        [Transpose.Template("System.Int64.divRem({a}, {b}, {result})")]
         public static extern long DivRem(long a, long b, out long result);
 
-        [H5.Template("H5.Math.sinh({value})")]
+        [Transpose.Template("Transpose.Math.sinh({value})")]
         public static extern double Sinh(double value);
 
-        [H5.Template("H5.Math.cosh({value})")]
+        [Transpose.Template("Transpose.Math.cosh({value})")]
         public static extern double Cosh(double value);
 
-        [H5.Template("H5.Math.tanh({value})")]
+        [Transpose.Template("Transpose.Math.tanh({value})")]
         public static extern double Tanh(double value);
 
-        [H5.Template("((1.0 / {y}) < 0 ? -1.0 : 1.0) * Math.abs({x})")]
+        [Transpose.Template("((1.0 / {y}) < 0 ? -1.0 : 1.0) * Math.abs({x})")]
         public static extern double CopySign(double x, double y);
 
-        [H5.Template("H5.Math.logWithBase({x}, 2.0)")]
+        [Transpose.Template("Transpose.Math.logWithBase({x}, 2.0)")]
         public static extern double Log2(double x);
 
-        [H5.Template("({x} * {y}) + {z}")]
+        [Transpose.Template("({x} * {y}) + {z}")]
         public static extern double FusedMultiplyAdd(double x, double y, double z);
 
-        [H5.Template("1.0 / {x}")]
+        [Transpose.Template("1.0 / {x}")]
         public static extern double ReciprocalEstimate(double x);
 
-        [H5.Template("1.0 / System.Math.sqrt({x})")]
+        [Transpose.Template("1.0 / System.Math.sqrt({x})")]
         public static extern double ReciprocalSqrtEstimate(double x);
 
         // Clamp
 
-        [H5.Template(@"(function(value, min, max) {
+        [Transpose.Template(@"(function(value, min, max) {
             if (min > max) { throw new System.ArgumentException('min > max'); }
             return (value < min) ? min : ((value > max) ? max : value);
         })({value}, {min}, {max})")]
         public static extern byte Clamp(byte value, byte min, byte max);
 
-        [H5.Template(@"(function(value, min, max) {
+        [Transpose.Template(@"(function(value, min, max) {
             if (min > max) { throw new System.ArgumentException('min > max'); }
             return (value < min) ? min : ((value > max) ? max : value);
         })({value}, {min}, {max})")]
         public static extern decimal Clamp(decimal value, decimal min, decimal max);
 
-        [H5.Template(@"(function(value, min, max) {
+        [Transpose.Template(@"(function(value, min, max) {
             if (min > max) { throw new System.ArgumentException('min > max'); }
             return (value < min) ? min : ((value > max) ? max : value);
         })({value}, {min}, {max})")]
         public static extern double Clamp(double value, double min, double max);
 
-        [H5.Template(@"(function(value, min, max) {
+        [Transpose.Template(@"(function(value, min, max) {
             if (min > max) { throw new System.ArgumentException('min > max'); }
             return (value < min) ? min : ((value > max) ? max : value);
         })({value}, {min}, {max})")]
         public static extern float Clamp(float value, float min, float max);
 
-        [H5.Template(@"(function(value, min, max) {
+        [Transpose.Template(@"(function(value, min, max) {
             if (min > max) { throw new System.ArgumentException('min > max'); }
             return (value < min) ? min : ((value > max) ? max : value);
         })({value}, {min}, {max})")]
         public static extern int Clamp(int value, int min, int max);
 
-        [H5.Template(@"(function(value, min, max) {
+        [Transpose.Template(@"(function(value, min, max) {
             if (min > max) { throw new System.ArgumentException('min > max'); }
             return (value < min) ? min : ((value > max) ? max : value);
         })({value}, {min}, {max})")]
         public static extern long Clamp(long value, long min, long max);
 
-        [H5.Template(@"(function(value, min, max) {
+        [Transpose.Template(@"(function(value, min, max) {
             if (min > max) { throw new System.ArgumentException('min > max'); }
             return (value < min) ? min : ((value > max) ? max : value);
         })({value}, {min}, {max})")]
         public static extern sbyte Clamp(sbyte value, sbyte min, sbyte max);
 
-        [H5.Template(@"(function(value, min, max) {
+        [Transpose.Template(@"(function(value, min, max) {
             if (min > max) { throw new System.ArgumentException('min > max'); }
             return (value < min) ? min : ((value > max) ? max : value);
         })({value}, {min}, {max})")]
         public static extern short Clamp(short value, short min, short max);
 
-        [H5.Template(@"(function(value, min, max) {
+        [Transpose.Template(@"(function(value, min, max) {
             if (min > max) { throw new System.ArgumentException('min > max'); }
             return (value < min) ? min : ((value > max) ? max : value);
         })({value}, {min}, {max})")]
         public static extern uint Clamp(uint value, uint min, uint max);
 
-        [H5.Template(@"(function(value, min, max) {
+        [Transpose.Template(@"(function(value, min, max) {
             if (min > max) { throw new System.ArgumentException('min > max'); }
             return (value < min) ? min : ((value > max) ? max : value);
         })({value}, {min}, {max})")]
         public static extern ulong Clamp(ulong value, ulong min, ulong max);
 
-        [H5.Template(@"(function(value, min, max) {
+        [Transpose.Template(@"(function(value, min, max) {
             if (min > max) { throw new System.ArgumentException('min > max'); }
             return (value < min) ? min : ((value > max) ? max : value);
         })({value}, {min}, {max})")]
@@ -404,7 +404,7 @@ namespace System
 
         // MaxMagnitude / MinMagnitude
 
-        [H5.Template(@"(function(x, y) {
+        [Transpose.Template(@"(function(x, y) {
             var ax = Math.abs(x);
             var ay = Math.abs(y);
 
@@ -414,7 +414,7 @@ namespace System
         })({x}, {y})")]
         public static extern double MaxMagnitude(double x, double y);
 
-        [H5.Template(@"(function(x, y) {
+        [Transpose.Template(@"(function(x, y) {
             var ax = Math.abs(x);
             var ay = Math.abs(y);
 
@@ -425,10 +425,10 @@ namespace System
         public static extern double MinMagnitude(double x, double y);
 
 
-        [H5.Template(@"System.Int64.bitIncrement({x})")]
+        [Transpose.Template(@"System.Int64.bitIncrement({x})")]
         public static extern double BitIncrement(double x);
 
-        [H5.Template(@"System.Int64.bitDecrement({x})")]
+        [Transpose.Template(@"System.Int64.bitDecrement({x})")]
         public static extern double BitDecrement(double x);
     }
 }

@@ -1,7 +1,7 @@
-// Original: H5/H5/Attributes/MixinAttribute.cs
+// Original: Transpose/Transpose/Attributes/MixinAttribute.cs
 using System;
 
-namespace H5
+namespace Transpose
 {
     [AttributeUsage(AttributeTargets.Class, Inherited = false, AllowMultiple = false)]
     public sealed class MixinAttribute : Attribute

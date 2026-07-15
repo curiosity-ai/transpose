@@ -1,13 +1,13 @@
 ﻿// Decompiled with JetBrains decompiler
-// Type: H5.ClassInterfaceAttribute
-// Assembly: H5.Core, Version=1.6.0.0, Culture=neutral, PublicKeyToken=null
+// Type: Transpose.ClassInterfaceAttribute
+// Assembly: Transpose.Core, Version=1.6.0.0, Culture=neutral, PublicKeyToken=null
 // MVID: 9E855DC6-9E83-4420-9E6F-8D2B7A117BBD
-// Assembly location: C:\work\curiosity\tesserae\Tesserae\bin\Debug\net461\H5.Core.dll
+// Assembly location: C:\work\curiosity\tesserae\Tesserae\bin\Debug\net461\Transpose.Core.dll
 
-using H5;
+using Transpose;
 using System;
 
-namespace H5.Core
+namespace Transpose.Core
 {
     [AttributeUsage(AttributeTargets.Interface)]
     public sealed class ClassInterfaceAttribute : Attribute

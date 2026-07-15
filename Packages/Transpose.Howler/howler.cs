@@ -6,7 +6,7 @@
 
 using System;
 
-namespace H5.Core
+namespace Transpose.Core
 {
     [Scope]
     [GlobalMethods]

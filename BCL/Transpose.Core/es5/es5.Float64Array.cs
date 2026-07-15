@@ -1,21 +1,21 @@
 ﻿// Decompiled with JetBrains decompiler
-// Type: H5.es5
-// Assembly: H5.es5, Version=2.8.2.0, Culture=neutral, PublicKeyToken=null
+// Type: Transpose.es5
+// Assembly: Transpose.es5, Version=2.8.2.0, Culture=neutral, PublicKeyToken=null
 // MVID: EC57AC2B-0E02-4A1C-B567-F790F377783B
-// Assembly location: C:\work\curiosity\tesserae\Tesserae\bin\Debug\net461\H5.es5.dll
+// Assembly location: C:\work\curiosity\tesserae\Tesserae\bin\Debug\net461\Transpose.es5.dll
 
 using System;
 using System.Collections;
 using System.Collections.Generic;
 
-namespace H5.Core
+namespace Transpose.Core
 {
     public  static partial class es5
     {
         [CombinedClass]
         [StaticInterface("Float64ArrayConstructor")]
         [FormerInterface]
-        public class Float64Array : IList<double>, ICollection<double>, IEnumerable<double>, IEnumerable, IH5Class, IReadOnlyList<double>, IReadOnlyCollection<double>, ICollection, IObject
+        public class Float64Array : IList<double>, ICollection<double>, IEnumerable<double>, IEnumerable, ITransposeClass, IReadOnlyList<double>, IReadOnlyCollection<double>, ICollection, IObject
         {
 
             public extern Float64Array(uint length);
@@ -224,10 +224,10 @@ namespace H5.Core
                 get;
             }
 
-            [Template("H5.getEnumerator({this}, {T})")]
+            [Template("Transpose.getEnumerator({this}, {T})")]
             extern IEnumerator<double> IEnumerable<double>.GetEnumerator();
 
-            [Template("H5.getEnumerator({this})")]
+            [Template("Transpose.getEnumerator({this})")]
             extern IEnumerator IEnumerable.GetEnumerator();
 
             extern double IReadOnlyList<double>.this[int index] { [Template("System.Array.getItem({this}, {0}, {T})")] get; }

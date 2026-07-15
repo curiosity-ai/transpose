@@ -2,8 +2,8 @@ using System.ComponentModel;
 
 namespace System.Runtime.CompilerServices
 {
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.External]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.External]
     public static class RuntimeHelpers
     {
         [EditorBrowsable(EditorBrowsableState.Never)]
@@ -15,10 +15,10 @@ namespace System.Runtime.CompilerServices
             get;
         }
 
-        [H5.Template("H5.getHashCode({obj})")]
+        [Transpose.Template("Transpose.getHashCode({obj})")]
         public static extern int GetHashCode(object obj);
 
-        [H5.Template("{type}.$staticInit && {type}.$staticInit()")]
+        [Transpose.Template("{type}.$staticInit && {type}.$staticInit()")]
         public static extern void RunClassConstructor(Type type);
 
         public static T[] GetSubArray<T>(T[] array, Range range)

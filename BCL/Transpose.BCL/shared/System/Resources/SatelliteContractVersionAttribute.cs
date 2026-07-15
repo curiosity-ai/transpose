@@ -16,7 +16,7 @@
 
 namespace System.Resources
 {
-    [H5.NonScriptable]
+    [Transpose.NonScriptable]
     [AttributeUsage(AttributeTargets.Assembly, AllowMultiple = false)]
     public sealed class SatelliteContractVersionAttribute : Attribute
     {

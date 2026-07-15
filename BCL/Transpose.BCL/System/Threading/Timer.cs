@@ -197,7 +197,7 @@
 
             if (period != -1 && !this.disposed)
             {
-                var p = H5.Script.Write<int>("{period}.toNumber();", period);
+                var p = Transpose.Script.Write<int>("{period}.toNumber();", period);
                 this.id = Global.SetTimeout(this.HandleCallback, p);
                 return true;
             }
@@ -275,9 +275,9 @@
             this.disposed = true;
         }
 
-        [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-        [H5.External]
-        [H5.Name("H5.global")]
+        [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+        [Transpose.External]
+        [Transpose.Name("Transpose.global")]
         internal class Global
         {
             public static extern int SetTimeout(Action handler, int delay);

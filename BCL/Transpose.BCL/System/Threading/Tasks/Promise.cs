@@ -4,10 +4,10 @@ namespace System.Threading.Tasks
     /// CommonJS Promise/A interface
     /// http://wiki.commonjs.org/wiki/Promises/A
     /// </summary>
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.External]
-    [H5.Name("H5.IPromise")]
-    [H5.Convention(Target = H5.ConventionTarget.Member, Member = H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.External]
+    [Transpose.Name("Transpose.IPromise")]
+    [Transpose.Convention(Target = Transpose.ConventionTarget.Member, Member = Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
     public interface IPromise
     {
         /// <summary>
@@ -22,8 +22,8 @@ namespace System.Threading.Tasks
     /// <summary>
     ///
     /// </summary>
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.External]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.External]
     public static class PromiseExtensions
     {
         /// <summary>
@@ -31,7 +31,7 @@ namespace System.Threading.Tasks
         /// </summary>
         /// <param name="promise"></param>
         /// <returns></returns>
-        [H5.Template("System.Threading.Tasks.Task.fromPromise({promise})")]
+        [Transpose.Template("System.Threading.Tasks.Task.fromPromise({promise})")]
         public static extern TaskAwaiter<object[]> GetAwaiter(this IPromise promise);
     }
 }

@@ -1,10 +1,10 @@
 namespace System.Collections
 {
-    [H5.External]
-    [H5.Reflectable]
-    public interface IEnumerable : H5.IH5Class
+    [Transpose.External]
+    [Transpose.Reflectable]
+    public interface IEnumerable : Transpose.ITransposeClass
     {
-        [H5.Template("H5.getEnumerator({this})")]
+        [Transpose.Template("Transpose.getEnumerator({this})")]
         IEnumerator GetEnumerator();
     }
 }

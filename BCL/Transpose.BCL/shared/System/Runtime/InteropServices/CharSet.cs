@@ -10,7 +10,7 @@ namespace System.Runtime.InteropServices
     // Using Unicode will marshal the strings as 2 byte wchar*'s.
     // Generally you probably want to use Auto, which does the
     // right thing 99% of the time.
-    [H5.NonScriptable]
+    [Transpose.NonScriptable]
     public enum CharSet
     {
         None = 1,        // User didn't specify how to marshal strings.

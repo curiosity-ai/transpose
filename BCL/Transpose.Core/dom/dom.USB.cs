@@ -1,7 +1,7 @@
-using H5;
-using H5.Core;
+using Transpose;
+using Transpose.Core;
 
-namespace H5.Core
+namespace Transpose.Core
 {
     public static partial class dom
     {
@@ -40,21 +40,21 @@ namespace H5.Core
             public virtual dom.USBConfiguration[] configurations { get; }
             public virtual bool opened { get; }
 
-            public virtual extern es5.Promise<H5.Core.Void> open();
-            public virtual extern es5.Promise<H5.Core.Void> close();
-            public virtual extern es5.Promise<H5.Core.Void> selectConfiguration(byte configurationValue);
-            public virtual extern es5.Promise<H5.Core.Void> claimInterface(byte interfaceNumber);
-            public virtual extern es5.Promise<H5.Core.Void> releaseInterface(byte interfaceNumber);
-            public virtual extern es5.Promise<H5.Core.Void> selectAlternateInterface(byte interfaceNumber, byte alternateSetting);
+            public virtual extern es5.Promise<Transpose.Core.Void> open();
+            public virtual extern es5.Promise<Transpose.Core.Void> close();
+            public virtual extern es5.Promise<Transpose.Core.Void> selectConfiguration(byte configurationValue);
+            public virtual extern es5.Promise<Transpose.Core.Void> claimInterface(byte interfaceNumber);
+            public virtual extern es5.Promise<Transpose.Core.Void> releaseInterface(byte interfaceNumber);
+            public virtual extern es5.Promise<Transpose.Core.Void> selectAlternateInterface(byte interfaceNumber, byte alternateSetting);
             public virtual extern es5.Promise<dom.USBInTransferResult> controlTransferIn(dom.USBControlTransferParameters setup, ushort length);
             public virtual extern es5.Promise<dom.USBOutTransferResult> controlTransferOut(dom.USBControlTransferParameters setup);
             public virtual extern es5.Promise<dom.USBOutTransferResult> controlTransferOut(dom.USBControlTransferParameters setup, es5.ArrayBufferView data);
-            public virtual extern es5.Promise<H5.Core.Void> clearHalt(dom.USBDirection direction, byte endpointNumber);
+            public virtual extern es5.Promise<Transpose.Core.Void> clearHalt(dom.USBDirection direction, byte endpointNumber);
             public virtual extern es5.Promise<dom.USBInTransferResult> transferIn(byte endpointNumber, double length);
             public virtual extern es5.Promise<dom.USBOutTransferResult> transferOut(byte endpointNumber, es5.ArrayBufferView data);
             public virtual extern es5.Promise<dom.USBIsochronousInTransferResult> isochronousTransferIn(byte endpointNumber, double[] packetLengths);
             public virtual extern es5.Promise<dom.USBIsochronousOutTransferResult> isochronousTransferOut(byte endpointNumber, es5.ArrayBufferView data, double[] packetLengths);
-            public virtual extern es5.Promise<H5.Core.Void> reset();
+            public virtual extern es5.Promise<Transpose.Core.Void> reset();
         }
 
         [CombinedClass]

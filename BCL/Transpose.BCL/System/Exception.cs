@@ -2,10 +2,10 @@ using System.Collections.Generic;
 
 namespace System
 {
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.External]
-    [H5.Reflectable]
-    public class Exception : H5.IH5Class
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.External]
+    [Transpose.Reflectable]
+    public class Exception : Transpose.ITransposeClass
     {
         /// <summary>
         /// Gets a collection of key/value pairs that provide additional user-defined information about the exception.

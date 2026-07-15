@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace H5
+namespace Transpose
 {
     /// <summary>
     /// TemplateAttribute is instruction to replace method calling (in expression) by required code

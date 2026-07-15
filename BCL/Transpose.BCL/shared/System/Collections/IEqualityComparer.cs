@@ -10,9 +10,9 @@ namespace System.Collections
     // that can be consumed by some of the common collections.
     public interface IEqualityComparer
     {
-        [H5.Convention(H5.Notation.CamelCase)]
+        [Transpose.Convention(Transpose.Notation.CamelCase)]
         bool Equals(object x, object y);
-        [H5.Convention(H5.Notation.CamelCase)]
+        [Transpose.Convention(Transpose.Notation.CamelCase)]
         int GetHashCode(object obj);
     }
 }

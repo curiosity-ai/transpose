@@ -4,7 +4,7 @@
 
 namespace System.ComponentModel
 {
-    [H5.NonScriptable]
+    [Transpose.NonScriptable]
     [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct | AttributeTargets.Enum | AttributeTargets.Constructor | AttributeTargets.Method | AttributeTargets.Property | AttributeTargets.Field | AttributeTargets.Event | AttributeTargets.Delegate | AttributeTargets.Interface)]
     public sealed class EditorBrowsableAttribute : Attribute
     {
@@ -39,8 +39,8 @@ namespace System.ComponentModel
         }
     }
 
-    [H5.NonScriptable]
-    [H5.Enum(H5.Emit.Value)]
+    [Transpose.NonScriptable]
+    [Transpose.Enum(Transpose.Emit.Value)]
     public enum EditorBrowsableState
     {
         Always,

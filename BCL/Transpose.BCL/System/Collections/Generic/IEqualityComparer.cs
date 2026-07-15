@@ -1,24 +1,24 @@
 namespace System.Collections.Generic
 {
-    [H5.External]
-    [H5.Reflectable]
-    [H5.Convention(Target = H5.ConventionTarget.Member, Member = H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    public interface IEqualityComparer<in T> : H5.IH5Class
+    [Transpose.External]
+    [Transpose.Reflectable]
+    [Transpose.Convention(Target = Transpose.ConventionTarget.Member, Member = Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    public interface IEqualityComparer<in T> : Transpose.ITransposeClass
     {
-        [H5.Name("equals2")]
+        [Transpose.Name("equals2")]
         bool Equals(T x, T y);
 
-        [H5.Name("getHashCode2")]
+        [Transpose.Name("getHashCode2")]
         int GetHashCode(T obj);
     }
 
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.External]
-    [H5.Reflectable]
-    public abstract class EqualityComparer<T> : IEqualityComparer<T>, H5.IH5Class
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.External]
+    [Transpose.Reflectable]
+    public abstract class EqualityComparer<T> : IEqualityComparer<T>, Transpose.ITransposeClass
     {
         public static extern EqualityComparer<T> Default { 
-            [H5.Template("System.Collections.Generic.EqualityComparer$1({T}).def")]
+            [Transpose.Template("System.Collections.Generic.EqualityComparer$1({T}).def")]
             get; 
         }
 

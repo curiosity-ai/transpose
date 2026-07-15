@@ -4,10 +4,10 @@ namespace System.ComponentModel.DataAnnotations
     /// Indicates whether the consumer of a field or property, such as a client application,
     /// should allow editing of the value.
     /// </summary>
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
     [AttributeUsage(AttributeTargets.Field | AttributeTargets.Property, AllowMultiple = false, Inherited = true)]
-    [H5.External]
-    [H5.NonScriptable]
+    [Transpose.External]
+    [Transpose.NonScriptable]
     public sealed class EditableAttribute : Attribute
     {
         /// <summary>

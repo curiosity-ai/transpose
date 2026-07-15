@@ -4,7 +4,7 @@
 
 namespace System.Runtime.InteropServices
 {
-    [H5.NonScriptable]
+    [Transpose.NonScriptable]
     [AttributeUsage(AttributeTargets.Module, Inherited = false)]
     public sealed class DefaultCharSetAttribute : Attribute
     {

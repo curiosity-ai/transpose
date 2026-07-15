@@ -1,4 +1,4 @@
-namespace H5.Utils
+namespace Transpose.Utils
 {
     class SystemAssemblyVersion
     {
@@ -14,7 +14,7 @@ namespace H5.Utils
     class SystemAssembly
     {
 #pragma warning disable 649 // CS0649  Field is never assigned to, and will always have its default value null
-        [Template("H5.SystemAssembly")]
+        [Template("Transpose.SystemAssembly")]
         public static SystemAssembly Assembly;
         [Name("version")]
         public string VersionString;

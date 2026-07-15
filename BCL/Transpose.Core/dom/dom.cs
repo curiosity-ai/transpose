@@ -1,16 +1,16 @@
 ﻿// Decompiled with JetBrains decompiler
-// Type: H5.dom
-// Assembly: H5.dom, Version=2.8.2.0, Culture=neutral, PublicKeyToken=null
+// Type: Transpose.dom
+// Assembly: Transpose.dom, Version=2.8.2.0, Culture=neutral, PublicKeyToken=null
 // MVID: 57CCBF73-D494-47BA-ACF8-95E65E795865
-// Assembly location: C:\work\curiosity\tesserae\Tesserae\bin\Debug\net461\H5.dom.dll
+// Assembly location: C:\work\curiosity\tesserae\Tesserae\bin\Debug\net461\Transpose.dom.dll
 
-using H5;
-using H5.Core;
+using Transpose;
+using Transpose.Core;
 using System;
 using System.Collections;
 using System.Collections.Generic;
 
-namespace H5.Core
+namespace Transpose.Core
 {
     [Scope]
     [GlobalMethods]
@@ -8700,7 +8700,7 @@ namespace H5.Core
 
             public abstract dom.AudioContextState state { get; }
 
-            public abstract es5.Promise<H5.Core.Void> close();
+            public abstract es5.Promise<Transpose.Core.Void> close();
 
             public abstract dom.AnalyserNode createAnalyser();
 
@@ -8780,7 +8780,7 @@ namespace H5.Core
               dom.DecodeSuccessCallback successCallback,
               dom.DecodeErrorCallback errorCallback);
 
-            public abstract es5.Promise<H5.Core.Void> resume();
+            public abstract es5.Promise<Transpose.Core.Void> resume();
 
             [Where("K", typeof(KeyOf<dom.AudioContextEventMap>), EnableImplicitConversion = true)]
             public abstract void addEventListener<K>(
@@ -8886,7 +8886,7 @@ namespace H5.Core
                 set;
             }
 
-            public virtual extern es5.Promise<H5.Core.Void> suspend();
+            public virtual extern es5.Promise<Transpose.Core.Void> suspend();
 
             public override extern double currentTime { get; }
 
@@ -8898,7 +8898,7 @@ namespace H5.Core
 
             public override extern dom.AudioContextState state { get; }
 
-            public override extern es5.Promise<H5.Core.Void> close();
+            public override extern es5.Promise<Transpose.Core.Void> close();
 
             public override extern dom.AnalyserNode createAnalyser();
 
@@ -8981,7 +8981,7 @@ namespace H5.Core
               dom.DecodeSuccessCallback successCallback,
               dom.DecodeErrorCallback errorCallback);
 
-            public override extern es5.Promise<H5.Core.Void> resume();
+            public override extern es5.Promise<Transpose.Core.Void> resume();
 
             public override extern void addEventListener<K>(
               K type,
@@ -10312,7 +10312,7 @@ namespace H5.Core
 
         [CombinedClass]
         [FormerInterface]
-        public class CSSRuleList : IEnumerable<dom.CSSRule>, IEnumerable, IH5Class, IObject
+        public class CSSRuleList : IEnumerable<dom.CSSRule>, IEnumerable, ITransposeClass, IObject
         {
 
             public static dom.CSSRuleList prototype
@@ -10330,10 +10330,10 @@ namespace H5.Core
 
             public virtual extern dom.CSSRule this[uint index] { get; set; }
 
-            [Template("H5.getEnumerator({this}, {T})")]
+            [Template("Transpose.getEnumerator({this}, {T})")]
             extern IEnumerator<dom.CSSRule> IEnumerable<dom.CSSRule>.GetEnumerator();
 
-            [Template("H5.getEnumerator({this})")]
+            [Template("Transpose.getEnumerator({this})")]
             extern IEnumerator IEnumerable.GetEnumerator();
         }
 
@@ -12876,19 +12876,19 @@ namespace H5.Core
                 set;
             }
 
-            public virtual extern es5.Promise<H5.Core.Void> add(
+            public virtual extern es5.Promise<Transpose.Core.Void> add(
               Union<dom.Request, string> request);
 
-            public virtual extern es5.Promise<H5.Core.Void> add(dom.Request request);
+            public virtual extern es5.Promise<Transpose.Core.Void> add(dom.Request request);
 
-            public virtual extern es5.Promise<H5.Core.Void> add(string request);
+            public virtual extern es5.Promise<Transpose.Core.Void> add(string request);
 
-            public virtual extern es5.Promise<H5.Core.Void> addAll(
+            public virtual extern es5.Promise<Transpose.Core.Void> addAll(
               Union<dom.Request, string>[] requests);
 
-            public virtual extern es5.Promise<H5.Core.Void> addAll(dom.Request[] requests);
+            public virtual extern es5.Promise<Transpose.Core.Void> addAll(dom.Request[] requests);
 
-            public virtual extern es5.Promise<H5.Core.Void> addAll(string[] requests);
+            public virtual extern es5.Promise<Transpose.Core.Void> addAll(string[] requests);
 
             public virtual extern es5.Promise<bool> delete(Union<dom.Request, string> request);
 
@@ -12967,15 +12967,15 @@ namespace H5.Core
               string request,
               dom.CacheQueryOptions options);
 
-            public virtual extern es5.Promise<H5.Core.Void> put(
+            public virtual extern es5.Promise<Transpose.Core.Void> put(
               Union<dom.Request, string> request,
               dom.Response response);
 
-            public virtual extern es5.Promise<H5.Core.Void> put(
+            public virtual extern es5.Promise<Transpose.Core.Void> put(
               dom.Request request,
               dom.Response response);
 
-            public virtual extern es5.Promise<H5.Core.Void> put(
+            public virtual extern es5.Promise<Transpose.Core.Void> put(
               string request,
               dom.Response response);
         }
@@ -14380,7 +14380,7 @@ namespace H5.Core
 
             public abstract object get(string name);
 
-            public abstract es5.PromiseLike<H5.Core.Void> whenDefined(string name);
+            public abstract es5.PromiseLike<Transpose.Core.Void> whenDefined(string name);
         }
 
         [IgnoreCast]
@@ -14904,7 +14904,7 @@ namespace H5.Core
         [IgnoreCast]
         [Virtual]
         [FormerInterface]
-        public abstract class DOMRectList : IEnumerable<dom.DOMRect>, IEnumerable, IH5Class, IObject
+        public abstract class DOMRectList : IEnumerable<dom.DOMRect>, IEnumerable, ITransposeClass, IObject
         {
             public abstract uint length { get; }
 
@@ -14912,10 +14912,10 @@ namespace H5.Core
 
             public virtual extern dom.DOMRect this[uint index] { get; set; }
 
-            [Template("H5.getEnumerator({this}, {T})")]
+            [Template("Transpose.getEnumerator({this}, {T})")]
             extern IEnumerator<dom.DOMRect> IEnumerable<dom.DOMRect>.GetEnumerator();
 
-            [Template("H5.getEnumerator({this})")]
+            [Template("Transpose.getEnumerator({this})")]
             extern IEnumerator IEnumerable.GetEnumerator();
         }
 
@@ -15008,7 +15008,7 @@ namespace H5.Core
 
         [CombinedClass]
         [FormerInterface]
-        public class DOMStringList : IEnumerable<string>, IEnumerable, IH5Class, IObject
+        public class DOMStringList : IEnumerable<string>, IEnumerable, ITransposeClass, IObject
         {
 
             public static dom.DOMStringList prototype
@@ -15028,10 +15028,10 @@ namespace H5.Core
 
             public virtual extern string this[double index] { get; set; }
 
-            [Template("H5.getEnumerator({this}, {T})")]
+            [Template("Transpose.getEnumerator({this}, {T})")]
             extern IEnumerator<string> IEnumerable<string>.GetEnumerator();
 
-            [Template("H5.getEnumerator({this})")]
+            [Template("Transpose.getEnumerator({this})")]
             extern IEnumerator IEnumerable.GetEnumerator();
         }
 
@@ -15050,7 +15050,7 @@ namespace H5.Core
 
         [CombinedClass]
         [FormerInterface]
-        public class DOMTokenList : IEnumerable<string>, IEnumerable, IH5Class, IObject
+        public class DOMTokenList : IEnumerable<string>, IEnumerable, ITransposeClass, IObject
         {
 
             public static dom.DOMTokenList prototype
@@ -15084,10 +15084,10 @@ namespace H5.Core
 
             public virtual extern string this[uint index] { get; set; }
 
-            [Template("H5.getEnumerator({this}, {T})")]
+            [Template("Transpose.getEnumerator({this}, {T})")]
             extern IEnumerator<string> IEnumerable<string>.GetEnumerator();
 
-            [Template("H5.getEnumerator({this})")]
+            [Template("Transpose.getEnumerator({this})")]
             extern IEnumerator IEnumerable.GetEnumerator();
         }
 
@@ -15245,7 +15245,7 @@ namespace H5.Core
 
         [CombinedClass]
         [FormerInterface]
-        public class DataTransferItemList : IEnumerable<dom.DataTransferItem>, IEnumerable, IH5Class, IObject
+        public class DataTransferItemList : IEnumerable<dom.DataTransferItem>, IEnumerable, ITransposeClass, IObject
         {
 
             public static dom.DataTransferItemList prototype
@@ -15271,10 +15271,10 @@ namespace H5.Core
 
             public virtual extern dom.DataTransferItem this[double name] { get; set; }
 
-            [Template("H5.getEnumerator({this}, {T})")]
+            [Template("Transpose.getEnumerator({this}, {T})")]
             extern IEnumerator<dom.DataTransferItem> IEnumerable<dom.DataTransferItem>.GetEnumerator();
 
-            [Template("H5.getEnumerator({this})")]
+            [Template("Transpose.getEnumerator({this})")]
             extern IEnumerator IEnumerable.GetEnumerator();
         }
 
@@ -18729,7 +18729,7 @@ namespace H5.Core
 
         [CombinedClass]
         [FormerInterface]
-        public class FileList : IEnumerable<dom.File>, IEnumerable, IH5Class, IObject
+        public class FileList : IEnumerable<dom.File>, IEnumerable, ITransposeClass, IObject
         {
 
             public static dom.FileList prototype
@@ -18747,10 +18747,10 @@ namespace H5.Core
 
             public virtual extern dom.File this[uint index] { get; set; }
 
-            [Template("H5.getEnumerator({this}, {T})")]
+            [Template("Transpose.getEnumerator({this}, {T})")]
             extern IEnumerator<dom.File> IEnumerable<dom.File>.GetEnumerator();
 
-            [Template("H5.getEnumerator({this})")]
+            [Template("Transpose.getEnumerator({this})")]
             extern IEnumerator IEnumerable.GetEnumerator();
         }
 
@@ -23532,7 +23532,7 @@ namespace H5.Core
                 set;
             }
 
-            public virtual es5.Promise<H5.Core.Void> closed
+            public virtual es5.Promise<Transpose.Core.Void> closed
             {
                 get;
             }
@@ -23552,99 +23552,99 @@ namespace H5.Core
                 get;
             }
 
-            public virtual extern es5.Promise<H5.Core.Void> close();
+            public virtual extern es5.Promise<Transpose.Core.Void> close();
 
-            public virtual extern es5.Promise<H5.Core.Void> generateRequest(
+            public virtual extern es5.Promise<Transpose.Core.Void> generateRequest(
               string initDataType,
               Union<es5.Int8Array, es5.Int16Array, es5.Int32Array, es5.Uint8Array, es5.Uint16Array, es5.Uint32Array, es5.Uint8ClampedArray, es5.Float32Array, es5.Float64Array, es5.DataView, es5.ArrayBuffer, Null> initData);
 
-            public virtual extern es5.Promise<H5.Core.Void> generateRequest(
+            public virtual extern es5.Promise<Transpose.Core.Void> generateRequest(
               string initDataType,
               es5.Int8Array initData);
 
-            public virtual extern es5.Promise<H5.Core.Void> generateRequest(
+            public virtual extern es5.Promise<Transpose.Core.Void> generateRequest(
               string initDataType,
               es5.Int16Array initData);
 
-            public virtual extern es5.Promise<H5.Core.Void> generateRequest(
+            public virtual extern es5.Promise<Transpose.Core.Void> generateRequest(
               string initDataType,
               es5.Int32Array initData);
 
-            public virtual extern es5.Promise<H5.Core.Void> generateRequest(
+            public virtual extern es5.Promise<Transpose.Core.Void> generateRequest(
               string initDataType,
               es5.Uint8Array initData);
 
-            public virtual extern es5.Promise<H5.Core.Void> generateRequest(
+            public virtual extern es5.Promise<Transpose.Core.Void> generateRequest(
               string initDataType,
               es5.Uint16Array initData);
 
-            public virtual extern es5.Promise<H5.Core.Void> generateRequest(
+            public virtual extern es5.Promise<Transpose.Core.Void> generateRequest(
               string initDataType,
               es5.Uint32Array initData);
 
-            public virtual extern es5.Promise<H5.Core.Void> generateRequest(
+            public virtual extern es5.Promise<Transpose.Core.Void> generateRequest(
               string initDataType,
               es5.Uint8ClampedArray initData);
 
-            public virtual extern es5.Promise<H5.Core.Void> generateRequest(
+            public virtual extern es5.Promise<Transpose.Core.Void> generateRequest(
               string initDataType,
               es5.Float32Array initData);
 
-            public virtual extern es5.Promise<H5.Core.Void> generateRequest(
+            public virtual extern es5.Promise<Transpose.Core.Void> generateRequest(
               string initDataType,
               es5.Float64Array initData);
 
-            public virtual extern es5.Promise<H5.Core.Void> generateRequest(
+            public virtual extern es5.Promise<Transpose.Core.Void> generateRequest(
               string initDataType,
               es5.DataView initData);
 
-            public virtual extern es5.Promise<H5.Core.Void> generateRequest(
+            public virtual extern es5.Promise<Transpose.Core.Void> generateRequest(
               string initDataType,
               es5.ArrayBuffer initData);
 
-            public virtual extern es5.Promise<H5.Core.Void> generateRequest(
+            public virtual extern es5.Promise<Transpose.Core.Void> generateRequest(
               string initDataType,
               Null initData);
 
             public virtual extern es5.Promise<bool> load(string sessionId);
 
-            public virtual extern es5.Promise<H5.Core.Void> remove();
+            public virtual extern es5.Promise<Transpose.Core.Void> remove();
 
-            public virtual extern es5.Promise<H5.Core.Void> update(
+            public virtual extern es5.Promise<Transpose.Core.Void> update(
               Union<es5.Int8Array, es5.Int16Array, es5.Int32Array, es5.Uint8Array, es5.Uint16Array, es5.Uint32Array, es5.Uint8ClampedArray, es5.Float32Array, es5.Float64Array, es5.DataView, es5.ArrayBuffer, Null> response);
 
-            public virtual extern es5.Promise<H5.Core.Void> update(es5.Int8Array response);
+            public virtual extern es5.Promise<Transpose.Core.Void> update(es5.Int8Array response);
 
-            public virtual extern es5.Promise<H5.Core.Void> update(
+            public virtual extern es5.Promise<Transpose.Core.Void> update(
               es5.Int16Array response);
 
-            public virtual extern es5.Promise<H5.Core.Void> update(
+            public virtual extern es5.Promise<Transpose.Core.Void> update(
               es5.Int32Array response);
 
-            public virtual extern es5.Promise<H5.Core.Void> update(
+            public virtual extern es5.Promise<Transpose.Core.Void> update(
               es5.Uint8Array response);
 
-            public virtual extern es5.Promise<H5.Core.Void> update(
+            public virtual extern es5.Promise<Transpose.Core.Void> update(
               es5.Uint16Array response);
 
-            public virtual extern es5.Promise<H5.Core.Void> update(
+            public virtual extern es5.Promise<Transpose.Core.Void> update(
               es5.Uint32Array response);
 
-            public virtual extern es5.Promise<H5.Core.Void> update(
+            public virtual extern es5.Promise<Transpose.Core.Void> update(
               es5.Uint8ClampedArray response);
 
-            public virtual extern es5.Promise<H5.Core.Void> update(
+            public virtual extern es5.Promise<Transpose.Core.Void> update(
               es5.Float32Array response);
 
-            public virtual extern es5.Promise<H5.Core.Void> update(
+            public virtual extern es5.Promise<Transpose.Core.Void> update(
               es5.Float64Array response);
 
-            public virtual extern es5.Promise<H5.Core.Void> update(es5.DataView response);
+            public virtual extern es5.Promise<Transpose.Core.Void> update(es5.DataView response);
 
-            public virtual extern es5.Promise<H5.Core.Void> update(
+            public virtual extern es5.Promise<Transpose.Core.Void> update(
               es5.ArrayBuffer response);
 
-            public virtual extern es5.Promise<H5.Core.Void> update(Null response);
+            public virtual extern es5.Promise<Transpose.Core.Void> update(Null response);
         }
 
         [CombinedClass]
@@ -23765,49 +23765,49 @@ namespace H5.Core
 
             public virtual extern dom.MediaKeySession createSession(dom.MediaKeySessionType sessionType);
 
-            public virtual extern es5.Promise<H5.Core.Void> setServerCertificate(
+            public virtual extern es5.Promise<Transpose.Core.Void> setServerCertificate(
               Union<es5.Int8Array, es5.Int16Array, es5.Int32Array, es5.Uint8Array, es5.Uint16Array, es5.Uint32Array, es5.Uint8ClampedArray, es5.Float32Array, es5.Float64Array, es5.DataView, es5.ArrayBuffer, Null> serverCertificate);
 
-            public virtual extern es5.Promise<H5.Core.Void> setServerCertificate(
+            public virtual extern es5.Promise<Transpose.Core.Void> setServerCertificate(
               es5.Int8Array serverCertificate);
 
-            public virtual extern es5.Promise<H5.Core.Void> setServerCertificate(
+            public virtual extern es5.Promise<Transpose.Core.Void> setServerCertificate(
               es5.Int16Array serverCertificate);
 
-            public virtual extern es5.Promise<H5.Core.Void> setServerCertificate(
+            public virtual extern es5.Promise<Transpose.Core.Void> setServerCertificate(
               es5.Int32Array serverCertificate);
 
-            public virtual extern es5.Promise<H5.Core.Void> setServerCertificate(
+            public virtual extern es5.Promise<Transpose.Core.Void> setServerCertificate(
               es5.Uint8Array serverCertificate);
 
-            public virtual extern es5.Promise<H5.Core.Void> setServerCertificate(
+            public virtual extern es5.Promise<Transpose.Core.Void> setServerCertificate(
               es5.Uint16Array serverCertificate);
 
-            public virtual extern es5.Promise<H5.Core.Void> setServerCertificate(
+            public virtual extern es5.Promise<Transpose.Core.Void> setServerCertificate(
               es5.Uint32Array serverCertificate);
 
-            public virtual extern es5.Promise<H5.Core.Void> setServerCertificate(
+            public virtual extern es5.Promise<Transpose.Core.Void> setServerCertificate(
               es5.Uint8ClampedArray serverCertificate);
 
-            public virtual extern es5.Promise<H5.Core.Void> setServerCertificate(
+            public virtual extern es5.Promise<Transpose.Core.Void> setServerCertificate(
               es5.Float32Array serverCertificate);
 
-            public virtual extern es5.Promise<H5.Core.Void> setServerCertificate(
+            public virtual extern es5.Promise<Transpose.Core.Void> setServerCertificate(
               es5.Float64Array serverCertificate);
 
-            public virtual extern es5.Promise<H5.Core.Void> setServerCertificate(
+            public virtual extern es5.Promise<Transpose.Core.Void> setServerCertificate(
               es5.DataView serverCertificate);
 
-            public virtual extern es5.Promise<H5.Core.Void> setServerCertificate(
+            public virtual extern es5.Promise<Transpose.Core.Void> setServerCertificate(
               es5.ArrayBuffer serverCertificate);
 
-            public virtual extern es5.Promise<H5.Core.Void> setServerCertificate(
+            public virtual extern es5.Promise<Transpose.Core.Void> setServerCertificate(
               Null serverCertificate);
         }
 
         [CombinedClass]
         [FormerInterface]
-        public class MediaList : IEnumerable<string>, IEnumerable, IH5Class, IObject
+        public class MediaList : IEnumerable<string>, IEnumerable, ITransposeClass, IObject
         {
 
 
@@ -23838,10 +23838,10 @@ namespace H5.Core
 
             public virtual extern string this[uint index] { get; set; }
 
-            [Template("H5.getEnumerator({this}, {T})")]
+            [Template("Transpose.getEnumerator({this}, {T})")]
             extern IEnumerator<string> IEnumerable<string>.GetEnumerator();
 
-            [Template("H5.getEnumerator({this})")]
+            [Template("Transpose.getEnumerator({this})")]
             extern IEnumerator IEnumerable.GetEnumerator();
         }
 
@@ -24344,7 +24344,7 @@ namespace H5.Core
                 get;
             }
 
-            public virtual extern es5.Promise<H5.Core.Void> applyConstraints(
+            public virtual extern es5.Promise<Transpose.Core.Void> applyConstraints(
               dom.MediaTrackConstraints constraints);
 
             public virtual extern dom.MediaStreamTrack clone();
@@ -24727,7 +24727,7 @@ namespace H5.Core
 
         [CombinedClass]
         [FormerInterface]
-        public class MimeTypeArray : IEnumerable<dom.MimeType>, IEnumerable, IH5Class, IObject
+        public class MimeTypeArray : IEnumerable<dom.MimeType>, IEnumerable, ITransposeClass, IObject
         {
 
             public static dom.MimeTypeArray prototype
@@ -24747,10 +24747,10 @@ namespace H5.Core
 
             public virtual extern dom.Plugin this[uint index] { get; set; }
 
-            [Template("H5.getEnumerator({this}, {T})")]
+            [Template("Transpose.getEnumerator({this}, {T})")]
             extern IEnumerator<dom.MimeType> IEnumerable<dom.MimeType>.GetEnumerator();
 
-            [Template("H5.getEnumerator({this})")]
+            [Template("Transpose.getEnumerator({this})")]
             extern IEnumerator IEnumerable.GetEnumerator();
         }
 
@@ -25872,7 +25872,7 @@ namespace H5.Core
 
         [CombinedClass]
         [FormerInterface]
-        public class NodeList : IEnumerable<dom.Node>, IEnumerable, IH5Class, IObject
+        public class NodeList : IEnumerable<dom.Node>, IEnumerable, ITransposeClass, IObject
         {
 
             public static dom.NodeList prototype
@@ -25890,10 +25890,10 @@ namespace H5.Core
 
             public virtual extern dom.Node this[uint index] { get; set; }
 
-            [Template("H5.getEnumerator({this}, {T})")]
+            [Template("Transpose.getEnumerator({this}, {T})")]
             extern IEnumerator<dom.Node> IEnumerable<dom.Node>.GetEnumerator();
 
-            [Template("H5.getEnumerator({this})")]
+            [Template("Transpose.getEnumerator({this})")]
             extern IEnumerator IEnumerable.GetEnumerator();
         }
 
@@ -25902,7 +25902,7 @@ namespace H5.Core
         [Virtual]
         [FormerInterface]
         [Where("TNode", typeof(dom.Node.Interface), EnableImplicitConversion = true)]
-        public abstract class NodeListOf<TNode> : dom.NodeList, IEnumerable<TNode>, IEnumerable, IH5Class
+        public abstract class NodeListOf<TNode> : dom.NodeList, IEnumerable<TNode>, IEnumerable, ITransposeClass
         {
             public virtual double length
             {
@@ -25914,10 +25914,10 @@ namespace H5.Core
 
             public virtual extern TNode this[double index] { get; set; }
 
-            [Template("H5.getEnumerator({this}, {T})")]
+            [Template("Transpose.getEnumerator({this}, {T})")]
             extern IEnumerator<TNode> IEnumerable<TNode>.GetEnumerator();
 
-            [Template("H5.getEnumerator({this})")]
+            [Template("Transpose.getEnumerator({this})")]
             extern IEnumerator IEnumerable.GetEnumerator();
         }
 
@@ -26344,7 +26344,7 @@ namespace H5.Core
 
             public virtual extern es5.Promise<dom.AudioBuffer> startRendering();
 
-            public virtual extern es5.Promise<H5.Core.Void> suspend(double suspendTime);
+            public virtual extern es5.Promise<Transpose.Core.Void> suspend(double suspendTime);
 
             [Where("K", typeof(KeyOf<dom.OfflineAudioContextEventMap>), EnableImplicitConversion = true)]
             public virtual extern void addEventListener<K>(
@@ -26402,7 +26402,7 @@ namespace H5.Core
 
             public override extern dom.AudioContextState state { get; }
 
-            public override extern es5.Promise<H5.Core.Void> close();
+            public override extern es5.Promise<Transpose.Core.Void> close();
 
             public override extern dom.AnalyserNode createAnalyser();
 
@@ -26485,7 +26485,7 @@ namespace H5.Core
               dom.DecodeSuccessCallback successCallback,
               dom.DecodeErrorCallback errorCallback);
 
-            public override extern es5.Promise<H5.Core.Void> resume();
+            public override extern es5.Promise<Transpose.Core.Void> resume();
 
             public override extern void addEventListener<K>(
               K type,
@@ -27281,7 +27281,7 @@ namespace H5.Core
                 get;
             }
 
-            public virtual extern es5.Promise<H5.Core.Void> abort();
+            public virtual extern es5.Promise<Transpose.Core.Void> abort();
 
             public virtual extern es5.Promise<bool> canMakePayment();
 
@@ -27458,9 +27458,9 @@ namespace H5.Core
                 get;
             }
 
-            public virtual extern es5.Promise<H5.Core.Void> complete();
+            public virtual extern es5.Promise<Transpose.Core.Void> complete();
 
-            public virtual extern es5.Promise<H5.Core.Void> complete(
+            public virtual extern es5.Promise<Transpose.Core.Void> complete(
               dom.PaymentComplete result);
 
             public virtual extern object toJSON();
@@ -28198,7 +28198,7 @@ namespace H5.Core
 
         [CombinedClass]
         [FormerInterface]
-        public class PluginArray : IEnumerable<dom.Plugin>, IEnumerable, IH5Class, IObject
+        public class PluginArray : IEnumerable<dom.Plugin>, IEnumerable, ITransposeClass, IObject
         {
 
             public static dom.PluginArray prototype
@@ -28222,10 +28222,10 @@ namespace H5.Core
 
             public virtual extern dom.Plugin this[uint index] { get; set; }
 
-            [Template("H5.getEnumerator({this}, {T})")]
+            [Template("Transpose.getEnumerator({this}, {T})")]
             extern IEnumerator<dom.Plugin> IEnumerable<dom.Plugin>.GetEnumerator();
 
-            [Template("H5.getEnumerator({this})")]
+            [Template("Transpose.getEnumerator({this})")]
             extern IEnumerator IEnumerable.GetEnumerator();
         }
 
@@ -29873,13 +29873,13 @@ namespace H5.Core
                 get;
             }
 
-            public virtual extern es5.Promise<H5.Core.Void> addIceCandidate(
+            public virtual extern es5.Promise<Transpose.Core.Void> addIceCandidate(
               Union<dom.RTCIceCandidateInit, dom.RTCIceCandidate> candidate);
 
-            public virtual extern es5.Promise<H5.Core.Void> addIceCandidate(
+            public virtual extern es5.Promise<Transpose.Core.Void> addIceCandidate(
               dom.RTCIceCandidateInit candidate);
 
-            public virtual extern es5.Promise<H5.Core.Void> addIceCandidate(
+            public virtual extern es5.Promise<Transpose.Core.Void> addIceCandidate(
               dom.RTCIceCandidate candidate);
 
             public virtual extern void addStream(dom.MediaStream stream);
@@ -29918,10 +29918,10 @@ namespace H5.Core
 
             public virtual extern void removeStream(dom.MediaStream stream);
 
-            public virtual extern es5.Promise<H5.Core.Void> setLocalDescription(
+            public virtual extern es5.Promise<Transpose.Core.Void> setLocalDescription(
               dom.RTCSessionDescriptionInit description);
 
-            public virtual extern es5.Promise<H5.Core.Void> setRemoteDescription(
+            public virtual extern es5.Promise<Transpose.Core.Void> setRemoteDescription(
               dom.RTCSessionDescriptionInit description);
 
             [Where("K", typeof(KeyOf<dom.RTCPeerConnectionEventMap>), EnableImplicitConversion = true)]
@@ -31063,7 +31063,7 @@ namespace H5.Core
                 get;
             }
 
-            public virtual extern es5.Promise<H5.Core.Void> cancel();
+            public virtual extern es5.Promise<Transpose.Core.Void> cancel();
 
             public virtual extern dom.ReadableStreamReader getReader();
         }
@@ -31078,7 +31078,7 @@ namespace H5.Core
                 set;
             }
 
-            public virtual extern es5.Promise<H5.Core.Void> cancel();
+            public virtual extern es5.Promise<Transpose.Core.Void> cancel();
 
             public virtual extern es5.Promise<object> read();
 
@@ -32600,15 +32600,15 @@ namespace H5.Core
             public virtual extern es5.Promise<dom.Notification[]> getNotifications(
               dom.GetNotificationOptions filter);
 
-            public virtual extern es5.Promise<H5.Core.Void> showNotification(string title);
+            public virtual extern es5.Promise<Transpose.Core.Void> showNotification(string title);
 
-            public virtual extern es5.Promise<H5.Core.Void> showNotification(
+            public virtual extern es5.Promise<Transpose.Core.Void> showNotification(
               string title,
               dom.NotificationOptions options);
 
             public virtual extern es5.Promise<bool> unregister();
 
-            public virtual extern es5.Promise<H5.Core.Void> update();
+            public virtual extern es5.Promise<Transpose.Core.Void> update();
 
             [Where("K", typeof(KeyOf<dom.ServiceWorkerRegistrationEventMap>), EnableImplicitConversion = true)]
             public virtual extern void addEventListener<K>(
@@ -33793,7 +33793,7 @@ namespace H5.Core
 
         [CombinedClass]
         [FormerInterface]
-        public class StyleSheetList : IEnumerable<dom.StyleSheet>, IEnumerable, IH5Class, IObject
+        public class StyleSheetList : IEnumerable<dom.StyleSheet>, IEnumerable, ITransposeClass, IObject
         {
 
             public static dom.StyleSheetList prototype
@@ -33811,10 +33811,10 @@ namespace H5.Core
 
             public virtual extern dom.StyleSheet this[uint index] { get; set; }
 
-            [Template("H5.getEnumerator({this}, {T})")]
+            [Template("Transpose.getEnumerator({this}, {T})")]
             extern IEnumerator<dom.StyleSheet> IEnumerable<dom.StyleSheet>.GetEnumerator();
 
-            [Template("H5.getEnumerator({this})")]
+            [Template("Transpose.getEnumerator({this})")]
             extern IEnumerator IEnumerable.GetEnumerator();
         }
 
@@ -35004,7 +35004,7 @@ namespace H5.Core
 
             public virtual extern es5.Promise<string[]> getTags();
 
-            public virtual extern es5.Promise<H5.Core.Void> register(string tag);
+            public virtual extern es5.Promise<Transpose.Core.Void> register(string tag);
         }
 
         [CombinedClass]
@@ -35813,7 +35813,7 @@ namespace H5.Core
 
         [CombinedClass]
         [FormerInterface]
-        public class TextTrackCueList : IEnumerable<dom.TextTrackCue>, IEnumerable, IH5Class, IObject
+        public class TextTrackCueList : IEnumerable<dom.TextTrackCue>, IEnumerable, ITransposeClass, IObject
         {
 
             public static dom.TextTrackCueList prototype
@@ -35833,10 +35833,10 @@ namespace H5.Core
 
             public virtual extern dom.TextTrackCue this[uint index] { get; set; }
 
-            [Template("H5.getEnumerator({this}, {T})")]
+            [Template("Transpose.getEnumerator({this}, {T})")]
             extern IEnumerator<dom.TextTrackCue> IEnumerable<dom.TextTrackCue>.GetEnumerator();
 
-            [Template("H5.getEnumerator({this})")]
+            [Template("Transpose.getEnumerator({this})")]
             extern IEnumerator IEnumerable.GetEnumerator();
         }
 
@@ -35861,7 +35861,7 @@ namespace H5.Core
 
         [CombinedClass]
         [FormerInterface]
-        public class TextTrackList : dom.EventTarget, IEnumerable<dom.TextTrack>, IEnumerable, IH5Class
+        public class TextTrackList : dom.EventTarget, IEnumerable<dom.TextTrack>, IEnumerable, ITransposeClass
         {
 
 
@@ -35971,10 +35971,10 @@ namespace H5.Core
 
             public virtual extern dom.TextTrack this[uint index] { get; set; }
 
-            [Template("H5.getEnumerator({this}, {T})")]
+            [Template("Transpose.getEnumerator({this}, {T})")]
             extern IEnumerator<dom.TextTrack> IEnumerable<dom.TextTrack>.GetEnumerator();
 
-            [Template("H5.getEnumerator({this})")]
+            [Template("Transpose.getEnumerator({this})")]
             extern IEnumerator IEnumerable.GetEnumerator();
 
             [Generated]
@@ -36162,7 +36162,7 @@ namespace H5.Core
 
         [CombinedClass]
         [FormerInterface]
-        public class TouchList : IEnumerable<dom.Touch>, IEnumerable, IH5Class, IObject
+        public class TouchList : IEnumerable<dom.Touch>, IEnumerable, ITransposeClass, IObject
         {
 
             public static dom.TouchList prototype
@@ -36180,10 +36180,10 @@ namespace H5.Core
 
             public virtual extern dom.Touch this[double index] { get; set; }
 
-            [Template("H5.getEnumerator({this}, {T})")]
+            [Template("Transpose.getEnumerator({this}, {T})")]
             extern IEnumerator<dom.Touch> IEnumerable<dom.Touch>.GetEnumerator();
 
-            [Template("H5.getEnumerator({this})")]
+            [Template("Transpose.getEnumerator({this})")]
             extern IEnumerator IEnumerable.GetEnumerator();
         }
 
@@ -36522,7 +36522,7 @@ namespace H5.Core
 
             public virtual extern void cancelAnimationFrame(double handle);
 
-            public virtual extern es5.Promise<H5.Core.Void> exitPresent();
+            public virtual extern es5.Promise<Transpose.Core.Void> exitPresent();
 
             public virtual extern dom.VREyeParameters getEyeParameters(string whichEye);
 
@@ -36534,7 +36534,7 @@ namespace H5.Core
 
             public virtual extern double requestAnimationFrame(dom.FrameRequestCallback callback);
 
-            public virtual extern es5.Promise<H5.Core.Void> requestPresent(
+            public virtual extern es5.Promise<Transpose.Core.Void> requestPresent(
               dom.VRLayer[] layers);
 
             public virtual extern void resetPose();
@@ -46789,9 +46789,9 @@ namespace H5.Core
                 get;
             }
 
-            public virtual extern es5.Promise<H5.Core.Void> abort();
+            public virtual extern es5.Promise<Transpose.Core.Void> abort();
 
-            public virtual extern es5.Promise<H5.Core.Void> abort(object reason);
+            public virtual extern es5.Promise<Transpose.Core.Void> abort(object reason);
 
             public virtual extern dom.WritableStreamDefaultWriter getWriter();
         }
@@ -46822,7 +46822,7 @@ namespace H5.Core
                 set;
             }
 
-            public virtual es5.Promise<H5.Core.Void> closed
+            public virtual es5.Promise<Transpose.Core.Void> closed
             {
                 get;
             }
@@ -46832,16 +46832,16 @@ namespace H5.Core
                 get;
             }
 
-            public virtual es5.Promise<H5.Core.Void> ready
+            public virtual es5.Promise<Transpose.Core.Void> ready
             {
                 get;
             }
 
-            public virtual extern es5.Promise<H5.Core.Void> abort();
+            public virtual extern es5.Promise<Transpose.Core.Void> abort();
 
-            public virtual extern es5.Promise<H5.Core.Void> abort(object reason);
+            public virtual extern es5.Promise<Transpose.Core.Void> abort(object reason);
 
-            public virtual extern es5.Promise<H5.Core.Void> close();
+            public virtual extern es5.Promise<Transpose.Core.Void> close();
 
             public virtual extern void releaseLock();
 

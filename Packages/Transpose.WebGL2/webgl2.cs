@@ -4,13 +4,13 @@
 // MVID: 36BF7521-37B1-4F4D-9780-EC3CA97E9F5A
 // Assembly location: ..\retyped.webgl2.0.1.6733\lib\net40\Retyped.webgl2.dll
 
-using H5;
-using H5.Core;
+using Transpose;
+using Transpose.Core;
 using System;
 using System.Collections;
 using System.Collections.Generic;
 
-namespace H5.Core
+namespace Transpose.Core
 {
     [Scope]
     [GlobalMethods]

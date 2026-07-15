@@ -1,7 +1,7 @@
-using H5;
-using H5.Core;
+using Transpose;
+using Transpose.Core;
 
-namespace H5.Core
+namespace Transpose.Core
 {
     public static partial class dom
     {
@@ -45,9 +45,9 @@ namespace H5.Core
 
             public virtual extern es5.Promise<dom.FileSystemDirectoryHandle> getDirectoryHandle(string name, dom.FileSystemGetDirectoryOptions options);
 
-            public virtual extern es5.Promise<H5.Core.Void> removeEntry(string name);
+            public virtual extern es5.Promise<Transpose.Core.Void> removeEntry(string name);
 
-            public virtual extern es5.Promise<H5.Core.Void> removeEntry(string name, dom.FileSystemRemoveOptions options);
+            public virtual extern es5.Promise<Transpose.Core.Void> removeEntry(string name, dom.FileSystemRemoveOptions options);
 
             public virtual extern es5.Promise<string[]> resolve(dom.FileSystemHandle possibleDescendant);
         }
@@ -58,11 +58,11 @@ namespace H5.Core
         {
             public static dom.FileSystemWritableFileStream prototype { get; set; }
 
-            public virtual extern es5.Promise<H5.Core.Void> write(object data);
+            public virtual extern es5.Promise<Transpose.Core.Void> write(object data);
 
-            public virtual extern es5.Promise<H5.Core.Void> seek(double position);
+            public virtual extern es5.Promise<Transpose.Core.Void> seek(double position);
 
-            public virtual extern es5.Promise<H5.Core.Void> truncate(double size);
+            public virtual extern es5.Promise<Transpose.Core.Void> truncate(double size);
         }
 
         [IgnoreCast]

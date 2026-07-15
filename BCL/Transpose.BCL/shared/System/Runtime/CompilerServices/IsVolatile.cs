@@ -4,7 +4,7 @@
 
 namespace System.Runtime.CompilerServices
 {
-    [H5.NonScriptable]
+    [Transpose.NonScriptable]
     public static class IsVolatile
     {
         // no instantiation, please!

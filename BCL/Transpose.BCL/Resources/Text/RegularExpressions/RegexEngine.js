@@ -1,4 +1,4 @@
-    H5.define("System.Text.RegularExpressions.RegexEngine", {
+    Transpose.define("System.Text.RegularExpressions.RegexEngine", {
         _pattern: "",
         _patternInfo: null,
 

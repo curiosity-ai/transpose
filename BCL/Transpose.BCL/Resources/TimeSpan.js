@@ -1,4 +1,4 @@
-    H5.define("System.TimeSpan", {
+    Transpose.define("System.TimeSpan", {
         inherits: [System.IComparable],
 
         config: {
@@ -44,11 +44,11 @@
             },
 
             neg: function (t) {
-                return H5.hasValue(t) ? (new System.TimeSpan(t.ticks.neg())) : null;
+                return Transpose.hasValue(t) ? (new System.TimeSpan(t.ticks.neg())) : null;
             },
 
             sub: function (t1, t2) {
-                return H5.hasValue$1(t1, t2) ? (new System.TimeSpan(t1.ticks.sub(t2.ticks))) : null;
+                return Transpose.hasValue$1(t1, t2) ? (new System.TimeSpan(t1.ticks.sub(t2.ticks))) : null;
             },
 
             eq: function (t1, t2) {
@@ -56,7 +56,7 @@
                     return true;
                 }
 
-                return H5.hasValue$1(t1, t2) ? (t1.ticks.eq(t2.ticks)) : false;
+                return Transpose.hasValue$1(t1, t2) ? (t1.ticks.eq(t2.ticks)) : false;
             },
 
             neq: function (t1, t2) {
@@ -64,31 +64,31 @@
                     return false;
                 }
 
-                return H5.hasValue$1(t1, t2) ? (t1.ticks.ne(t2.ticks)) : true;
+                return Transpose.hasValue$1(t1, t2) ? (t1.ticks.ne(t2.ticks)) : true;
             },
 
             plus: function (t) {
-                return H5.hasValue(t) ? (new System.TimeSpan(t.ticks)) : null;
+                return Transpose.hasValue(t) ? (new System.TimeSpan(t.ticks)) : null;
             },
 
             add: function (t1, t2) {
-                return H5.hasValue$1(t1, t2) ? (new System.TimeSpan(t1.ticks.add(t2.ticks))) : null;
+                return Transpose.hasValue$1(t1, t2) ? (new System.TimeSpan(t1.ticks.add(t2.ticks))) : null;
             },
 
             gt: function (a, b) {
-                return H5.hasValue$1(a, b) ? (a.ticks.gt(b.ticks)) : false;
+                return Transpose.hasValue$1(a, b) ? (a.ticks.gt(b.ticks)) : false;
             },
 
             gte: function (a, b) {
-                return H5.hasValue$1(a, b) ? (a.ticks.gte(b.ticks)) : false;
+                return Transpose.hasValue$1(a, b) ? (a.ticks.gte(b.ticks)) : false;
             },
 
             lt: function (a, b) {
-                return H5.hasValue$1(a, b) ? (a.ticks.lt(b.ticks)) : false;
+                return Transpose.hasValue$1(a, b) ? (a.ticks.lt(b.ticks)) : false;
             },
 
             lte: function (a, b) {
-                return H5.hasValue$1(a, b) ? (a.ticks.lte(b.ticks)) : false;
+                return Transpose.hasValue$1(a, b) ? (a.ticks.lte(b.ticks)) : false;
             },
 
             timeSpanWithDays: /^(\-)?(\d+)[\.|:](\d+):(\d+):(\d+)(\.\d+)?/,
@@ -215,7 +215,7 @@
         },
 
         equals: function (other) {
-            return H5.is(other, System.TimeSpan) ? other.ticks.eq(this.ticks) : false;
+            return Transpose.is(other, System.TimeSpan) ? other.ticks.eq(this.ticks) : false;
         },
 
         equalsT: function (other) {
@@ -299,4 +299,4 @@
         }
     });
 
-    H5.Class.addExtend(System.TimeSpan, [System.IComparable$1(System.TimeSpan), System.IEquatable$1(System.TimeSpan)]);
+    Transpose.Class.addExtend(System.TimeSpan, [System.IComparable$1(System.TimeSpan), System.IEquatable$1(System.TimeSpan)]);

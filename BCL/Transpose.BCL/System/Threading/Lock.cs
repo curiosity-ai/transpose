@@ -8,7 +8,7 @@ namespace System.Threading
 
         public ref struct Scope
         {
-            [H5.Name("System$IDisposable$Dispose")]
+            [Transpose.Name("System$IDisposable$Dispose")]
             public void Dispose() { }
         }
     }

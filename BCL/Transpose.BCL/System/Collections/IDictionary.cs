@@ -2,13 +2,13 @@ using System.Collections.Generic;
 
 namespace System.Collections
 {
-    [H5.External]
-    [H5.Unbox(true)]
-    [H5.Convention(Target = H5.ConventionTarget.Member, Member = H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.Reflectable]
-    public interface IDictionary : ICollection, H5.IH5Class
+    [Transpose.External]
+    [Transpose.Unbox(true)]
+    [Transpose.Convention(Target = Transpose.ConventionTarget.Member, Member = Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.Reflectable]
+    public interface IDictionary : ICollection, Transpose.ITransposeClass
     {
-        [H5.AccessorsIndexer]
+        [Transpose.AccessorsIndexer]
         object this[object key]
         {
             get;
@@ -40,7 +40,7 @@ namespace System.Collections
         /// An System.Collections.IDictionaryEnumerator object for the System.Collections.IDictionary
         /// object.
         /// </returns>
-        [H5.Convention(H5.Notation.None)]
+        [Transpose.Convention(Transpose.Notation.None)]
         new IDictionaryEnumerator GetEnumerator();
 
         /// <summary>

@@ -1,4 +1,4 @@
-    H5.define("H5.GeneratorEnumerable", {
+    Transpose.define("Transpose.GeneratorEnumerable", {
         inherits: [System.Collections.IEnumerable],
 
         config: {
@@ -14,27 +14,27 @@
         }
     });
 
-    H5.define("H5.GeneratorEnumerable$1", function (T)
+    Transpose.define("Transpose.GeneratorEnumerable$1", function (T)
     {
         return {
             inherits: [System.Collections.Generic.IEnumerable$1(T)],
 
             config: {
                 alias: [
-                "GetEnumerator", ["System$Collections$Generic$IEnumerable$1$" + H5.getTypeAlias(T) + "$GetEnumerator", "System$Collections$Generic$IEnumerable$1$GetEnumerator"]
+                "GetEnumerator", ["System$Collections$Generic$IEnumerable$1$" + Transpose.getTypeAlias(T) + "$GetEnumerator", "System$Collections$Generic$IEnumerable$1$GetEnumerator"]
                 ]
             },
 
             ctor: function (action) {
                 this.$initialize();
                 this.GetEnumerator = action;
-                this["System$Collections$Generic$IEnumerable$1$" + H5.getTypeAlias(T) + "$GetEnumerator"] = action;
+                this["System$Collections$Generic$IEnumerable$1$" + Transpose.getTypeAlias(T) + "$GetEnumerator"] = action;
                 this["System$Collections$Generic$IEnumerable$1$GetEnumerator"] = action;
             }
         };
     });
 
-    H5.define("H5.GeneratorEnumerator", {
+    Transpose.define("Transpose.GeneratorEnumerator", {
         inherits: [System.Collections.IEnumerator],
 
         current: null,
@@ -75,7 +75,7 @@
         }
     });
 
-    H5.define("H5.GeneratorEnumerator$1", function (T) {
+    Transpose.define("Transpose.GeneratorEnumerator$1", function (T) {
         return {
             inherits: [System.Collections.Generic.IEnumerator$1(T), System.IDisposable],
 
@@ -96,8 +96,8 @@
                     }
                 },
                 alias: [
-                    "getCurrent", ["System$Collections$Generic$IEnumerator$1$" + H5.getTypeAlias(T) + "$getCurrent$1", "System$Collections$Generic$IEnumerator$1$getCurrent$1"],
-                    "Current", ["System$Collections$Generic$IEnumerator$1$" + H5.getTypeAlias(T) + "$Current$1", "System$Collections$Generic$IEnumerator$1$Current$1"],
+                    "getCurrent", ["System$Collections$Generic$IEnumerator$1$" + Transpose.getTypeAlias(T) + "$getCurrent$1", "System$Collections$Generic$IEnumerator$1$getCurrent$1"],
+                    "Current", ["System$Collections$Generic$IEnumerator$1$" + Transpose.getTypeAlias(T) + "$Current$1", "System$Collections$Generic$IEnumerator$1$Current$1"],
                     "Current", "System$Collections$IEnumerator$Current",
                     "Dispose", "System$IDisposable$Dispose",
                     "moveNext", "System$Collections$IEnumerator$moveNext",

@@ -1,4 +1,4 @@
-namespace H5
+namespace Transpose
 {
     /// <summary>
     /// Provides access to the arguments of the current function.

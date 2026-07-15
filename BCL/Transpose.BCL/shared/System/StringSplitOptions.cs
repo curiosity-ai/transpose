@@ -4,7 +4,7 @@
 
 namespace System
 {
-    [H5.Enum(H5.Emit.Value)]
+    [Transpose.Enum(Transpose.Emit.Value)]
     [Flags]
     public enum StringSplitOptions
     {

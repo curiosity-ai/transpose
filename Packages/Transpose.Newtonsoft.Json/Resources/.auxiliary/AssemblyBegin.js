@@ -1,2 +1,2 @@
- H5.assembly("Newtonsoft.Json", function ($asm, globals) {
+ Transpose.assembly("Newtonsoft.Json", function ($asm, globals) {
     "use strict";

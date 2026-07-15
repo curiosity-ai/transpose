@@ -1,15 +1,15 @@
-using H5;
+using Transpose;
 
 namespace System.Collections.Generic
 {
-    [H5.External]
-    [H5.Reflectable]
-    [H5.Convention(Target = H5.ConventionTarget.Member, Member = H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
+    [Transpose.External]
+    [Transpose.Reflectable]
+    [Transpose.Convention(Target = Transpose.ConventionTarget.Member, Member = Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
     public interface IReadOnlyCollection<out T> : IEnumerable<T>
     {
         int Count
         {
-            [H5.Template("System.Array.getCount({this}, {T})")]
+            [Transpose.Template("System.Array.getCount({this}, {T})")]
             get;
         }
     }

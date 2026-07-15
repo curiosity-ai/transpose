@@ -2,7 +2,7 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System.Net.Http.Headers;
-using static H5.Core.dom;
+using static Transpose.Core.dom;
 
 namespace System.Net.Http
 {

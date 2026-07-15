@@ -2,17 +2,17 @@ using System.Collections.Generic;
 
 namespace System.Threading.Tasks
 {
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.External]
-    [H5.IgnoreGeneric]
-    [H5.Name("System.Threading.Tasks.TaskCompletionSource")]
-    [H5.Reflectable]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.External]
+    [Transpose.IgnoreGeneric]
+    [Transpose.Name("System.Threading.Tasks.TaskCompletionSource")]
+    [Transpose.Reflectable]
     public class TaskCompletionSource<TResult>
     {
         public extern TaskCompletionSource();
         public extern TaskCompletionSource(object state);
 
-        [H5.Convention(H5.Notation.CamelCase)]
+        [Transpose.Convention(Transpose.Notation.CamelCase)]
         public extern Task<TResult> Task
         {
             get;

@@ -45,7 +45,7 @@
             var idx = Array.prototype.slice.call(arguments, 1);
 
             for (var i = 0; i < idx.length; i++) {
-                if (!H5.hasValue(idx[i])) {
+                if (!Transpose.hasValue(idx[i])) {
                     throw new System.ArgumentNullException.$ctor1("indices");
                 }
             }
@@ -100,7 +100,7 @@
             arr.get = System.Array.$get;
             arr.set = System.Array.$set;
 
-            if (sizes && H5.isArray(sizes)) {
+            if (sizes && Transpose.isArray(sizes)) {
                 for (i = 0; i < sizes.length; i++) {
                     j = sizes[i];
 
@@ -125,7 +125,7 @@
             }
 
             arr.length = length;
-            var isFn = H5.isFunction(defvalue);
+            var isFn = Transpose.isFunction(defvalue);
 
             if (isFn) {
                 var v = defvalue();
@@ -148,7 +148,7 @@
                     for (s = arr.$s.length - 1; s >= 0; s--) {
                         idx = flatIdx % arr.$s[s];
                         indices.unshift(idx);
-                        flatIdx = H5.Int.div(flatIdx - idx, arr.$s[s]);
+                        flatIdx = Transpose.Int.div(flatIdx - idx, arr.$s[s]);
                     }
 
                     v = initValues;
@@ -171,7 +171,7 @@
                 throw new System.ArgumentNullException.$ctor1("length");
             }
 
-            if (H5.isArray(length)) {
+            if (Transpose.isArray(length)) {
                 var elementType = value,
                     rank = T || 1;
 
@@ -185,7 +185,7 @@
             }
 
             var arr = new Array(length),
-                isFn = addFn !== true && H5.isFunction(value);
+                isFn = addFn !== true && Transpose.isFunction(value);
 
             if (isFn) {
                 var v = value();
@@ -204,11 +204,11 @@
         },
 
         toEnumerable: function (array) {
-            return new H5.ArrayEnumerable(array);
+            return new Transpose.ArrayEnumerable(array);
         },
 
         toEnumerator: function (array, T) {
-            return new H5.ArrayEnumerator(array, T);
+            return new Transpose.ArrayEnumerator(array, T);
         },
 
         _typedArrays: {
@@ -224,9 +224,9 @@
         },
 
         is: function (obj, type) {
-            if (obj instanceof H5.ArrayEnumerator) {
+            if (obj instanceof Transpose.ArrayEnumerator) {
                 if ((obj.constructor === type) || (obj instanceof type) ||
-                    type === H5.ArrayEnumerator ||
+                    type === Transpose.ArrayEnumerator ||
                     type.$$name && System.String.startsWith(type.$$name, "System.Collections.IEnumerator") ||
                     type.$$name && System.String.startsWith(type.$$name, "System.Collections.Generic.IEnumerator")) {
                     return true;
@@ -235,20 +235,20 @@
                 return false;
             }
 
-            if (!H5.isArray(obj)) {
+            if (!Transpose.isArray(obj)) {
                 return false;
             }
 
             if (type.$elementType && type.$isArray) {
-                var et = H5.getType(obj).$elementType;
+                var et = Transpose.getType(obj).$elementType;
 
                 if (et) {
 
-                    if (H5.Reflection.isValueType(et) !== H5.Reflection.isValueType(type.$elementType)) {
+                    if (Transpose.Reflection.isValueType(et) !== Transpose.Reflection.isValueType(type.$elementType)) {
                         return false;
                     }
 
-                    return System.Array.getRank(obj) === type.$rank && H5.Reflection.isAssignableFrom(type.$elementType, et);
+                    return System.Array.getRank(obj) === type.$rank && Transpose.Reflection.isAssignableFrom(type.$elementType, et);
                 }
 
                 type = Array;
@@ -301,23 +301,23 @@
             var name,
                 v;
 
-            if (H5.isArray(obj)) {
+            if (Transpose.isArray(obj)) {
                 return obj.length;
-            } else if (T && H5.isFunction(obj[name = "System$Collections$Generic$ICollection$1$" + H5.getTypeAlias(T) + "$getCount"])) {
+            } else if (T && Transpose.isFunction(obj[name = "System$Collections$Generic$ICollection$1$" + Transpose.getTypeAlias(T) + "$getCount"])) {
                 return obj[name]();
-            } else if (T && H5.isFunction(obj[name = "System$Collections$Generic$IReadOnlyCollection$1$" + H5.getTypeAlias(T) + "$getCount"])) {
+            } else if (T && Transpose.isFunction(obj[name = "System$Collections$Generic$IReadOnlyCollection$1$" + Transpose.getTypeAlias(T) + "$getCount"])) {
                 return obj[name]();
-            } else if (H5.isFunction(obj[name = "System$Collections$ICollection$getCount"])) {
+            } else if (Transpose.isFunction(obj[name = "System$Collections$ICollection$getCount"])) {
                 return obj[name]();
-            } else if (T && (v = obj["System$Collections$Generic$ICollection$1$" + H5.getTypeAlias(T) + "$Count"]) !== undefined) {
+            } else if (T && (v = obj["System$Collections$Generic$ICollection$1$" + Transpose.getTypeAlias(T) + "$Count"]) !== undefined) {
                 return v;
-            } else if (T && (v = obj["System$Collections$Generic$IReadOnlyCollection$1$" + H5.getTypeAlias(T) + "$Count"]) !== undefined) {
+            } else if (T && (v = obj["System$Collections$Generic$IReadOnlyCollection$1$" + Transpose.getTypeAlias(T) + "$Count"]) !== undefined) {
                 return v;
             } else if ((v = obj["System$Collections$ICollection$Count"]) !== undefined) {
                 return v;
             } else if ((v = obj.Count) !== undefined) {
                 return v;
-            } else if (H5.isFunction(obj.getCount)) {
+            } else if (Transpose.isFunction(obj.getCount)) {
                 return obj.getCount();
             }
 
@@ -328,19 +328,19 @@
             var name,
                 v;
 
-            if (H5.isArray(obj)) {
+            if (Transpose.isArray(obj)) {
                 return T ? true : false;
-            } else if (T && H5.isFunction(obj[name = "System$Collections$Generic$ICollection$1$" + H5.getTypeAlias(T) + "$getIsReadOnly"])) {
+            } else if (T && Transpose.isFunction(obj[name = "System$Collections$Generic$ICollection$1$" + Transpose.getTypeAlias(T) + "$getIsReadOnly"])) {
                 return obj[name]();
-            } else if (T && (v = obj["System$Collections$Generic$ICollection$1$" + H5.getTypeAlias(T) + "$IsReadOnly"]) !== undefined) {
+            } else if (T && (v = obj["System$Collections$Generic$ICollection$1$" + Transpose.getTypeAlias(T) + "$IsReadOnly"]) !== undefined) {
                 return v;
-            } else if (H5.isFunction(obj[name = "System$Collections$IList$getIsReadOnly"])) {
+            } else if (Transpose.isFunction(obj[name = "System$Collections$IList$getIsReadOnly"])) {
                 return obj[name]();
             } else if ((v = obj["System$Collections$IList$IsReadOnly"]) !== undefined) {
                 return v;
             } else if ((v = obj.IsReadOnly) !== undefined) {
                 return v;
-            } else if (H5.isFunction(obj.getIsReadOnly)) {
+            } else if (Transpose.isFunction(obj.getIsReadOnly)) {
                 return obj.getIsReadOnly();
             }
 
@@ -348,7 +348,7 @@
         },
 
         checkReadOnly: function (obj, T, msg) {
-            if (H5.isArray(obj)) {
+            if (Transpose.isArray(obj)) {
                 if (T) {
                     throw new System.NotSupportedException.$ctor1(msg || "Collection was of a fixed size.");
                 }
@@ -366,11 +366,11 @@
                 item = System.Array.checkNewElementType(item, T);
             }
 
-            if (T && H5.isFunction(obj[name = "System$Collections$Generic$ICollection$1$" + H5.getTypeAlias(T) + "$add"])) {
+            if (T && Transpose.isFunction(obj[name = "System$Collections$Generic$ICollection$1$" + Transpose.getTypeAlias(T) + "$add"])) {
                 return obj[name](item);
-            } else if (H5.isFunction(obj[name = "System$Collections$IList$add"])) {
+            } else if (Transpose.isFunction(obj[name = "System$Collections$IList$add"])) {
                 return obj[name](item);
-            } else if (H5.isFunction(obj.add)) {
+            } else if (Transpose.isFunction(obj.add)) {
                 return obj.add(item);
             }
 
@@ -378,9 +378,9 @@
         },
 
         checkNewElementType: function (v, type) {
-            var unboxed = H5.unbox(v, true);
+            var unboxed = Transpose.unbox(v, true);
 
-            if (H5.isNumber(unboxed)) {
+            if (Transpose.isNumber(unboxed)) {
                 if (type === System.Decimal) {
                     return new System.Decimal(unboxed);
                 }
@@ -394,14 +394,14 @@
                 }
             }
 
-            var is = H5.is(v, type);
+            var is = Transpose.is(v, type);
 
             if (!is) {
-                if (v == null && H5.getDefaultValue(type) == null) {
+                if (v == null && Transpose.getDefaultValue(type) == null) {
                     return null;
                 }
 
-                throw new System.ArgumentException.$ctor1("The value " + unboxed + "is not of type " + H5.getTypeName(type) + " and cannot be used in this generic collection.");
+                throw new System.ArgumentException.$ctor1("The value " + unboxed + "is not of type " + Transpose.getTypeName(type) + " and cannot be used in this generic collection.");
             }
 
             return unboxed;
@@ -412,19 +412,19 @@
 
             System.Array.checkReadOnly(obj, T, "Collection is read-only.");
 
-            if (H5.isArray(obj)) {
-                System.Array.fill(obj, T ? (T.getDefaultValue || H5.getDefaultValue(T)) : null, 0, obj.length);
-            } else if (T && H5.isFunction(obj[name = "System$Collections$Generic$ICollection$1$" + H5.getTypeAlias(T) + "$clear"])) {
+            if (Transpose.isArray(obj)) {
+                System.Array.fill(obj, T ? (T.getDefaultValue || Transpose.getDefaultValue(T)) : null, 0, obj.length);
+            } else if (T && Transpose.isFunction(obj[name = "System$Collections$Generic$ICollection$1$" + Transpose.getTypeAlias(T) + "$clear"])) {
                 obj[name]();
-            } else if (H5.isFunction(obj[name = "System$Collections$IList$clear"])) {
+            } else if (Transpose.isFunction(obj[name = "System$Collections$IList$clear"])) {
                 obj[name]();
-            } else if (H5.isFunction(obj.clear)) {
+            } else if (Transpose.isFunction(obj.clear)) {
                 obj.clear();
             }
         },
 
         fill: function (dst, val, index, count) {
-            if (!H5.hasValue(dst)) {
+            if (!Transpose.hasValue(dst)) {
                 throw new System.ArgumentNullException.$ctor1("dst");
             }
 
@@ -432,7 +432,7 @@
                 throw new System.IndexOutOfRangeException();
             }
 
-            var isFn = H5.isFunction(val);
+            var isFn = Transpose.isFunction(val);
 
             if (isFn) {
                 var v = val();
@@ -479,13 +479,13 @@
         copyTo: function (obj, dest, index, T) {
             var name;
 
-            if (H5.isArray(obj)) {
+            if (Transpose.isArray(obj)) {
                 System.Array.copy(obj, 0, dest, index, obj ? obj.length : 0);
-            } else if (H5.isFunction(obj.copyTo)) {
+            } else if (Transpose.isFunction(obj.copyTo)) {
                 obj.copyTo(dest, index);
-            } else if (T && H5.isFunction(obj[name = "System$Collections$Generic$ICollection$1$" + H5.getTypeAlias(T) + "$copyTo"])) {
+            } else if (T && Transpose.isFunction(obj[name = "System$Collections$Generic$ICollection$1$" + Transpose.getTypeAlias(T) + "$copyTo"])) {
                 obj[name](dest, index);
-            } else if (H5.isFunction(obj[name = "System$Collections$ICollection$copyTo"])) {
+            } else if (Transpose.isFunction(obj[name = "System$Collections$ICollection$copyTo"])) {
                 obj[name](dest, index);
             } else {
                 throw new System.NotImplementedException.$ctor1("copyTo");
@@ -495,13 +495,13 @@
         indexOf: function (arr, item, startIndex, count, T) {
             var name;
 
-            if (H5.isArray(arr)) {
+            if (Transpose.isArray(arr)) {
                 var i,
                     el,
                     endIndex;
 
                 startIndex = startIndex || 0;
-                count = H5.isNumber(count) ? count : arr.length;
+                count = Transpose.isNumber(count) ? count : arr.length;
                 endIndex = startIndex + count;
 
                 for (i = startIndex; i < endIndex; i++) {
@@ -511,11 +511,11 @@
                         return i;
                     }
                 }
-            } else if (T && H5.isFunction(arr[name = "System$Collections$Generic$IList$1$" + H5.getTypeAlias(T) + "$indexOf"])) {
+            } else if (T && Transpose.isFunction(arr[name = "System$Collections$Generic$IList$1$" + Transpose.getTypeAlias(T) + "$indexOf"])) {
                 return arr[name](item);
-            } else if (H5.isFunction(arr[name = "System$Collections$IList$indexOf"])) {
+            } else if (Transpose.isFunction(arr[name = "System$Collections$IList$indexOf"])) {
                 return arr[name](item);
-            } else if (H5.isFunction(arr.indexOf)) {
+            } else if (Transpose.isFunction(arr.indexOf)) {
                 return arr.indexOf(item);
             }
 
@@ -525,13 +525,13 @@
         contains: function (obj, item, T) {
             var name;
 
-            if (H5.isArray(obj)) {
+            if (Transpose.isArray(obj)) {
                 return System.Array.indexOf(obj, item) > -1;
-            } else if (T && H5.isFunction(obj[name = "System$Collections$Generic$ICollection$1$" + H5.getTypeAlias(T) + "$contains"])) {
+            } else if (T && Transpose.isFunction(obj[name = "System$Collections$Generic$ICollection$1$" + Transpose.getTypeAlias(T) + "$contains"])) {
                 return obj[name](item);
-            } else if (H5.isFunction(obj[name = "System$Collections$IList$contains"])) {
+            } else if (Transpose.isFunction(obj[name = "System$Collections$IList$contains"])) {
                 return obj[name](item);
-            } else if (H5.isFunction(obj.contains)) {
+            } else if (Transpose.isFunction(obj.contains)) {
                 return obj.contains(item);
             }
 
@@ -543,7 +543,7 @@
 
             System.Array.checkReadOnly(obj, T);
 
-            if (H5.isArray(obj)) {
+            if (Transpose.isArray(obj)) {
                 var index = System.Array.indexOf(obj, item);
 
                 if (index > -1) {
@@ -551,11 +551,11 @@
 
                     return true;
                 }
-            } else if (T && H5.isFunction(obj[name = "System$Collections$Generic$ICollection$1$" + H5.getTypeAlias(T) + "$remove"])) {
+            } else if (T && Transpose.isFunction(obj[name = "System$Collections$Generic$ICollection$1$" + Transpose.getTypeAlias(T) + "$remove"])) {
                 return obj[name](item);
-            } else if (H5.isFunction(obj[name = "System$Collections$IList$remove"])) {
+            } else if (Transpose.isFunction(obj[name = "System$Collections$IList$remove"])) {
                 return obj[name](item);
-            } else if (H5.isFunction(obj.remove)) {
+            } else if (Transpose.isFunction(obj.remove)) {
                 return obj.remove(item);
             }
 
@@ -571,11 +571,11 @@
                 item = System.Array.checkNewElementType(item, T);
             }
 
-            if (T && H5.isFunction(obj[name = "System$Collections$Generic$IList$1$" + H5.getTypeAlias(T) + "$insert"])) {
+            if (T && Transpose.isFunction(obj[name = "System$Collections$Generic$IList$1$" + Transpose.getTypeAlias(T) + "$insert"])) {
                 obj[name](index, item);
-            } else if (H5.isFunction(obj[name = "System$Collections$IList$insert"])) {
+            } else if (Transpose.isFunction(obj[name = "System$Collections$IList$insert"])) {
                 obj[name](index, item);
-            } else if (H5.isFunction(obj.insert)) {
+            } else if (Transpose.isFunction(obj.insert)) {
                 obj.insert(index, item);
             }
         },
@@ -585,13 +585,13 @@
 
             System.Array.checkReadOnly(obj, T);
 
-            if (H5.isArray(obj)) {
+            if (Transpose.isArray(obj)) {
                 obj.splice(index, 1);
-            } else if (T && H5.isFunction(obj[name = "System$Collections$Generic$IList$1$" + H5.getTypeAlias(T) + "$removeAt"])) {
+            } else if (T && Transpose.isFunction(obj[name = "System$Collections$Generic$IList$1$" + Transpose.getTypeAlias(T) + "$removeAt"])) {
                 obj[name](index);
-            } else if (H5.isFunction(obj[name = "System$Collections$IList$removeAt"])) {
+            } else if (Transpose.isFunction(obj[name = "System$Collections$IList$removeAt"])) {
                 obj[name](index);
-            } else if (H5.isFunction(obj.removeAt)) {
+            } else if (Transpose.isFunction(obj.removeAt)) {
                 obj.removeAt(index);
             }
         },
@@ -600,33 +600,33 @@
             var name,
                 v;
 
-            if (H5.isArray(obj)) {
+            if (Transpose.isArray(obj)) {
                 v = obj[idx];
                 if (T) {
                     return v;
                 }
 
-                return (obj.$type && (H5.isNumber(v) || H5.isBoolean(v) || H5.isDate(v))) ? H5.box(v, obj.$type.$elementType) : v;
-            } else if (T && H5.isFunction(obj[name = "System$Collections$Generic$IList$1$" + H5.getTypeAlias(T) + "$getItem"])) {
+                return (obj.$type && (Transpose.isNumber(v) || Transpose.isBoolean(v) || Transpose.isDate(v))) ? Transpose.box(v, obj.$type.$elementType) : v;
+            } else if (T && Transpose.isFunction(obj[name = "System$Collections$Generic$IList$1$" + Transpose.getTypeAlias(T) + "$getItem"])) {
                 v = obj[name](idx);
                 return v;
-            } else if (H5.isFunction(obj.get)) {
+            } else if (Transpose.isFunction(obj.get)) {
                 v = obj.get(idx);
-            } else if (H5.isFunction(obj.getItem)) {
+            } else if (Transpose.isFunction(obj.getItem)) {
                 v = obj.getItem(idx);
-            } else if (H5.isFunction(obj[name = "System$Collections$IList$$getItem"])) {
+            } else if (Transpose.isFunction(obj[name = "System$Collections$IList$$getItem"])) {
                 v = obj[name](idx);
-            } else if (H5.isFunction(obj.get_Item)) {
+            } else if (Transpose.isFunction(obj.get_Item)) {
                 v = obj.get_Item(idx);
             }
 
-            return T && H5.getDefaultValue(T) != null ? H5.box(v, T) : v;
+            return T && Transpose.getDefaultValue(T) != null ? Transpose.box(v, T) : v;
         },
 
         setItem: function (obj, idx, value, T) {
             var name;
 
-            if (H5.isArray(obj)) {
+            if (Transpose.isArray(obj)) {
                 if (obj.$type) {
                     value = System.Array.checkElementType(value, obj.$type.$elementType);
                 }
@@ -637,24 +637,24 @@
                     value = System.Array.checkElementType(value, T);
                 }
 
-                if (H5.isFunction(obj.set)) {
+                if (Transpose.isFunction(obj.set)) {
                     obj.set(idx, value);
-                } else if (H5.isFunction(obj.setItem)) {
+                } else if (Transpose.isFunction(obj.setItem)) {
                     obj.setItem(idx, value);
-                } else if (T && H5.isFunction(obj[name = "System$Collections$Generic$IList$1$" + H5.getTypeAlias(T) + "$setItem"])) {
+                } else if (T && Transpose.isFunction(obj[name = "System$Collections$Generic$IList$1$" + Transpose.getTypeAlias(T) + "$setItem"])) {
                     return obj[name](idx, value);
-                } else if (T && H5.isFunction(obj[name = "System$Collections$IList$setItem"])) {
+                } else if (T && Transpose.isFunction(obj[name = "System$Collections$IList$setItem"])) {
                     return obj[name](idx, value);
-                } else if (H5.isFunction(obj.set_Item)) {
+                } else if (Transpose.isFunction(obj.set_Item)) {
                     obj.set_Item(idx, value);
                 }
             }
         },
 
         checkElementType: function (v, type) {
-            var unboxed = H5.unbox(v, true);
+            var unboxed = Transpose.unbox(v, true);
 
-            if (H5.isNumber(unboxed)) {
+            if (Transpose.isNumber(unboxed)) {
                 if (type === System.Decimal) {
                     return new System.Decimal(unboxed);
                 }
@@ -668,11 +668,11 @@
                 }
             }
 
-            var is = H5.is(v, type);
+            var is = Transpose.is(v, type);
 
             if (!is) {
                 if (v == null) {
-                    return H5.getDefaultValue(type);
+                    return Transpose.getDefaultValue(type);
                 }
 
                 throw new System.ArgumentException.$ctor1("Cannot widen from source type to target type either because the source type is a not a primitive type or the conversion cannot be accomplished.");
@@ -687,7 +687,7 @@
             }
 
             var oldSize = 0,
-                isFn = H5.isFunction(val),
+                isFn = Transpose.isFunction(val),
                 ref = arr.v;
 
             if (isFn) {
@@ -806,7 +806,7 @@
             }
 
             var list = [],
-                fn = H5.fn.bind(comparer, System.Collections.Generic.Comparer$1.get(comparer));
+                fn = Transpose.fn.bind(comparer, System.Collections.Generic.Comparer$1.get(comparer));
 
             if (length == null) {
                 length = keys.length;
@@ -853,11 +853,11 @@
                 index = null;
             }
 
-            if (!H5.isNumber(index)) {
+            if (!Transpose.isNumber(index)) {
                 index = 0;
             }
 
-            if (!H5.isNumber(length)) {
+            if (!Transpose.isNumber(length)) {
                 length = array.length;
             }
 
@@ -866,11 +866,11 @@
             }
 
             if (index === 0 && length === array.length) {
-                array.sort(H5.fn.bind(comparer, System.Collections.Generic.Comparer$1.get(comparer)));
+                array.sort(Transpose.fn.bind(comparer, System.Collections.Generic.Comparer$1.get(comparer)));
             } else {
                 var newarray = array.slice(index, index + length);
 
-                newarray.sort(H5.fn.bind(comparer, System.Collections.Generic.Comparer$1.get(comparer)));
+                newarray.sort(Transpose.fn.bind(comparer, System.Collections.Generic.Comparer$1.get(comparer)));
 
                 for (var i = index; i < (index + length) ; i++) {
                     array[i] = newarray[i - index];
@@ -905,17 +905,17 @@
         },
 
         addRange: function (arr, items) {
-            if (H5.isArray(items)) {
+            if (Transpose.isArray(items)) {
                 arr.push.apply(arr, items);
             } else {
-                var e = H5.getEnumerator(items);
+                var e = Transpose.getEnumerator(items);
 
                 try {
                     while (e.moveNext()) {
                         arr.push(e.Current);
                     }
                 } finally {
-                    if (H5.is(e, System.IDisposable)) {
+                    if (Transpose.is(e, System.IDisposable)) {
                         e.Dispose();
                     }
                 }
@@ -923,11 +923,11 @@
         },
 
         convertAll: function (array, converter) {
-            if (!H5.hasValue(array)) {
+            if (!Transpose.hasValue(array)) {
                 throw new System.ArgumentNullException.$ctor1("array");
             }
 
-            if (!H5.hasValue(converter)) {
+            if (!Transpose.hasValue(converter)) {
                 throw new System.ArgumentNullException.$ctor1("converter");
             }
 
@@ -937,11 +937,11 @@
         },
 
         find: function (T, array, match) {
-            if (!H5.hasValue(array)) {
+            if (!Transpose.hasValue(array)) {
                 throw new System.ArgumentNullException.$ctor1("array");
             }
 
-            if (!H5.hasValue(match)) {
+            if (!Transpose.hasValue(match)) {
                 throw new System.ArgumentNullException.$ctor1("match");
             }
 
@@ -951,15 +951,15 @@
                 }
             }
 
-            return H5.getDefaultValue(T);
+            return Transpose.getDefaultValue(T);
         },
 
         findAll: function (array, match) {
-            if (!H5.hasValue(array)) {
+            if (!Transpose.hasValue(array)) {
                 throw new System.ArgumentNullException.$ctor1("array");
             }
 
-            if (!H5.hasValue(match)) {
+            if (!Transpose.hasValue(match)) {
                 throw new System.ArgumentNullException.$ctor1("match");
             }
 
@@ -975,7 +975,7 @@
         },
 
         findIndex: function (array, startIndex, count, match) {
-            if (!H5.hasValue(array)) {
+            if (!Transpose.hasValue(array)) {
                 throw new System.ArgumentNullException.$ctor1("array");
             }
 
@@ -996,7 +996,7 @@
                 throw new System.ArgumentOutOfRangeException.$ctor1("count");
             }
 
-            if (!H5.hasValue(match)) {
+            if (!Transpose.hasValue(match)) {
                 throw new System.ArgumentNullException.$ctor1("match");
             }
 
@@ -1012,11 +1012,11 @@
         },
 
         findLast: function (T, array, match) {
-            if (!H5.hasValue(array)) {
+            if (!Transpose.hasValue(array)) {
                 throw new System.ArgumentNullException.$ctor1("array");
             }
 
-            if (!H5.hasValue(match)) {
+            if (!Transpose.hasValue(match)) {
                 throw new System.ArgumentNullException.$ctor1("match");
             }
 
@@ -1026,11 +1026,11 @@
                 }
             }
 
-            return H5.getDefaultValue(T);
+            return Transpose.getDefaultValue(T);
         },
 
         findLastIndex: function (array, startIndex, count, match) {
-            if (!H5.hasValue(array)) {
+            if (!Transpose.hasValue(array)) {
                 throw new System.ArgumentNullException.$ctor1("array");
             }
 
@@ -1043,7 +1043,7 @@
                 count = startIndex + 1;
             }
 
-            if (!H5.hasValue(match)) {
+            if (!Transpose.hasValue(match)) {
                 throw new System.ArgumentNullException.$ctor1("match");
             }
 
@@ -1073,11 +1073,11 @@
         },
 
         forEach: function (array, action) {
-            if (!H5.hasValue(array)) {
+            if (!Transpose.hasValue(array)) {
                 throw new System.ArgumentNullException.$ctor1("array");
             }
 
-            if (!H5.hasValue(action)) {
+            if (!Transpose.hasValue(action)) {
                 throw new System.ArgumentNullException.$ctor1("action");
             }
 
@@ -1087,7 +1087,7 @@
         },
 
         indexOfT: function (array, value, startIndex, count) {
-            if (!H5.hasValue(array)) {
+            if (!Transpose.hasValue(array)) {
                 throw new System.ArgumentNullException.$ctor1("array");
             }
 
@@ -1110,7 +1110,7 @@
         },
 
         isFixedSize: function (array) {
-            if (H5.isArray(array)) {
+            if (Transpose.isArray(array)) {
                 return true;
             } else if (array["System$Collections$IList$isFixedSize"] != null) {
                 return array["System$Collections$IList$isFixedSize"];
@@ -1130,7 +1130,7 @@
         },
 
         lastIndexOfT: function (array, value, startIndex, count) {
-            if (!H5.hasValue(array)) {
+            if (!Transpose.hasValue(array)) {
                 throw new System.ArgumentNullException.$ctor1("array");
             }
 
@@ -1167,11 +1167,11 @@
         },
 
         trueForAll: function (array, match) {
-            if (!H5.hasValue(array)) {
+            if (!Transpose.hasValue(array)) {
                 throw new System.ArgumentNullException.$ctor1("array");
             }
 
-            if (!H5.hasValue(match)) {
+            if (!Transpose.hasValue(match)) {
                 throw new System.ArgumentNullException.$ctor1("match");
             }
 
@@ -1204,11 +1204,11 @@
             }
 
             if (!result) {
-                name = H5.getTypeName(t) + "[" + System.String.fromCharCount(",".charCodeAt(0), rank - 1) + "]";
+                name = Transpose.getTypeName(t) + "[" + System.String.fromCharCount(",".charCodeAt(0), rank - 1) + "]";
 
-                var old = H5.Class.staticInitAllow;
+                var old = Transpose.Class.staticInitAllow;
 
-                result = H5.define(name, {
+                result = Transpose.define(name, {
                     $inherits: [System.Array, System.Collections.ICollection, System.ICloneable, System.Collections.Generic.IList$1(t), System.Collections.Generic.IReadOnlyCollection$1(t)],
                     $noRegister: true,
                     statics: {
@@ -1227,7 +1227,7 @@
                             if (this.$rank === 1) {
                                 arr = [];
                             } else {
-                                var args = [H5.getDefaultValue(this.$elementType), null, this.$elementType];
+                                var args = [Transpose.getDefaultValue(this.$elementType), null, this.$elementType];
 
                                 for (var j = 0; j < this.$rank; j++) {
                                     args.push(0);
@@ -1245,13 +1245,13 @@
 
                 typeCache.push(result);
 
-                H5.Class.staticInitAllow = true;
+                Transpose.Class.staticInitAllow = true;
 
                 if (result.$staticInit) {
                     result.$staticInit();
                 }
 
-                H5.Class.staticInitAllow = old;
+                Transpose.Class.staticInitAllow = old;
             }
 
             if (arr) {
@@ -1265,7 +1265,7 @@
         }
     };
 
-    H5.define("System.Array", {
+    Transpose.define("System.Array", {
         statics: array
     });
 

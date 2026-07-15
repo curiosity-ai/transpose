@@ -1,7 +1,7 @@
-using H5;
-using H5.Core;
+using Transpose;
+using Transpose.Core;
 
-namespace H5.Core
+namespace Transpose.Core
 {
     public static partial class dom
     {
@@ -65,9 +65,9 @@ namespace H5.Core
             public virtual es5.DataView value { get; }
 
             public virtual extern es5.Promise<es5.DataView> readValue();
-            public virtual extern es5.Promise<H5.Core.Void> writeValue(es5.ArrayBufferView value);
-            public virtual extern es5.Promise<H5.Core.Void> startNotifications();
-            public virtual extern es5.Promise<H5.Core.Void> stopNotifications();
+            public virtual extern es5.Promise<Transpose.Core.Void> writeValue(es5.ArrayBufferView value);
+            public virtual extern es5.Promise<Transpose.Core.Void> startNotifications();
+            public virtual extern es5.Promise<Transpose.Core.Void> stopNotifications();
         }
 
         [IgnoreCast]

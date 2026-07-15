@@ -3,9 +3,9 @@ namespace System
     /// <summary>
     /// Specifies how mathematical rounding methods should process a number that is midway between two numbers.
     /// </summary>
-    [H5.External]
-    [H5.Enum(H5.Emit.Value)]
-    [H5.Name("Number")]
+    [Transpose.External]
+    [Transpose.Enum(Transpose.Emit.Value)]
+    [Transpose.Name("Number")]
     public enum MidpointRounding
     {
         /// <summary>

@@ -1,12 +1,12 @@
-using H5;
+using Transpose;
 using System.Collections.Generic;
 
 namespace System.Threading.Tasks
 {
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.External]
-    [H5.Reflectable]
-    public class Task : IDisposable, H5.IH5Class, IAsyncResult
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.External]
+    [Transpose.Reflectable]
+    public class Task : IDisposable, Transpose.ITransposeClass, IAsyncResult
     {
         public extern Task(Action action);
 
@@ -20,23 +20,23 @@ namespace System.Threading.Tasks
 
         public extern bool IsCanceled
         {
-            [H5.Template("isCanceled()")]
+            [Transpose.Template("isCanceled()")]
             get;
         }
 
         public extern bool IsCompleted
         {
-            [H5.Template("isCompleted()")]
+            [Transpose.Template("isCompleted()")]
             get;
         }
 
         public extern bool IsFaulted
         {
-            [H5.Template("isFaulted()")]
+            [Transpose.Template("isFaulted()")]
             get;
         }
 
-        [H5.Convention(H5.Notation.CamelCase)]
+        [Transpose.Convention(Transpose.Notation.CamelCase)]
         public extern TaskStatus Status
         {
             get;
@@ -105,17 +105,17 @@ namespace System.Threading.Tasks
         
         public static extern Task CompletedTask 
         {
-            [H5.Template("System.Threading.Tasks.Task.fromResult({}, null)")]
+            [Transpose.Template("System.Threading.Tasks.Task.fromResult({}, null)")]
             get; 
         }
 
-        [H5.Template("System.Threading.Tasks.Task.fromResult({result}, {TResult})")]
+        [Transpose.Template("System.Threading.Tasks.Task.fromResult({result}, {TResult})")]
         public static extern Task<TResult> FromResult<TResult>(TResult result);
 
-        [H5.Template("System.Threading.Tasks.Task.fromException({exception}, null)")]
+        [Transpose.Template("System.Threading.Tasks.Task.fromException({exception}, null)")]
         public static extern Task FromException(Exception exception);        
 
-        [H5.Template("System.Threading.Tasks.Task.fromException({exception}, {TResult})")]
+        [Transpose.Template("System.Threading.Tasks.Task.fromException({exception}, {TResult})")]
         public static extern Task<TResult> FromException<TResult>(Exception exception);        
 
         public static extern Task Run(Action action);
@@ -155,9 +155,9 @@ namespace System.Threading.Tasks
         public static extern Task<TResult> FromPromise<TResult>(IPromise promise, Delegate resultHandler, Delegate errorHandler, Delegate progressHandler);
     }
 
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.External]
-    [H5.Reflectable]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.External]
+    [Transpose.Reflectable]
     public class Task<TResult> : Task
     {
         public extern Task(Func<TResult> function);
@@ -166,13 +166,13 @@ namespace System.Threading.Tasks
 
         public extern TResult Result
         {
-            [H5.Template("getResult()")]
+            [Transpose.Template("getResult()")]
             get;
         }
 
         public extern Task ContinueWith(Action<Task<TResult>> continuationAction);
 
-        [H5.IgnoreGeneric]
+        [Transpose.IgnoreGeneric]
         public extern Task<TNewResult> ContinueWith<TNewResult>(Func<Task<TResult>, TNewResult> continuationFunction);
 
         public new extern TaskAwaiter<TResult> GetAwaiter();

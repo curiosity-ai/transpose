@@ -28,7 +28,7 @@
         },
 
         toObject: function (enumType, value) {
-            value = H5.unbox(value, true);
+            value = Transpose.unbox(value, true);
 
             if (value == null) {
                 return null;
@@ -48,7 +48,7 @@
                 var intValue = {};
 
                 if (System.Int32.tryParse(s, intValue)) {
-                    return H5.box(intValue.v, enumType, function (obj) { return System.Enum.toString(enumType, obj); });
+                    return Transpose.box(intValue.v, enumType, function (obj) { return System.Enum.toString(enumType, obj); });
                 }
 
                 var names = System.Enum.getNames(enumType),
@@ -59,7 +59,7 @@
                         var name = names[i];
 
                         if (enumMethods.nameEquals(name, s, ignoreCase)) {
-                            return H5.box(values[name], enumType, function (obj) { return System.Enum.toString(enumType, obj); });
+                            return Transpose.box(values[name], enumType, function (obj) { return System.Enum.toString(enumType, obj); });
                         }
                     }
                 } else {
@@ -90,7 +90,7 @@
                     }
 
                     if (parsed) {
-                        return H5.box(value, enumType, function (obj) { return System.Enum.toString(enumType, obj); });
+                        return Transpose.box(value, enumType, function (obj) { return System.Enum.toString(enumType, obj); });
                     }
                 }
             }
@@ -117,7 +117,7 @@
                 enumType = value.type;
             }
 
-            value = H5.unbox(value, true);
+            value = Transpose.unbox(value, true);
 
             if (enumType === Number || enumType === System.String || enumType.$number) {
                 return value.toString();
@@ -221,11 +221,11 @@
 
             var name;
 
-            if (!H5.hasValue(value) && (name = "value") || !H5.hasValue(format) && (name = "format")) {
+            if (!Transpose.hasValue(value) && (name = "value") || !Transpose.hasValue(format) && (name = "format")) {
                 throw new System.ArgumentNullException.$ctor1(name);
             }
 
-            value = H5.unbox(value, true);
+            value = Transpose.unbox(value, true);
 
             switch (format) {
                 case "G":
@@ -269,7 +269,7 @@
         },
 
         getName: function (enumType, value) {
-            value = H5.unbox(value, true);
+            value = Transpose.unbox(value, true);
 
             if (value == null) {
                 throw new System.ArgumentNullException.$ctor1("value");
@@ -298,20 +298,20 @@
         },
 
         hasFlag: function (value, flag) {
-            flag = H5.unbox(flag, true);
+            flag = Transpose.unbox(flag, true);
             var isLong = System.Int64.is64Bit(value);
 
             return flag === 0 || (isLong ? !value.and(flag).isZero() : !!(value & flag));
         },
 
         isDefined: function (enumType, value) {
-            value = H5.unbox(value, true);
+            value = Transpose.unbox(value, true);
 
             System.Enum.checkEnumType(enumType);
 
             var values = enumType,
                 names = System.Enum.getNames(enumType),
-                isString = H5.isString(value),
+                isString = Transpose.isString(value),
                 isLong = System.Int64.is64Bit(value);
 
             for (var i = 0; i < names.length; i++) {
@@ -326,7 +326,7 @@
         },
 
         tryParse: function (enumType, value, result, ignoreCase) {
-            result.v = H5.unbox(enumMethods.parse(enumType, value, ignoreCase, true), true);
+            result.v = Transpose.unbox(enumMethods.parse(enumType, value, ignoreCase, true), true);
 
             if (result.v == null) {
                 result.v = 0;
@@ -348,11 +348,11 @@
         },
 
         equalsT: function (v1, v2) {
-            return H5.equals(H5.unbox(v1, true), H5.unbox(v2, true));
+            return Transpose.equals(Transpose.unbox(v1, true), Transpose.unbox(v2, true));
         }
     };
 
-    H5.define("System.Enum", {
+    Transpose.define("System.Enum", {
         inherits: [System.IComparable, System.IFormattable],
         statics: {
             methods: enumMethods

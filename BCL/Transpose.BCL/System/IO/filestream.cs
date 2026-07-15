@@ -52,27 +52,27 @@ using System.Threading.Tasks;
 
 namespace System.IO
 {
-    [H5.External]
-    [H5.Namespace(false)]
+    [Transpose.External]
+    [Transpose.Namespace(false)]
     internal class FileReader
     {
         public extern FileReader();
 
-        [H5.Convention(H5.Notation.CamelCase)]
+        [Transpose.Convention(Transpose.Notation.CamelCase)]
         public extern void ReadAsArrayBuffer(object file);
 
-        [H5.Convention(H5.Notation.CamelCase)]
+        [Transpose.Convention(Transpose.Notation.CamelCase)]
         public readonly string Result;
 
-        [H5.Convention(H5.Notation.LowerCase)]
+        [Transpose.Convention(Transpose.Notation.LowerCase)]
         public Action OnLoad;
 
-        [H5.Convention(H5.Notation.LowerCase)]
+        [Transpose.Convention(Transpose.Notation.LowerCase)]
         public Action<object> OnError;
     }
 
-    [H5.Reflectable]
-    [H5.Convention]
+    [Transpose.Reflectable]
+    [Transpose.Convention]
     public class FileStream : Stream
     {
         private string name;
@@ -232,12 +232,12 @@ namespace System.IO
                 return 0;
             }
 
-            var byteBuffer = H5.Script.Write<dynamic>("new Uint8Array(this.GetInternalBuffer())");
+            var byteBuffer = Transpose.Script.Write<dynamic>("new Uint8Array(this.GetInternalBuffer())");
             if (num > 8)
             {
                 for (var n = 0; n < num; n++)
                 {
-                    buffer[n + offset] = H5.Script.Write<dynamic>("byteBuffer[this.Position.add(System.Int64(n))]");
+                    buffer[n + offset] = Transpose.Script.Write<dynamic>("byteBuffer[this.Position.add(System.Int64(n))]");
                 }
             }
             else
@@ -251,7 +251,7 @@ namespace System.IO
                     {
                         break;
                     }
-                    buffer[offset + num1] = H5.Script.Write<dynamic>("byteBuffer[this.Position.add(num1)]");
+                    buffer[offset + num1] = Transpose.Script.Write<dynamic>("byteBuffer[this.Position.add(num1)]");
                 }
             }
             this.Position += num;
@@ -260,24 +260,24 @@ namespace System.IO
 
         internal static byte[] ReadBytes(string path)
         {
-            if (H5.Script.IsNode)
+            if (Transpose.Script.IsNode)
             {
-                var fs = H5.Script.Write<dynamic>(@"require(""fs"")");
-                return H5.Script.Write<dynamic>("H5.cast(fs.readFileSync(path), ArrayBuffer)");
+                var fs = Transpose.Script.Write<dynamic>(@"require(""fs"")");
+                return Transpose.Script.Write<dynamic>("Transpose.cast(fs.readFileSync(path), ArrayBuffer)");
             }
             else
             {
-                var req = H5.Script.Write<dynamic>("new XMLHttpRequest()");
+                var req = Transpose.Script.Write<dynamic>("new XMLHttpRequest()");
                 req.open("GET", path, false);
                 req.overrideMimeType("text/plain; charset=x-user-defined");
                 req.send(null);
-                if (H5.Script.Write<bool>("req.status !== 200"))
+                if (Transpose.Script.Write<bool>("req.status !== 200"))
                 {
                     throw new IOException("Status of request to " + path + " returned status: " + req.status);
                 }
 
                 string text = req.responseText;
-                var resultArray = H5.Script.Write<dynamic>("new Uint8Array(text.length)");
+                var resultArray = Transpose.Script.Write<dynamic>("new Uint8Array(text.length)");
                 text.ToCharArray().ForEach((v, index, array) => resultArray[index] = (byte)(v & byte.MaxValue));
                 return resultArray.buffer;
             }
@@ -287,9 +287,9 @@ namespace System.IO
         {
             var tcs = new TaskCompletionSource<byte[]>();
 
-            if (H5.Script.IsNode)
+            if (Transpose.Script.IsNode)
             {
-                var fs = H5.Script.Write<dynamic>(@"require(""fs"")");
+                var fs = Transpose.Script.Write<dynamic>(@"require(""fs"")");
                 fs.readFile(path, new Action<object, byte[]>((err, data) => {
                     if (err != null)
                     {
@@ -301,7 +301,7 @@ namespace System.IO
             }
             else
             {
-                var req = H5.Script.Write<dynamic>("new XMLHttpRequest()");
+                var req = Transpose.Script.Write<dynamic>("new XMLHttpRequest()");
                 req.open("GET", path, true);
                 req.overrideMimeType("text/plain; charset=binary-data");
                 req.send(null);
@@ -309,18 +309,18 @@ namespace System.IO
                 /*@
                 req.onreadystatechange = function () {
                 */
-                    if (H5.Script.Write<bool>("req.readyState !== 4"))
+                    if (Transpose.Script.Write<bool>("req.readyState !== 4"))
                     {
-                        H5.Script.Write("return;");
+                        Transpose.Script.Write("return;");
                     }
 
-                    if (H5.Script.Write<bool>("req.status !== 200"))
+                    if (Transpose.Script.Write<bool>("req.status !== 200"))
                     {
                         throw new IOException("Status of request to " + path + " returned status: " + req.status);
                     }
 
                     string text = req.responseText;
-                    var resultArray = H5.Script.Write<dynamic>("new Uint8Array(text.length)");
+                    var resultArray = Transpose.Script.Write<dynamic>("new Uint8Array(text.length)");
                     text.ToCharArray().ForEach((v, index, array) => resultArray[index] = (byte)(v & byte.MaxValue));
                     tcs.SetResult(resultArray.buffer);
                 /*@

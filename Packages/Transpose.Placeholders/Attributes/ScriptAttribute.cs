@@ -1,7 +1,7 @@
-// Original: H5/H5/Attributes/ScriptAttribute.cs
+// Original: Transpose/Transpose/Attributes/ScriptAttribute.cs
 using System;
 
-namespace H5
+namespace Transpose
 {
     [AttributeUsage(AttributeTargets.Method | AttributeTargets.Constructor)]
     public sealed class ScriptAttribute : Attribute

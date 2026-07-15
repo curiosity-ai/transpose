@@ -4,12 +4,12 @@
   },
   "resources": [
     {
-      "name": "h5.httpclient.js",
-      "files": [ "$(OutDir)h5/h5.httpclient.js" ]
+      "name": "tps.httpclient.js",
+      "files": [ "$(OutDir)tps/tps.httpclient.js" ]
     },
     {
-      "name": "h5.httpclient.min.js",
-      "files": [ "$(OutDir)h5/h5.httpclient.min.js" ]
+      "name": "tps.httpclient.min.js",
+      "files": [ "$(OutDir)tps/tps.httpclient.min.js" ]
     }
   ],
   // Always build both minified and non-minified versions of the code so that resource for both versions are always included

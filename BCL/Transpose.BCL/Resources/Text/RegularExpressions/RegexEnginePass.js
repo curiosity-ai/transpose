@@ -1,4 +1,4 @@
-    H5.define("System.Text.RegularExpressions.RegexEnginePass", {
+    Transpose.define("System.Text.RegularExpressions.RegexEnginePass", {
         index: 0,
         tokens: null,
         probe: null,

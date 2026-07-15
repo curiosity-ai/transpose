@@ -6,17 +6,17 @@ namespace System.Net.WebSockets
     /// <summary>
     /// Provides a client for connecting to WebSocket services.
     /// </summary>
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.External]
-    [H5.Reflectable]
-    public class ClientWebSocket : H5.IH5Class, IDisposable
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.External]
+    [Transpose.Reflectable]
+    public class ClientWebSocket : Transpose.ITransposeClass, IDisposable
     {
         /// <summary>
         /// Get the WebSocket state of the <see cref="ClientWebSocket"/> instance.
         /// </summary>
         public extern WebSocketState State
         {
-            [H5.Template("getState()")]
+            [Transpose.Template("getState()")]
             get;
         }
 
@@ -25,7 +25,7 @@ namespace System.Net.WebSockets
         /// </summary>
         public extern ClientWebSocketOptions Options
         {
-            [H5.Template("getOptions()")]
+            [Transpose.Template("getOptions()")]
             get;
         }
 
@@ -34,7 +34,7 @@ namespace System.Net.WebSockets
         /// </summary>
         public extern WebSocketCloseStatus? CloseStatus
         {
-            [H5.Template("getCloseStatus()")]
+            [Transpose.Template("getCloseStatus()")]
             get;
         }
 
@@ -44,7 +44,7 @@ namespace System.Net.WebSockets
         /// </summary>
         public extern string CloseStatusDescription
         {
-            [H5.Template("getCloseStatusDescription()")]
+            [Transpose.Template("getCloseStatusDescription()")]
             get;
         }
 
@@ -53,7 +53,7 @@ namespace System.Net.WebSockets
         /// </summary>
         public extern string SubProtocol
         {
-            [H5.Template("getSubProtocol()")]
+            [Transpose.Template("getSubProtocol()")]
             get;
         }
 

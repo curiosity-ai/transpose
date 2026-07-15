@@ -1,7 +1,7 @@
-<Project Sdk="h5.Target/25.11.62725">
+<Project Sdk="Transpose.Build.Target/25.11.62725">
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
-    <AssemblyName>H5</AssemblyName>
+    <AssemblyName>Transpose</AssemblyName>
     <DebugType>None</DebugType>
     <DebugSymbols>false</DebugSymbols>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
@@ -11,8 +11,8 @@
 
   <PropertyGroup>
     <IncludeSymbols>false</IncludeSymbols>
-    <PackageIcon>h5.png</PackageIcon>
-    <PackageId>h5</PackageId>
+    <PackageIcon>transpose.png</PackageIcon>
+    <PackageId>tps</PackageId>
     <LangVersion>7.2</LangVersion>
     <Authors>Curiosity GmbH, Object.NET, Inc.</Authors>
     <Company>Curiosity GmbH, Object.NET, Inc.</Company>
@@ -24,11 +24,11 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <IsPackable>true</IsPackable>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/curiosity-ai/h5</PackageProjectUrl>
+    <PackageProjectUrl>https://github.com/curiosity-ai/transpose</PackageProjectUrl>
   </PropertyGroup>
 
   <ItemGroup>
-    <None Include="..\..\logo\h5.png" Link="h5.png" Pack="true" PackagePath="\" />
+    <None Include="..\..\logo\transpose.png" Link="transpose.png" Pack="true" PackagePath="\" />
   </ItemGroup>
   
   <ItemGroup>

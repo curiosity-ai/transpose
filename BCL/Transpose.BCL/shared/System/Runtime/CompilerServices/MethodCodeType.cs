@@ -6,7 +6,7 @@ using System.Reflection;
 
 namespace System.Runtime.CompilerServices
 {
-    [H5.NonScriptable]
+    [Transpose.NonScriptable]
     public enum MethodCodeType
     {
         IL = MethodImplAttributes.IL,

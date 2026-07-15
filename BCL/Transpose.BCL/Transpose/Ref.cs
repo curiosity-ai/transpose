@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 
-namespace H5
+namespace Transpose
 {
     public class Ref<T>
     {

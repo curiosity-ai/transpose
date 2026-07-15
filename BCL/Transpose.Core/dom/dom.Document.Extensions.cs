@@ -1,8 +1,8 @@
-using H5;
-using H5.Core;
+using Transpose;
+using Transpose.Core;
 using System;
 
-namespace H5.Core
+namespace Transpose.Core
 {
     public static partial class dom
     {
@@ -59,7 +59,7 @@ namespace H5.Core
                 get;
             }
 
-            public virtual extern es5.Promise<H5.Core.Void> exitPictureInPicture();
+            public virtual extern es5.Promise<Transpose.Core.Void> exitPictureInPicture();
 
             public virtual dom.FontFaceSet fonts
             {

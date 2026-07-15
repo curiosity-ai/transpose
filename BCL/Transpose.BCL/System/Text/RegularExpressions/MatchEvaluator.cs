@@ -5,6 +5,6 @@
     /// </summary>
     /// <param name="match"></param>
     /// <returns></returns>
-    [H5.External]
+    [Transpose.External]
     public delegate string MatchEvaluator(Match match);
 }

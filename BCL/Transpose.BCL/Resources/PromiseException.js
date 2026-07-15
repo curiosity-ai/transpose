@@ -1,4 +1,4 @@
-    H5.define("H5.PromiseException", {
+    Transpose.define("Transpose.PromiseException", {
         inherits: [System.Exception],
 
         ctor: function (args, message, innerException) {

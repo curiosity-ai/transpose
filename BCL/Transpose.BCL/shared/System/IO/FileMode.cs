@@ -12,7 +12,7 @@ namespace System.IO
     // to the end of the file).  To truncate a file or create it if it doesn't
     // exist, use Create.
     //
-    [H5.Enum(H5.Emit.Value)]
+    [Transpose.Enum(Transpose.Emit.Value)]
     public enum FileMode
     {
         // Creates a new file. An exception is raised if the file already exists.

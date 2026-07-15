@@ -1,17 +1,17 @@
 namespace System.Reflection
 {
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.External]
-    [H5.Unbox(true)]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.External]
+    [Transpose.Unbox(true)]
     public abstract partial class ConstructorInfo : MethodBase
     {
-        [H5.Template("H5.Reflection.invokeCI({this}, {arguments:array})")]
+        [Transpose.Template("Transpose.Reflection.invokeCI({this}, {arguments:array})")]
         public extern object Invoke(params object[] arguments);
 
         /// <summary>
         /// Script name of the constructor. Null for the unnamed constructor and for constructors with special implementations
         /// </summary>
-        [H5.Name("sn")]
+        [Transpose.Name("sn")]
         public extern string ScriptName
         {
             get;
@@ -23,16 +23,16 @@ namespace System.Reflection
         /// </summary>
         public extern bool IsStaticMethod
         {
-            [H5.Template("({this}.sm || false)")]
+            [Transpose.Template("({this}.sm || false)")]
             get;
-            [H5.Template("{this}.sm = {value}")]
+            [Transpose.Template("{this}.sm = {value}")]
             private set;
         }
 
         /// <summary>
-        /// For constructors with a special implementation (eg. [H5.Template]), contains a delegate that can be invoked to create an instance.
+        /// For constructors with a special implementation (eg. [Transpose.Template]), contains a delegate that can be invoked to create an instance.
         /// </summary>
-        [H5.Name("def")]
+        [Transpose.Name("def")]
         public extern Delegate SpecialImplementation
         {
             get;
@@ -42,7 +42,7 @@ namespace System.Reflection
         /// <summary>
         /// Whether the [ExpandParams] attribute was specified on the constructor.
         /// </summary>
-        public extern bool IsExpandParams {[H5.Template("{this}.exp || false")] get;[H5.Template("{this}.exp = {value}")] private set; }
+        public extern bool IsExpandParams {[Transpose.Template("{this}.exp || false")] get;[Transpose.Template("{this}.exp = {value}")] private set; }
 
         internal extern ConstructorInfo();
     }

@@ -1,7 +1,7 @@
 namespace System.Reflection
 {
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.External]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.External]
     public class Assembly
     {
         private extern Assembly();
@@ -9,7 +9,7 @@ namespace System.Reflection
         /// <summary>
         /// Gets the display name of the assembly.
         /// </summary>
-        [H5.Name("name")]
+        [Transpose.Name("name")]
         public extern string FullName
         {
             get;
@@ -18,7 +18,7 @@ namespace System.Reflection
         /// <summary>
         /// Gets the version of the assembly.
         /// </summary>
-        [H5.Name("getVersion")]
+        [Transpose.Name("getVersion")]
         public extern string GetVersion();
 
         /// <summary>
@@ -27,7 +27,7 @@ namespace System.Reflection
         /// <param name="assemblyName">The display name of an assembly.</param>
         /// <param name="typeName">The full name of a type.</param>
         /// <returns>The full name of the type qualified by the display name of the assembly.</returns>
-        [H5.Template("{typeName} + \", \" + {assemblyName}")]
+        [Transpose.Template("{typeName} + \", \" + {assemblyName}")]
         public static extern string CreateQualifiedName(string assemblyName, string typeName);
 
         /// <summary>
@@ -35,7 +35,7 @@ namespace System.Reflection
         /// </summary>
         /// <param name="type">An object representing a type in the assembly that will be returned.</param>
         /// <returns>The assembly in which the specified type is defined.</returns>
-        [H5.Template("H5.Reflection.getTypeAssembly({type})")]
+        [Transpose.Template("Transpose.Reflection.getTypeAssembly({type})")]
         public static extern Assembly GetAssembly(Type type);
 
         /// <summary>
@@ -43,7 +43,7 @@ namespace System.Reflection
         /// </summary>
         /// <param name="assemblyString">The long form of the assembly name.</param>
         /// <returns>The loaded assembly.</returns>
-        [H5.Template("H5.Reflection.load({assemblyString})")]
+        [Transpose.Template("Transpose.Reflection.load({assemblyString})")]
         public static extern Assembly Load(string assemblyString);
 
         /// <summary>
@@ -51,14 +51,14 @@ namespace System.Reflection
         /// </summary>
         /// <param name="name">The full name of the type.</param>
         /// <returns>An object that represents the specified class, or null if the class is not found.</returns>
-        [H5.Template("H5.Reflection.getType({name}, {this})")]
+        [Transpose.Template("Transpose.Reflection.getType({name}, {this})")]
         public extern Type GetType(string name);
 
         /// <summary>
         /// Gets the types defined in this assembly.
         /// </summary>
         /// <returns>An array that contains all the types that are defined in this assembly.</returns>
-        [H5.Template("H5.Reflection.getAssemblyTypes({this})")]
+        [Transpose.Template("Transpose.Reflection.getAssemblyTypes({this})")]
         public extern Type[] GetTypes();
 
         /// <summary>
@@ -66,14 +66,14 @@ namespace System.Reflection
         /// </summary>
         /// <param name="typeName">The Type.FullName of the type to locate.</param>
         /// <returns>An instance of the specified type created with the default constructor; or null if typeName is not found. The type is resolved using the default binder, without specifying culture or activation attributes, and with BindingFlags set to Public or Instance.</returns>
-        [H5.Template("H5.Reflection.createAssemblyInstance({this}, {typeName})")]
+        [Transpose.Template("Transpose.Reflection.createAssemblyInstance({this}, {typeName})")]
         public extern object CreateInstance(string typeName);
 
         /// <summary>
         /// Gets the assembly that contains the code that is currently executing.
         /// </summary>
         /// <returns>The assembly that contains the code that is currently executing.</returns>
-        [H5.Template("$asm")]
+        [Transpose.Template("$asm")]
         public static extern Assembly GetExecutingAssembly();
 
         /// <summary>

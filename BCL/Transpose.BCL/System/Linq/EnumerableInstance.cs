@@ -3,17 +3,17 @@ using System.Collections.Generic;
 
 namespace System.Linq
 {
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.External]
-    [H5.IgnoreGeneric]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.External]
+    [Transpose.IgnoreGeneric]
     public class EnumerableInstance<TElement> : IEnumerable<TElement>
     {
         internal extern EnumerableInstance();
 
-        [H5.Convention(H5.Notation.None)]
+        [Transpose.Convention(Transpose.Notation.None)]
         public extern IEnumerator<TElement> GetEnumerator();
 
-        [H5.Convention(H5.Notation.None)]
+        [Transpose.Convention(Transpose.Notation.None)]
         extern IEnumerator IEnumerable.GetEnumerator();
 
         public extern TElement Aggregate(Func<TElement, TElement, TElement> func);
@@ -39,7 +39,7 @@ namespace System.Linq
 
         public extern double Average(Func<TElement, double> selector);
 
-        [H5.Template("{this}.average({selector}, System.Decimal.Zero)")]
+        [Transpose.Template("{this}.average({selector}, System.Decimal.Zero)")]
         public extern decimal Average(Func<TElement, decimal> selector);
 
         public extern EnumerableInstance<TElement[]> Buffer(int count);
@@ -60,7 +60,7 @@ namespace System.Linq
         public extern EnumerableInstance<TResult> CascadeDepthFirst<TResult>(Func<TElement, IEnumerable<TElement>> func,
             Func<TElement, int, TResult> resultSelector);
 
-        [H5.Template("{this}.select(function (x) {{ return H5.cast(x, {TResult}); }})")]
+        [Transpose.Template("{this}.select(function (x) {{ return Transpose.cast(x, {TResult}); }})")]
         public extern EnumerableInstance<TResult> Cast<TResult>();
 
         public extern EnumerableInstance<TElement> CatchError(Action<Exception> action);
@@ -75,7 +75,7 @@ namespace System.Linq
 
         public extern int Count(Func<TElement, bool> predicate);
 
-        [H5.Template("{this}.defaultIfEmpty({TElement:default})")]
+        [Transpose.Template("{this}.defaultIfEmpty({TElement:default})")]
         public extern EnumerableInstance<TElement> DefaultIfEmpty();
 
         public extern EnumerableInstance<TElement> DefaultIfEmpty(TElement defaultValue);
@@ -90,7 +90,7 @@ namespace System.Linq
 
         public extern TElement ElementAt(int index);
 
-        [H5.Template("{this}.elementAtOrDefault({index}, {TElement:default})")]
+        [Transpose.Template("{this}.elementAtOrDefault({index}, {TElement:default})")]
         public extern TElement ElementAtOrDefault(int index);
 
         public extern TElement ElementAtOrDefault(int index, TElement defaultValue);
@@ -105,16 +105,16 @@ namespace System.Linq
 
         public extern TElement First(Func<TElement, bool> predicate);
 
-        [H5.Template("{this}.firstOrDefault(null, {TElement:default})")]
+        [Transpose.Template("{this}.firstOrDefault(null, {TElement:default})")]
         public extern TElement FirstOrDefault();
 
-        [H5.Template("{this}.firstOrDefault(null, {defaultValue})")]
+        [Transpose.Template("{this}.firstOrDefault(null, {defaultValue})")]
         public extern TElement FirstOrDefault(TElement defaultValue);
 
-        [H5.Template("{this}.firstOrDefault({predicate}, {TElement:default})")]
+        [Transpose.Template("{this}.firstOrDefault({predicate}, {TElement:default})")]
         public extern TElement FirstOrDefault(Func<TElement, bool> predicate);
 
-        [H5.Template("{this}.firstOrDefault({predicate}, {defaultValue})")]
+        [Transpose.Template("{this}.firstOrDefault({predicate}, {defaultValue})")]
         public extern TElement FirstOrDefault(Func<TElement, bool> predicate, TElement defaultValue);
 
         public extern EnumerableInstance<object> Flatten();
@@ -131,25 +131,25 @@ namespace System.Linq
 
         public extern EnumerableInstance<Grouping<TKey, TElement>> GroupBy<TKey>(Func<TElement, TKey> keySelector);
 
-        [H5.Template("{this}.groupBy({keySelector}, null, null, {comparer})")]
+        [Transpose.Template("{this}.groupBy({keySelector}, null, null, {comparer})")]
         public extern EnumerableInstance<Grouping<TKey, TElement>> GroupBy<TKey>(Func<TElement, TKey> keySelector,
             IEqualityComparer<TKey> comparer);
 
         public extern EnumerableInstance<Grouping<TKey, TSource>> GroupBy<TKey, TSource>(Func<TSource, TKey> keySelector,
             Func<TSource, TSource> elementSelector);
 
-        [H5.Template("{this}.groupBy({keySelector}, null, {resultSelector})")]
+        [Transpose.Template("{this}.groupBy({keySelector}, null, {resultSelector})")]
         public extern EnumerableInstance<TResult> GroupBy<TKey, TResult>(Func<TElement, TKey> keySelector,
             Func<TKey, IEnumerable<TElement>, TResult> resultSelector);
 
-        [H5.Template("{this}.groupBy({keySelector}, {elementSelector}, null, {comparer})")]
+        [Transpose.Template("{this}.groupBy({keySelector}, {elementSelector}, null, {comparer})")]
         public extern EnumerableInstance<Grouping<TKey, TSource>> GroupBy<TKey, TSource>(Func<TSource, TKey> keySelector,
             Func<TSource, TSource> elementSelector, IEqualityComparer<TKey> comparer);
 
         public extern EnumerableInstance<TResult> GroupBy<TKey, TSource, TResult>(Func<TSource, TKey> keySelector,
             Func<TSource, TSource> elementSelector, Func<TKey, IEnumerable<TSource>, TResult> resultSelector);
 
-        [H5.Template("{this}.groupBy({keySelector}, null, {resultSelector}, {comparer})")]
+        [Transpose.Template("{this}.groupBy({keySelector}, null, {resultSelector}, {comparer})")]
         public extern EnumerableInstance<TResult> GroupBy<TKey, TResult>(Func<TElement, TKey> keySelector,
             Func<TKey, IEnumerable<TElement>, TResult> resultSelector, IEqualityComparer<TKey> comparer);
 
@@ -191,22 +191,22 @@ namespace System.Linq
 
         public extern int LastIndexOf(TElement item, IEqualityComparer<TElement> comparer);
 
-        [H5.Template("{this}.count()")]
+        [Transpose.Template("{this}.count()")]
         public extern long LongCount<TSource>();
 
-        [H5.Template("{this}.count({predicate})")]
+        [Transpose.Template("{this}.count({predicate})")]
         public extern long LongCount<TSource>(Func<TSource, bool> predicate);
 
-        [H5.Template("{this}.lastOrDefault(null, {TElement:default})")]
+        [Transpose.Template("{this}.lastOrDefault(null, {TElement:default})")]
         public extern TElement LastOrDefault();
 
-        [H5.Template("{this}.lastOrDefault(null, {defaultValue})")]
+        [Transpose.Template("{this}.lastOrDefault(null, {defaultValue})")]
         public extern TElement LastOrDefault(TElement defaultValue);
 
-        [H5.Template("{this}.lastOrDefault({predicate}, {TElement:default})")]
+        [Transpose.Template("{this}.lastOrDefault({predicate}, {TElement:default})")]
         public extern TElement LastOrDefault(Func<TElement, bool> predicate);
 
-        [H5.Template("{this}.lastOrDefault({predicate}, {defaultValue})")]
+        [Transpose.Template("{this}.lastOrDefault({predicate}, {defaultValue})")]
         public extern TElement LastOrDefault(Func<TElement, bool> predicate, TElement defaultValue);
 
         public extern EnumerableInstance<TResult> LetBind<TResult>(Func<IEnumerable<TElement>, IEnumerable<TResult>> func);
@@ -261,7 +261,7 @@ namespace System.Linq
 
         public extern TElement MinBy(Func<TElement, decimal> selector);
 
-        [H5.Template("{this}.ofType({TResult})")]
+        [Transpose.Template("{this}.ofType({TResult})")]
         public extern EnumerableInstance<TResult> OfType<TResult>();
 
         public extern OrderedEnumerable<TElement> OrderBy();
@@ -281,25 +281,25 @@ namespace System.Linq
 
         public extern EnumerableInstance<Grouping<TKey, TElement>> PartitionBy<TKey>(Func<TElement, TKey> keySelector);
 
-        [H5.Template("{this}.partitionBy({keySelector}, null, null, {comparer})")]
+        [Transpose.Template("{this}.partitionBy({keySelector}, null, null, {comparer})")]
         public extern EnumerableInstance<Grouping<TKey, TElement>> PartitionBy<TKey>(Func<TElement, TKey> keySelector,
             IEqualityComparer<TKey> comparer);
 
         public extern EnumerableInstance<Grouping<TKey, TSource>> PartitionBy<TKey, TSource>(
             Func<TSource, TKey> keySelector, Func<TSource, TSource> elementSelector);
 
-        [H5.Template("{this}.partitionBy({keySelector}, null, {resultSelector})")]
+        [Transpose.Template("{this}.partitionBy({keySelector}, null, {resultSelector})")]
         public extern EnumerableInstance<TResult> PartitionBy<TKey, TResult>(Func<TElement, TKey> keySelector,
             Func<TKey, IEnumerable<TElement>, TResult> resultSelector);
 
-        [H5.Template("{this}.partitionBy({keySelector}, {elementSelector}, null, {comparer})")]
+        [Transpose.Template("{this}.partitionBy({keySelector}, {elementSelector}, null, {comparer})")]
         public extern EnumerableInstance<Grouping<TKey, TSource>> PartitionBy<TKey, TSource>(
             Func<TSource, TKey> keySelector, Func<TSource, TSource> elementSelector, IEqualityComparer<TKey> comparer);
 
         public extern EnumerableInstance<TResult> PartitionBy<TKey, TSource, TResult>(Func<TSource, TKey> keySelector,
             Func<TSource, TSource> elementSelector, Func<TKey, IEnumerable<TSource>, TResult> resultSelector);
 
-        [H5.Template("{this}.partitionBy({keySelector}, null, {resultSelector}, {comparer})")]
+        [Transpose.Template("{this}.partitionBy({keySelector}, null, {resultSelector}, {comparer})")]
         public extern EnumerableInstance<TResult> PartitionBy<TKey, TResult>(Func<TElement, TKey> keySelector,
             Func<TKey, IEnumerable<TElement>, TResult> resultSelector, IEqualityComparer<TKey> comparer);
 
@@ -342,16 +342,16 @@ namespace System.Linq
 
         public extern TElement Single(Func<TElement, bool> predicate);
 
-        [H5.Template("{this}.singleOrDefault(null, {TElement:default})")]
+        [Transpose.Template("{this}.singleOrDefault(null, {TElement:default})")]
         public extern TElement SingleOrDefault();
 
-        [H5.Template("{this}.singleOrDefault(null, {defaultValue})")]
+        [Transpose.Template("{this}.singleOrDefault(null, {defaultValue})")]
         public extern TElement SingleOrDefault(TElement defaultValue);
 
-        [H5.Template("{this}.singleOrDefault({predicate}, {TElement:default})")]
+        [Transpose.Template("{this}.singleOrDefault({predicate}, {TElement:default})")]
         public extern TElement SingleOrDefault(Func<TElement, bool> predicate);
 
-        [H5.Template("{this}.singleOrDefault({predicate}, {defaultValue})")]
+        [Transpose.Template("{this}.singleOrDefault({predicate}, {defaultValue})")]
         public extern TElement SingleOrDefault(Func<TElement, bool> predicate, TElement defaultValue);
 
         public extern EnumerableInstance<TElement> Skip(int count);
@@ -362,14 +362,14 @@ namespace System.Linq
 
         public extern int Sum(Func<TElement, int> selector);
 
-        [H5.Template("{this}.sum({selector}, System.Int64.Zero)")]
+        [Transpose.Template("{this}.sum({selector}, System.Int64.Zero)")]
         public extern long Sum(Func<TElement, long> selector);
 
         public extern float Sum(Func<TElement, float> selector);
 
         public extern double Sum(Func<TElement, double> selector);
 
-        [H5.Template("{this}.sum({selector}, System.Decimal.Zero)")]
+        [Transpose.Template("{this}.sum({selector}, System.Decimal.Zero)")]
         public extern decimal Sum(Func<TElement, decimal> selector);
 
         public extern EnumerableInstance<TElement> Take(int count);
@@ -392,21 +392,21 @@ namespace System.Linq
 
         public static extern IOrderedEnumerable<TSource> ThenByDescending<TSource, TKey>(Func<TSource, TKey> keySelector, IComparer<TKey> comparer);
 
-        [H5.Template("{this}.ToArray({TElement})")]
+        [Transpose.Template("{this}.ToArray({TElement})")]
         public extern TElement[] ToArray();
 
-        [H5.Template("{this}.toDictionary({keySelector}, null, {TKey}, {TElement})")]
+        [Transpose.Template("{this}.toDictionary({keySelector}, null, {TKey}, {TElement})")]
         public extern Dictionary<TKey, TElement> ToDictionary<TKey>(Func<TElement, TKey> keySelector);
 
-        [H5.Template("{this}.toDictionary({keySelector}, null, {TKey}, {TElement}, {comparer})")]
+        [Transpose.Template("{this}.toDictionary({keySelector}, null, {TKey}, {TElement}, {comparer})")]
         public extern Dictionary<TKey, TElement> ToDictionary<TKey>(Func<TElement, TKey> keySelector,
             IEqualityComparer<TKey> comparer);
 
-        [H5.Template("{this}.toDictionary({keySelector}, {elementSelector}, {TKey}, {TValue})")]
+        [Transpose.Template("{this}.toDictionary({keySelector}, {elementSelector}, {TKey}, {TValue})")]
         public extern Dictionary<TKey, TValue> ToDictionary<TKey, TValue>(Func<TElement, TKey> keySelector,
             Func<TElement, TValue> elementSelector);
 
-        [H5.Template("{this}.toDictionary({keySelector}, {elementSelector}, {TKey}, {TValue}, {comparer})")]
+        [Transpose.Template("{this}.toDictionary({keySelector}, {elementSelector}, {TKey}, {TValue}, {comparer})")]
         public extern Dictionary<TKey, TValue> ToDictionary<TKey, TValue>(Func<TElement, TKey> keySelector,
             Func<TElement, TValue> elementSelector, IEqualityComparer<TKey> comparer);
 
@@ -416,12 +416,12 @@ namespace System.Linq
 
         public extern string ToJoinedString(string separator, Func<TElement, string> selector);
 
-        [H5.Template("{this}.toList({TElement})")]
+        [Transpose.Template("{this}.toList({TElement})")]
         public extern List<TElement> ToList();
 
         public extern Lookup<TKey, TElement> ToLookup<TKey>(Func<TElement, TKey> keySelector);
 
-        [H5.Template("{this}.toLookup({keySelector}, null, {comparer})")]
+        [Transpose.Template("{this}.toLookup({keySelector}, null, {comparer})")]
         public extern Lookup<TKey, TElement> ToLookup<TKey>(Func<TElement, TKey> keySelector, IEqualityComparer<TKey> comparer);
 
         public extern Lookup<TKey, TSource> ToLookup<TKey, TSource>(Func<TSource, TKey> keySelector,

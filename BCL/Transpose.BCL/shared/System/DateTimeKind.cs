@@ -8,7 +8,7 @@ namespace System
 {
     // This enum is used to indentify DateTime instances in cases when they are known to be in local time,
     // UTC time or if this information has not been specified or is not applicable.
-    [H5.Enum(H5.Emit.Value)]
+    [Transpose.Enum(Transpose.Emit.Value)]
     [Serializable]
     [System.Runtime.InteropServices.ComVisible(true)]
     public enum DateTimeKind

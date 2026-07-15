@@ -1,6 +1,6 @@
 ﻿namespace System.Text.RegularExpressions
 {
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
     public sealed class Regex
     {
         public extern Regex(string pattern);
@@ -16,7 +16,7 @@
         /// </summary>
         public extern TimeSpan MatchTimeout
         {
-            [H5.Template("getMatchTimeout()")]
+            [Transpose.Template("getMatchTimeout()")]
             get;
         }
 
@@ -25,7 +25,7 @@
         /// </summary>
         public extern RegexOptions Options
         {
-            [H5.Template("getOptions()")]
+            [Transpose.Template("getOptions()")]
             get;
         }
 
@@ -34,7 +34,7 @@
         /// </summary>
         public extern bool RightToLeft
         {
-            [H5.Template("getRightToLeft()")]
+            [Transpose.Template("getRightToLeft()")]
             get;
         }
 
@@ -268,9 +268,9 @@
         #endregion Static members
     }
 
-    [H5.External]
-    [H5.Name("RegExp")]
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method | H5.ConventionMember.Property, Notation = H5.Notation.CamelCase)]
+    [Transpose.External]
+    [Transpose.Name("RegExp")]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method | Transpose.ConventionMember.Property, Notation = Transpose.Notation.CamelCase)]
     internal class RegExp
     {
         public extern RegExp(string pattern);
@@ -309,9 +309,9 @@
         public extern bool Test(string s);
     }
 
-    [H5.External]
-    [H5.Name("RegexMatch")]
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method | H5.ConventionMember.Property, Notation = H5.Notation.CamelCase)]
+    [Transpose.External]
+    [Transpose.Name("RegexMatch")]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method | Transpose.ConventionMember.Property, Notation = Transpose.Notation.CamelCase)]
     internal class RegexMatch
     {
         public int Index { get; set; }

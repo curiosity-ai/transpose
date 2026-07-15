@@ -13,12 +13,12 @@ namespace System.ComponentModel.DataAnnotations
     ///     The value can be strongly typed as type conversion will be attempted.
     /// </para>
     /// </summary>
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
     [AttributeUsage(
         AttributeTargets.Class | AttributeTargets.Property | AttributeTargets.Field | AttributeTargets.Method |
         AttributeTargets.Parameter, AllowMultiple = true)]
-    [H5.External]
-    [H5.NonScriptable]
+    [Transpose.External]
+    [Transpose.NonScriptable]
     public sealed class CustomValidationAttribute : ValidationAttribute
     {
         /// <summary>

@@ -4,7 +4,7 @@
 
 namespace System.Globalization
 {
-    [H5.Enum(H5.Emit.Value)]
+    [Transpose.Enum(Transpose.Emit.Value)]
     public enum CalendarAlgorithmType
     {
         Unknown = 0,            // This is the default value to return in the Calendar base class.

@@ -1,11 +1,11 @@
 namespace System
 {
-    [H5.External]
-    [H5.Convention(Target = H5.ConventionTarget.Member, Member = H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.Reflectable]
-    public interface ICloneable : H5.IH5Class
+    [Transpose.External]
+    [Transpose.Convention(Target = Transpose.ConventionTarget.Member, Member = Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.Reflectable]
+    public interface ICloneable : Transpose.ITransposeClass
     {
-        [H5.Template("H5.clone({this})")]
+        [Transpose.Template("Transpose.clone({this})")]
         object Clone();
     }
 }

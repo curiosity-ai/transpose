@@ -1,4 +1,4 @@
-    H5.define("System.Text.RegularExpressions.RegexRunner", {
+    Transpose.define("System.Text.RegularExpressions.RegexRunner", {
         statics: {},
 
         _runregex: null,

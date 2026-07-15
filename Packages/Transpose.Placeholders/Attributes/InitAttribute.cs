@@ -1,7 +1,7 @@
-// Original: H5/H5/Attributes/InitAttribute.cs
+// Original: Transpose/Transpose/Attributes/InitAttribute.cs
 using System;
 
-namespace H5
+namespace Transpose
 {
     [AttributeUsage(AttributeTargets.Method)]
     public class InitAttribute : Attribute

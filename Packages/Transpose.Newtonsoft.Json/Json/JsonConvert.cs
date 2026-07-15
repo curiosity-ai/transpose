@@ -1,5 +1,5 @@
 ﻿using System;
-using H5;
+using Transpose;
 
 namespace Newtonsoft.Json
 {
@@ -111,7 +111,7 @@ namespace Newtonsoft.Json
         /// <param name="value">The JSON to deserialize.</param>
         /// <param name="anonymousTypeObject">The anonymous type object.</param>
         /// <returns>The deserialized anonymous type from the JSON string.</returns>
-        [Template("Newtonsoft.Json.JsonConvert.DeserializeObject({value}, H5.getType({anonymousTypeObject}))")]
+        [Template("Newtonsoft.Json.JsonConvert.DeserializeObject({value}, Transpose.getType({anonymousTypeObject}))")]
         public static extern T DeserializeAnonymousType<T>(string value, T anonymousTypeObject);
 
         /// <summary>
@@ -129,7 +129,7 @@ namespace Newtonsoft.Json
         /// If this is <c>null</c>, default serialization settings will be used.
         /// </param>
         /// <returns>The deserialized anonymous type from the JSON string.</returns>
-        [Template("Newtonsoft.Json.JsonConvert.DeserializeObject({value}, H5.getType({anonymousTypeObject}), {settings})")]
+        [Template("Newtonsoft.Json.JsonConvert.DeserializeObject({value}, Transpose.getType({anonymousTypeObject}), {settings})")]
         public static extern T DeserializeAnonymousType<T>(string value, T anonymousTypeObject, JsonSerializerSettings settings);
 
         /// <summary>

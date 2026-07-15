@@ -8,9 +8,9 @@ namespace System.ComponentModel.DataAnnotations
     ///     Use the static <see cref="ValidationResult.Success" /> to represent successful validation.
     /// </para>
     /// </summary>
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
-    [H5.External]
-    [H5.NonScriptable]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    [Transpose.External]
+    [Transpose.NonScriptable]
     public class ValidationResult
     {
         /// <summary>

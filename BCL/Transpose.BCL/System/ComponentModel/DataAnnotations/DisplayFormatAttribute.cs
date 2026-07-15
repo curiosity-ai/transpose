@@ -4,10 +4,10 @@ namespace System.ComponentModel.DataAnnotations
     /// Allows overriding various display-related options for a given field. The options have the same meaning as in
     /// BoundField.
     /// </summary>
-    [H5.Convention(Member = H5.ConventionMember.Field | H5.ConventionMember.Method, Notation = H5.Notation.CamelCase)]
+    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
     [AttributeUsage(AttributeTargets.Property | AttributeTargets.Field, AllowMultiple = false)]
-    [H5.External]
-    [H5.NonScriptable]
+    [Transpose.External]
+    [Transpose.NonScriptable]
     public class DisplayFormatAttribute : Attribute
     {
         /// <summary>

@@ -1,4 +1,4 @@
-namespace H5
+namespace Transpose
 {
     [External]
     [Name("this")]

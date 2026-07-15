@@ -1,8 +1,8 @@
-using H5;
-using H5.Core;
+using Transpose;
+using Transpose.Core;
 using System;
 
-namespace H5.Core
+namespace Transpose.Core
 {
     public static partial class dom
     {
@@ -24,7 +24,7 @@ namespace H5.Core
             public virtual extern es5.Promise<object> create(object options);
             public virtual extern es5.Promise<object> get(object options);
             public virtual extern es5.Promise<bool> preventSilentAccess();
-            public virtual extern es5.Promise<H5.Core.Void> store(object credential);
+            public virtual extern es5.Promise<Transpose.Core.Void> store(object credential);
         }
 
         [CombinedClass]
@@ -69,7 +69,7 @@ namespace H5.Core
         {
             public virtual bool released { get; }
             public virtual string type { get; }
-            public virtual extern es5.Promise<H5.Core.Void> release();
+            public virtual extern es5.Promise<Transpose.Core.Void> release();
             public virtual dom.WakeLockSentinel.onreleaseFn onrelease { get; set; }
             [Generated]
             public delegate void onreleaseFn(dom.Event ev);
@@ -123,10 +123,10 @@ namespace H5.Core
             public virtual dom.MediaCapabilities mediaCapabilities { get; }
             public virtual dom.MediaSession mediaSession { get; }
 
-            public virtual extern es5.Promise<H5.Core.Void> share(dom.ShareData data);
-            public virtual extern es5.Promise<H5.Core.Void> setAppBadge(double contents);
-            public virtual extern es5.Promise<H5.Core.Void> setAppBadge();
-            public virtual extern es5.Promise<H5.Core.Void> clearAppBadge();
+            public virtual extern es5.Promise<Transpose.Core.Void> share(dom.ShareData data);
+            public virtual extern es5.Promise<Transpose.Core.Void> setAppBadge(double contents);
+            public virtual extern es5.Promise<Transpose.Core.Void> setAppBadge();
+            public virtual extern es5.Promise<Transpose.Core.Void> clearAppBadge();
             public virtual extern es5.Promise<dom.MIDIAccess> requestMIDIAccess();
             public virtual extern es5.Promise<dom.MIDIAccess> requestMIDIAccess(dom.MIDIOptions options);
             public virtual extern bool canShare(dom.ShareData data);

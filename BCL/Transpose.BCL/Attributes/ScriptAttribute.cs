@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace H5
+namespace Transpose
 {
     /// <summary>
     /// ScriptAttribute specifies the method implementation that will be output to javascript

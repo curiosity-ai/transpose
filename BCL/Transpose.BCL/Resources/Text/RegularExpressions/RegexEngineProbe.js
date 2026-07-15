@@ -1,4 +1,4 @@
-    H5.define("System.Text.RegularExpressions.RegexEngineProbe", {
+    Transpose.define("System.Text.RegularExpressions.RegexEngineProbe", {
         min: 0,
         max: 0,
         value: 0,

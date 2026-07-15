@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace H5
+namespace Transpose
 {
     [NonScriptable]
     [AttributeUsage(AttributeTargets.Enum | AttributeTargets.Class | AttributeTargets.Struct | AttributeTargets.Interface)]
@@ -24,7 +24,7 @@ namespace H5
     }
 
     [NonScriptable]
-    [Enum(H5.Emit.Value)]
+    [Enum(Transpose.Emit.Value)]
     public enum ObjectInitializationMode
     {
         /// <summary>
@@ -44,7 +44,7 @@ namespace H5
     }
 
     [NonScriptable]
-    [Enum(H5.Emit.Value)]
+    [Enum(Transpose.Emit.Value)]
     public enum ObjectCreateMode
     {
         /// <summary>

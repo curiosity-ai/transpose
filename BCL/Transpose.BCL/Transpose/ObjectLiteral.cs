@@ -1,4 +1,4 @@
-﻿namespace H5
+﻿namespace Transpose
 {
     /// <summary>
     /// A simple JavaScript object where a comma separated list of name-value pairs are wrapped in curly braces.

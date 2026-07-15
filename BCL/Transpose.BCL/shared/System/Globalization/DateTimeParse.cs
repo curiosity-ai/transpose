@@ -2342,7 +2342,7 @@ namespace System {
             // 3. Fallback: Parse as DateTime, assume Local offset
             if (DateTime.TryParse(s, out result))
             {
-                // H5 specific: Calculate local offset using DateTime.Now (Local) vs UtcNow (UTC)
+                // Transpose specific: Calculate local offset using DateTime.Now (Local) vs UtcNow (UTC)
                 // This assumes the parsed date is treated as Local.
                 offset = DateTime.Now - DateTime.UtcNow;
                 return true;
@@ -4998,7 +4998,7 @@ namespace System {
 //        }
     }
 
-    [H5.Enum(H5.Emit.Value)]
+    [Transpose.Enum(Transpose.Emit.Value)]
     internal enum ParseFailureKind {
         None = 0,
         ArgumentNull = 1,
@@ -5007,7 +5007,7 @@ namespace System {
         FormatBadDateTimeCalendar = 4,  // FormatException when ArgumentOutOfRange is thrown by a Calendar.TryToDateTime().
     };
 
-    [H5.Enum(H5.Emit.Value)]
+    [Transpose.Enum(Transpose.Emit.Value)]
     [Flags]
     internal enum ParseFlags {
         HaveYear        = 0x00000001,
@@ -5116,7 +5116,7 @@ namespace System {
     //
     // The type of token that will be returned by DateTimeFormatInfo.Tokenize().
     //
-    [H5.Enum(H5.Emit.Value)]
+    [Transpose.Enum(Transpose.Emit.Value)]
     internal enum TokenType
     {
         // The valid token should start from 1.

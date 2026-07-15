@@ -1,13 +1,13 @@
 using System.Collections;
 using System.Collections.Generic;
 
-namespace H5.Core
+namespace Transpose.Core
 {
     public static partial class es5
     {
         [IgnoreCast]
         [Name("Map")]
-        public class Map<K, V> : IEnumerable<object[]>, IEnumerable, IH5Class, IObject
+        public class Map<K, V> : IEnumerable<object[]>, IEnumerable, ITransposeClass, IObject
         {
             public extern Map();
             public extern Map(object[][] entries);

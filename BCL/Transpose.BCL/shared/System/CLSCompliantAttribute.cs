@@ -13,7 +13,7 @@
 
 namespace System
 {
-    [H5.NonScriptable]
+    [Transpose.NonScriptable]
     [AttributeUsage(AttributeTargets.All, Inherited = true, AllowMultiple = false)]
     public sealed class CLSCompliantAttribute : Attribute
     {

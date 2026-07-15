@@ -78,7 +78,7 @@ namespace System.Globalization
         [ComVisibleAttribute(false)]
         public virtual object Clone()
         {
-            return H5.Script.Copy(new TextInfo(), this, new string[]
+            return Transpose.Script.Copy(new TextInfo(), this, new string[]
             {
                 "ANSICodePage",
                 "CultureName",
