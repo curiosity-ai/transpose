@@ -29,6 +29,7 @@ public static class Program
         var maxErrors = 40;
         var emitPackage = false;
         var separateAssemblies = false;
+        var buildRuntime = false;
         var extraReferences = new List<string>();
         var extraDefines = new List<string>();
         string? assemblyVersion = null;
@@ -41,6 +42,7 @@ public static class Program
                 case "--site-dir": siteDir = args[++i]; break;
                 case "--configuration" or "-c": configuration = args[++i]; break;
                 case "--emit-package": emitPackage = true; separateAssemblies = true; break;
+                case "--build-runtime": buildRuntime = true; break;
                 case "--separate-assemblies": separateAssemblies = true; break;
                 case "--with-runtime": withRuntime = true; break;
                 case "--quiet" or "-q": quiet = true; break;
@@ -96,6 +98,12 @@ public static class Program
             Console.WriteLine($"  projects:   {string.Join(", ", project.ReferencedProjectDlls.Select(Path.GetFileName))}");
         Console.WriteLine($"  defines:    {string.Join(";", project.DefineConstants)}");
         Console.WriteLine($"  lang:       {project.LanguageVersion}");
+
+        // Base runtime package build: compile Transpose.BCL self-contained, transpile it with
+        // outputBy: ClassPath, stitch the per-class files with the hand-written Resources primitives
+        // into tps.js per the project's tps.json, and embed tps.js + tps.meta.js into Transpose.dll.
+        if (buildRuntime)
+            return BuildRuntime(project, configuration, sw, outPath);
 
         // Reflection settings come from the project's tps.json (target inline vs a .meta.js file).
         var tpscfg = TransposeJson.TryLoad(project.ProjectDir);
@@ -173,6 +181,74 @@ public static class Program
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outPath))!);
         File.WriteAllText(outPath, js);
         Console.WriteLine($"\nOK — wrote {js.Length:N0} bytes to {outPath} in {sw.ElapsedMilliseconds} ms.");
+        return 0;
+    }
+
+    /// <summary>
+    /// Builds the base runtime package (Transpose.BCL → the `tps` NuGet package): compiles the BCL
+    /// self-contained, transpiles it with outputBy: ClassPath into Resources/.generated/, stitches
+    /// those with the hand-written Resources/*.js primitives into tps.js (and the reflection block
+    /// into tps.meta.js) per the project's tps.json, and embeds both into Transpose.dll.
+    /// </summary>
+    private static int BuildRuntime(ResolvedProject project, string configuration, Stopwatch sw, string? outPath)
+    {
+        var cfg = TransposeJson.TryLoad(project.ProjectDir);
+        var reflectionEnabled = !(cfg?.ReflectionDisabled ?? false);
+
+        RuntimePackageResult result;
+        try
+        {
+            result = new RoslynTranslator().BuildRuntimePackage(
+                project.Sources, project.AssemblyName, project.DefineConstants,
+                project.LanguageVersion, reflectionEnabled);
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"Runtime build threw: {ex}"); return 2; }
+
+        if (!result.Success)
+        {
+            ReportDiagnostics(result.Diagnostics, 40);
+            Console.Error.WriteLine($"\nFAILED building runtime in {sw.ElapsedMilliseconds} ms.");
+            return 1;
+        }
+
+        // Write the ClassPath per-class files + reflection metadata under Resources/.generated/.
+        var genRoot = Path.Combine(project.ProjectDir, "Resources", ".generated");
+        if (Directory.Exists(genRoot)) Directory.Delete(genRoot, recursive: true);
+        Directory.CreateDirectory(genRoot);
+        foreach (var (rel, js) in result.ClassPath!.Files)
+        {
+            var dest = Path.Combine(genRoot, rel.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+            File.WriteAllText(dest, js);
+        }
+        if (result.ClassPath.MetaBlock is not null)
+            File.WriteAllText(Path.Combine(genRoot, project.AssemblyName + ".meta.js"), result.ClassPath.MetaBlock);
+        Console.WriteLine($"  emitted:    {result.ClassPath.Files.Count} ClassPath file(s) into Resources/.generated");
+        if (result.ClassPath.Skipped.Count > 0)
+        {
+            Console.WriteLine($"  skipped:    {result.ClassPath.Skipped.Count} type(s) the emitter could not translate:");
+            foreach (var (t, why) in result.ClassPath.Skipped.Take(20)) Console.WriteLine($"                - {t}: {why}");
+        }
+
+        // Assemble the resource bundles (tps.js, tps.meta.js, …) declared in tps.json.
+        var bundles = RuntimeAssembler.Assemble(project.ProjectDir);
+        var dllPath = outPath ?? Path.Combine(project.ProjectDir, "bin", configuration, "netstandard2.1", project.AssemblyName + ".dll");
+        var outDir = Path.GetDirectoryName(Path.GetFullPath(dllPath))!;
+        Directory.CreateDirectory(outDir);
+        foreach (var (name, bytes) in bundles)
+        {
+            File.WriteAllBytes(Path.Combine(outDir, name), bytes); // write bundles next to the DLL for reuse
+            Console.WriteLine($"  assembled:  {name} ({bytes.Length:N0} bytes)");
+        }
+
+        // Embed the assembled JS bundles into the emitted reference assembly.
+        File.WriteAllBytes(dllPath, result.AssemblyBytes!);
+        var items = bundles.Select(b => new EmbeddedItem(b.name, b.bytes, null)).ToList();
+        ResourceEmbedder.Embed(dllPath, items);
+
+        Console.WriteLine($"\nOK — built runtime {Path.GetFileName(dllPath)} with {items.Count} embedded bundle(s) in {sw.ElapsedMilliseconds} ms.");
+        Console.WriteLine($"  dll:      {dllPath}");
+        Console.WriteLine($"  bundles:  written to {outDir}");
         return 0;
     }
 

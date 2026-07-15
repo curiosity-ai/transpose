@@ -20,7 +20,8 @@ public static class CompilationBuilder
         string assemblyName = DefaultAssemblyName,
         LanguageVersion languageVersion = LanguageVersion.Latest,
         IEnumerable<string>? extraReferencePaths = null,
-        IEnumerable<string>? preprocessorSymbols = null)
+        IEnumerable<string>? preprocessorSymbols = null,
+        bool selfContainedBcl = false)
     {
         var parseOptions = new CSharpParseOptions(languageVersion)
             .WithFeatures(new[] { new KeyValuePair<string, string>("strict", "false") });
@@ -54,10 +55,20 @@ public static class CompilationBuilder
             // resolve to the same JS names.
             metadataImportOptions: MetadataImportOptions.All);
 
+        // The base runtime library (Transpose.BCL) *defines* the BCL (System.Object, …), so it is
+        // compiled self-contained with no base reference — like compiling corlib. Every other
+        // project references Transpose.dll as its whole BCL.
+        var references = selfContainedBcl
+            ? (extraReferencePaths ?? System.Array.Empty<string>())
+                .Where(File.Exists)
+                .Select(p => (MetadataReference)MetadataReference.CreateFromFile(p))
+                .ToList()
+            : GetReferenceAssemblies(extraReferencePaths);
+
         return CSharpCompilation.Create(
             assemblyName,
             syntaxTrees: trees,
-            references: GetReferenceAssemblies(extraReferencePaths),
+            references: references,
             options: options);
     }
 

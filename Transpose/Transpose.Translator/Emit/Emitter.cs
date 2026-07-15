@@ -97,6 +97,61 @@ public sealed partial class Emitter
         return _w.ToString();
     }
 
+    /// <summary>The result of an <c>outputBy: ClassPath</c> emission: one bare
+    /// <c>Transpose.define(...)</c> per non-external type at a namespace/containing-type path,
+    /// plus the shared reflection metadata block (bare <c>$m/$n</c> calls) for the assembly.</summary>
+    public sealed class ClassPathOutput
+    {
+        public List<(string relPath, string js)> Files { get; } = new();
+        public List<(string type, string reason)> Skipped { get; } = new();
+        public string? MetaBlock { get; init; }
+    }
+
+    /// <summary>
+    /// Emits the assembly with <c>outputBy: ClassPath</c>: each type goes to its own file
+    /// (<c>&lt;ns&gt;/&lt;containing types&gt;/&lt;Type&gt;.js</c>) containing a bare
+    /// <c>Transpose.define(...)</c>, and the reflection metadata is returned as one bare block.
+    /// This is how the base runtime library (Transpose.BCL) is transpiled: the per-class files are
+    /// stitched with the hand-written <c>Resources/*.js</c> primitives into <c>tps.js</c>.
+    /// </summary>
+    public ClassPathOutput EmitClassPath()
+    {
+        var types = CollectTypes();
+        var meta = ReflectionEnabled ? BuildMetadataBlock(types) : null;
+        var outp = new ClassPathOutput { MetaBlock = meta };
+        foreach (var type in types)
+        {
+            string js;
+            try { js = Capture(() => EmitType(type)).Trim(); }
+            catch (TranslationException ex)
+            {
+                // Skip a type the emitter can't yet translate (e.g. an unsupported ref construct in
+                // a rarely-used BCL member) rather than aborting the whole runtime build; record it.
+                outp.Skipped.Add((type.ToDisplayString(), ex.Message));
+                continue;
+            }
+            if (js.Length == 0) continue;
+            outp.Files.Add((ClassPathRelPath(type), js + "\n"));
+        }
+        return outp;
+    }
+
+    /// <summary>The <c>&lt;ns segments&gt;/&lt;containing types&gt;/&lt;Type&gt;.js</c> path for a type,
+    /// mirroring the legacy ClassPath layout (no generic-arity suffix in the file name).</summary>
+    private static string ClassPathRelPath(INamedTypeSymbol type)
+    {
+        var parts = new List<string>();
+        var nsParts = new List<string>();
+        for (var ns = type.ContainingNamespace; ns is { IsGlobalNamespace: false }; ns = ns.ContainingNamespace)
+            nsParts.Insert(0, ns.Name);
+        parts.AddRange(nsParts);
+        var containing = new List<string>();
+        for (var t = type.ContainingType; t is not null; t = t.ContainingType) containing.Insert(0, t.Name);
+        parts.AddRange(containing);
+        parts.Add(type.Name);
+        return string.Join("/", parts) + ".js";
+    }
+
     /// <summary>Runs <paramref name="emit"/> against a temporary writer and returns its text.</summary>
     private string Capture(Action emit)
     {

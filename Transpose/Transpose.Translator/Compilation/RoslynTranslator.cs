@@ -136,6 +136,54 @@ public sealed class RoslynTranslator
     }
 
     /// <summary>
+    /// Builds the base runtime library (Transpose.BCL): compiles it self-contained (it defines the
+    /// BCL, so no base reference), emits the real .NET reference assembly, and transpiles it with
+    /// <c>outputBy: ClassPath</c> — one bare <c>Transpose.define</c> per non-external type plus the
+    /// reflection metadata block. The caller stitches the per-class files with the hand-written
+    /// <c>Resources/*.js</c> primitives into <c>tps.js</c> and embeds it into the assembly.
+    /// </summary>
+    public RuntimePackageResult BuildRuntimePackage(
+        IEnumerable<(string path, string text)> sources,
+        string assemblyName,
+        IEnumerable<string>? preprocessorSymbols = null,
+        LanguageVersion languageVersion = LanguageVersion.Latest,
+        bool reflectionEnabled = true)
+    {
+        var compilation = CompilationBuilder.Build(
+            sources, assemblyName, languageVersion,
+            preprocessorSymbols: preprocessorSymbols, selfContainedBcl: true);
+
+        var diagnostics = new List<Diagnostic>();
+        diagnostics.AddRange(compilation.GetDiagnostics()
+            .Where(d => d.Severity == DiagnosticSeverity.Error && !BenignForJs.Contains(d.Id)));
+        if (diagnostics.Count > 0)
+            return new RuntimePackageResult(null, null, diagnostics);
+
+        // The UnsupportedFeatureScanner is deliberately NOT run here: the base library *defines* the
+        // BCL surface (System.Threading.Timer, System.IO stubs, …) as bindings backed by the
+        // hand-written runtime, which is exactly what the scanner flags in user code.
+
+        var asmCompilation = compilation.WithOptions(
+            compilation.Options.WithOutputKind(OutputKind.DynamicallyLinkedLibrary));
+        using var ms = new MemoryStream();
+        // No embedded debug info: the base library ships with none (matching its csproj), and an
+        // embedded PDB makes the emitted corlib reference harder for Roslyn to consume downstream.
+        var emit = asmCompilation.Emit(ms, options: new Microsoft.CodeAnalysis.Emit.EmitOptions(
+            metadataOnly: false, includePrivateMembers: true));
+        if (!emit.Success)
+        {
+            diagnostics.AddRange(emit.Diagnostics
+                .Where(d => d.Severity == DiagnosticSeverity.Error && !BenignForJs.Contains(d.Id)));
+            return new RuntimePackageResult(null, null, diagnostics);
+        }
+        var assemblyBytes = ms.ToArray();
+
+        var emitter = new Emitter(compilation, assemblyName) { ReflectionEnabled = reflectionEnabled };
+        var classPath = emitter.EmitClassPath();
+        return new RuntimePackageResult(assemblyBytes, classPath, diagnostics);
+    }
+
+    /// <summary>
     /// Convenience: translate and throw with a readable message if anything failed.
     /// Mirrors the behavior tests expect (compilation failures throw).
     /// </summary>
