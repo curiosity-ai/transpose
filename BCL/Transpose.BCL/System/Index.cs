@@ -19,6 +19,15 @@ namespace System
                 _value = value;
         }
 
+        // Stores the raw encoded value directly (a from-end index is stored as its bitwise
+        // complement, which is negative), without the non-negative validation the public ctor
+        // applies. FromStart/FromEnd/Start/End construct through this — matching .NET's private
+        // Index(int) ctor, which they call with an already-encoded value.
+        private Index(int value)
+        {
+            _value = value;
+        }
+
         public static Index Start => new Index(0);
         public static Index End => new Index(~0);
 

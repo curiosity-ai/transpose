@@ -12,6 +12,11 @@ public sealed partial class Emitter
     // a label string = `break <label>` (pattern-switch labelled block).
     private readonly Stack<string?> _breakTargets = new();
 
+    // Inline-var names already `let`-declared in the current JS block, so a name reused by
+    // sibling statements (e.g. two `if (… out var t …)` — invalid C# the runtime tolerates, or
+    // repeated is-pattern names) is declared once, not redeclared (which `let` rejects).
+    private readonly Stack<HashSet<string>> _predeclaredInScope = new();
+
     private void EmitStatement(StatementSyntax statement)
     {
         // C# out-var declarations and is-pattern variables have block scope; declare
@@ -134,9 +139,12 @@ public sealed partial class Emitter
         var names = new List<string>();
         CollectInlineDesignations(scope, isRoot: true, names);
 
+        var blockScope = _predeclaredInScope.Count > 0 ? _predeclaredInScope.Peek() : null;
         foreach (var name in names.Distinct())
         {
-            _w.WriteLine($"let {NameMangler.JsIdentifier(name)};");
+            var jsName = NameMangler.JsIdentifier(name);
+            if (blockScope is not null && !blockScope.Add(jsName)) continue; // already declared in this block
+            _w.WriteLine($"let {jsName};");
         }
     }
 
@@ -189,6 +197,12 @@ public sealed partial class Emitter
             foreach (var fn in statements.OfType<LocalFunctionStatementSyntax>())
                 EmitLocalFunction(fn);
 
+        // Track inline-var names declared in this block (a `start > 0` continuation is the same
+        // logical block re-entered — reuse the existing scope so names aren't redeclared).
+        var pushedScope = start == 0;
+        if (pushedScope) _predeclaredInScope.Push(new HashSet<string>());
+        try
+        {
         for (var i = start; i < statements.Count; i++)
         {
             var s = statements[i];
@@ -214,6 +228,8 @@ public sealed partial class Emitter
             }
             EmitStatement(s);
         }
+        }
+        finally { if (pushedScope) _predeclaredInScope.Pop(); }
     }
 
     /// <summary>

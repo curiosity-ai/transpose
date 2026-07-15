@@ -669,10 +669,30 @@ public sealed partial class Emitter
             return;
         }
 
-        // [ObjectLiteral] type → a plain JS object ({}); the initializer sets its members.
-        if (type.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "Transpose.ObjectLiteralAttribute"))
+        // [ObjectLiteral] type → a plain JS object; the object initializer sets its members. The
+        // ObjectInitializationMode controls which property initializers seed the object:
+        // Initializer(1) emits the members that carry a `= value` initializer, DefaultValue(2)
+        // emits every property, Ignore(0)/unspecified emits an empty object.
+        if (type.GetAttributes().FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == "Transpose.ObjectLiteralAttribute") is { } objLit)
         {
-            _w.Write("{}");
+            var mode = ObjectLiteralInitMode(objLit);
+            _w.Write("{");
+            if (mode is 1 or 2)
+            {
+                var first = true;
+                foreach (var prop in type.GetMembers().OfType<IPropertySymbol>()
+                             .Where(p => !p.IsStatic && !p.IsIndexer && !p.IsWriteOnly))
+                {
+                    var propInit = PropertyInitializerExpr(prop);
+                    if (mode == 1 && propInit is null) continue; // Initializer: only initialized members
+                    if (!first) _w.Write(", ");
+                    first = false;
+                    _w.Write($"{NameMangler.JsPropertyKey(TransposeNaming.MemberJsName(prop))}: ");
+                    if (propInit is not null) EmitExpression(propInit);
+                    else _w.Write(DefaultValueLiteral(prop.Type));
+                }
+            }
+            _w.Write("}");
             return;
         }
 
@@ -715,6 +735,21 @@ public sealed partial class Emitter
             _w.Write(")");
         }
     }
+
+    /// <summary>The ObjectInitializationMode of an [ObjectLiteral] attribute (0=Ignore, 1=Initializer,
+    /// 2=DefaultValue), or 0 when unspecified — only the ObjectInitializationMode constructor argument
+    /// is consulted (an ObjectCreateMode-only overload leaves the init mode at its Ignore default).</summary>
+    private static int ObjectLiteralInitMode(AttributeData attr)
+    {
+        foreach (var arg in attr.ConstructorArguments)
+            if (arg.Type?.ToDisplayString() == "Transpose.ObjectInitializationMode" && arg.Value is int v)
+                return v;
+        return 0;
+    }
+
+    /// <summary>The `= value` initializer expression of an auto-property, or null.</summary>
+    private static ExpressionSyntax? PropertyInitializerExpr(IPropertySymbol prop)
+        => (prop.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() as PropertyDeclarationSyntax)?.Initializer?.Value;
 
     private void EmitInitializer(string target, InitializerExpressionSyntax initializer)
     {
@@ -1130,6 +1165,20 @@ public sealed partial class Emitter
             return;
         }
 
+        // Multi-dimensional array element write grid[i, j] = v → System.Array.set(grid, v, i, j).
+        if (op == "=" && assignment.Left is ElementAccessExpressionSyntax mdea
+            && mdea.ArgumentList.Arguments.Count > 1
+            && _model.GetTypeInfo(mdea.Expression).Type is IArrayTypeSymbol { Rank: > 1 })
+        {
+            _w.Write("System.Array.set(");
+            EmitExpression(mdea.Expression);
+            _w.Write(", ");
+            EmitExpressionConverted(assignment.Right, leftType);
+            foreach (var a in mdea.ArgumentList.Arguments) { _w.Write(", "); EmitExpression(a.Expression); }
+            _w.Write(")");
+            return;
+        }
+
         // Indexer set on a collection: coll[i] = v → coll.setItem(i, v)
         if (op == "=" && assignment.Left is ElementAccessExpressionSyntax ea
             && _model.GetSymbolInfo(ea).Symbol is IPropertySymbol { IsIndexer: true } idx
@@ -1221,6 +1270,17 @@ public sealed partial class Emitter
 
     private void EmitPrefixUnary(PrefixUnaryExpressionSyntax prefix)
     {
+        // `^n` (from-end index) as a value → a System.Index. Array element access handles `^n`
+        // inline (arr.length - n) before reaching here; this covers every other position — an
+        // Index-typed argument, an `Index i = ^1;` initializer, etc.
+        if (prefix.IsKind(SyntaxKind.IndexExpression))
+        {
+            _w.Write("System.Index.FromEnd(");
+            EmitExpression(prefix.Operand);
+            _w.Write(")");
+            return;
+        }
+
         if (_model.GetSymbolInfo(prefix).Symbol is IMethodSymbol { MethodKind: MethodKind.UserDefinedOperator } opm
             && opm.Locations.Any(l => l.IsInSource)
             && !prefix.IsKind(SyntaxKind.PreIncrementExpression) && !prefix.IsKind(SyntaxKind.PreDecrementExpression))
@@ -1420,6 +1480,29 @@ public sealed partial class Emitter
             return;
         }
 
+        // Multi-dimensional array element read grid[i, j] → System.Array.get(grid, i, j).
+        if (element.ArgumentList.Arguments.Count > 1
+            && _model.GetTypeInfo(element.Expression).Type is IArrayTypeSymbol { Rank: > 1 })
+        {
+            _w.Write("System.Array.get(");
+            EmitExpression(element.Expression);
+            foreach (var a in element.ArgumentList.Arguments) { _w.Write(", "); EmitExpression(a.Expression); }
+            _w.Write(")");
+            return;
+        }
+
+        // Array indexed by a System.Index value (an `Index` variable, or a `^n` already lowered to
+        // System.Index): arr[idx.GetOffset(arr.length)]. A `^n` literal is handled inline above.
+        if (arg is not null && !arg.IsKind(SyntaxKind.IndexExpression)
+            && _model.GetTypeInfo(arg).Type?.ToDisplayString() == "System.Index"
+            && _model.GetTypeInfo(element.Expression).Type is IArrayTypeSymbol)
+        {
+            var arr = Capture(() => EmitExpression(element.Expression));
+            var idx = Capture(() => EmitExpression(arg));
+            _w.Write($"{arr}[{idx}.GetOffset({arr}.length)]");
+            return;
+        }
+
         // Arrays: native element access.
         EmitExpression(element.Expression);
         _w.Write("[");
@@ -1444,6 +1527,19 @@ public sealed partial class Emitter
 
     private void EmitArrayCreation(ArrayCreationExpressionSyntax array)
     {
+        var rankSpec = array.Type.RankSpecifiers.FirstOrDefault();
+        var elementType = _model.GetTypeInfo(array.Type.ElementType).Type;
+        var rank = rankSpec?.Sizes.Count ?? 1;
+
+        // Multi-dimensional array (int[,] …) → System.Array.create(default, initValues, T, dims…),
+        // a flat backing array carrying its dimension sizes ($s); element access/assignment go
+        // through System.Array.get/set.
+        if (rank > 1)
+        {
+            EmitMultiDimArray(elementType!, rankSpec, array.Initializer);
+            return;
+        }
+
         if (array.Initializer is not null)
         {
             EmitInitializerArray(array.Initializer);
@@ -1451,8 +1547,6 @@ public sealed partial class Emitter
         }
 
         // new T[n] → TransposeR.array(n, default)
-        var rankSpec = array.Type.RankSpecifiers.FirstOrDefault();
-        var elementType = _model.GetTypeInfo(array.Type.ElementType).Type;
         if (rankSpec is { Sizes.Count: 1 } && rankSpec.Sizes[0] is not OmittedArraySizeExpressionSyntax)
         {
             _w.Write("TransposeR.array(");
@@ -1464,13 +1558,47 @@ public sealed partial class Emitter
         _w.Write("[]");
     }
 
+    /// <summary>Emits a multi-dimensional array via System.Array.create(defaultValue, initValues,
+    /// elementType, dim0, dim1, …). Sizes come from explicit bounds or, for an initializer-only
+    /// creation, the initializer's shape.</summary>
+    private void EmitMultiDimArray(ITypeSymbol elementType, ArrayRankSpecifierSyntax? rankSpec, InitializerExpressionSyntax? initializer)
+    {
+        _w.Write("System.Array.create(");
+        // A struct element needs a fresh instance per slot, so pass a factory; primitives pass a value.
+        if (IsSourceStruct(elementType) && !IsJsPrimitiveValueType(elementType))
+            _w.Write($"function () {{ return {DefaultValueLiteral(elementType)}; }}");
+        else
+            _w.Write(DefaultValueLiteral(elementType));
+        _w.Write(", ");
+        if (initializer is not null) EmitInitializerArray(initializer); else _w.Write("null");
+        _w.Write($", {TypeRef(elementType)}");
+
+        var explicitSizes = rankSpec is not null && rankSpec.Sizes.Count > 0
+            && rankSpec.Sizes[0] is not OmittedArraySizeExpressionSyntax;
+        if (explicitSizes)
+        {
+            foreach (var s in rankSpec!.Sizes) { _w.Write(", "); EmitExpression(s); }
+        }
+        else if (initializer is not null)
+        {
+            // Derive each dimension's length from the (rectangular) initializer's nesting.
+            for (var dim = initializer; dim is not null; dim = dim.Expressions.FirstOrDefault() as InitializerExpressionSyntax)
+                _w.Write($", {dim.Expressions.Count}");
+        }
+        _w.Write(")");
+    }
+
     private void EmitInitializerArray(InitializerExpressionSyntax initializer)
     {
         _w.Write("[");
         for (var i = 0; i < initializer.Expressions.Count; i++)
         {
             if (i > 0) _w.Write(", ");
-            EmitExpression(initializer.Expressions[i]);
+            // Nested initializer (a multi-dimensional array's rows) recurses to a nested JS array.
+            if (initializer.Expressions[i] is InitializerExpressionSyntax nested)
+                EmitInitializerArray(nested);
+            else
+                EmitExpression(initializer.Expressions[i]);
         }
         _w.Write("]");
     }

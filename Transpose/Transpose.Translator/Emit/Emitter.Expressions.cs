@@ -106,7 +106,12 @@ public sealed partial class Emitter
                 EmitInitializerArray(implicitArray.Initializer);
                 break;
             case InitializerExpressionSyntax initializer:
-                EmitInitializerArray(initializer);
+                // A bare initializer targeting a multi-dimensional array (int[,] g = {{…},{…}})
+                // must build a System.Array with dimension metadata, not a plain nested JS array.
+                if (_model.GetTypeInfo(initializer).ConvertedType is IArrayTypeSymbol { Rank: > 1 } mdInit)
+                    EmitMultiDimArray(mdInit.ElementType, null, initializer);
+                else
+                    EmitInitializerArray(initializer);
                 break;
             case CollectionExpressionSyntax collection:
                 EmitCollectionExpression(collection);

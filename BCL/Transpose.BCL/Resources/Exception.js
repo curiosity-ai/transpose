@@ -19,6 +19,24 @@
                     }
                 },
 
+                // Generated code addresses an [External] type's members in camelCase (ex.StackTrace
+                // -> ex.stackTrace, ex.HResult -> ex.hResult). message/innerException/data already
+                // exist as lowercase fields; StackTrace/HResult need explicit camelCase accessors.
+                stackTrace: {
+                    get: function () {
+                        return this.errorStack.stack;
+                    }
+                },
+
+                hResult: {
+                    get: function () {
+                        return this._HResult;
+                    },
+                    set: function (value) {
+                        this._HResult = value;
+                    }
+                },
+
                 Data: {
                     get: function () {
                         return this.data;

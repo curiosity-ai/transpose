@@ -33,6 +33,10 @@ public sealed class RoslynTranslator
         "CS1983", // return type of an async method must be void/Task/task-like…
         "CS0161", // not all code paths return a value (fallout of the above; JS returns undefined)
         "CS4032", // 'await' in a method with a non-task-like return (same ValueTask fallout)
+        // Repeated `out var X` names that collapse into the same enclosing scope after hoisting
+        // (CS0128). JS `var` allows redeclaration and each out-var is assigned immediately before
+        // use, so a single shared binding is harmless — the legacy compiler tolerated this too.
+        "CS0128", // a local variable named 'X' is already defined in this scope
     };
 
     /// <summary>Translate a single source file.</summary>
