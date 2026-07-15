@@ -181,8 +181,14 @@ internal static class TransposeNaming
             if (t.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == ExternalAttr))
                 return true;
         }
-        return false;
+        // Assembly-level [assembly: External] (how binding libraries such as Transpose.Core mark
+        // every type external) — synthesized from the csproj's <AssemblyAttribute> items.
+        return AssemblyHasExternalAttribute(type?.ContainingAssembly);
     }
+
+    /// <summary>True if the assembly carries <c>[assembly: Transpose.External]</c>.</summary>
+    public static bool AssemblyHasExternalAttribute(IAssemblySymbol? asm)
+        => asm is not null && asm.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == ExternalAttr);
 
     public static bool IsExternal(ISymbol symbol)
     {

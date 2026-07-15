@@ -95,22 +95,47 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
         }
     }
 
-    /// <summary>An `extern` member is only unsupported when it is real native interop —
-    /// not when it carries an Transpose codegen attribute ([Template]/[Name]/[External]/[Script])
-    /// that maps it to JavaScript.</summary>
+    /// <summary>An `extern` member is only unsupported when it is real native interop.
+    /// In the Transpose model an <c>extern</c> method is the normal way to declare a JavaScript
+    /// binding: the method (or, far more commonly for binding libraries such as Transpose.Core, its
+    /// containing type) carries a codegen attribute ([External]/[Template]/[Name]/[Script]/
+    /// [GlobalMethods]/[ObjectLiteral]) that supplies the JS mapping. Only genuine P/Invoke
+    /// (detected separately via [DllImport]/[LibraryImport]) is rejected.</summary>
     private void CheckExtern(SyntaxTokenList modifiers, SyntaxList<AttributeListSyntax> attributes, SyntaxNode node)
     {
         if (!modifiers.Any(SyntaxKind.ExternKeyword)) return;
-        var jsMapped = attributes.SelectMany(a => a.Attributes).Any(a =>
-        {
-            var n = a.Name.ToString();
-            return n is "Template" or "Name" or "External" or "Script"
-                or "Transpose.Template" or "Transpose.Name" or "Transpose.External" or "Transpose.Script"
-                or "TemplateAttribute" or "NameAttribute" or "ExternalAttribute" or "ScriptAttribute";
-        });
+
+        // Method-level codegen attribute (syntactic, fast path).
+        var jsMapped = attributes.SelectMany(a => a.Attributes).Any(a => IsCodegenAttributeName(a.Name.ToString()));
+
+        // Otherwise consult the semantic model: a binding declared on an [External]-family type
+        // (the common DOM/binding-library shape), a scope/GlobalMethods binding, or an
+        // [assembly: External] library (e.g. Transpose.Core) has bare extern members with no
+        // per-member attribute.
+        if (!jsMapped && _model.GetDeclaredSymbol(node) is IMethodSymbol method)
+            jsMapped = HasCodegenAttribute(method)
+                    || (method.ContainingType is { } t && (HasCodegenAttribute(t) || TransposeNaming.IsExternalType(t)))
+                    || TransposeNaming.AssemblyHasExternalAttribute(method.ContainingAssembly);
+
         if (!jsMapped)
             Report(node, "Native interop (extern methods) is not supported in the browser environment.");
     }
+
+    private static bool IsCodegenAttributeName(string n) =>
+        n is "Template" or "Name" or "External" or "Script" or "GlobalMethods" or "ObjectLiteral"
+          or "Transpose.Template" or "Transpose.Name" or "Transpose.External" or "Transpose.Script"
+          or "Transpose.GlobalMethods" or "Transpose.ObjectLiteral"
+          or "TemplateAttribute" or "NameAttribute" or "ExternalAttribute" or "ScriptAttribute"
+          or "GlobalMethodsAttribute" or "ObjectLiteralAttribute";
+
+    private static bool HasCodegenAttribute(ISymbol symbol) =>
+        symbol.GetAttributes().Any(a =>
+        {
+            var n = a.AttributeClass?.ToDisplayString();
+            return n is "Transpose.ExternalAttribute" or "Transpose.TemplateAttribute" or "Transpose.NameAttribute"
+                or "Transpose.ScriptAttribute" or "Transpose.GlobalMethodsAttribute" or "Transpose.ObjectLiteralAttribute"
+                or "Transpose.ExternalInterfaceAttribute";
+        });
 
     public override void VisitMethodDeclaration(MethodDeclarationSyntax node)
     {
