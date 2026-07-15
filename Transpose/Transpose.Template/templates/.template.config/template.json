@@ -1,10 +1,10 @@
 {
   "$schema": "http://json.schemastore.org/template",
   "author": "Rafael Oliveira",
-  "classifications": [ "H5", "Web" ],
-  "name": "h5 Template",
-  "identity": "h5.Template",
-  "shortName": "h5",
+  "classifications": [ "Transpose", "Web" ],
+  "name": "Transpose Template",
+  "identity": "Transpose.Template",
+  "shortName": "transpose",
   "tags": {
     "language": "C#",
     "type": "project"

@@ -1,8 +1,8 @@
 ﻿using System;
-using H5;
-using H5.Core;
-using static H5.Core.es5;
-using static H5.Core.dom;
+using Transpose;
+using Transpose.Core;
+using static Transpose.Core.es5;
+using static Transpose.Core.dom;
 using Tesserae;
 using static Tesserae.UI;
 

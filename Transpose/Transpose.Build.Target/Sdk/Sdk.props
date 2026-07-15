@@ -6,13 +6,13 @@
 -->
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
 
-  <Import Project="$(CustomBeforeH5Props)" Condition=" '$(CustomBeforeH5Props)' != '' And Exists('$(CustomBeforeH5Props)') " />
+  <Import Project="$(CustomBeforeTransposeProps)" Condition=" '$(CustomBeforeTransposeProps)' != '' And Exists('$(CustomBeforeTransposeProps)') " />
 
   <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" Condition=" '$(MicrosoftCommonPropsHasBeenImported)' != 'true' "/>
 
-  <Import Project="$(CustomAfterH5Props)" Condition=" '$(CustomAfterH5Props)' != '' And Exists('$(CustomAfterH5Props)') " />
+  <Import Project="$(CustomAfterTransposeProps)" Condition=" '$(CustomAfterTransposeProps)' != '' And Exists('$(CustomAfterTransposeProps)') " />
 
   <Target Name="CheckReSharper" BeforeTargets="PrepareForBuild" Condition="'$(ReSharperBuild)' == 'true'">
-    <Error Text="H5 is not compatible with ReSharper and you should disable it for the project." />
+    <Error Text="Transpose is not compatible with ReSharper and you should disable it for the project." />
   </Target>
 </Project>

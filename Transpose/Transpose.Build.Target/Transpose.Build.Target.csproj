@@ -1,11 +1,11 @@
 ﻿<Project Sdk="Microsoft.Build.NoTargets/1.0.40">
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
-    <Description>Provides targets for H5-based projects that compile C# to Javascript</Description>
-    <PackageTags>MSBuild MSBuildSdk h5 javascript compiler</PackageTags>
+    <Description>Provides targets for Transpose-based projects that compile C# to Javascript</Description>
+    <PackageTags>MSBuild MSBuildSdk tps transpose javascript compiler</PackageTags>
     <ArtifactsPath>$(BaseArtifactsPath)$(MSBuildProjectName)\</ArtifactsPath>
     <PackageType>MSBuildSdk</PackageType>
-    <PackageId>h5.Target</PackageId>
+    <PackageId>Transpose.Build.Target</PackageId>
     <Company>Curiosity GmbH</Company>
     <Authors>Curiosity GmbH</Authors>
     <Copyright>Copyright (c) 2019-2022, Curiosity GmbH. All rights reserved.</Copyright>
