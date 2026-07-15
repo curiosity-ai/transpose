@@ -205,9 +205,12 @@ public sealed partial class Emitter
         => c.ContainingType.IsRecord && c.Parameters.Length == 1
            && SymbolEqualityComparer.Default.Equals(c.Parameters[0].Type, c.ContainingType);
 
-    /// <summary>Ctor name honouring that external (tps) types expose only "ctor".</summary>
+    /// <summary>Ctor name honouring that genuinely external (native-JS) types expose only "ctor".
+    /// A transpiled BCL runtime type (e.g. System.SystemException) is NOT external — its base call
+    /// must use the real overload name ($ctorN) so, e.g., `: base(message)` reaches the message
+    /// ctor rather than the parameterless one. Only [External]/scoped types collapse to "ctor".</summary>
     private string ExternalAwareCtorName(IMethodSymbol ctor)
-        => TransposeNaming.IsTransposeCompiledSource(ctor.ContainingType) ? CtorName(ctor) : "ctor";
+        => TransposeNaming.IsExternalType(ctor.ContainingType) ? "ctor" : CtorName(ctor);
 
     private static bool IsPrimaryCtorSyntax(IMethodSymbol ctor)
         => ctor.MethodKind == MethodKind.Constructor

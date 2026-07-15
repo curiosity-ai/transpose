@@ -217,7 +217,11 @@ public sealed partial class Emitter
             var p = method.Parameters[pi];
             if (p.IsParams)
             {
-                byName[p.Name] = "[" + string.Join(", ", byPos.Skip(pi)) + "]";
+                // A params argument resolves as the SPREAD (comma-joined) form by default —
+                // {args} in "System.String.format({format}, {args})" → format(fmt, a, b). A
+                // template that needs the array wraps it explicitly with the :array modifier
+                // ({values:array} → [a, b]); the array wrapping is applied in SubstituteTemplate.
+                byName[p.Name] = string.Join(", ", byPos.Skip(pi));
             }
             else if (pi < byPos.Count)
             {

@@ -724,13 +724,13 @@ public sealed partial class Emitter
             // {param:version} — the assembly/compiler version string (used by the SystemAssembly
             // version-marker template). Resolved to the version this build was invoked with.
             if (modifier == "version") return "\"" + AssemblyVersion + "\"";
-            if (token == "this") return receiver ?? "this";
+            if (token == "this") return ApplyArgModifier(modifier, receiver ?? "this");
             if (token.StartsWith("*"))
             {
                 var n = token.Substring(1);
                 return argsByName.TryGetValue(n, out var av) ? av : string.Join(", ", argsByPos);
             }
-            if (argsByName.TryGetValue(token, out var v)) { posCursor++; return v; }
+            if (argsByName.TryGetValue(token, out var v)) { posCursor++; return ApplyArgModifier(modifier, v); }
             // A generic type-parameter placeholder ({T}, {TSource}, …) → the type argument
             // bound at the call site (e.g. Comparer<string>.Default's {T} → System.String).
             if (typeArgs is not null && typeArgs.TryGetValue(token, out var ta)) return ta;
@@ -750,6 +750,29 @@ public sealed partial class Emitter
         result = System.Text.RegularExpressions.Regex.Replace(result, @"\s*,\s*￿", "");
         result = System.Text.RegularExpressions.Regex.Replace(result, @"￿\s*,\s*", "");
         return result.Replace(drop, "");
+    }
+
+    /// <summary>
+    /// Applies the <c>:raw</c> template modifier: a constant string argument is inserted as raw
+    /// JS code rather than a quoted string — e.g. <c>Script.Call&lt;string&gt;("x.toString", 16)</c>
+    /// with template <c>{name:raw}({args})</c> emits <c>x.toString(16)</c>, not <c>"x.toString"(…)</c>.
+    /// </summary>
+    private static string ApplyArgModifier(string? modifier, string value)
+    {
+        switch (modifier)
+        {
+            // :raw — a constant string argument inserted as raw JS code, not a quoted string.
+            case "raw":
+                if (value.Length >= 2 && value[0] == '"' && value[^1] == '"')
+                    return value.Substring(1, value.Length - 2).Replace("\\\"", "\"").Replace("\\\\", "\\");
+                return value;
+            // :array — the params argument as a JS array literal ([a, b]); params otherwise
+            // resolve to the bare spread form (a, b).
+            case "array":
+                return "[" + value + "]";
+            default:
+                return value;
+        }
     }
 
     /// <summary>
