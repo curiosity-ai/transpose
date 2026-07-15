@@ -197,6 +197,8 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
         "System.Threading.Tasks.TaskCompletionSource`1",
         "System.Threading.CancellationToken",
         "System.Threading.CancellationTokenSource",
+        "System.Threading.CancellationTokenRegistration",
+        "System.Threading.Timeout",
     };
 
     public override void VisitIdentifierName(IdentifierNameSyntax node)

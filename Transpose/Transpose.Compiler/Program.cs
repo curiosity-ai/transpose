@@ -29,6 +29,9 @@ public static class Program
         var maxErrors = 40;
         var emitPackage = false;
         var separateAssemblies = false;
+        var extraReferences = new List<string>();
+        var extraDefines = new List<string>();
+        string? assemblyVersion = null;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -42,12 +45,17 @@ public static class Program
                 case "--with-runtime": withRuntime = true; break;
                 case "--quiet" or "-q": quiet = true; break;
                 case "--max-errors": maxErrors = int.Parse(args[++i]); break;
+                case "--reference" or "-r": extraReferences.Add(args[++i]); break;
+                case "--define" or "-D": extraDefines.Add(args[++i]); break;
+                case "--assembly-version": assemblyVersion = args[++i]; break;
+                case "--project" or "-p": projectArg = args[++i]; break;
                 default:
                     if (projectArg is null) projectArg = args[i];
                     else { Console.Error.WriteLine($"Unexpected argument: {args[i]}"); return 1; }
                     break;
             }
         }
+        _ = assemblyVersion; // accepted for MSBuild-target compatibility; reflection metadata carries its own versioning
 
         var csproj = LocateProject(projectArg);
         if (csproj is null)
@@ -69,6 +77,18 @@ public static class Program
             Console.Error.WriteLine($"Failed to resolve project: {ex.Message}");
             return 1;
         }
+
+        // Extra references (--reference) and defines (--define) from the command line. --reference
+        // lets a build reference assemblies that are not in the NuGet cache (e.g. locally-built
+        // tps.core during bootstrap, or a <Reference HintPath> assembly).
+        foreach (var r in extraReferences)
+        {
+            var full = Path.GetFullPath(r);
+            if (File.Exists(full) && !project.ReferencePaths.Contains(full)) project.ReferencePaths.Add(full);
+            else if (!File.Exists(full)) Console.Error.WriteLine($"  warning: --reference not found: {full}");
+        }
+        foreach (var d in extraDefines)
+            if (!project.DefineConstants.Contains(d)) project.DefineConstants.Add(d);
 
         Console.WriteLine($"  sources:    {project.Sources.Count} file(s){(separateAssemblies ? " (own sources only)" : "")}");
         Console.WriteLine($"  references: {project.ReferencePaths.Count} assembly(ies) — {string.Join(", ", project.ReferencePaths.Select(Path.GetFileNameWithoutExtension))}");

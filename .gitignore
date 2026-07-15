@@ -351,3 +351,6 @@ MigrationBackup/
 
 
 **/.generated/*
+# Transpose bootstrap / build outputs
+artifacts/
+BCL/Transpose.BCL/Resources/tps.js
