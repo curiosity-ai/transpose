@@ -29,7 +29,7 @@ internal static class OutputBuilder
 </body>
 </html>";
 
-    public static string Build(ResolvedProject project, H5Json config, string javascript, string outputDir, bool minified = false)
+    public static string Build(ResolvedProject project, H5Json config, string javascript, string outputDir, bool minified = false, string? metadataJavascript = null)
     {
         Directory.CreateDirectory(outputDir);
 
@@ -73,7 +73,18 @@ internal static class OutputBuilder
         // 3. The compiled bundle — loads last, after runtime + library deps are in place.
         File.WriteAllText(Path.Combine(outputDir, config.FileName), javascript);
 
-        var scripts = runtimeScripts.Concat(resourceScripts).Append(config.FileName).ToList();
+        var appScripts = new List<string> { config.FileName };
+
+        // 3b. Reflection metadata as a separate file (reflection.target: "file") — loads right
+        //     after the bundle whose types it describes, matching the existing compiler.
+        if (metadataJavascript is not null)
+        {
+            var metaName = Path.GetFileNameWithoutExtension(config.FileName) + ".meta.js";
+            File.WriteAllText(Path.Combine(outputDir, metaName), metadataJavascript);
+            appScripts.Add(metaName);
+        }
+
+        var scripts = runtimeScripts.Concat(resourceScripts).Concat(appScripts).ToList();
 
         // 4. index.html.
         if (!config.HtmlDisabled)

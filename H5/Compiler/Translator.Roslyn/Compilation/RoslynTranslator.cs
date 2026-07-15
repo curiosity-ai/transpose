@@ -52,7 +52,9 @@ public sealed class RoslynTranslator
         string assemblyName,
         IEnumerable<string>? extraReferencePaths,
         IEnumerable<string>? preprocessorSymbols = null,
-        LanguageVersion languageVersion = LanguageVersion.Latest)
+        LanguageVersion languageVersion = LanguageVersion.Latest,
+        bool reflectionEnabled = true,
+        MetadataTarget metadataTarget = MetadataTarget.Inline)
     {
         var compilation = CompilationBuilder.Build(
             sources, assemblyName, languageVersion,
@@ -78,9 +80,13 @@ public sealed class RoslynTranslator
 
         try
         {
-            var emitter = new Emitter(compilation, assemblyName);
+            var emitter = new Emitter(compilation, assemblyName)
+            {
+                ReflectionEnabled = reflectionEnabled,
+                MetadataTarget = metadataTarget,
+            };
             var js = emitter.Emit();
-            return new TranslationResult(js, diagnostics);
+            return new TranslationResult(js, diagnostics, emitter.MetadataScript);
         }
         catch (TranslationException ex)
         {

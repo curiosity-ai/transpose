@@ -18,6 +18,12 @@ internal sealed class H5Json
     public string HtmlMeta { get; init; } = "";
     public List<ResourceGroup> Resources { get; init; } = new();
 
+    /// <summary>reflection.disabled — when true, no reflection metadata is emitted.</summary>
+    public bool ReflectionDisabled { get; init; }
+
+    /// <summary>reflection.target — "inline" or "file" (default). Others map to the closest of the two.</summary>
+    public string ReflectionTarget { get; init; } = "file";
+
     internal sealed class ResourceGroup
     {
         public string? Name { get; init; }
@@ -38,6 +44,7 @@ internal sealed class H5Json
             => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
 
         var html = root.TryGetProperty("html", out var h) && h.ValueKind == JsonValueKind.Object ? h : default;
+        var reflection = root.TryGetProperty("reflection", out var rfl) && rfl.ValueKind == JsonValueKind.Object ? rfl : default;
         var resources = new List<ResourceGroup>();
         if (root.TryGetProperty("resources", out var res) && res.ValueKind == JsonValueKind.Array)
         {
@@ -61,6 +68,9 @@ internal sealed class H5Json
             HtmlHead = (html.ValueKind == JsonValueKind.Object ? Str(html, "head") : null) ?? "",
             HtmlMeta = (html.ValueKind == JsonValueKind.Object ? Str(html, "meta") : null) ?? "",
             Resources = resources,
+            ReflectionDisabled = reflection.ValueKind == JsonValueKind.Object
+                && reflection.TryGetProperty("disabled", out var rd) && rd.ValueKind == JsonValueKind.True,
+            ReflectionTarget = (reflection.ValueKind == JsonValueKind.Object ? Str(reflection, "target") : null) ?? "file",
         };
     }
 }

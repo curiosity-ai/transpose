@@ -71,6 +71,17 @@ public static class Program
         Console.WriteLine($"  defines:    {string.Join(";", project.DefineConstants)}");
         Console.WriteLine($"  lang:       {project.LanguageVersion}");
 
+        // Reflection settings come from the project's h5.json (target inline vs a .meta.js file).
+        var h5cfg = H5Json.TryLoad(project.ProjectDir);
+        var reflectionEnabled = !(h5cfg?.ReflectionDisabled ?? false);
+        var metadataTarget = (h5cfg?.ReflectionTarget ?? "file").ToLowerInvariant() switch
+        {
+            "inline" => MetadataTarget.Inline,
+            "type" => MetadataTarget.Type,
+            "assembly" => MetadataTarget.Assembly,
+            _ => MetadataTarget.File,
+        };
+
         var translator = new RoslynTranslator();
         TranslationResult result;
         try
@@ -80,7 +91,9 @@ public static class Program
                 project.AssemblyName,
                 project.ReferencePaths,
                 project.DefineConstants,
-                project.LanguageVersion);
+                project.LanguageVersion,
+                reflectionEnabled,
+                metadataTarget);
         }
         catch (Exception ex)
         {
@@ -103,12 +116,12 @@ public static class Program
         // Site build: when the project has an h5.json and no single-file --out was requested,
         // assemble a runnable output folder (runtime JS + bundle + resources + index.html),
         // exactly like the existing h5 compiler.
-        var config = H5Json.TryLoad(project.ProjectDir);
+        var config = h5cfg;
         var minified = configuration.Equals("Release", StringComparison.OrdinalIgnoreCase);
         if (config is not null && outPath is null)
         {
             var outDir = siteDir ?? ResolveOutputDir(config, project.ProjectDir, configuration);
-            OutputBuilder.Build(project, config, js, outDir, minified);
+            OutputBuilder.Build(project, config, js, outDir, minified, result.MetadataJavascript);
             Console.WriteLine($"\nOK — built site in {outDir} ({js.Length:N0} bytes of {config.FileName}) in {sw.ElapsedMilliseconds} ms.");
             Console.WriteLine($"  index.html: {(config.HtmlDisabled ? "disabled" : "generated")}");
             return 0;

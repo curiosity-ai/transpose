@@ -32,6 +32,19 @@ public sealed partial class Emitter
     /// </summary>
     private readonly Stack<(System.Collections.Generic.Dictionary<string, int> labels, string loopLabel, string stateVar)> _gotoContexts = new();
 
+    /// <summary>Whether reflection metadata is emitted at all (h5.json reflection.disabled).</summary>
+    public bool ReflectionEnabled { get; set; } = true;
+
+    /// <summary>Where reflection metadata goes — inline in the assembly, or a separate file.</summary>
+    public MetadataTarget MetadataTarget { get; set; } = MetadataTarget.Inline;
+
+    /// <summary>Assembly version string emitted into a separate metadata file's header.</summary>
+    public string AssemblyVersion { get; set; } = "1.0.0.0";
+
+    /// <summary>When <see cref="MetadataTarget"/> is File/Assembly, the standalone metadata
+    /// script (a full H5.assembly wrapper) produced by the last <see cref="Emit"/>; else null.</summary>
+    public string? MetadataScript { get; private set; }
+
     public Emitter(CSharpCompilation compilation, string assemblyName = CompilationBuilder.DefaultAssemblyName)
     {
         _compilation = compilation;
@@ -44,22 +57,30 @@ public sealed partial class Emitter
         _w.WriteLine("/**");
         _w.WriteLine(" * H5.Translator.Roslyn generated output.");
         _w.WriteLine(" */");
+        var types = CollectTypes();
+
+        // Reflection metadata: either woven into this assembly function (inline target) or
+        // collected into a standalone metadata script (file target), never both.
+        var inlineMeta = ReflectionEnabled && MetadataTarget is MetadataTarget.Inline or MetadataTarget.Type;
+        var fileMeta = ReflectionEnabled && MetadataTarget is MetadataTarget.File or MetadataTarget.Assembly;
+
         _w.Write($"H5.assembly(\"{_assemblyName}\", function ($asm, globals) ");
         _w.Block(() =>
         {
             _w.WriteLine("\"use strict\";");
             _w.WriteLine();
 
-            var types = CollectTypes();
             foreach (var type in types)
             {
                 EmitType(type);
                 _w.WriteLine();
             }
 
-            EmitReflectionMetadata(types);
+            if (inlineMeta) EmitReflectionMetadata(types);
         });
         _w.WriteLine(");");
+
+        MetadataScript = fileMeta ? BuildMetadataFile(types) : null;
         return _w.ToString();
     }
 
