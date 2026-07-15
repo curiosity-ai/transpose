@@ -342,15 +342,35 @@ internal static class H5Naming
         => iface.TypeKind == TypeKind.Interface && IsH5CompiledSource(iface);
 
     /// <summary>Full type name as a single JS identifier: dotted segments joined by <c>$</c>,
-    /// with a generic arity suffix (e.g. <c>System$Collections$Generic$IComparer$1</c>).</summary>
+    /// with a generic arity suffix (e.g. <c>System$Collections$Generic$IComparer$1</c>). Honours a
+    /// type-level <c>[H5.Name]</c> (its dotted value becomes the mangled prefix, e.g.
+    /// <c>[Name("tss.IC")]</c> → <c>tss$IC</c>), so interface-member slots stay consistent with the
+    /// type's registered name.</summary>
     private static string MangledTypeName(INamedTypeSymbol type)
     {
+        if (MangledSelf(type) is { } named) return named;
         var parts = new System.Collections.Generic.List<string>();
         for (INamedTypeSymbol? t = type; t is not null; t = t.ContainingType)
+        {
+            if (!SymbolEqualityComparer.Default.Equals(t, type) && MangledSelf(t) is { } enclosing)
+            {
+                var tail = string.Join("$", parts);
+                return tail.Length == 0 ? enclosing : enclosing + "$" + tail;
+            }
             parts.Insert(0, t.Arity > 0 ? t.Name + "$" + t.Arity : t.Name);
+        }
         for (var ns = type.ContainingNamespace; ns is { IsGlobalNamespace: false }; ns = ns.ContainingNamespace)
             parts.Insert(0, ns.Name);
         return string.Join("$", parts);
+    }
+
+    /// <summary>The mangled form of a type's own <c>[Name]</c> (dotted → <c>$</c>, arity appended),
+    /// or null when the type has no <c>[Name]</c>.</summary>
+    private static string? MangledSelf(INamedTypeSymbol type)
+    {
+        if (GetName(type) is not { } n) return null;
+        var mangled = n.Replace('.', '$');
+        return type.Arity > 0 ? mangled + "$" + type.Arity : mangled;
     }
 
     private static readonly System.Collections.Generic.Dictionary<ISymbol, string> _methodCache = new(SymbolEqualityComparer.Default);
@@ -415,7 +435,11 @@ internal static class H5Naming
     /// <summary>A resolved name that must be used verbatim (never overload-suffixed).</summary>
     private static bool HasCanonicalName(IMethodSymbol m)
         => IsObjectToString(m) || IsObjectGetHashCode(m) || IsObjectEquals(m)
-           || GetName(m) is not null || InheritedName(m) is not null || ImplementedInterfaceMember(m) is not null;
+           || GetName(m) is not null || InheritedName(m) is not null;
+    // Note: a plain interface implementation is NOT canonical — H5 still numbers it through the
+    // overload collection (so a type implementing e.g. both IDictionary.Add(k,v) and
+    // ICollection.Add(KeyValuePair) gets add / add$1, not two colliding `add` keys). A lone
+    // interface implementation still lands at index 0 and keeps its bare name.
 
     /// <summary>
     /// True if this is a library (H5.dll) method with no IL body and not abstract — a C#
@@ -573,8 +597,14 @@ internal static class H5Naming
 
     private static bool IsDerivedFrom(ITypeSymbol? derived, ITypeSymbol? base_)
     {
+        // Compare on original definitions: an overload group mixes a derived type's own methods
+        // with a *generic* base's methods, where the base appears constructed on the derived
+        // (e.g. Card : ComponentBase<Card,…>) but as its open definition in the group. Comparing
+        // the raw symbols would miss that relationship and mis-order the overloads — which made a
+        // derived new overload collide with the base's slot (duplicate JS keys).
+        var target = base_?.OriginalDefinition ?? base_;
         for (var t = derived?.BaseType; t is not null; t = t.BaseType)
-            if (SymbolEqualityComparer.Default.Equals(t, base_)) return true;
+            if (SymbolEqualityComparer.Default.Equals(t.OriginalDefinition, target)) return true;
         return false;
     }
 

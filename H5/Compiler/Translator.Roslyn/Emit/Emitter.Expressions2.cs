@@ -453,6 +453,41 @@ public sealed partial class Emitter
             return;
         }
 
+        // [ExpandParams]: a native variadic function (e.g. DOMTokenList.add(params string[])).
+        // Its trailing args are spread as individual arguments (add("a","b")), and a single array
+        // argument is spread with JS spread (add(...arr)) so it reaches the native function as
+        // separate tokens. Without this the params would be passed as ONE array argument —
+        // classList.add(["a","b"]) coerces to the single malformed token "a,b".
+        if (method is { Parameters.Length: > 0 } && method.Parameters[^1].IsParams && HasExpandParams(method))
+        {
+            var fixedCount = method.Parameters.Length - 1;
+            var first = !lead;
+            for (var i = 0; i < fixedCount && i < args.Count; i++)
+            {
+                if (!first) _w.Write(", ");
+                first = false;
+                EmitExpressionConverted(args[i].Expression, method.Parameters[i].Type);
+            }
+            var trailing = args.Skip(fixedCount).ToList();
+            var elem = (method.Parameters[^1].Type as IArrayTypeSymbol)?.ElementType;
+            if (trailing.Count == 1 && _model.GetTypeInfo(trailing[0].Expression).Type is IArrayTypeSymbol)
+            {
+                if (!first) _w.Write(", ");
+                _w.Write("...");
+                EmitExpression(trailing[0].Expression);
+            }
+            else
+            {
+                for (var i = 0; i < trailing.Count; i++)
+                {
+                    if (!first) _w.Write(", ");
+                    first = false;
+                    EmitExpressionConverted(trailing[i].Expression, elem);
+                }
+            }
+            return;
+        }
+
         // params array handling: collect trailing args into a JS array (except for
         // the variadic BCL formatters, whose runtime functions take individual args).
         if (method is { Parameters.Length: > 0 } && method.Parameters[^1].IsParams && ShouldWrapParams(method))
@@ -501,6 +536,12 @@ public sealed partial class Emitter
     /// formatters (Console.Write/WriteLine, String.Format/Concat) take individual
     /// arguments in the runtime, so they are excluded.
     /// </summary>
+    /// <summary>A method whose <c>params</c> array must be expanded (spread) at the call site,
+    /// per H5's <c>[ExpandParams]</c> — the native variadic DOM/JS functions.</summary>
+    private static bool HasExpandParams(IMethodSymbol method)
+        => method.OriginalDefinition.GetAttributes()
+            .Any(a => a.AttributeClass?.ToDisplayString() == "H5.ExpandParamsAttribute");
+
     private static bool ShouldWrapParams(IMethodSymbol method)
     {
         var containing = method.ContainingType?.ToDisplayString();
@@ -1470,6 +1511,11 @@ public sealed partial class Emitter
     private string ConstantLiteral(object? value, ITypeSymbol type)
     {
         if (value is null) return type.SpecialType == SpecialType.System_String ? "null" : DefaultValueLiteral(type);
+        // A string-backed enum ([Enum(Emit.StringName*)]) constant emits its string name, not the
+        // numeric ordinal — so a defaulted enum parameter (e.g. `format = default`) seeds the
+        // string the runtime actually compares against.
+        if (type is INamedTypeSymbol { TypeKind: TypeKind.Enum } en && H5Naming.EnumEmitMode(en) is 3 or 4 or 5 or 6)
+            return EnumConstantLiteral(en, value);
         // 64-bit integer constants (e.g. long.MinValue) must be System.Int64/UInt64 instances.
         if (value is long or ulong && Is64BitInteger(type))
             return Long64Literal(value, Is64BitUnsigned(type));
@@ -1487,6 +1533,16 @@ public sealed partial class Emitter
             IFormattable f => f.ToString(null, CultureInfo.InvariantCulture),
             _ => value.ToString() ?? "null",
         };
+    }
+
+    /// <summary>The string literal for a string-backed enum constant with the given numeric value.</summary>
+    private string EnumConstantLiteral(INamedTypeSymbol enumType, object value)
+    {
+        var mode = H5Naming.EnumEmitMode(enumType);
+        var v = Convert.ToInt64(value);
+        var field = enumType.GetMembers().OfType<IFieldSymbol>()
+            .FirstOrDefault(f => f.HasConstantValue && Convert.ToInt64(f.ConstantValue) == v);
+        return field is not null ? JsString(H5Naming.EnumStringName(field, mode)) : "null";
     }
 
     private static bool IsStringType(ITypeSymbol? type) => type?.SpecialType == SpecialType.System_String;

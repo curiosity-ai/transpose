@@ -25,6 +25,12 @@ public sealed partial class Emitter
     /// function parameters (raw names); elsewhere captured params read from the instance.</summary>
     private bool _inPrimaryCtorBody;
 
+    /// <summary>The type whose define body is currently being emitted. Its own type parameters are
+    /// the ones actually bound as JS function parameters of the define, so <c>default(T)</c> may
+    /// safely reference them via <c>H5.getDefaultValue(T)</c>; a type parameter from an enclosing
+    /// type (accessible in C# but not emitted as a parameter here) is not in scope.</summary>
+    private INamedTypeSymbol? _currentEmitType;
+
     /// <summary>
     /// Active goto label-dispatch contexts. When non-empty a statement body is being lowered
     /// into a `for(;;) switch($state)` machine: `goto L` sets the state and continues the loop.

@@ -572,12 +572,22 @@ public sealed partial class Emitter
 
     private void EmitOptionalDefaults(IMethodSymbol method)
     {
-        foreach (var p in method.Parameters.Where(p => p.HasExplicitDefaultValue))
+        foreach (var p in method.Parameters)
         {
             var name = NameMangler.JsIdentifier(p.Name);
-            _w.Write($"if ({name} === undefined) {{ {name} = ");
-            _w.Write(ConstantLiteral(p.ExplicitDefaultValue, p.Type));
-            _w.WriteLine("; }");
+            if (p.HasExplicitDefaultValue)
+            {
+                _w.Write($"if ({name} === undefined) {{ {name} = ");
+                _w.Write(ConstantLiteral(p.ExplicitDefaultValue, p.Type));
+                _w.WriteLine("; }");
+            }
+            else if (p.IsParams)
+            {
+                // A params array invoked with no trailing arguments arrives as undefined at the JS
+                // boundary (e.g. a reflection/JS caller, or an ExpandParams spread with none); default
+                // it to an empty array so the body's enumeration/indexing behaves, matching H5.
+                _w.WriteLine($"if ({name} === undefined) {{ {name} = []; }}");
+            }
         }
     }
 

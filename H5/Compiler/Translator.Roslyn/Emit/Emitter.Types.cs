@@ -62,14 +62,14 @@ public sealed partial class Emitter
             // A type this compiler emits — either from source, or from a referenced H5-compiled
             // assembly (a package built with --emit-package). Both are defined via H5.define under
             // their full nested JS name, so a reference must use the same name (nested-aware).
-            // Constructed generic → Name$arity(typeArgs).
-            if (named.IsGenericType && named.TypeArguments.Length > 0)
-            {
-                var gBase = _names.TypeFullName(named) + "$" + named.Arity;
-                var gArgs = string.Join(", ", named.TypeArguments.Select(TypeRef));
-                return $"{gBase}({gArgs})";
-            }
-            return _names.TypeFullName(named);
+            // The name carries only the type's OWN arity suffix; the type arguments passed are the
+            // EFFECTIVE ones (enclosing + own), so a type nested in a generic (e.g.
+            // IconToggle<int>.Item) resolves to tss.IconToggle.Item(System.Int32).
+            var effArgs = EffectiveTypeArguments(named);
+            var defName = named.Arity > 0 ? _names.TypeFullName(named) + "$" + named.Arity : _names.TypeFullName(named);
+            if (effArgs.Count > 0)
+                return $"{defName}({string.Join(", ", effArgs.Select(TypeRef))})";
+            return defName;
         }
         if (type is IArrayTypeSymbol) return "System.Array";
         return type.Name;
@@ -79,6 +79,31 @@ public sealed partial class Emitter
     {
         var i = name.IndexOf('`');
         return i >= 0 ? name.Substring(0, i) : name;
+    }
+
+    /// <summary>
+    /// The type parameters a type's H5.define is a function of: its enclosing types' parameters
+    /// (outermost first) followed by its own. A type nested in a generic type can reference the
+    /// enclosing type parameters in C#, so — like the legacy compiler — its define is emitted as
+    /// <c>function (TOuter…) { return {…}; }</c> even when the nested type has no parameters of its
+    /// own (e.g. <c>IconToggle&lt;T&gt;.Item</c> → <c>H5.define("tss.IconToggle.Item", function (T){…})</c>).
+    /// </summary>
+    private static List<ITypeParameterSymbol> EffectiveTypeParameters(INamedTypeSymbol type)
+    {
+        var result = new List<ITypeParameterSymbol>();
+        for (INamedTypeSymbol? t = type; t is not null; t = t.ContainingType)
+            result.InsertRange(0, t.TypeParameters);
+        return result;
+    }
+
+    /// <summary>The type arguments to pass when referencing a type: its enclosing types' arguments
+    /// (outermost first) then its own — the mirror of <see cref="EffectiveTypeParameters"/>.</summary>
+    private static List<ITypeSymbol> EffectiveTypeArguments(INamedTypeSymbol type)
+    {
+        var result = new List<ITypeSymbol>();
+        for (INamedTypeSymbol? t = type; t is not null; t = t.ContainingType)
+            result.InsertRange(0, t.TypeArguments);
+        return result;
     }
 
     /// <summary>
@@ -116,10 +141,31 @@ public sealed partial class Emitter
         return null;
     }
 
+    /// <summary>The JS literal for <c>default(enum)</c>. A string-backed enum
+    /// (<c>[Enum(Emit.StringName*)]</c>) defaults to the string of its zero-valued member;
+    /// every other mode is a numeric enum at runtime and defaults to 0.</summary>
+    private string EnumDefaultLiteral(INamedTypeSymbol enumType)
+    {
+        var mode = H5Naming.EnumEmitMode(enumType);
+        if (mode is 3 or 4 or 5 or 6)
+        {
+            var zero = enumType.GetMembers().OfType<IFieldSymbol>()
+                .FirstOrDefault(f => f.HasConstantValue && Convert.ToInt64(f.ConstantValue) == 0);
+            return zero is not null ? JsString(H5Naming.EnumStringName(zero, mode)) : "null";
+        }
+        return "0";
+    }
+
     private void EmitEnum(INamedTypeSymbol type)
     {
         _w.Write($"H5.define(\"{_names.TypeFullName(type)}\", ");
         var isFlags = type.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "System.FlagsAttribute");
+        var mode = H5Naming.EnumEmitMode(type);
+        // Emit.StringName* modes back the enum with strings (its [Name] on each member); every
+        // other mode keeps the numeric ordinals. A string-backed enum also declares
+        // $utype: System.String so the runtime treats its members as strings (this is what makes
+        // `x === "top"`-style comparisons against enum members work).
+        var stringMode = mode is 3 or 4 or 5 or 6;
         _w.Block(() =>
         {
             _w.WriteLine("$kind: \"enum\",");
@@ -133,13 +179,17 @@ public sealed partial class Emitter
                     var fields = type.GetMembers().OfType<IFieldSymbol>().Where(f => f.HasConstantValue).ToList();
                     for (var i = 0; i < fields.Count; i++)
                     {
-                        _w.Write($"{NameMangler.JsPropertyKey(H5Naming.MemberJsName(fields[i]))}: {Convert.ToInt64(fields[i].ConstantValue)}");
+                        var value = stringMode
+                            ? JsString(H5Naming.EnumStringName(fields[i], mode))
+                            : Convert.ToInt64(fields[i].ConstantValue).ToString(System.Globalization.CultureInfo.InvariantCulture);
+                        _w.Write($"{NameMangler.JsPropertyKey(H5Naming.MemberJsName(fields[i]))}: {value}");
                         _w.WriteLine(i < fields.Count - 1 ? "," : "");
                     }
                 });
                 _w.WriteLine();
             });
-            _w.WriteLine();
+            _w.WriteLine(stringMode ? "," : "");
+            if (stringMode) _w.WriteLine("$utype: System.String");
         });
         _w.WriteLine(");");
     }
@@ -147,13 +197,25 @@ public sealed partial class Emitter
     private void EmitInterface(INamedTypeSymbol type)
     {
         // A generic interface is a function of its type parameters (like generic classes),
-        // so references such as IContainer$1(T) resolve at runtime.
-        var typeParams = type.TypeParameters;
-        var isGeneric = typeParams.Length > 0;
-        var fullName = isGeneric ? _names.TypeFullName(type) + "$" + type.Arity : _names.TypeFullName(type);
+        // so references such as IContainer$1(T) resolve at runtime. Effective parameters include
+        // an enclosing generic type's, matching the class treatment.
+        var typeParams = EffectiveTypeParameters(type);
+        var isGeneric = typeParams.Count > 0;
+        var fullName = type.Arity > 0 ? _names.TypeFullName(type) + "$" + type.Arity : _names.TypeFullName(type);
 
         _w.Write($"H5.define(\"{fullName}\", ");
         if (isGeneric) _w.Write($"function ({string.Join(", ", typeParams.Select(p => p.Name))}) {{ return ");
+        // $variance records each OWN type parameter's variance so the runtime can model
+        // covariant/contravariant interface assignability: 2 = covariant (out), 1 = contravariant
+        // (in), 0 = invariant. Only emitted when at least one parameter is variant (as H5 does).
+        var variances = type.TypeParameters.Select(p => p.Variance switch
+        {
+            VarianceKind.Out => 2,
+            VarianceKind.In => 1,
+            _ => 0,
+        }).ToList();
+        var hasVariance = variances.Any(v => v != 0);
+
         _w.Block(() =>
         {
             _w.Write("$kind: \"interface\"");
@@ -161,12 +223,14 @@ public sealed partial class Emitter
             if (bases.Count > 0)
             {
                 _w.WriteLine(",");
-                _w.WriteLine($"inherits: function () {{ return [{string.Join(", ", bases.Select(TypeRef))}]; }}");
+                _w.Write($"inherits: function () {{ return [{string.Join(", ", bases.Select(TypeRef))}]; }}");
             }
-            else
+            if (hasVariance)
             {
-                _w.WriteLine();
+                _w.WriteLine(",");
+                _w.Write($"$variance: [{string.Join(", ", variances)}]");
             }
+            _w.WriteLine();
         });
         if (isGeneric) _w.Write("; }");
         _w.WriteLine(");");
@@ -174,14 +238,24 @@ public sealed partial class Emitter
 
     private void EmitClassLike(INamedTypeSymbol type)
     {
+        var prevEmitType = _currentEmitType;
+        _currentEmitType = type;
+        try { EmitClassLikeCore(type); }
+        finally { _currentEmitType = prevEmitType; }
+    }
+
+    private void EmitClassLikeCore(INamedTypeSymbol type)
+    {
         var entryPoint = _compilation.GetEntryPoint(System.Threading.CancellationToken.None);
 
         // A generic type is defined as a function of its type parameters, returning the
         // config object (H5.define("Name$N", function (T) { return { … }; })); the type
-        // parameters are then in scope at runtime for new T()/default(T)/typeof(T).
-        var typeParams = type.TypeParameters;
-        var isGeneric = typeParams.Length > 0;
-        var fullName = isGeneric ? _names.TypeFullName(type) + "$" + type.Arity : _names.TypeFullName(type);
+        // parameters are then in scope at runtime for new T()/default(T)/typeof(T). A type nested
+        // in a generic type is a function of the ENCLOSING parameters too (its own arity may be 0),
+        // so the define name carries only its own arity but the function takes every effective one.
+        var typeParams = EffectiveTypeParameters(type);
+        var isGeneric = typeParams.Count > 0;
+        var fullName = type.Arity > 0 ? _names.TypeFullName(type) + "$" + type.Arity : _names.TypeFullName(type);
 
         _w.Write($"H5.define(\"{fullName}\", ");
         if (isGeneric) _w.Write($"function ({string.Join(", ", typeParams.Select(p => p.Name))}) {{ return ");
@@ -193,6 +267,14 @@ public sealed partial class Emitter
             if (type.TypeKind == TypeKind.Struct)
             {
                 sections.Add(() => _w.Write("$kind: \"struct\""));
+            }
+
+            // $literal marks an [ObjectLiteral] type: instances are plain JS objects (construction
+            // emits {} + initializer), and the runtime treats the type as a literal for is/as/typeof
+            // rather than a real class. Matches the legacy compiler's $literal:true flag.
+            if (type.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "H5.ObjectLiteralAttribute"))
+            {
+                sections.Add(() => _w.Write("$literal: true"));
             }
 
             // inherits: base class + implemented interfaces the runtime tracks (source or a
@@ -346,7 +428,24 @@ public sealed partial class Emitter
 
     private string DefaultValueLiteral(ITypeSymbol type)
     {
-        if (type.TypeKind == TypeKind.Enum) return "0";
+        // default(T) for an unconstrained/struct type parameter must defer to the runtime, which
+        // picks 0 / false / null based on the *actual* T at construction — exactly what H5 emits
+        // (H5.getDefaultValue(T)). Emitting a bare null here would wrongly seed value-type T
+        // (int/bool/enum/struct) with null instead of its zeroed default. Only safe when T is a
+        // type parameter of the type currently being emitted (hence bound as a JS function
+        // parameter of the define); a T inherited from an enclosing generic type is not in scope
+        // here, so fall through to null (that nested type is emitted non-generically).
+        if (type is ITypeParameterSymbol tp)
+        {
+            // In scope when it is one of the effective type parameters of the type being emitted
+            // (own or from an enclosing generic type) — those are the define's JS function
+            // parameters. A method type parameter (not threaded here) falls back to null.
+            var inScope = _currentEmitType is not null
+                && tp.TypeParameterKind == TypeParameterKind.Type
+                && EffectiveTypeParameters(_currentEmitType).Any(p => SymbolEqualityComparer.Default.Equals(p, tp));
+            return inScope ? $"H5.getDefaultValue({TypeRef(type)})" : "null";
+        }
+        if (type.TypeKind == TypeKind.Enum) return EnumDefaultLiteral((INamedTypeSymbol)type);
         if (type is INamedTypeSymbol { TypeKind: TypeKind.Struct } st && st.Locations.Any(l => l.IsInSource))
             return $"{TypeRef(st)}.getDefaultValue()";
         switch (type.SpecialType)

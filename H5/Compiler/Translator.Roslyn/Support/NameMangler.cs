@@ -52,10 +52,22 @@ public sealed class NameMangler
     /// <summary>Fully-qualified JS name for a type, e.g. <c>App.Foo.Bar</c>.</summary>
     public string TypeFullName(INamedTypeSymbol type)
     {
+        // A type-level [H5.Name("...")] supplies the fully-qualified JS name (namespace + entity),
+        // overriding the inferred dotted name — this is how a source type maps onto a short runtime
+        // name (e.g. [Name("tss.S")] class Stack → tss.S).
+        if (H5Naming.GetName(type) is { } self) return self;
+
         var parts = new List<string>();
 
         for (INamedTypeSymbol? t = type; t is not null; t = t.ContainingType)
         {
+            // An enclosing type's [Name] fixes the fully-qualified prefix; the nested leaf names
+            // collected so far append under it (so [Name("tss.NodeView")] + Graph → tss.NodeView.Graph).
+            if (!SymbolEqualityComparer.Default.Equals(t, type) && H5Naming.GetName(t) is { } enclosing)
+            {
+                var tail = parts.Select(JsIdentifier);
+                return string.Join(".", new[] { enclosing }.Concat(tail));
+            }
             parts.Insert(0, t.Name);
         }
 
