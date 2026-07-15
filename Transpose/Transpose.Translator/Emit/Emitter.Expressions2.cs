@@ -6,7 +6,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
-namespace H5.Translator.Roslyn;
+namespace Transpose.Translator;
 
 public sealed partial class Emitter
 {
@@ -75,8 +75,8 @@ public sealed partial class Emitter
             return;
         }
 
-        // H5.Script.Write(code, args) — inject raw JavaScript, substituting {0},{1}… with args.
-        if (symbol is { Name: "Write" } && symbol.ContainingType?.ToDisplayString() == "H5.Script"
+        // Transpose.Script.Write(code, args) — inject raw JavaScript, substituting {0},{1}… with args.
+        if (symbol is { Name: "Write" } && symbol.ContainingType?.ToDisplayString() == "Transpose.Script"
             && invocation.ArgumentList.Arguments.Count >= 1
             && _model.GetConstantValue(invocation.ArgumentList.Arguments[0].Expression).Value is string rawJs)
         {
@@ -87,7 +87,7 @@ public sealed partial class Emitter
         }
 
         var origin = symbol.OriginalDefinition;
-        var template = H5Naming.GetTemplate(origin) ?? H5Naming.GetTemplate(symbol);
+        var template = TransposeNaming.GetTemplate(origin) ?? TransposeNaming.GetTemplate(symbol);
 
         // by-ref args (no template): holder objects with write-back.
         if (template is null && HasByRefArguments(invocation.ArgumentList, symbol))
@@ -134,11 +134,11 @@ public sealed partial class Emitter
         }
 
         // base.Method(...) → Base.prototype.Method.call(this, args) for instance methods
-        // (instance methods live on the prototype in the H5 runtime); statics on the type.
+        // (instance methods live on the prototype in the Transpose runtime); statics on the type.
         if (isBase)
         {
             var baseAccess = symbol.IsStatic ? "" : ".prototype";
-            _w.Write($"{TypeRef(symbol.ContainingType)}{baseAccess}.{H5Naming.MemberJsName(symbol)}.call(this");
+            _w.Write($"{TypeRef(symbol.ContainingType)}{baseAccess}.{TransposeNaming.MemberJsName(symbol)}.call(this");
             if (invocation.ArgumentList.Arguments.Count > 0) { _w.Write(", "); EmitArguments(invocation.ArgumentList, symbol); }
             _w.Write(")");
             return;
@@ -151,7 +151,7 @@ public sealed partial class Emitter
         // (whose parameters already exclude `this` and preserve params-array collection).
         if (symbol is { IsExtensionMethod: true, ReducedFrom: { } reducedFrom } && (receiverExpr is not null || condRecv is not null))
         {
-            _w.Write($"{TypeRef(symbol.ContainingType)}.{H5Naming.MemberJsName(reducedFrom)}(");
+            _w.Write($"{TypeRef(symbol.ContainingType)}.{TransposeNaming.MemberJsName(reducedFrom)}(");
             var lead = EmitLeadingTypeArgs(symbol);
             if (lead) _w.Write(", ");
             if (receiverExpr is not null) EmitExpression(receiverExpr); else _w.Write(condRecv!);
@@ -172,15 +172,15 @@ public sealed partial class Emitter
         else if (receiverExpr is not null)
         {
             EmitExpression(receiverExpr);
-            _w.Write($".{H5Naming.MemberJsName(symbol)}");
+            _w.Write($".{TransposeNaming.MemberJsName(symbol)}");
         }
         else if (condRecv is not null)
         {
-            _w.Write($"{condRecv}.{H5Naming.MemberJsName(symbol)}");
+            _w.Write($"{condRecv}.{TransposeNaming.MemberJsName(symbol)}");
         }
         else
         {
-            _w.Write($"this.{H5Naming.MemberJsName(symbol)}");
+            _w.Write($"this.{TransposeNaming.MemberJsName(symbol)}");
         }
         _w.Write("(");
         EmitArguments(invocation.ArgumentList, symbol);
@@ -259,11 +259,11 @@ public sealed partial class Emitter
         else if (invocation.Expression is MemberAccessExpressionSyntax memberAccess)
         {
             EmitExpression(memberAccess.Expression);
-            _w.Write($".{H5Naming.MemberJsName(symbol)}");
+            _w.Write($".{TransposeNaming.MemberJsName(symbol)}");
         }
         else
         {
-            _w.Write($"this.{H5Naming.MemberJsName(symbol)}");
+            _w.Write($"this.{TransposeNaming.MemberJsName(symbol)}");
         }
     }
 
@@ -359,7 +359,7 @@ public sealed partial class Emitter
         var reduced = symbol.IsExtensionMethod ? symbol.ReducedFrom : null;
         var extReceiver = reduced is not null && invocation.Expression is MemberAccessExpressionSyntax ma ? ma.Expression : null;
         if (extReceiver is not null)
-            _w.Write($"{TypeRef(symbol.ContainingType)}.{H5Naming.MemberJsName(reduced!)}");
+            _w.Write($"{TypeRef(symbol.ContainingType)}.{TransposeNaming.MemberJsName(reduced!)}");
         else
             EmitCallee(invocation, symbol);
         _w.Write("(");
@@ -553,10 +553,10 @@ public sealed partial class Emitter
     /// arguments in the runtime, so they are excluded.
     /// </summary>
     /// <summary>A method whose <c>params</c> array must be expanded (spread) at the call site,
-    /// per H5's <c>[ExpandParams]</c> — the native variadic DOM/JS functions.</summary>
+    /// per Transpose's <c>[ExpandParams]</c> — the native variadic DOM/JS functions.</summary>
     private static bool HasExpandParams(IMethodSymbol method)
         => method.OriginalDefinition.GetAttributes()
-            .Any(a => a.AttributeClass?.ToDisplayString() == "H5.ExpandParamsAttribute");
+            .Any(a => a.AttributeClass?.ToDisplayString() == "Transpose.ExpandParamsAttribute");
 
     private static bool ShouldWrapParams(IMethodSymbol method)
     {
@@ -587,7 +587,7 @@ public sealed partial class Emitter
         // guarantees the method threads T) are in scope as the identifier tp.Name at runtime.
         if (_model.GetTypeInfo(creation).Type is ITypeParameterSymbol tp)
         {
-            _w.Write($"H5.createInstance({tp.Name})");
+            _w.Write($"Transpose.createInstance({tp.Name})");
             return;
         }
         var symbol = _model.GetSymbolInfo(creation).Symbol as IMethodSymbol;
@@ -627,7 +627,7 @@ public sealed partial class Emitter
 
         // A constructor [Template] defines how `new T(...)` is built — e.g. a DOM element's
         // ctor maps to document.createElement("span") instead of an (illegal) native `new`.
-        if (ctor is not null && H5Naming.GetTemplate(ctor.OriginalDefinition) is { } ctorTemplate)
+        if (ctor is not null && TransposeNaming.GetTemplate(ctor.OriginalDefinition) is { } ctorTemplate)
         {
             var (byName, byPos) = argList is not null ? CaptureArguments(argList, ctor) : (new(), new List<string>());
             WriteTemplate(ctorTemplate, isStatic: true, isExtension: false, receiver: null, byName, byPos, TemplateTypeArgs(ctor));
@@ -642,9 +642,9 @@ public sealed partial class Emitter
             return;
         }
 
-        // `new object()` is a plain empty JS object ({}), not an H5 System.Object instance — matching
+        // `new object()` is a plain empty JS object ({}), not an Transpose System.Object instance — matching
         // the legacy compiler. Code commonly uses it as a dynamic property bag whose own keys are
-        // iterated (e.g. a Baklava node's inputs/outputs map); an H5 instance would carry prototype
+        // iterated (e.g. a Baklava node's inputs/outputs map); an Transpose instance would carry prototype
         // members that pollute that iteration.
         if (type.SpecialType == SpecialType.System_Object)
         {
@@ -653,14 +653,14 @@ public sealed partial class Emitter
         }
 
         // [ObjectLiteral] type → a plain JS object ({}); the initializer sets its members.
-        if (type.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "H5.ObjectLiteralAttribute"))
+        if (type.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "Transpose.ObjectLiteralAttribute"))
         {
             _w.Write("{}");
             return;
         }
 
         // Constructor [Template] (some BCL types).
-        var template = ctor is not null ? H5Naming.GetTemplate(ctor.OriginalDefinition) : null;
+        var template = ctor is not null ? TransposeNaming.GetTemplate(ctor.OriginalDefinition) : null;
         if (template is not null && argList is not null)
         {
             var (byName, byPos) = CaptureArguments(argList, ctor!);
@@ -680,7 +680,7 @@ public sealed partial class Emitter
             if (argList is not null) EmitArguments(argList, ctor);
             _w.Write(")");
         }
-        else if (type.ToDisplayString() == "System.Exception" || H5Naming.IsExternalType(type))
+        else if (type.ToDisplayString() == "System.Exception" || TransposeNaming.IsExternalType(type))
         {
             // External / ambient-JS types (StringBuilder, Exception, DOM globals like
             // MutationObserver, …) map to a native constructor that dispatches on arguments.
@@ -690,7 +690,7 @@ public sealed partial class Emitter
         }
         else
         {
-            // H5-generated BCL type: new (TypeRef).ctorName(args) — named-constructor form.
+            // Transpose-generated BCL type: new (TypeRef).ctorName(args) — named-constructor form.
             _w.Write($"new ({typeRef}).{ctorName}(");
             if (argList is not null) EmitArguments(argList, ctor);
             _w.Write(")");
@@ -706,7 +706,7 @@ public sealed partial class Emitter
                 // Object initializer member: X = value
                 case AssignmentExpressionSyntax { Left: IdentifierNameSyntax name } assign:
                     var memberSym = _model.GetSymbolInfo(name).Symbol;
-                    var memberName = memberSym is not null ? H5Naming.MemberJsName(memberSym) : NameMangler.JsIdentifier(name.Identifier.Text);
+                    var memberName = memberSym is not null ? TransposeNaming.MemberJsName(memberSym) : NameMangler.JsIdentifier(name.Identifier.Text);
                     _w.Write($"{target}.{memberName} = ");
                     EmitExpression(assign.Right);
                     _w.Write("; ");
@@ -743,7 +743,7 @@ public sealed partial class Emitter
     private string AddMethodName(ExpressionSyntax element)
     {
         if (_model.GetCollectionInitializerSymbolInfo(element).Symbol is IMethodSymbol add)
-            return H5Naming.MemberJsName(add);
+            return TransposeNaming.MemberJsName(add);
         return "add";
     }
 
@@ -797,7 +797,7 @@ public sealed partial class Emitter
         if (_model.GetSymbolInfo(binary).Symbol is IMethodSymbol { MethodKind: MethodKind.UserDefinedOperator, IsImplicitlyDeclared: false } opMethod
             && opMethod.Locations.Any(l => l.IsInSource))
         {
-            _w.Write($"{TypeRef(opMethod.ContainingType)}.{H5Naming.MemberJsName(opMethod)}(");
+            _w.Write($"{TypeRef(opMethod.ContainingType)}.{TransposeNaming.MemberJsName(opMethod)}(");
             EmitExpression(binary.Left);
             _w.Write(", ");
             EmitExpression(binary.Right);
@@ -809,7 +809,7 @@ public sealed partial class Emitter
         if (binary.IsKind(SyntaxKind.IsExpression))
         {
             var t = _model.GetTypeInfo(binary.Right).Type;
-            _w.Write("H5R.is(");
+            _w.Write("TransposeR.is(");
             EmitExpression(binary.Left);
             _w.Write($", {TypeRef(t!)})");
             return;
@@ -824,7 +824,7 @@ public sealed partial class Emitter
                 EmitExpression(binary.Left);
                 return;
             }
-            _w.Write("H5R.as(");
+            _w.Write("TransposeR.as(");
             EmitExpression(binary.Left);
             _w.Write($", {TypeRef(t)})");
             return;
@@ -837,11 +837,11 @@ public sealed partial class Emitter
         {
             var helper = (lName, rName, sub: binary.IsKind(SyntaxKind.SubtractExpression)) switch
             {
-                ("System.DateTime", "System.DateTime", true) => "H5R.dtSub",
-                ("System.DateTime", "System.TimeSpan", true) => "H5R.dtSubTs",
-                ("System.DateTime", "System.TimeSpan", false) => "H5R.dtAddTs",
-                ("System.TimeSpan", "System.TimeSpan", true) => "H5R.tsSub",
-                ("System.TimeSpan", "System.TimeSpan", false) => "H5R.tsAdd",
+                ("System.DateTime", "System.DateTime", true) => "TransposeR.dtSub",
+                ("System.DateTime", "System.TimeSpan", true) => "TransposeR.dtSubTs",
+                ("System.DateTime", "System.TimeSpan", false) => "TransposeR.dtAddTs",
+                ("System.TimeSpan", "System.TimeSpan", true) => "TransposeR.tsSub",
+                ("System.TimeSpan", "System.TimeSpan", false) => "TransposeR.tsAdd",
                 _ => null,
             };
             if (helper is not null)
@@ -893,7 +893,7 @@ public sealed partial class Emitter
         // Integer division
         if (binary.IsKind(SyntaxKind.DivideExpression) && IsIntegerType(leftType) && IsIntegerType(rightType))
         {
-            _w.Write("H5R.idiv(");
+            _w.Write("TransposeR.idiv(");
             EmitExpression(binary.Left);
             _w.Write(", ");
             EmitExpression(binary.Right);
@@ -902,11 +902,11 @@ public sealed partial class Emitter
         }
 
         // 32-bit integer multiplication wraps (unchecked C# semantics); JS "*" does not,
-        // so route through Math.imul via H5.Int.mul / umul.
+        // so route through Math.imul via Transpose.Int.mul / umul.
         if (binary.IsKind(SyntaxKind.MultiplyExpression)
             && resultType?.SpecialType is SpecialType.System_Int32 or SpecialType.System_UInt32)
         {
-            _w.Write(resultType.SpecialType == SpecialType.System_UInt32 ? "H5.Int.umul(" : "H5.Int.mul(");
+            _w.Write(resultType.SpecialType == SpecialType.System_UInt32 ? "Transpose.Int.umul(" : "Transpose.Int.mul(");
             EmitExpression(binary.Left);
             _w.Write(", ");
             EmitExpression(binary.Right);
@@ -932,7 +932,7 @@ public sealed partial class Emitter
             && (IsValueEqualityType(leftType) || IsValueEqualityType(rightType)))
         {
             if (binary.IsKind(SyntaxKind.NotEqualsExpression)) _w.Write("!");
-            _w.Write("H5R.equals(");
+            _w.Write("TransposeR.equals(");
             EmitExpression(binary.Left);
             _w.Write(", ");
             EmitExpression(binary.Right);
@@ -1054,7 +1054,7 @@ public sealed partial class Emitter
         }
         else if (IsCharType(type))
         {
-            _w.Write("H5R.chr(");
+            _w.Write("TransposeR.chr(");
             EmitExpression(operand);
             _w.Write(")");
         }
@@ -1066,7 +1066,7 @@ public sealed partial class Emitter
         }
         else
         {
-            _w.Write("H5R.toStr(");
+            _w.Write("TransposeR.toStr(");
             EmitExpression(operand);
             _w.Write(")");
         }
@@ -1091,7 +1091,7 @@ public sealed partial class Emitter
             && idx.ContainingType.SpecialType != SpecialType.System_String)
         {
             // Indexer setter [Template].
-            if (idx.SetMethod is { } setIdx && H5Naming.GetTemplate(setIdx.OriginalDefinition) is { } setIdxTpl)
+            if (idx.SetMethod is { } setIdx && TransposeNaming.GetTemplate(setIdx.OriginalDefinition) is { } setIdxTpl)
             {
                 var recv = Capture(() => EmitExpression(ea.Expression));
                 var args = ea.ArgumentList.Arguments.Select(a => Capture(() => EmitExpression(a.Expression))).ToList();
@@ -1100,7 +1100,7 @@ public sealed partial class Emitter
                 return;
             }
             // An [External] type's plain indexer sets via native bracket access (domElement["name"] = v).
-            if (H5Naming.IsNativeIndexer(idx))
+            if (TransposeNaming.IsNativeIndexer(idx))
             {
                 EmitExpression(ea.Expression);
                 _w.Write("[");
@@ -1110,7 +1110,7 @@ public sealed partial class Emitter
                 return;
             }
             EmitExpression(ea.Expression);
-            _w.Write("." + H5Naming.IndexerAccessorName(idx, isGet: false) + "(");
+            _w.Write("." + TransposeNaming.IndexerAccessorName(idx, isGet: false) + "(");
             EmitArgumentList(ea.ArgumentList);
             _w.Write(", ");
             EmitExpressionConverted(assignment.Right, leftType);
@@ -1121,7 +1121,7 @@ public sealed partial class Emitter
         // Property setter with a [Template] (e.g. StringBuilder.Length → setLength({0})).
         if (op == "=" && _model.GetSymbolInfo(assignment.Left).Symbol is IPropertySymbol { SetMethod: { } setter } setProp
             && !setProp.IsIndexer
-            && H5Naming.GetTemplate(setter.OriginalDefinition) is { } setTemplate)
+            && TransposeNaming.GetTemplate(setter.OriginalDefinition) is { } setTemplate)
         {
             var recv = setProp.IsStatic ? TypeRef(setProp.ContainingType)
                 : assignment.Left is MemberAccessExpressionSyntax sma ? Capture(() => EmitExpression(sma.Expression))
@@ -1138,7 +1138,7 @@ public sealed partial class Emitter
                 || _model.GetSymbolInfo(assignment.Left).Symbol is IEventSymbol))
         {
             EmitExpression(assignment.Left);
-            _w.Write($" = H5R.{(op == "+=" ? "combine" : "remove")}(");
+            _w.Write($" = TransposeR.{(op == "+=" ? "combine" : "remove")}(");
             EmitExpression(assignment.Left);
             _w.Write(", ");
             EmitExpression(assignment.Right);
@@ -1161,7 +1161,7 @@ public sealed partial class Emitter
         if (op == "/=" && IsIntegerType(leftType) && IsIntegerType(rightType))
         {
             EmitExpression(assignment.Left);
-            _w.Write(" = H5R.idiv(");
+            _w.Write(" = TransposeR.idiv(");
             EmitExpression(assignment.Left);
             _w.Write(", ");
             EmitExpression(assignment.Right);
@@ -1180,7 +1180,7 @@ public sealed partial class Emitter
             && opm.Locations.Any(l => l.IsInSource)
             && !prefix.IsKind(SyntaxKind.PreIncrementExpression) && !prefix.IsKind(SyntaxKind.PreDecrementExpression))
         {
-            _w.Write($"{TypeRef(opm.ContainingType)}.{H5Naming.MemberJsName(opm)}(");
+            _w.Write($"{TypeRef(opm.ContainingType)}.{TransposeNaming.MemberJsName(opm)}(");
             EmitExpression(prefix.Operand);
             _w.Write(")");
             return;
@@ -1240,7 +1240,7 @@ public sealed partial class Emitter
         }
         if (IsDecimalType(sourceType) && !IsDecimalType(targetType) && (IsIntegerType(targetType) || IsFloatingType(targetType)))
         {
-            if (IsIntegerType(targetType) && !Is64BitInteger(targetType)) { _w.Write("H5R.trunc("); EmitExpression(cast.Expression); _w.Write(".toFloat())"); }
+            if (IsIntegerType(targetType) && !Is64BitInteger(targetType)) { _w.Write("TransposeR.trunc("); EmitExpression(cast.Expression); _w.Write(".toFloat())"); }
             else { _w.Write("("); EmitExpression(cast.Expression); _w.Write(").toFloat()"); }
             return;
         }
@@ -1248,7 +1248,7 @@ public sealed partial class Emitter
         // Numeric narrowing to an integer type truncates toward zero.
         if (IsIntegerType(targetType) && IsFloatingType(sourceType))
         {
-            _w.Write("H5R.trunc(");
+            _w.Write("TransposeR.trunc(");
             EmitExpression(cast.Expression);
             _w.Write(")");
             return;
@@ -1279,13 +1279,13 @@ public sealed partial class Emitter
                     if (!first) _w.Write(" + ");
                     if (interpolation.FormatClause is not null)
                     {
-                        _w.Write("H5R.formatValue(");
+                        _w.Write("TransposeR.formatValue(");
                         EmitExpression(interpolation.Expression);
                         _w.Write($", {JsString(interpolation.FormatClause.FormatStringToken.ValueText)})");
                     }
                     else if (IsCharType(_model.GetTypeInfo(interpolation.Expression).Type))
                     {
-                        _w.Write("H5R.chr(");
+                        _w.Write("TransposeR.chr(");
                         EmitExpression(interpolation.Expression);
                         _w.Write(")");
                     }
@@ -1297,7 +1297,7 @@ public sealed partial class Emitter
                     }
                     else
                     {
-                        _w.Write("H5R.toStr(");
+                        _w.Write("TransposeR.toStr(");
                         EmitExpression(interpolation.Expression);
                         _w.Write(")");
                     }
@@ -1328,7 +1328,7 @@ public sealed partial class Emitter
             }
 
             // Indexer getter [Template] (e.g. some BCL indexers).
-            if (indexer.GetMethod is { } getM && H5Naming.GetTemplate(getM.OriginalDefinition) is { } getTpl)
+            if (indexer.GetMethod is { } getM && TransposeNaming.GetTemplate(getM.OriginalDefinition) is { } getTpl)
             {
                 var recv = Capture(() => EmitExpression(element.Expression));
                 var args = element.ArgumentList.Arguments.Select(a => Capture(() => EmitExpression(a.Expression))).ToList();
@@ -1337,7 +1337,7 @@ public sealed partial class Emitter
             }
 
             // An [External] type's plain indexer is native bracket access (e.g. domElement["name"]).
-            if (H5Naming.IsNativeIndexer(indexer))
+            if (TransposeNaming.IsNativeIndexer(indexer))
             {
                 EmitExpression(element.Expression);
                 _w.Write("[");
@@ -1348,7 +1348,7 @@ public sealed partial class Emitter
 
             // Source types and BCL collections route through the indexer accessor.
             EmitExpression(element.Expression);
-            _w.Write("." + H5Naming.IndexerAccessorName(indexer, isGet: true) + "(");
+            _w.Write("." + TransposeNaming.IndexerAccessorName(indexer, isGet: true) + "(");
             EmitArgumentList(element.ArgumentList);
             _w.Write(")");
             return;
@@ -1405,12 +1405,12 @@ public sealed partial class Emitter
             return;
         }
 
-        // new T[n] → H5R.array(n, default)
+        // new T[n] → TransposeR.array(n, default)
         var rankSpec = array.Type.RankSpecifiers.FirstOrDefault();
         var elementType = _model.GetTypeInfo(array.Type.ElementType).Type;
         if (rankSpec is { Sizes.Count: 1 } && rankSpec.Sizes[0] is not OmittedArraySizeExpressionSyntax)
         {
-            _w.Write("H5R.array(");
+            _w.Write("TransposeR.array(");
             EmitExpression(rankSpec.Sizes[0]);
             _w.Write($", {DefaultValueLiteral(elementType!)})");
             return;
@@ -1453,7 +1453,7 @@ public sealed partial class Emitter
                     }
                     else
                     {
-                        _w.Write("...H5R.spread(");
+                        _w.Write("...TransposeR.spread(");
                         EmitExpression(spread.Expression);
                         _w.Write(")");
                     }
@@ -1468,7 +1468,7 @@ public sealed partial class Emitter
 
         var target = _model.GetTypeInfo(collection).ConvertedType;
         // Arrays, spans, and collection interfaces (IEnumerable/IReadOnlyList/…) are all
-        // represented as plain JS arrays (h5.js enumerates arrays natively).
+        // represented as plain JS arrays (tps.js enumerates arrays natively).
         if (target is IArrayTypeSymbol
             || target is { TypeKind: TypeKind.Interface }
             || target?.OriginalDefinition.ToDisplayString() is "System.Span<T>" or "System.ReadOnlySpan<T>"
@@ -1493,7 +1493,7 @@ public sealed partial class Emitter
     {
         // Emit an arrow function so `this` is captured lexically, matching C# lambda semantics
         // (a plain `function` would rebind `this` and break `this`-referencing closures).
-        // An async lambda returns an h5.js Task (via the H5R.fromPromise wrapper in
+        // An async lambda returns an tps.js Task (via the TransposeR.fromPromise wrapper in
         // EmitMaybeAsyncBody), so it composes with Task.Run/WhenAll/ContinueWith; the outer
         // function is therefore not itself `async`.
         _w.Write("(");
@@ -1549,7 +1549,7 @@ public sealed partial class Emitter
         // A string-backed enum ([Enum(Emit.StringName*)]) constant emits its string name, not the
         // numeric ordinal — so a defaulted enum parameter (e.g. `format = default`) seeds the
         // string the runtime actually compares against.
-        if (type is INamedTypeSymbol { TypeKind: TypeKind.Enum } en && H5Naming.EnumEmitMode(en) is 3 or 4 or 5 or 6)
+        if (type is INamedTypeSymbol { TypeKind: TypeKind.Enum } en && TransposeNaming.EnumEmitMode(en) is 3 or 4 or 5 or 6)
             return EnumConstantLiteral(en, value);
         // 64-bit integer constants (e.g. long.MinValue) must be System.Int64/UInt64 instances.
         if (value is long or ulong && Is64BitInteger(type))
@@ -1573,11 +1573,11 @@ public sealed partial class Emitter
     /// <summary>The string literal for a string-backed enum constant with the given numeric value.</summary>
     private string EnumConstantLiteral(INamedTypeSymbol enumType, object value)
     {
-        var mode = H5Naming.EnumEmitMode(enumType);
+        var mode = TransposeNaming.EnumEmitMode(enumType);
         var v = Convert.ToInt64(value);
         var field = enumType.GetMembers().OfType<IFieldSymbol>()
             .FirstOrDefault(f => f.HasConstantValue && Convert.ToInt64(f.ConstantValue) == v);
-        return field is not null ? JsString(H5Naming.EnumStringName(field, mode)) : "null";
+        return field is not null ? JsString(TransposeNaming.EnumStringName(field, mode)) : "null";
     }
 
     private static bool IsStringType(ITypeSymbol? type) => type?.SpecialType == SpecialType.System_String;
@@ -1596,7 +1596,7 @@ public sealed partial class Emitter
     private static bool IsFloatingType(ITypeSymbol? type)
         => type?.SpecialType is SpecialType.System_Single or SpecialType.System_Double;
 
-    /// <summary>64-bit integer type (long/ulong) — h5.js models these as System.Int64/UInt64 objects.</summary>
+    /// <summary>64-bit integer type (long/ulong) — tps.js models these as System.Int64/UInt64 objects.</summary>
     private static bool Is64BitInteger(ITypeSymbol? type)
         => type?.SpecialType is SpecialType.System_Int64 or SpecialType.System_UInt64;
 

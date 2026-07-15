@@ -1,26 +1,26 @@
 using System.Linq;
 using Microsoft.CodeAnalysis;
 
-namespace H5.Translator.Roslyn;
+namespace Transpose.Translator;
 
 /// <summary>
-/// Reads the H5 code-generation attributes ([Template], [Name], [External], [Script])
-/// from symbols in the referenced H5 assembly, and derives JavaScript names using
-/// H5's conventions. This is what lets emitted code interoperate with the h5.js runtime.
+/// Reads the Transpose code-generation attributes ([Template], [Name], [External], [Script])
+/// from symbols in the referenced Transpose assembly, and derives JavaScript names using
+/// Transpose's conventions. This is what lets emitted code interoperate with the tps.js runtime.
 /// </summary>
-internal static class H5Naming
+internal static class TransposeNaming
 {
-    public const string TemplateAttr = "H5.TemplateAttribute";
-    public const string NameAttr = "H5.NameAttribute";
-    public const string ExternalAttr = "H5.ExternalAttribute";
-    public const string ScriptAttr = "H5.ScriptAttribute";
-    public const string EnumAttr = "H5.EnumAttribute";
-    public const string ScopeAttr = "H5.ScopeAttribute";
-    public const string GlobalMethodsAttr = "H5.GlobalMethodsAttribute";
+    public const string TemplateAttr = "Transpose.TemplateAttribute";
+    public const string NameAttr = "Transpose.NameAttribute";
+    public const string ExternalAttr = "Transpose.ExternalAttribute";
+    public const string ScriptAttr = "Transpose.ScriptAttribute";
+    public const string EnumAttr = "Transpose.EnumAttribute";
+    public const string ScopeAttr = "Transpose.ScopeAttribute";
+    public const string GlobalMethodsAttr = "Transpose.GlobalMethodsAttribute";
 
     /// <summary>
-    /// The JS scope prefix for a type marked <c>[Scope]</c>/<c>[GlobalMethods]</c> — the H5
-    /// bindings (e.g. <c>H5.Core.dom</c>) that project onto ambient JS globals. Returns the
+    /// The JS scope prefix for a type marked <c>[Scope]</c>/<c>[GlobalMethods]</c> — the Transpose
+    /// bindings (e.g. <c>Transpose.Core.dom</c>) that project onto ambient JS globals. Returns the
     /// scope's name argument, <c>""</c> for the global scope (no argument), or null when the
     /// type is not scoped. A scoped type's static members and nested types drop the C#
     /// type/namespace path and live under this prefix (so <c>dom.window</c> → <c>window</c>).
@@ -35,10 +35,10 @@ internal static class H5Naming
     }
 
     /// <summary>
-    /// The <c>[Enum(Emit.X)]</c> mode of an enum type (H5's <c>Emit</c> values:
+    /// The <c>[Enum(Emit.X)]</c> mode of an enum type (Transpose's <c>Emit</c> values:
     /// 1 Name, 2 Value, 3 StringName, 4 StringNamePreserveCase, 5 StringNameLowerCase,
     /// 6 StringNameUpperCase, 7 NamePreserveCase, 8 NameLowerCase, 9 NameUpperCase).
-    /// Defaults to 7 (NamePreserveCase) when the attribute is absent, matching H5.
+    /// Defaults to 7 (NamePreserveCase) when the attribute is absent, matching Transpose.
     /// </summary>
     public static int EnumEmitMode(ITypeSymbol enumType)
     {
@@ -49,7 +49,7 @@ internal static class H5Naming
 
     /// <summary>
     /// The string an enum member emits under a StringName mode (3–6): the member name
-    /// with H5's per-mode casing (3 camelCases the first letter, 5 lowercases, 6 uppercases,
+    /// with Transpose's per-mode casing (3 camelCases the first letter, 5 lowercases, 6 uppercases,
     /// 4 preserves), unless an explicit <c>[Name]</c> overrides it.
     /// </summary>
     public static string EnumStringName(IFieldSymbol member, int mode)
@@ -73,7 +73,7 @@ internal static class H5Naming
     public static string? GetName(ISymbol symbol)
         => GetStringAttr(symbol, NameAttr);
 
-    public const string AccessorsIndexerAttr = "H5.AccessorsIndexerAttribute";
+    public const string AccessorsIndexerAttr = "Transpose.AccessorsIndexerAttribute";
 
     /// <summary>
     /// True if an indexer maps to native JS bracket access (<c>obj[key]</c>) rather than
@@ -87,8 +87,8 @@ internal static class H5Naming
         // native JS objects like a DOM element's this[string]. The [External] BCL *collection
         // interfaces* (IReadOnlyList/IReadOnlyDictionary) still route through getItem/setItem.
         if (!indexer.IsIndexer) return false;
-        // External (or scope-bound, e.g. a DOM NodeList under H5.Core.dom's [Scope]) non-interface
-        // types are native JS objects, so their indexer is bracket access. Real H5 runtime
+        // External (or scope-bound, e.g. a DOM NodeList under Transpose.Core.dom's [Scope]) non-interface
+        // types are native JS objects, so their indexer is bracket access. Real Transpose runtime
         // collection classes (List<T>, Dictionary<,>, …) are not external and keep getItem/setItem.
         if (indexer.ContainingType is not { TypeKind: TypeKind.Class } ct || !IsExternalType(ct)) return false;
         if (indexer.ContainingType.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == AccessorsIndexerAttr)) return false;
@@ -113,7 +113,7 @@ internal static class H5Naming
     /// <summary>
     /// True if the type behaves like an external JS type for naming (no overload suffixes,
     /// camelCase members): it carries [External], or it is projected onto ambient JS globals
-    /// via a [Scope]/[GlobalMethods] binding (e.g. the DOM types under H5.Core.dom).
+    /// via a [Scope]/[GlobalMethods] binding (e.g. the DOM types under Transpose.Core.dom).
     /// </summary>
     public static bool IsExternalType(ITypeSymbol? type)
     {
@@ -124,48 +124,48 @@ internal static class H5Naming
     }
 
     /// <summary>
-    /// True if a type is emitted by an H5 compiler with source naming conventions — either it is
+    /// True if a type is emitted by an Transpose compiler with source naming conventions — either it is
     /// in this compilation's source, or it lives in a referenced *user library* assembly (one
-    /// compiled with --emit-package). It is false for external/DOM types and for the H5 runtime
-    /// assemblies (H5, H5.Core, …) whose BCL types are baked into h5.js with fixed names. This is
+    /// compiled with --emit-package). It is false for external/DOM types and for the Transpose runtime
+    /// assemblies (Transpose, Transpose.Core, …) whose BCL types are baked into tps.js with fixed names. This is
     /// the discriminator for names that must agree between a library and the projects that
     /// reference it — preserving existing source/BCL behaviour while treating a referenced library
     /// the same as source.
     /// </summary>
-    public static bool IsH5CompiledSource(ITypeSymbol? type)
+    public static bool IsTransposeCompiledSource(ITypeSymbol? type)
     {
         if (type is null) return false;
         if (type.Locations.Any(l => l.IsInSource)) return true;
-        return !IsExternalType(type) && !IsH5RuntimeAssembly(type.ContainingAssembly);
+        return !IsExternalType(type) && !IsTransposeRuntimeAssembly(type.ContainingAssembly);
     }
 
-    /// <summary>An H5 runtime/BCL package (H5.dll, H5.Core.dll, H5.Newtonsoft.Json.dll, …) whose
+    /// <summary>An Transpose runtime/BCL package (Transpose.dll, Transpose.Core.dll, Transpose.Newtonsoft.Json.dll, …) whose
     /// types are provided pre-compiled by the runtime, as opposed to a user library.</summary>
-    private static bool IsH5RuntimeAssembly(IAssemblySymbol? asm)
+    private static bool IsTransposeRuntimeAssembly(IAssemblySymbol? asm)
     {
         var n = asm?.Name;
-        return n == "H5" || (n is not null && n.StartsWith("H5.", System.StringComparison.Ordinal));
+        return n == "Transpose" || (n is not null && n.StartsWith("Transpose.", System.StringComparison.Ordinal));
     }
 
     /// <summary>
     /// True if an interface should be listed in a type's <c>inherits</c> so the runtime tracks it
     /// for <c>is</c>/<c>as</c> and interface dispatch. This is every implemented interface that the
-    /// runtime registers: source/referenced-library interfaces AND the H5 BCL interfaces
+    /// runtime registers: source/referenced-library interfaces AND the Transpose BCL interfaces
     /// (System.Collections.Generic.IList/ICollection/IEnumerable, IComparable, …) which are real
-    /// H5.define'd types. Only ambient DOM/scoped interfaces are excluded (they are native JS, not
-    /// H5-registered). Omitting the BCL collection interfaces breaks e.g. LINQ over a user
+    /// Transpose.define'd types. Only ambient DOM/scoped interfaces are excluded (they are native JS, not
+    /// Transpose-registered). Omitting the BCL collection interfaces breaks e.g. LINQ over a user
     /// collection: <c>Enumerable.from(x)</c> tests <c>x is IEnumerable</c> before enumerating it.
     /// </summary>
     public static bool IsInheritableInterface(ITypeSymbol? i)
     {
         if (i is not { TypeKind: TypeKind.Interface }) return false;
         if (IsScopedType(i)) return false;                       // DOM / ambient JS — not registered
-        if (IsH5CompiledSource(i)) return true;                  // source or referenced user library
-        return IsH5RuntimeAssembly(i.ContainingAssembly);        // H5 BCL interface (IList, IEnumerable, …)
+        if (IsTransposeCompiledSource(i)) return true;                  // source or referenced user library
+        return IsTransposeRuntimeAssembly(i.ContainingAssembly);        // Transpose BCL interface (IList, IEnumerable, …)
     }
 
     /// <summary>True if the type (or an enclosing type) is a [Scope]/[GlobalMethods] binding
-    /// projected onto ambient JS (e.g. the DOM types under H5.Core.dom).</summary>
+    /// projected onto ambient JS (e.g. the DOM types under Transpose.Core.dom).</summary>
     public static bool IsScopedType(ITypeSymbol? type)
     {
         for (var t = type; t is not null; t = t.ContainingType)
@@ -191,7 +191,7 @@ internal static class H5Naming
             if (s.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == ExternalAttr))
                 return true;
         }
-        // Types defined in the H5 assembly (not in user source) are external BCL.
+        // Types defined in the Transpose assembly (not in user source) are external BCL.
         return !symbol.Locations.Any(l => l.IsInSource);
     }
 
@@ -206,21 +206,21 @@ internal static class H5Naming
 
     /// <summary>
     /// JavaScript member name for a member with no [Template], honouring [Name]
-    /// and H5's convention (camelCase methods for library members; source members
+    /// and Transpose's convention (camelCase methods for library members; source members
     /// keep their C# name, with the entry point mapped to "main").
     /// </summary>
     public static string MemberJsName(ISymbol symbol)
     {
         // An explicit interface implementation is named by the interface-qualified mangled
-        // name H5 uses (e.g. IMyInterface.Method → Namespace$IMyInterface$method), so it
+        // name Transpose uses (e.g. IMyInterface.Method → Namespace$IMyInterface$method), so it
         // stays a valid JS identifier and matches the runtime's interface-member slot.
         if (ExplicitInterfaceMangledName(symbol) is { } explicitName) return explicitName;
 
         // A member accessed through a *source* interface type resolves to the interface's own
-        // member; H5 stores it under a mangled slot (Namespace$IFace$member) that every
+        // member; Transpose stores it under a mangled slot (Namespace$IFace$member) that every
         // implementer aliases (see InterfaceAliasPairs), so route the access there — this is
         // what reaches explicit implementations. BCL interfaces keep the plain name: their
-        // implementers (h5.js types) expose it directly, so plain access already resolves.
+        // implementers (tps.js types) expose it directly, so plain access already resolves.
         if (symbol.ContainingType is { TypeKind: TypeKind.Interface } iface && IsSourceInterface(iface))
             return MangledTypeName(iface) + "$" + LeafJsName(symbol);
 
@@ -235,12 +235,12 @@ internal static class H5Naming
         var raw = RawMemberName(symbol);
 
         // A property/field/event that hides a same-named base member (C# `new`) takes its own
-        // slot via a $N suffix (as H5 does), so the hiding member and the base member don't
+        // slot via a $N suffix (as Transpose does), so the hiding member and the base member don't
         // collide — and base access (base.X, emitted as this.X) still reaches the base slot.
-        // Only H5-compiled members (source or referenced library) get a slot suffix: an
+        // Only Transpose-compiled members (source or referenced library) get a slot suffix: an
         // external/native member (e.g. a DOM NodeListOf<T>.length hiding NodeList.length) maps to
         // a single fixed JS property, so suffixing it would reference a nonexistent property.
-        if (GetName(symbol) is null && IsH5CompiledSource(symbol.ContainingType)
+        if (GetName(symbol) is null && IsTransposeCompiledSource(symbol.ContainingType)
             && symbol is IPropertySymbol { IsIndexer: false } or IFieldSymbol or IEventSymbol)
         {
             var idx = HidingIndex(symbol, raw);
@@ -320,7 +320,7 @@ internal static class H5Naming
     /// accessed through one of its interfaces resolves to the implementing member. Covers
     /// members this type implements *implicitly* — explicit implementations are already
     /// emitted under the mangled slot, and inherited implementations are aliased by the base
-    /// type. H5's `alias` config installs these on the prototype.
+    /// type. Transpose's `alias` config installs these on the prototype.
     /// </summary>
     public static System.Collections.Generic.List<(string plain, string mangled)> InterfaceAliasPairs(INamedTypeSymbol type)
     {
@@ -354,13 +354,13 @@ internal static class H5Naming
     /// interface slots; BCL interfaces resolve through their implementers' plain names.</summary>
     private static bool IsSourceInterface(INamedTypeSymbol iface)
         // A user-defined interface — whether from this compilation's source or a referenced
-        // H5-compiled assembly (both mangle their members the same way). Only truly external
+        // Transpose-compiled assembly (both mangle their members the same way). Only truly external
         // (BCL/DOM) interfaces resolve through their implementers' plain names.
-        => iface.TypeKind == TypeKind.Interface && IsH5CompiledSource(iface);
+        => iface.TypeKind == TypeKind.Interface && IsTransposeCompiledSource(iface);
 
     /// <summary>Full type name as a single JS identifier: dotted segments joined by <c>$</c>,
     /// with a generic arity suffix (e.g. <c>System$Collections$Generic$IComparer$1</c>). Honours a
-    /// type-level <c>[H5.Name]</c> (its dotted value becomes the mangled prefix, e.g.
+    /// type-level <c>[Transpose.Name]</c> (its dotted value becomes the mangled prefix, e.g.
     /// <c>[Name("tss.IC")]</c> → <c>tss$IC</c>), so interface-member slots stay consistent with the
     /// type's registered name.</summary>
     private static string MangledTypeName(INamedTypeSymbol type)
@@ -400,16 +400,16 @@ internal static class H5Naming
         var baseName = JsBaseName(method);
 
         // A canonical name (object-override, explicit/inherited [Name], or an implemented
-        // interface member's name) is used verbatim — no overload suffix (H5 behaviour).
+        // interface member's name) is used verbatim — no overload suffix (Transpose behaviour).
         // External non-interface types also skip suffixes.
         var declType = method.ContainingType;
         var external = declType is not null && IsExternalType(declType) && declType.TypeKind != TypeKind.Interface;
 
         // Extern (no IL body) methods on a non-external type are hand-written-JS backed:
-        // H5 excludes them from the overload set, so they carry no suffix.
+        // Transpose excludes them from the overload set, so they carry no suffix.
         if (external || HasCanonicalName(method) || HasNoBody(method)) return Cache(method, baseName);
 
-        // Overload index via H5's overload-collection ordering (override → base member),
+        // Overload index via Transpose's overload-collection ordering (override → base member),
         // grouped by the FINAL JS base name so differently-named overloads don't collide.
         var resolved = ResolveOverrideBase(method);
         var group = OverloadGroup(resolved);
@@ -426,14 +426,14 @@ internal static class H5Naming
         return Cache(method, result);
     }
 
-    // The object-method override signatures (H5 gives these canonical runtime names).
+    // The object-method override signatures (Transpose gives these canonical runtime names).
     private static bool IsObjectToString(IMethodSymbol m) => m is { Name: "ToString", Parameters.Length: 0 };
     private static bool IsObjectGetHashCode(IMethodSymbol m) => m is { Name: "GetHashCode", Parameters.Length: 0 };
     private static bool IsObjectEquals(IMethodSymbol m)
         => m is { Name: "Equals", Parameters.Length: 1 } && m.Parameters[0].Type.SpecialType == SpecialType.System_Object;
 
     /// <summary>
-    /// The un-suffixed JS name for a method, following H5's resolution order:
+    /// The un-suffixed JS name for a method, following Transpose's resolution order:
     /// object-override runtime names, an explicit [Name], an inherited [Name] (from an
     /// overridden base or implemented interface member), the implemented interface member's
     /// own name, then the convention-derived name.
@@ -453,22 +453,22 @@ internal static class H5Naming
     private static bool HasCanonicalName(IMethodSymbol m)
         => IsObjectToString(m) || IsObjectGetHashCode(m) || IsObjectEquals(m)
            || GetName(m) is not null || InheritedName(m) is not null;
-    // Note: a plain interface implementation is NOT canonical — H5 still numbers it through the
+    // Note: a plain interface implementation is NOT canonical — Transpose still numbers it through the
     // overload collection (so a type implementing e.g. both IDictionary.Add(k,v) and
     // ICollection.Add(KeyValuePair) gets add / add$1, not two colliding `add` keys). A lone
     // interface implementation still lands at index 0 and keeps its bare name.
 
     /// <summary>
-    /// True if this is a library (H5.dll) method with no IL body and not abstract — a C#
+    /// True if this is a library (Transpose.dll) method with no IL body and not abstract — a C#
     /// <c>extern</c> member backed by hand-written runtime JS (e.g. <c>Regex.Replace</c>).
-    /// H5 leaves such members out of a non-external type's overload set, so they take the
+    /// Transpose leaves such members out of a non-external type's overload set, so they take the
     /// bare convention name with no <c>$N</c> suffix.
     /// </summary>
     public static bool HasNoBody(IMethodSymbol method)
     {
         if (method.Locations.Any(l => l.IsInSource)) return false;
-        if (method.ContainingAssembly?.Name != "H5") return false;
-        return H5Assemblies.NoBodyMethodTokens.Contains(method.OriginalDefinition.MetadataToken);
+        if (method.ContainingAssembly?.Name != "Transpose") return false;
+        return TransposeAssemblies.NoBodyMethodTokens.Contains(method.OriginalDefinition.MetadataToken);
     }
 
     /// <summary>A [Name] inherited from an overridden base method or an implemented interface member.</summary>
@@ -500,8 +500,8 @@ internal static class H5Naming
     private static string Cache(IMethodSymbol m, string name) { _methodCache[m.OriginalDefinition] = name; return name; }
 
     /// <summary>
-    /// JS name of a constructor using H5's OverloadsCollection ordering: the first
-    /// constructor is "ctor", the rest "$ctor1", "$ctor2"… This matches the names h5.js
+    /// JS name of a constructor using Transpose's OverloadsCollection ordering: the first
+    /// constructor is "ctor", the rest "$ctor1", "$ctor2"… This matches the names tps.js
     /// was generated with, so BCL constructions (e.g. new Guid(string) → $ctor4) resolve.
     /// </summary>
     public static string ConstructorName(IMethodSymbol ctor)
@@ -523,17 +523,17 @@ internal static class H5Naming
     /// <summary>Notation for a library method: member [Convention], else type [Convention], else interface-inherited camelCase, else external, else preserve.</summary>
     private static Notation MethodNotation(IMethodSymbol method)
     {
-        // H5-compiled methods (source or referenced library) keep their verbatim name; only the
+        // Transpose-compiled methods (source or referenced library) keep their verbatim name; only the
         // external-type conventions below apply to BCL/DOM methods.
-        if (IsH5CompiledSource(method.ContainingType)) return Notation.None;
+        if (IsTransposeCompiledSource(method.ContainingType)) return Notation.None;
         // A [Convention] applied directly to the method (e.g. IComparer<T>.Compare) wins.
         if (MemberConventionNotation(method) is { } mc) return mc;
         var conv = ResolveNotation(method.ContainingType, ConvMethod);
         if (conv is { } c) return c;
-        // A templated member with no [Convention] keeps its raw name — H5 does not camelCase it.
+        // A templated member with no [Convention] keeps its raw name — Transpose does not camelCase it.
         // The [Template] drives every call site, so the name is used only for an implementer's
         // method slot: e.g. IEnumerable.GetEnumerator (templated, no [Convention]) stays
-        // "GetEnumerator", the PascalCase name h5.js's H5.getEnumerator looks up. (Collection
+        // "GetEnumerator", the PascalCase name tps.js's Transpose.getEnumerator looks up. (Collection
         // interfaces whose members SHOULD camelCase — ICollection.Add etc. — carry an explicit
         // type-level [Convention], handled above before this point.)
         if (GetTemplate(method) is not null) return Notation.None;
@@ -558,7 +558,7 @@ internal static class H5Naming
         return false;
     }
 
-    // ---- overload collection (ported from H5's OverloadsCollection) --------
+    // ---- overload collection (ported from Transpose's OverloadsCollection) --------
 
     private static System.Collections.Generic.List<IMethodSymbol> OverloadGroup(IMethodSymbol method)
     {
@@ -582,7 +582,7 @@ internal static class H5Naming
 
                 // The parameterless object ToString occupies a slot (so a same-named
                 // overload like Version.ToString(int) numbers from $1), even though it is
-                // inline/body-less — H5 keeps only ToString here, not Equals/GetHashCode.
+                // inline/body-less — Transpose keeps only ToString here, not Equals/GetHashCode.
                 var isToStringSlot = IsObjectToString(c);
                 if (!isToStringSlot && GetTemplate(c) is not null) continue;   // inline methods are excluded
                 if (!isToStringSlot && HasNoBody(c)) continue;                 // extern (hand-written JS) methods aren't numbered
@@ -609,7 +609,7 @@ internal static class H5Naming
         var c2 = m2.MethodKind == MethodKind.Constructor;
         if (c1 && !c2) return -1;
         if (c2 && !c1) return 1;
-        // Two constructors compare by signature directly (H5 returns here, before accessibility).
+        // Two constructors compare by signature directly (Transpose returns here, before accessibility).
         if (c1 && c2) return string.Compare(MethodToString(m1), MethodToString(m2), System.StringComparison.CurrentCulture);
 
         var a1 = AccessibilityWeight(m1.DeclaredAccessibility);
@@ -709,13 +709,13 @@ internal static class H5Naming
         };
     }
 
-    public const string ConventionAttr = "H5.ConventionAttribute";
+    public const string ConventionAttr = "Transpose.ConventionAttribute";
 
     public static string CamelCase(string s)
     {
         if (string.IsNullOrEmpty(s) || char.IsLower(s[0])) return s;
         if (s.Length == 1) return s.ToLowerInvariant();
-        // Leave ALLCAPS runs mostly alone but lower the first char (H5 behavior is
+        // Leave ALLCAPS runs mostly alone but lower the first char (Transpose behavior is
         // first-letter lowercase for typical PascalCase identifiers).
         return char.ToLowerInvariant(s[0]) + s.Substring(1);
     }

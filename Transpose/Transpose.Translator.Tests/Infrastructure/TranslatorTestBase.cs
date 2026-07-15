@@ -2,11 +2,11 @@ using System;
 using System.Linq;
 using System.Threading.Tasks;
 
-namespace H5.Translator.Roslyn.Tests;
+namespace Transpose.Translator.Tests;
 
 /// <summary>
 /// Base class for the Roslyn translator integration tests. Mirrors the behavior
-/// (and signature) of the existing H5 <c>IntegrationTestBase</c>: it runs the same
+/// (and signature) of the existing Transpose <c>IntegrationTestBase</c>: it runs the same
 /// C# both natively (Roslyn) and as translated JavaScript (Node), then diffs the
 /// normalized console output.
 /// </summary>
@@ -18,9 +18,9 @@ public abstract class TranslatorTestBase
     /// </summary>
     /// <param name="csharpCode">The C# to translate + run as JS.</param>
     /// <param name="waitForOutput">Ignored (Node runs the program to completion, incl. async).</param>
-    /// <param name="skipRoslyn">Skip native execution / comparison (H5-only behavior check).</param>
+    /// <param name="skipRoslyn">Skip native execution / comparison (Transpose-only behavior check).</param>
     /// <param name="overrideRoslynCode">Alternate source to run natively (when it must differ).</param>
-    /// <param name="includeCorePackages">Ignored (the clean-room runtime models no h5.core bindings).</param>
+    /// <param name="includeCorePackages">Ignored (the clean-room runtime models no tps.core bindings).</param>
     protected async Task<string> RunTest(
         string csharpCode,
         string? waitForOutput = null,
@@ -34,13 +34,13 @@ public abstract class TranslatorTestBase
         if (!result.Success)
         {
             var errors = string.Join("\n", result.Errors.Select(d => d.GetMessage()));
-            Assert.Fail($"H5.Translator.Roslyn translation failed:\n{errors}");
+            Assert.Fail($"Transpose.Translator translation failed:\n{errors}");
         }
 
         string jsOutput;
         try
         {
-            // Prepend the real h5.js runtime + shim; h5.js auto-runs the entry point.
+            // Prepend the real tps.js runtime + shim; tps.js auto-runs the entry point.
             var full = RoslynTranslator.LoadRuntime() + "\n" + result.Javascript!;
             jsOutput = await NodeJsRunner.RunAsync(full);
         }
@@ -56,7 +56,7 @@ public abstract class TranslatorTestBase
         {
             var nativeOutput = Normalize(RoslynNativeRunner.CompileAndRun(overrideRoslynCode ?? csharpCode));
             Assert.AreEqual(nativeOutput, jsOutput,
-                $"Output mismatch.\n\nExpected (native Roslyn):\n----\n{nativeOutput}\n----\n\nActual (H5.Translator.Roslyn / JS):\n----\n{jsOutput}\n----\n\n--- Generated JS ---\n{result.Javascript}");
+                $"Output mismatch.\n\nExpected (native Roslyn):\n----\n{nativeOutput}\n----\n\nActual (Transpose.Translator / JS):\n----\n{jsOutput}\n----\n\n--- Generated JS ---\n{result.Javascript}");
         }
 
         return jsOutput;

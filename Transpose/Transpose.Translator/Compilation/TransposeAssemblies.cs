@@ -7,37 +7,37 @@ using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
 
-namespace H5.Translator.Roslyn;
+namespace Transpose.Translator;
 
 /// <summary>
-/// Locates the H5 reference assembly (H5.dll) and extracts the embedded H5
-/// JavaScript runtime (h5.js) so emitted code can run against the real H5 runtime.
+/// Locates the Transpose reference assembly (Transpose.dll) and extracts the embedded Transpose
+/// JavaScript runtime (tps.js) so emitted code can run against the real Transpose runtime.
 /// </summary>
-public static class H5Assemblies
+public static class TransposeAssemblies
 {
-    private static string? _h5DllPath;
+    private static string? _tpsDllPath;
     private static string? _runtimeJs;
     private static HashSet<int>? _noBodyTokens;
 
-    /// <summary>Path to H5.dll, discovered from the NuGet global-packages cache (overridable).</summary>
-    public static string H5DllPath
+    /// <summary>Path to Transpose.dll, discovered from the NuGet global-packages cache (overridable).</summary>
+    public static string TransposeDllPath
     {
-        get => _h5DllPath ??= Discover();
-        set => _h5DllPath = value;
+        get => _tpsDllPath ??= Discover();
+        set => _tpsDllPath = value;
     }
 
     private static string Discover()
     {
         // Allow explicit override.
-        var env = Environment.GetEnvironmentVariable("H5_DLL_PATH");
+        var env = Environment.GetEnvironmentVariable("TRANSPOSE_DLL_PATH");
         if (!string.IsNullOrEmpty(env) && File.Exists(env)) return env;
 
         var candidates =
             from root in NuGetRoots()
-            let pkg = Path.Combine(root, "h5")
+            let pkg = Path.Combine(root, "tps")
             where Directory.Exists(pkg)
             from versionDir in Directory.GetDirectories(pkg)
-            let dll = Path.Combine(versionDir, "lib", "netstandard2.0", "H5.dll")
+            let dll = Path.Combine(versionDir, "lib", "netstandard2.0", "Transpose.dll")
             where File.Exists(dll)
             orderby versionDir
             select dll;
@@ -46,7 +46,7 @@ public static class H5Assemblies
         if (found is null)
         {
             throw new InvalidOperationException(
-                "Could not locate H5.dll in the NuGet packages cache. Set the H5_DLL_PATH environment variable.");
+                "Could not locate Transpose.dll in the NuGet packages cache. Set the TRANSPOSE_DLL_PATH environment variable.");
         }
         return found;
     }
@@ -61,9 +61,9 @@ public static class H5Assemblies
     }
 
     /// <summary>
-    /// Metadata tokens of the H5.dll methods that carry no IL body and are not abstract —
+    /// Metadata tokens of the Transpose.dll methods that carry no IL body and are not abstract —
     /// i.e. C# <c>extern</c> methods/constructors whose behaviour is supplied by a
-    /// hand-written JS runtime file (e.g. <c>Regex</c>). H5's <c>OverloadsCollection</c>
+    /// hand-written JS runtime file (e.g. <c>Regex</c>). Transpose's <c>OverloadsCollection</c>
     /// excludes these from a non-external type's overload set, so they receive no
     /// <c>$N</c> suffix (matching the single dispatching name in the hand-written JS).
     /// </summary>
@@ -73,7 +73,7 @@ public static class H5Assemblies
         {
             if (_noBodyTokens is not null) return _noBodyTokens;
             var set = new HashSet<int>();
-            using (var fs = File.OpenRead(H5DllPath))
+            using (var fs = File.OpenRead(TransposeDllPath))
             using (var pe = new PEReader(fs))
             {
                 var mr = pe.GetMetadataReader();
@@ -89,16 +89,16 @@ public static class H5Assemblies
         }
     }
 
-    /// <summary>The embedded H5 JavaScript runtime (h5.js), read once from H5.dll.</summary>
+    /// <summary>The embedded Transpose JavaScript runtime (tps.js), read once from Transpose.dll.</summary>
     public static string RuntimeJs
     {
         get
         {
             if (_runtimeJs is not null) return _runtimeJs;
-            var asm = Assembly.LoadFrom(H5DllPath);
-            var name = asm.GetManifestResourceNames().FirstOrDefault(n => n.Equals("h5.js", StringComparison.OrdinalIgnoreCase))
-                ?? asm.GetManifestResourceNames().FirstOrDefault(n => n.EndsWith("h5.js", StringComparison.OrdinalIgnoreCase))
-                ?? throw new InvalidOperationException("h5.js resource not found in H5.dll.");
+            var asm = Assembly.LoadFrom(TransposeDllPath);
+            var name = asm.GetManifestResourceNames().FirstOrDefault(n => n.Equals("tps.js", StringComparison.OrdinalIgnoreCase))
+                ?? asm.GetManifestResourceNames().FirstOrDefault(n => n.EndsWith("tps.js", StringComparison.OrdinalIgnoreCase))
+                ?? throw new InvalidOperationException("tps.js resource not found in Transpose.dll.");
             using var stream = asm.GetManifestResourceStream(name)!;
             using var reader = new StreamReader(stream);
             _runtimeJs = reader.ReadToEnd();

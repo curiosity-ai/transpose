@@ -1,7 +1,7 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System.Threading.Tasks;
 
-namespace H5.Translator.Roslyn.Tests.Ported
+namespace Transpose.Translator.Tests.Ported
 {
     [TestClass]
     public class OutVarUserReproTests : TranslatorTestBase

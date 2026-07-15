@@ -2,7 +2,7 @@ using System;
 using System.Threading.Tasks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
-namespace H5.Translator.Roslyn.Tests.Ported
+namespace Transpose.Translator.Tests.Ported
 {
     [TestClass]
     public class SpecialAttributesTests : TranslatorTestBase
@@ -11,7 +11,7 @@ namespace H5.Translator.Roslyn.Tests.Ported
         public async Task TestObjectLiteral_Default()
         {
             var code = @"
-using H5;
+using Transpose;
 using System;
 
 [ObjectLiteral]
@@ -60,7 +60,7 @@ public class Program
              // Based on previous run, it seems Initializer mode INCLUDES property initializers,
              // and ObjectLiteral defaults to PascalCase (Preserve casing).
              var code = @"
-using H5;
+using Transpose;
 using System;
 
 [ObjectLiteral(ObjectInitializationMode.Initializer)]
@@ -98,7 +98,7 @@ public class Program
              // Test ObjectInitializationMode.Ignore
              // Based on previous run, Ignore mode EXCLUDES property initializers (unless in object init).
              var code = @"
-using H5;
+using Transpose;
 using System;
 
 [ObjectLiteral(ObjectInitializationMode.Ignore)]
@@ -132,7 +132,7 @@ public class Program
         public async Task TestNameAttribute()
         {
             var code = @"
-using H5;
+using Transpose;
 using System;
 
 namespace TestNamespace
@@ -171,7 +171,7 @@ namespace TestNamespace
         public async Task TestTemplateAttribute()
         {
             var code = @"
-using H5;
+using Transpose;
 using System;
 
 public class Utils
@@ -202,7 +202,7 @@ public class Program
         public async Task TestEnumAttribute()
         {
             var code = @"
-using H5;
+using Transpose;
 using System;
 
 [Enum(Emit.Value)]
@@ -229,15 +229,15 @@ public class Program
         Console.WriteLine(""ValA: "" + valA);
         if (valA.ToString() != ""1"") throw new Exception(""EnumValue.A should be 1"");
 
-        // Emit.StringName -> defaults to camelCase in H5 unless configured otherwise?
+        // Emit.StringName -> defaults to camelCase in Transpose unless configured otherwise?
         // Let's check what it emits. Usually StringName means string representation.
-        // H5 default for StringName is often the name as string.
+        // Transpose default for StringName is often the name as string.
         object valFirst = EnumString.First;
         Console.WriteLine(""EnumString.First: "" + valFirst);
-        // Note: H5 default notation might affect this, but StringName usually emits the name.
+        // Note: Transpose default notation might affect this, but StringName usually emits the name.
         // Let's verify if it's a string.
         if (!(valFirst is string)) throw new Exception(""EnumString should emit string"");
-        // Emit.StringName camelCases the first letter (H5 behaviour): First -> first.
+        // Emit.StringName camelCases the first letter (Transpose behaviour): First -> first.
         if ((string)valFirst != ""first"") throw new Exception(""EnumString.First should be 'first'"");
 
         // Emit.StringNamePreserveCase

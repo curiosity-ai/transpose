@@ -5,7 +5,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
-namespace H5.Translator.Roslyn;
+namespace Transpose.Translator;
 
 public sealed partial class Emitter
 {
@@ -133,9 +133,9 @@ public sealed partial class Emitter
                 EmitExpression(checkedExpr.Expression);
                 break;
             case AwaitExpressionSyntax await:
-                // h5.js Tasks are not natively thenable; H5.toPromise adapts a Task (or an
+                // tps.js Tasks are not natively thenable; Transpose.toPromise adapts a Task (or an
                 // already-native Promise) into something JS `await` can drive.
-                _w.Write("(await H5.toPromise(");
+                _w.Write("(await Transpose.toPromise(");
                 EmitExpression(await.Expression);
                 _w.Write("))");
                 break;
@@ -161,7 +161,7 @@ public sealed partial class Emitter
                 EmitQuery(query);
                 break;
             case WithExpressionSyntax with:
-                _w.Write("(function ($w) { var $c = H5R.clone($w); ");
+                _w.Write("(function ($w) { var $c = TransposeR.clone($w); ");
                 EmitInitializer("$c", with.Initializer);
                 _w.Write("return $c; })(");
                 EmitExpression(with.Expression);
@@ -189,7 +189,7 @@ public sealed partial class Emitter
         if (targetType is not null && sourceType is not null
             && IsIntegerType(targetType) && IsFloatingType(sourceType))
         {
-            _w.Write("H5R.trunc(");
+            _w.Write("TransposeR.trunc(");
             EmitExpression(expr);
             _w.Write(")");
             return;
@@ -222,7 +222,7 @@ public sealed partial class Emitter
         // string, so those box to themselves without a lookup.
         if (sourceType is { TypeKind: TypeKind.Enum }
             && targetType?.SpecialType is SpecialType.System_Object or SpecialType.System_String
-            && H5Naming.EnumEmitMode(sourceType) is not (2 or 3 or 4 or 5 or 6))
+            && TransposeNaming.EnumEmitMode(sourceType) is not (2 or 3 or 4 or 5 or 6))
         {
             _w.Write($"System.Enum.toString({TypeRef(sourceType)}, ");
             EmitExpression(expr);
@@ -234,7 +234,7 @@ public sealed partial class Emitter
         // from a referencing expression, so mutations to the copy don't alias the source.
         if (IsSourceStruct(sourceType) && IsReferencingExpression(expr))
         {
-            _w.Write("H5R.clone(");
+            _w.Write("TransposeR.clone(");
             EmitExpression(expr);
             _w.Write(")");
             return;
@@ -299,7 +299,7 @@ public sealed partial class Emitter
     }
 
     /// <summary>
-    /// A 64-bit integer literal → an h5.js System.Int64/UInt64 instance. Values within JS
+    /// A 64-bit integer literal → an tps.js System.Int64/UInt64 instance. Values within JS
     /// safe-integer range pass a number; larger ones pass a decimal string to keep precision.
     /// </summary>
     internal static string Long64Literal(object value, bool unsigned)
@@ -399,7 +399,7 @@ public sealed partial class Emitter
                 EmitPropertyAccess(prop, thisTarget: null);
                 break;
             case IEventSymbol ev:
-                _w.Write(ev.IsStatic ? StaticMemberAccess(ev) : $"this.{H5Naming.MemberJsName(ev)}");
+                _w.Write(ev.IsStatic ? StaticMemberAccess(ev) : $"this.{TransposeNaming.MemberJsName(ev)}");
                 break;
             case IMethodSymbol { MethodKind: MethodKind.LocalFunction } localFn:
                 _w.Write(NameMangler.JsIdentifier(localFn.Name));
@@ -422,7 +422,7 @@ public sealed partial class Emitter
         // A [Template] on the field defines how the access emits — e.g. the DOM literal fields
         // dom.InsertPosition.afterend ([Template("<self>\"afterend\"")]) → the string "afterend",
         // not a Type.member reference that would resolve to undefined.
-        if (H5Naming.GetTemplate(field.OriginalDefinition) is { } template)
+        if (TransposeNaming.GetTemplate(field.OriginalDefinition) is { } template)
         {
             var recv = field.IsStatic || thisTarget is null ? null : Capture(() => EmitExpression(thisTarget));
             WriteTemplate(template, field.IsStatic, isExtension: false, recv, new(), new());
@@ -439,13 +439,13 @@ public sealed partial class Emitter
             return;
         }
         EmitReceiver(thisTarget);
-        _w.Write(H5Naming.MemberJsName(field));
+        _w.Write(TransposeNaming.MemberJsName(field));
     }
 
     private void EmitPropertyAccess(IPropertySymbol prop, ExpressionSyntax? thisTarget)
     {
         // [Template] getter (BCL properties like string.Length).
-        var template = prop.GetMethod is not null ? H5Naming.GetTemplate(prop.GetMethod.OriginalDefinition) : null;
+        var template = prop.GetMethod is not null ? TransposeNaming.GetTemplate(prop.GetMethod.OriginalDefinition) : null;
         if (template is not null)
         {
             // For a static member, {this} is the declaring type (e.g. CultureInfo.CurrentCulture
@@ -461,7 +461,7 @@ public sealed partial class Emitter
             return;
         }
         EmitReceiver(thisTarget);
-        _w.Write(H5Naming.MemberJsName(prop));
+        _w.Write(TransposeNaming.MemberJsName(prop));
     }
 
     /// <summary>
@@ -500,7 +500,7 @@ public sealed partial class Emitter
         {
             _w.Write("(");
             EmitReceiverExpr(thisTarget);
-            _w.Write($").{H5Naming.MemberJsName(method)}.bind(");
+            _w.Write($").{TransposeNaming.MemberJsName(method)}.bind(");
             EmitReceiverExpr(thisTarget);
             _w.Write(")");
         }
@@ -561,7 +561,7 @@ public sealed partial class Emitter
                 return;
             case IEventSymbol ev:
                 if (ev.IsStatic) { _w.Write(StaticMemberAccess(ev)); }
-                else { EmitExpression(member.Expression); _w.Write("." + H5Naming.MemberJsName(ev)); }
+                else { EmitExpression(member.Expression); _w.Write("." + TransposeNaming.MemberJsName(ev)); }
                 return;
             case IMethodSymbol method:
                 EmitMethodGroup(method, member.Expression is ThisExpressionSyntax ? null : member.Expression);
@@ -577,30 +577,30 @@ public sealed partial class Emitter
     }
 
     /// <summary>
-    /// Emits a reference to an enum member honouring H5's <c>[Enum(Emit.X)]</c> mode:
+    /// Emits a reference to an enum member honouring Transpose's <c>[Enum(Emit.X)]</c> mode:
     /// <c>Value</c> emits the numeric constant, the <c>StringName*</c> modes emit the
     /// member name as a (cased) string literal, and the <c>Name*</c> modes (and the
     /// default) reference the runtime enum object's member.
     /// </summary>
     private void EmitEnumMemberAccess(IFieldSymbol enumField)
     {
-        switch (H5Naming.EnumEmitMode(enumField.ContainingType))
+        switch (TransposeNaming.EnumEmitMode(enumField.ContainingType))
         {
             case 2: // Emit.Value
                 _w.Write(ConstantLiteral(enumField.ConstantValue,
                     enumField.ContainingType.EnumUnderlyingType ?? enumField.Type));
                 return;
             case 3 or 4 or 5 or 6: // Emit.StringName*
-                _w.Write(JsString(H5Naming.EnumStringName(enumField, H5Naming.EnumEmitMode(enumField.ContainingType))));
+                _w.Write(JsString(TransposeNaming.EnumStringName(enumField, TransposeNaming.EnumEmitMode(enumField.ContainingType))));
                 return;
             default: // Emit.Name* / default → the runtime enum object's member
-                _w.Write($"{TypeRef(enumField.ContainingType)}.{H5Naming.MemberJsName(enumField)}");
+                _w.Write($"{TypeRef(enumField.ContainingType)}.{TransposeNaming.MemberJsName(enumField)}");
                 return;
         }
     }
 
     /// <summary>
-    /// Emits an H5 [Template]. For plain instance members whose template does not
+    /// Emits an Transpose [Template]. For plain instance members whose template does not
     /// reference {this}, the template is relative to the receiver (e.g. "getTotalHours()"
     /// → "recv.getTotalHours()"); otherwise it is absolute.
     /// </summary>
@@ -615,14 +615,14 @@ public sealed partial class Emitter
     }
 
     /// <summary>
-    /// Substitutes an H5 [Template] string. {this} → receiver, {paramName}/{index} → argument JS.
+    /// Substitutes an Transpose [Template] string. {this} → receiver, {paramName}/{index} → argument JS.
     /// </summary>
     private string SubstituteTemplate(string template, string? receiver, Dictionary<string, string> argsByName, List<string> argsByPos, Dictionary<string, string>? typeArgs = null)
     {
-        // Strip the self-reference marker used by some H5 templates (e.g. GetType()).
+        // Strip the self-reference marker used by some Transpose templates (e.g. GetType()).
         template = template.Replace("<self>", "");
         var recv = receiver ?? "this";
-        // {this:type} / {key:type} → runtime type via H5.getType(expr).
+        // {this:type} / {key:type} → runtime type via Transpose.getType(expr).
         template = System.Text.RegularExpressions.Regex.Replace(template, @"\{(this|\*?[A-Za-z_][A-Za-z0-9_]*|\d+):type\}", m =>
         {
             var tok = m.Groups[1].Value;
@@ -630,7 +630,7 @@ public sealed partial class Emitter
                 : argsByName.TryGetValue(tok, out var av) ? av
                 : int.TryParse(tok, out var i2) && i2 < argsByPos.Count ? argsByPos[i2]
                 : recv;
-            return $"H5.getType({expr})";
+            return $"Transpose.getType({expr})";
         });
 
         // {T:default} → the default value of the type argument bound to T (precomputed in
@@ -647,7 +647,7 @@ public sealed partial class Emitter
         // trailing param not supplied); the slot and its leading comma are stripped after.
         const string drop = "￿";
         var posCursor = 0;
-        // {name} / {*name} / {index}, optionally with an H5 modifier ({name:array},
+        // {name} / {*name} / {index}, optionally with an Transpose modifier ({name:array},
         // {name:nobox}, {name:raw}, …). The :type and :default modifiers were already
         // resolved above; the remaining modifiers don't change how the token resolves —
         // a params argument is captured in array form ("[a, b]") regardless — so the
@@ -671,7 +671,7 @@ public sealed partial class Emitter
                 posCursor = idx + 1;
                 return argsByPos[idx];
             }
-            // A named token with no matching parameter (some H5 templates reuse a name like
+            // A named token with no matching parameter (some Transpose templates reuse a name like
             // {result} for the next positional slot) → the next unconsumed argument, else drop.
             if (posCursor < argsByPos.Count) return argsByPos[posCursor++];
             return drop;
@@ -698,12 +698,12 @@ public sealed partial class Emitter
         var recv = _condReceiver ?? "this";
         var sym = _model.GetSymbolInfo(binding).Symbol;
         if (sym is IPropertySymbol { GetMethod: { } getM } prop
-            && H5Naming.GetTemplate(getM.OriginalDefinition) is { } propTpl)
+            && TransposeNaming.GetTemplate(getM.OriginalDefinition) is { } propTpl)
         {
             _w.Write(SubstituteTemplate(propTpl, recv, new(), new(), TemplateTypeArgs(prop)));
             return;
         }
-        _w.Write($"{recv}.{(sym is not null ? H5Naming.MemberJsName(sym) : NameMangler.JsIdentifier(binding.Name.Identifier.Text))}");
+        _w.Write($"{recv}.{(sym is not null ? TransposeNaming.MemberJsName(sym) : NameMangler.JsIdentifier(binding.Name.Identifier.Text))}");
     }
 
     private void EmitConditionalAccess(ConditionalAccessExpressionSyntax condAccess)
@@ -728,9 +728,9 @@ public sealed partial class Emitter
         var recv = _condReceiver ?? "this";
         if (_model.GetSymbolInfo(elemBind).Symbol is IPropertySymbol { IsIndexer: true } idx
             && idx.ContainingType.SpecialType != SpecialType.System_String
-            && !H5Naming.IsNativeIndexer(idx))
+            && !TransposeNaming.IsNativeIndexer(idx))
         {
-            _w.Write($"{recv}.{H5Naming.IndexerAccessorName(idx, isGet: true)}(");
+            _w.Write($"{recv}.{TransposeNaming.IndexerAccessorName(idx, isGet: true)}(");
             EmitArgumentList(elemBind.ArgumentList);
             _w.Write(")");
         }

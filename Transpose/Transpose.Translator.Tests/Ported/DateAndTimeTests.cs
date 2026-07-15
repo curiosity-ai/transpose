@@ -3,7 +3,7 @@ using System.Globalization;
 using System.Threading.Tasks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
-namespace H5.Translator.Roslyn.Tests.Ported
+namespace Transpose.Translator.Tests.Ported
 {
     [TestClass]
     public class DateAndTimeTests : TranslatorTestBase
@@ -85,9 +85,9 @@ public class Program
         // dto3 (12:30 +00:00) == 12:30 UTC
         Console.WriteLine(dto == dto3); // True
 
-        // H5 implementation might use local time for ToString if not specified?
+        // Transpose implementation might use local time for ToString if not specified?
         // Or specific format. Let's test properties mainly or standard ToString if predictable.
-        // H5 DateTimeOffset.ToString() delegates to DateTime.ToString() on ClockDateTime (Local kind).
+        // Transpose DateTimeOffset.ToString() delegates to DateTime.ToString() on ClockDateTime (Local kind).
         // So output depends on browser timezone potentially?
         // Let's stick to properties and explicit formatting if supported, or just testing validity.
 

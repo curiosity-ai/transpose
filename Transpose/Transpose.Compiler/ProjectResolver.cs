@@ -1,13 +1,13 @@
 using System.Xml.Linq;
 using Microsoft.CodeAnalysis.CSharp;
 
-namespace H5.Translator.Roslyn.CLI;
+namespace Transpose.Compiler;
 
 /// <summary>
-/// Minimal resolver for an H5 project: gathers the C# sources (the SDK's default glob),
+/// Minimal resolver for an Transpose project: gathers the C# sources (the SDK's default glob),
 /// and resolves the package references — transitively — to their assemblies in the NuGet
-/// global-packages cache. H5 projects reference H5.dll as their whole BCL plus a few h5.*
-/// packages (h5.core, h5.Newtonsoft.Json), all of which live in the cache once restored.
+/// global-packages cache. Transpose projects reference Transpose.dll as their whole BCL plus a few tps.*
+/// packages (tps.core, tps.Newtonsoft.Json), all of which live in the cache once restored.
 /// </summary>
 internal sealed class ResolvedProject
 {
@@ -20,7 +20,7 @@ internal sealed class ResolvedProject
     public required LanguageVersion LanguageVersion { get; init; }
 
     /// <summary>Directories of every project in the closure — the root first, then the
-    /// referenced projects it pulls in (each may contribute h5.json resources).</summary>
+    /// referenced projects it pulls in (each may contribute tps.json resources).</summary>
     public required List<string> ProjectDirs { get; init; }
 
     /// <summary>In separate-assembly mode, the built output DLLs of referenced projects — the
@@ -43,7 +43,7 @@ internal static class ProjectResolver
             .Select(s => s.Trim())
             .Where(s => s.Length > 0)
             .ToList();
-        if (!defines.Contains("H5")) defines.Add("H5"); // H5 projects always compile the H5 branch
+        if (!defines.Contains("Transpose")) defines.Add("Transpose"); // Transpose projects always compile the Transpose branch
 
         var lang = ParseLangVersion(Property(doc, "LangVersion"));
 
@@ -93,7 +93,7 @@ internal static class ProjectResolver
         var doc = XDocument.Load(csprojPath);
         var projectDir = Path.GetDirectoryName(csprojPath)!;
 
-        // In separate mode only the root contributes source + h5.json resources; a referenced
+        // In separate mode only the root contributes source + tps.json resources; a referenced
         // project contributes its DLL (below) and its own package references for binding.
         if (!separate || isRoot)
         {
@@ -180,7 +180,7 @@ internal static class ProjectResolver
     public static string? OutputDll(string csprojPath, string configuration) => ProjectOutputDll(csprojPath, configuration);
 
     /// <summary>
-    /// True if <paramref name="csprojPath"/>'s package DLL is present, carries embedded H5 resources
+    /// True if <paramref name="csprojPath"/>'s package DLL is present, carries embedded Transpose resources
     /// (i.e. was built by the translator, not a plain csc build), and is newer than the project's
     /// .csproj, all its source files, and every referenced project's DLL — the same incremental
     /// check the MSBuild-driven compiler relies on. When false, the project must be rebuilt.
@@ -339,7 +339,7 @@ internal static class ProjectResolver
         var lib = Path.Combine(pkgDir, "lib");
         if (!Directory.Exists(lib)) return null;
         var tfms = Directory.GetDirectories(lib);
-        // Prefer netstandard2.0 (what the h5 packages ship), else any netstandard, else the first.
+        // Prefer netstandard2.0 (what the tps packages ship), else any netstandard, else the first.
         return tfms.FirstOrDefault(d => Path.GetFileName(d).Equals("netstandard2.0", StringComparison.OrdinalIgnoreCase))
             ?? tfms.FirstOrDefault(d => Path.GetFileName(d).StartsWith("netstandard", StringComparison.OrdinalIgnoreCase))
             ?? tfms.FirstOrDefault();

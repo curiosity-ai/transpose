@@ -18,7 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\H5\Compiler\Translator.Roslyn\H5.Translator.Roslyn.csproj" />
+    <ProjectReference Include="..\Transpose.Translator\Transpose.Translator.csproj" />
   </ItemGroup>
 
 </Project>

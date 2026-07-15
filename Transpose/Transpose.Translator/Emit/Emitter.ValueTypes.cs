@@ -4,7 +4,7 @@ using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
-namespace H5.Translator.Roslyn;
+namespace Transpose.Translator;
 
 public sealed partial class Emitter
 {
@@ -19,7 +19,7 @@ public sealed partial class Emitter
     private List<string> RecordValuePropNames(INamedTypeSymbol type)
         => type.GetMembers().OfType<IPropertySymbol>()
             .Where(p => !p.IsStatic && p.GetMethod is not null && !p.IsIndexer && p.Name != "EqualityContract")
-            .Select(p => H5Naming.MemberJsName(p))
+            .Select(p => TransposeNaming.MemberJsName(p))
             .Distinct()
             .ToList();
 
@@ -56,7 +56,7 @@ public sealed partial class Emitter
                 _w.Block(() =>
                 {
                     if (props.Count == 0) { _w.WriteLine($"return \"{type.Name} {{ }}\";"); return; }
-                    var parts = string.Join(" + \", \" + ", props.Select(p => $"\"{p} = \" + H5R.toStr(this.{p})"));
+                    var parts = string.Join(" + \", \" + ", props.Select(p => $"\"{p} = \" + TransposeR.toStr(this.{p})"));
                     _w.WriteLine($"return \"{type.Name} {{ \" + {parts} + \" }}\";");
                 });
             });
@@ -67,7 +67,7 @@ public sealed partial class Emitter
                 {
                     _w.WriteLine("if (o == null || o.constructor !== this.constructor) { return false; }");
                     _w.Write("return ");
-                    _w.Write(props.Count == 0 ? "true" : string.Join(" && ", props.Select(p => $"H5R.equals(this.{p}, o.{p})")));
+                    _w.Write(props.Count == 0 ? "true" : string.Join(" && ", props.Select(p => $"TransposeR.equals(this.{p}, o.{p})")));
                     _w.WriteLine(";");
                 });
             });
@@ -77,12 +77,12 @@ public sealed partial class Emitter
                 _w.Block(() =>
                 {
                     _w.WriteLine("var h = 17;");
-                    foreach (var p in props) _w.WriteLine($"h = (h * 31 + H5R.hash(this.{p})) | 0;");
+                    foreach (var p in props) _w.WriteLine($"h = (h * 31 + TransposeR.hash(this.{p})) | 0;");
                     _w.WriteLine("return h;");
                 });
             });
 
-            var positional = RecordPositionalProps(type).Select(p => H5Naming.MemberJsName(p)).ToList();
+            var positional = RecordPositionalProps(type).Select(p => TransposeNaming.MemberJsName(p)).ToList();
             if (positional.Count > 0)
             {
                 entries.Add(() =>

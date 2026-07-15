@@ -4,7 +4,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
-namespace H5.Translator.Roslyn;
+namespace Transpose.Translator;
 
 public sealed partial class Emitter
 {
@@ -202,7 +202,7 @@ public sealed partial class Emitter
                 _w.Block(() => EmitStatements(statements, i + 1));
                 _w.WriteLine();
                 _w.Write("finally ");
-                _w.Block(() => { foreach (var r in Enumerable.Reverse(resources)) _w.WriteLine($"H5R.dispose({r});"); });
+                _w.Block(() => { foreach (var r in Enumerable.Reverse(resources)) _w.WriteLine($"TransposeR.dispose({r});"); });
                 _w.WriteLine();
                 return; // the rest of the sequence was emitted inside the try
             }
@@ -282,7 +282,7 @@ public sealed partial class Emitter
         // A local declared inside a loop body is emitted with `let` so each iteration gets a fresh
         // binding — a closure created in the loop then captures that iteration's value (C# block
         // scoping), not the final one. Outside a loop, `var` (function scope) is kept: it matches
-        // H5's model and tolerates the same-name redeclarations across flattened scopes that some
+        // Transpose's model and tolerates the same-name redeclarations across flattened scopes that some
         // code relies on (which `let` would reject). A goto state machine also needs `var` so a
         // local persists across `case` transitions as the loop re-enters the switch.
         var kw = _loopDepth > 0 && _gotoContexts.Count == 0 ? "let" : "var";
@@ -415,7 +415,7 @@ public sealed partial class Emitter
     }
 
     /// <summary>
-    /// Emits <c>var $e = H5R.getEnumerator(source)</c>, routing through an extension
+    /// Emits <c>var $e = TransposeR.getEnumerator(source)</c>, routing through an extension
     /// GetEnumerator when the foreach binds to one, and returns the enumerator variable name.
     /// </summary>
     private string EmitEnumeratorInit(CommonForEachStatementSyntax forEach, ExpressionSyntax source)
@@ -423,10 +423,10 @@ public sealed partial class Emitter
         var enumVar = "$e" + forEach.GetHashCode().ToString("x").Substring(0, 4);
         var getEnum = _model.GetForEachStatementInfo(forEach).GetEnumeratorMethod;
         var ext = getEnum is { IsExtensionMethod: true } ? (getEnum.ReducedFrom ?? getEnum) : null;
-        _w.Write($"var {enumVar} = H5R.getEnumerator(");
+        _w.Write($"var {enumVar} = TransposeR.getEnumerator(");
         if (ext is not null && ext.Locations.Any(l => l.IsInSource))
         {
-            _w.Write($"{TypeRef(ext.ContainingType)}.{H5Naming.MemberJsName(ext)}(");
+            _w.Write($"{TypeRef(ext.ContainingType)}.{TransposeNaming.MemberJsName(ext)}(");
             EmitExpression(source);
             _w.Write(")");
         }
@@ -532,7 +532,7 @@ public sealed partial class Emitter
                 var isCatchAll = exType is null || exType.SpecialType == SpecialType.System_Object
                     || exType.ToDisplayString() == "System.Exception";
 
-                var condition = isCatchAll ? null : $"H5R.is($ex, {ExceptionTypeRef(exType!)})";
+                var condition = isCatchAll ? null : $"TransposeR.is($ex, {ExceptionTypeRef(exType!)})";
                 if (katch.Filter is not null)
                 {
                     // exception filter appended
@@ -603,7 +603,7 @@ public sealed partial class Emitter
 
     private void EmitUsing(UsingStatementSyntax usingStmt)
     {
-        // using (var x = expr) body  =>  { let x = expr; try { body } finally { H5R.dispose(x); } }
+        // using (var x = expr) body  =>  { let x = expr; try { body } finally { TransposeR.dispose(x); } }
         _w.Block(() =>
         {
             string? resourceVar = null;
@@ -628,7 +628,7 @@ public sealed partial class Emitter
             _w.Write("try ");
             EmitStatementAsBlock(usingStmt.Statement);
             _w.Write("finally ");
-            _w.Block(() => _w.WriteLine($"H5R.dispose({resourceVar});"));
+            _w.Block(() => _w.WriteLine($"TransposeR.dispose({resourceVar});"));
             _w.WriteLine();
         });
         _w.WriteLine();

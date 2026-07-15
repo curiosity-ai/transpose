@@ -1,7 +1,7 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System.Threading.Tasks;
 
-namespace H5.Translator.Roslyn.Tests.Ported
+namespace Transpose.Translator.Tests.Ported
 {
     [TestClass]
     public class ExceptionsTests : TranslatorTestBase
@@ -220,7 +220,7 @@ public class Program
             }
 
             // Checking StackTrace presence.
-            // Note: Content will differ between Roslyn and H5, so we only check existence.
+            // Note: Content will differ between Roslyn and Transpose, so we only check existence.
             if (!string.IsNullOrEmpty(ex.StackTrace))
             {
                 Console.WriteLine("Has StackTrace");

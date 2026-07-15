@@ -4,11 +4,11 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
-namespace H5.Translator.Roslyn;
+namespace Transpose.Translator;
 
 /// <summary>
 /// Walks the syntax trees and reports language features that cannot run in a
-/// browser environment as compilation errors (H5R0001). Detection is by syntax
+/// browser environment as compilation errors (TransposeR0001). Detection is by syntax
 /// for language constructs and by bound symbol namespace for runtime APIs.
 /// </summary>
 internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
@@ -96,7 +96,7 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
     }
 
     /// <summary>An `extern` member is only unsupported when it is real native interop —
-    /// not when it carries an H5 codegen attribute ([Template]/[Name]/[External]/[Script])
+    /// not when it carries an Transpose codegen attribute ([Template]/[Name]/[External]/[Script])
     /// that maps it to JavaScript.</summary>
     private void CheckExtern(SyntaxTokenList modifiers, SyntaxList<AttributeListSyntax> attributes, SyntaxNode node)
     {
@@ -105,7 +105,7 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
         {
             var n = a.Name.ToString();
             return n is "Template" or "Name" or "External" or "Script"
-                or "H5.Template" or "H5.Name" or "H5.External" or "H5.Script"
+                or "Transpose.Template" or "Transpose.Name" or "Transpose.External" or "Transpose.Script"
                 or "TemplateAttribute" or "NameAttribute" or "ExternalAttribute" or "ScriptAttribute";
         });
         if (!jsMapped)

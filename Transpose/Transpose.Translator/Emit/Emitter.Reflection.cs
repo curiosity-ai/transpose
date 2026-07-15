@@ -5,11 +5,11 @@ using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
 
-namespace H5.Translator.Roslyn;
+namespace Transpose.Translator;
 
 public sealed partial class Emitter
 {
-    // System.Reflection.MemberTypes codes used by h5.js reflection metadata.
+    // System.Reflection.MemberTypes codes used by tps.js reflection metadata.
     private const int MtConstructor = 1, MtEvent = 2, MtField = 4, MtMethod = 8, MtProperty = 16;
 
     // Namespace → index map for the $n compaction array, rebuilt per metadata emission.
@@ -17,7 +17,7 @@ public sealed partial class Emitter
 
     /// <summary>
     /// Emits reflection metadata inline (inside the current assembly function): the
-    /// <c>var $m = H5.setMetadata, $n = [...]</c> prologue followed by one
+    /// <c>var $m = Transpose.setMetadata, $n = [...]</c> prologue followed by one
     /// <c>$m("Type", function (T…) { return {…}; }, $n)</c> per reflectable source type.
     /// </summary>
     private void EmitReflectionMetadata(IReadOnlyList<INamedTypeSymbol> types)
@@ -29,15 +29,15 @@ public sealed partial class Emitter
             _w.WriteLine(line);
     }
 
-    /// <summary>Builds a standalone metadata script (its own H5.assembly wrapper) for the
+    /// <summary>Builds a standalone metadata script (its own Transpose.assembly wrapper) for the
     /// file/assembly reflection target; null when there is nothing to emit.</summary>
     private string? BuildMetadataFile(IReadOnlyList<INamedTypeSymbol> types)
     {
         var block = BuildMetadataBlock(types);
         if (block is null) return null;
         var sb = new StringBuilder();
-        sb.Append("H5.assemblyVersion(\"").Append(_assemblyName).Append("\",\"").Append(AssemblyVersion).Append("\");\n");
-        sb.Append("H5.assembly(\"").Append(_assemblyName).Append("\", function ($asm, globals) {\n");
+        sb.Append("Transpose.assemblyVersion(\"").Append(_assemblyName).Append("\",\"").Append(AssemblyVersion).Append("\");\n");
+        sb.Append("Transpose.assembly(\"").Append(_assemblyName).Append("\", function ($asm, globals) {\n");
         sb.Append("    \"use strict\";\n\n");
         foreach (var line in block.Split('\n'))
             sb.Append("    ").Append(line).Append('\n');
@@ -70,7 +70,7 @@ public sealed partial class Emitter
         foreach (var kv in _nsCache) ns[kv.Value] = kv.Key;
 
         var sb = new StringBuilder();
-        sb.Append("var $m = H5.setMetadata,\n");
+        sb.Append("var $m = Transpose.setMetadata,\n");
         sb.Append("    $n = [").Append(string.Join(",", ns.Select(n => "\"" + n + "\""))).Append("];\n");
         foreach (var e in entries) sb.Append(e).Append('\n');
         return sb.ToString().TrimEnd('\n');
@@ -120,7 +120,7 @@ public sealed partial class Emitter
                     var mi = ConstructMemberInfo(m);
                     if (mi is not null) members.Add(mi);
                 }
-                // Auto-property backing fields, appended after the members (as h5 does).
+                // Auto-property backing fields, appended after the members (as tps does).
                 foreach (var p in reflectable.OfType<IPropertySymbol>().Where(IsAutoProperty))
                     members.Add(ConstructBackingField(p));
             }
@@ -185,7 +185,7 @@ public sealed partial class Emitter
         var pi = ctor.Parameters.Select(ConstructParameterInfo).ToList();
         if (pi.Count > 0) o.RawArray("pi", pi);
         // The JS constructor slot is "ctor"/"ctor$N" (the metadata name "n" keeps ".ctor").
-        var sn = H5Naming.MemberJsName(ctor);
+        var sn = TransposeNaming.MemberJsName(ctor);
         o.Str("sn", sn.StartsWith(".", StringComparison.Ordinal) ? sn.Substring(1) : sn);
         return o.ToString();
     }
@@ -203,7 +203,7 @@ public sealed partial class Emitter
             o.Num("tpc", method.TypeParameters.Length);
             o.RawArray("tprm", method.TypeParameters.Select(tp => "\"" + tp.Name + "\""));
         }
-        o.Str("sn", H5Naming.MemberJsName(method));
+        o.Str("sn", TransposeNaming.MemberJsName(method));
         o.Raw("rt", method.ReturnsVoid ? MetaTypeName(_compilation.GetSpecialType(SpecialType.System_Void)) : MetaTypeName(method.ReturnType));
         if (method.Parameters.Length > 0)
             o.RawArray("p", method.Parameters.Select(p => MetaTypeName(p.Type)));
@@ -218,7 +218,7 @@ public sealed partial class Emitter
         if (field.IsStatic) o.Bool("is", true);
         o.Num("t", MtField);
         o.Raw("rt", MetaTypeName(field.Type));
-        o.Str("sn", H5Naming.MemberJsName(field));
+        o.Str("sn", TransposeNaming.MemberJsName(field));
         if (field.IsReadOnly) o.Bool("ro", true);
         AddBox(o, field.Type);
         return o.ToString();
@@ -233,7 +233,7 @@ public sealed partial class Emitter
         o.Bool("is", true);
         o.Num("t", MtField);
         o.Raw("rt", MetaTypeName(enumType));
-        o.Str("sn", H5Naming.MemberJsName(field));
+        o.Str("sn", TransposeNaming.MemberJsName(field));
         AddBox(o, enumType);
         return o.ToString();
     }
@@ -273,7 +273,7 @@ public sealed partial class Emitter
             }
         }
 
-        var fn = H5Naming.MemberJsName(prop);
+        var fn = TransposeNaming.MemberJsName(prop);
         if (prop.GetMethod is { } getter && !SkipMember(getter))
             o.Raw("g", ConstructAccessor(getter, fn, isGetter: true, prop));
         if (prop.SetMethod is { } setter && !SkipMember(setter))
@@ -318,7 +318,7 @@ public sealed partial class Emitter
         if (prop.IsStatic) o.Bool("is", true);
         o.Num("t", MtField);
         o.Raw("rt", MetaTypeName(prop.Type));
-        o.Str("sn", H5Naming.MemberJsName(prop));
+        o.Str("sn", TransposeNaming.MemberJsName(prop));
         AddBox(o, prop.Type);
         return o.ToString();
     }
@@ -351,11 +351,11 @@ public sealed partial class Emitter
         if (t.TypeKind == TypeKind.Enum)
         {
             var tn = MetaTypeName(t);
-            o.Raw("box", $"function ($v) {{ return H5.box($v, {tn}, System.Enum.toStringFn({tn}));}}");
+            o.Raw("box", $"function ($v) {{ return Transpose.box($v, {tn}, System.Enum.toStringFn({tn}));}}");
             return;
         }
         if (IsBoxablePrimitive(t))
-            o.Raw("box", $"function ($v) {{ return H5.box($v, {MetaTypeName(t)});}}");
+            o.Raw("box", $"function ($v) {{ return Transpose.box($v, {MetaTypeName(t)});}}");
     }
 
     private static bool IsBoxablePrimitive(ITypeSymbol t) => t.SpecialType is
@@ -372,8 +372,8 @@ public sealed partial class Emitter
     {
         if (!type.Locations.Any(l => l.IsInSource)) return false;
         if (type.IsImplicitlyDeclared) return false;
-        if (H5Naming.IsExternalType(type)) return false;
-        if (type.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "H5.NonScriptableAttribute")) return false;
+        if (TransposeNaming.IsExternalType(type)) return false;
+        if (type.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "Transpose.NonScriptableAttribute")) return false;
         return true;
     }
 
@@ -389,7 +389,7 @@ public sealed partial class Emitter
     private static bool SkipMember(ISymbol m)
     {
         if (!m.ExplicitInterfaceImplementations().IsEmpty()) return true;
-        if (m.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "H5.NonScriptableAttribute")) return true;
+        if (m.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "Transpose.NonScriptableAttribute")) return true;
         if (m is IMethodSymbol meth)
         {
             if (meth.MethodKind is MethodKind.PropertyGet or MethodKind.PropertySet
@@ -402,17 +402,17 @@ public sealed partial class Emitter
     }
 
     private static bool IsIgnoreGeneric(ISymbol s)
-        => s.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "H5.IgnoreGenericAttribute");
+        => s.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "Transpose.IgnoreGenericAttribute");
 
     private static List<AttributeData> ReflectableAttributes(IEnumerable<AttributeData> attrs)
         => attrs.Where(a => a.AttributeClass is { } ac
                             && ac.Locations.Any(l => l.IsInSource)
-                            && !ac.GetAttributes().Any(x => x.AttributeClass?.ToDisplayString() == "H5.NonScriptableAttribute"))
+                            && !ac.GetAttributes().Any(x => x.AttributeClass?.ToDisplayString() == "Transpose.NonScriptableAttribute"))
                 .ToList();
 
     // ---- attribute codes / type names -------------------------------------
 
-    /// <summary>NRefactory Accessibility codes used by h5.js: Private=1, Public=2, Protected=3,
+    /// <summary>NRefactory Accessibility codes used by tps.js: Private=1, Public=2, Protected=3,
     /// Internal=4, ProtectedOrInternal=5, ProtectedAndInternal=6.</summary>
     private static int AccessibilityCode(Accessibility a) => a switch
     {
@@ -425,7 +425,7 @@ public sealed partial class Emitter
         _ => 0,
     };
 
-    /// <summary>The System.Reflection.TypeAttributes bitmask h5.js stores in "att".</summary>
+    /// <summary>The System.Reflection.TypeAttributes bitmask tps.js stores in "att".</summary>
     private static int TypeAttributesFlags(INamedTypeSymbol type)
     {
         var nested = type.ContainingType is not null;
@@ -463,7 +463,7 @@ public sealed partial class Emitter
     {
         var name = _names.TypeFullName(type);
         // Only the type's OWN generic arity earns a $N suffix — a non-generic type nested in a
-        // generic one (Arity 0 but IsGenericType true) keeps its plain name, as H5.define does.
+        // generic one (Arity 0 but IsGenericType true) keeps its plain name, as Transpose.define does.
         return type.Arity > 0 ? name + "$" + type.Arity : name;
     }
 
@@ -494,7 +494,7 @@ public sealed partial class Emitter
 
     /// <summary>
     /// A single custom-attribute instance: <c>new T(ctorArgs)</c>, wrapped in
-    /// <c>H5.apply(..., { Named: value })</c> when the attribute sets named properties/fields.
+    /// <c>Transpose.apply(..., { Named: value })</c> when the attribute sets named properties/fields.
     /// </summary>
     private string EmitAttributeInstance(AttributeData attr)
     {
@@ -504,7 +504,7 @@ public sealed partial class Emitter
 
         var named = string.Join(", ", attr.NamedArguments.Select(
             kv => $"{NameMangler.JsPropertyKey(kv.Key)}: {TypedConstantJs(kv.Value)}"));
-        return $"H5.apply({ctor}, {{{named}}})";
+        return $"Transpose.apply({ctor}, {{{named}}})";
     }
 
     /// <summary>An attribute argument value as JS: enums fold to their numeric value, typeof to
@@ -520,7 +520,7 @@ public sealed partial class Emitter
         };
     }
 
-    /// <summary>A tiny ordered JSON object writer producing compact h5-style metadata.</summary>
+    /// <summary>A tiny ordered JSON object writer producing compact tps-style metadata.</summary>
     private sealed class MetaObj
     {
         private readonly StringBuilder _sb = new("{");

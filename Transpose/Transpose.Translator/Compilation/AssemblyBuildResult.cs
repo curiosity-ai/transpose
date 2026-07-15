@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Microsoft.CodeAnalysis;
 
-namespace H5.Translator.Roslyn;
+namespace Transpose.Translator;
 
 /// <summary>
 /// Result of building a project as a distributable assembly: the translated JavaScript, its

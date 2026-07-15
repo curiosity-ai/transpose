@@ -2,11 +2,11 @@ using System;
 using System.Threading.Tasks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
-namespace H5.Translator.Roslyn.Tests.Ported
+namespace Transpose.Translator.Tests.Ported
 {
     /// <summary>
-    /// Covers the H5 attributes and codegen fixes added while aligning the Roslyn translator's
-    /// output with the legacy H5 compiler: [Name] on types, [ExpandParams], [ObjectLiteral]
+    /// Covers the Transpose attributes and codegen fixes added while aligning the Roslyn translator's
+    /// output with the legacy Transpose compiler: [Name] on types, [ExpandParams], [ObjectLiteral]
     /// ($literal), string-backed enums, generic-interface variance, default(T) for value-type
     /// parameters, types nested in a generic, overload disambiguation, and IEnumerable
     /// (GetEnumerator) dispatch through the runtime's is/as tracking.
@@ -20,7 +20,7 @@ namespace H5.Translator.Roslyn.Tests.Ported
         public async Task TestNameAttributeOnType()
         {
             var code = @"
-using H5;
+using Transpose;
 using System;
 
 namespace App
@@ -59,7 +59,7 @@ namespace App
             // An [ObjectLiteral] type declares $literal: true so the runtime treats it as a
             // literal (instances are plain {} objects), matching the legacy compiler.
             var code = @"
-using H5;
+using Transpose;
 using System;
 
 [ObjectLiteral]
@@ -87,7 +87,7 @@ public class Program { public static void Main() { var o = new Options { Title =
             // coerces to a single value). Verified at the translation layer — the emitted call
             // shape is what the fix controls.
             var code = @"
-using H5;
+using Transpose;
 using System;
 
 [External]
@@ -120,7 +120,7 @@ public class Program
         {
             // Passing a single array to an [ExpandParams] method spreads it (Math.max(...arr)).
             var code = @"
-using H5;
+using Transpose;
 using System;
 
 [External]
@@ -153,7 +153,7 @@ public class Program
         public async Task TestStringEnumWithNameMembers()
         {
             var code = @"
-using H5;
+using Transpose;
 using System;
 
 [Enum(Emit.StringName)]
@@ -348,7 +348,7 @@ public class Program
         {
             // A user collection implementing IEnumerable<T> must be recognized as IEnumerable by
             // the runtime (its inherits must list the BCL collection interfaces) and expose
-            // GetEnumerator under the PascalCase name h5.js looks up — otherwise Enumerable.from
+            // GetEnumerator under the PascalCase name tps.js looks up — otherwise Enumerable.from
             // falls back to {key,value} object iteration.
             var code = @"
 using System;

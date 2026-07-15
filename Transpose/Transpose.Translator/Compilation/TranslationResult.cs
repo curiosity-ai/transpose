@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Microsoft.CodeAnalysis;
 
-namespace H5.Translator.Roslyn;
+namespace Transpose.Translator;
 
 /// <summary>
 /// Result of translating one or more C# source files to JavaScript.
@@ -19,7 +19,7 @@ public sealed class TranslationResult
     /// <summary>The emitted JavaScript, or <c>null</c> if translation failed.</summary>
     public string? Javascript { get; }
 
-    /// <summary>The standalone reflection-metadata script (a full H5.assembly wrapper) when the
+    /// <summary>The standalone reflection-metadata script (a full Transpose.assembly wrapper) when the
     /// reflection target is a separate file; <c>null</c> when metadata is inline or disabled.</summary>
     public string? MetadataJavascript { get; }
 

@@ -6,12 +6,12 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
-namespace H5.Translator.Roslyn;
+namespace Transpose.Translator;
 
 /// <summary>
 /// Walks the Roslyn syntax tree (guided by the semantic model) and emits JavaScript
-/// in the H5 runtime format (H5.assembly + H5.define), so the output runs against
-/// the real h5.js / h5.core runtime.
+/// in the Transpose runtime format (Transpose.assembly + Transpose.define), so the output runs against
+/// the real tps.js / tps.core runtime.
 /// </summary>
 public sealed partial class Emitter
 {
@@ -34,7 +34,7 @@ public sealed partial class Emitter
 
     /// <summary>The type whose define body is currently being emitted. Its own type parameters are
     /// the ones actually bound as JS function parameters of the define, so <c>default(T)</c> may
-    /// safely reference them via <c>H5.getDefaultValue(T)</c>; a type parameter from an enclosing
+    /// safely reference them via <c>Transpose.getDefaultValue(T)</c>; a type parameter from an enclosing
     /// type (accessible in C# but not emitted as a parameter here) is not in scope.</summary>
     private INamedTypeSymbol? _currentEmitType;
 
@@ -45,7 +45,7 @@ public sealed partial class Emitter
     /// </summary>
     private readonly Stack<(System.Collections.Generic.Dictionary<string, int> labels, string loopLabel, string stateVar)> _gotoContexts = new();
 
-    /// <summary>Whether reflection metadata is emitted at all (h5.json reflection.disabled).</summary>
+    /// <summary>Whether reflection metadata is emitted at all (tps.json reflection.disabled).</summary>
     public bool ReflectionEnabled { get; set; } = true;
 
     /// <summary>Where reflection metadata goes — inline in the assembly, or a separate file.</summary>
@@ -55,7 +55,7 @@ public sealed partial class Emitter
     public string AssemblyVersion { get; set; } = "1.0.0.0";
 
     /// <summary>When <see cref="MetadataTarget"/> is File/Assembly, the standalone metadata
-    /// script (a full H5.assembly wrapper) produced by the last <see cref="Emit"/>; else null.</summary>
+    /// script (a full Transpose.assembly wrapper) produced by the last <see cref="Emit"/>; else null.</summary>
     public string? MetadataScript { get; private set; }
 
     public Emitter(CSharpCompilation compilation, string assemblyName = CompilationBuilder.DefaultAssemblyName)
@@ -68,7 +68,7 @@ public sealed partial class Emitter
     public string Emit()
     {
         _w.WriteLine("/**");
-        _w.WriteLine(" * H5.Translator.Roslyn generated output.");
+        _w.WriteLine(" * Transpose.Translator generated output.");
         _w.WriteLine(" */");
         var types = CollectTypes();
 
@@ -77,7 +77,7 @@ public sealed partial class Emitter
         var inlineMeta = ReflectionEnabled && MetadataTarget is MetadataTarget.Inline or MetadataTarget.Type;
         var fileMeta = ReflectionEnabled && MetadataTarget is MetadataTarget.File or MetadataTarget.Assembly;
 
-        _w.Write($"H5.assembly(\"{_assemblyName}\", function ($asm, globals) ");
+        _w.Write($"Transpose.assembly(\"{_assemblyName}\", function ($asm, globals) ");
         _w.Block(() =>
         {
             _w.WriteLine("\"use strict\";");
@@ -131,7 +131,7 @@ public sealed partial class Emitter
         }
 
         // Emit each type after every source type it depends on (base class + implemented/
-        // extended interfaces), so the runtime's H5.define never sees an undefined reference
+        // extended interfaces), so the runtime's Transpose.define never sees an undefined reference
         // in `inherits`. Dependency depth gives such an order (the graph is acyclic).
         var depthCache = new Dictionary<INamedTypeSymbol, int>(SymbolEqualityComparer.Default);
         return declared

@@ -4,7 +4,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
-namespace H5.Translator.Roslyn;
+namespace Transpose.Translator;
 
 public sealed partial class Emitter
 {
@@ -260,7 +260,7 @@ public sealed partial class Emitter
             return;
         }
 
-        _w.Write($"H5R.is({subject}, {TypeRef(type)})");
+        _w.Write($"TransposeR.is({subject}, {TypeRef(type)})");
     }
 
     private void EmitDesignationBinding(string subject, VariableDesignationSyntax designation)

@@ -7,7 +7,7 @@ using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 
-namespace H5.Translator.Roslyn.Tests;
+namespace Transpose.Translator.Tests;
 
 /// <summary>
 /// Compiles and runs C# natively (Roslyn → in-memory assembly → invoke entry point),

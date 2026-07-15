@@ -1,7 +1,7 @@
 using System.Threading.Tasks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
-namespace H5.Translator.Roslyn.Tests.Ported
+namespace Transpose.Translator.Tests.Ported
 {
     [TestClass]
     public class ConditionalCompilationTests : TranslatorTestBase

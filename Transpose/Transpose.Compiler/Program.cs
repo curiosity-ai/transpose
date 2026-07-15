@@ -1,14 +1,14 @@
 using System.Diagnostics;
 using Microsoft.CodeAnalysis;
 
-namespace H5.Translator.Roslyn.CLI;
+namespace Transpose.Compiler;
 
 /// <summary>
 /// A small command-line front-end for the Roslyn-only C# → JavaScript translator, in the
-/// spirit of the existing <c>h5</c> compiler: point it at a project and it resolves the
+/// spirit of the existing <c>tps</c> compiler: point it at a project and it resolves the
 /// sources and package references, runs the translator, and writes the JavaScript bundle.
 ///
-///   h5-roslyn &lt;project.csproj|dir&gt; [--out &lt;file.js&gt;] [--with-runtime] [--quiet]
+///   tps &lt;project.csproj|dir&gt; [--out &lt;file.js&gt;] [--with-runtime] [--quiet]
 /// </summary>
 public static class Program
 {
@@ -56,7 +56,7 @@ public static class Program
             return 1;
         }
 
-        Console.WriteLine($"h5-roslyn: compiling {Path.GetFileName(csproj)}");
+        Console.WriteLine($"tps: compiling {Path.GetFileName(csproj)}");
         var sw = Stopwatch.StartNew();
 
         ResolvedProject project;
@@ -77,9 +77,9 @@ public static class Program
         Console.WriteLine($"  defines:    {string.Join(";", project.DefineConstants)}");
         Console.WriteLine($"  lang:       {project.LanguageVersion}");
 
-        // Reflection settings come from the project's h5.json (target inline vs a .meta.js file).
-        var h5cfg = H5Json.TryLoad(project.ProjectDir);
-        var (reflectionEnabled, metadataTarget) = ReflectionSettings(h5cfg);
+        // Reflection settings come from the project's tps.json (target inline vs a .meta.js file).
+        var tpscfg = TransposeJson.TryLoad(project.ProjectDir);
+        var (reflectionEnabled, metadataTarget) = ReflectionSettings(tpscfg);
 
         // Chain the referenced projects first (like the MSBuild-driven compiler): in
         // separate-assembly / package mode this project binds against its dependencies' built DLLs
@@ -122,11 +122,11 @@ public static class Program
 
         var js = result.Javascript!;
         if (!quiet) ReportDiagnostics(result.Diagnostics, maxErrors); // surface warnings
-        var config = h5cfg;
+        var config = tpscfg;
         var minified = configuration.Equals("Release", StringComparison.OrdinalIgnoreCase);
 
         // Package mode: compile this project as a distributable assembly — emit the .NET DLL and
-        // embed its JS (+ h5.json resources) so another project can reference it and extract them.
+        // embed its JS (+ tps.json resources) so another project can reference it and extract them.
         if (emitPackage)
         {
             var (dllPath, items) = WritePackage(project, config, configuration, result);
@@ -136,9 +136,9 @@ public static class Program
             return 0;
         }
 
-        // Site build: when the project has an h5.json and no single-file --out was requested,
+        // Site build: when the project has an tps.json and no single-file --out was requested,
         // assemble a runnable output folder (runtime JS + bundle + resources + index.html),
-        // exactly like the existing h5 compiler.
+        // exactly like the existing tps compiler.
         if (config is not null && outPath is null)
         {
             var outDir = siteDir ?? ResolveOutputDir(config, project.ProjectDir, configuration);
@@ -156,10 +156,10 @@ public static class Program
         return 0;
     }
 
-    private static (bool reflectionEnabled, MetadataTarget target) ReflectionSettings(H5Json? h5cfg)
+    private static (bool reflectionEnabled, MetadataTarget target) ReflectionSettings(TransposeJson? tpscfg)
     {
-        var reflectionEnabled = !(h5cfg?.ReflectionDisabled ?? false);
-        var metadataTarget = (h5cfg?.ReflectionTarget ?? "file").ToLowerInvariant() switch
+        var reflectionEnabled = !(tpscfg?.ReflectionDisabled ?? false);
+        var metadataTarget = (tpscfg?.ReflectionTarget ?? "file").ToLowerInvariant() switch
         {
             "inline" => MetadataTarget.Inline,
             "type" => MetadataTarget.Type,
@@ -195,8 +195,8 @@ public static class Program
         return true;
     }
 
-    /// <summary>Compiles one project into its H5 package DLL (the .NET assembly with the compiled JS
-    /// and h5.json resources embedded). Its own project references are consumed as their built DLLs,
+    /// <summary>Compiles one project into its Transpose package DLL (the .NET assembly with the compiled JS
+    /// and tps.json resources embedded). Its own project references are consumed as their built DLLs,
     /// so they must already have been built (this is called in dependency order).</summary>
     private static bool BuildPackage(string csproj, string configuration, int maxErrors)
     {
@@ -204,8 +204,8 @@ public static class Program
         try { project = ProjectResolver.Resolve(csproj, configuration, separateAssemblies: true); }
         catch (Exception ex) { Console.Error.WriteLine($"    resolve failed: {ex.Message}"); return false; }
 
-        var h5cfg = H5Json.TryLoad(project.ProjectDir);
-        var (reflectionEnabled, metadataTarget) = ReflectionSettings(h5cfg);
+        var tpscfg = TransposeJson.TryLoad(project.ProjectDir);
+        var (reflectionEnabled, metadataTarget) = ReflectionSettings(tpscfg);
 
         AssemblyBuildResult result;
         try
@@ -223,7 +223,7 @@ public static class Program
             return false;
         }
 
-        WritePackage(project, h5cfg, configuration, result);
+        WritePackage(project, tpscfg, configuration, result);
         return true;
     }
 
@@ -231,7 +231,7 @@ public static class Program
     /// path and the embedded items. The DLL path is the one the resolver references for this
     /// project, so a consumer finds it.</summary>
     private static (string dllPath, List<EmbeddedItem> items) WritePackage(
-        ResolvedProject project, H5Json? config, string configuration, AssemblyBuildResult result)
+        ResolvedProject project, TransposeJson? config, string configuration, AssemblyBuildResult result)
     {
         var mainJsName = config?.ExplicitFileName ?? project.AssemblyName + ".js";
         var dllPath = ProjectResolver.OutputDll(project.CsprojPath, configuration)!;
@@ -245,15 +245,15 @@ public static class Program
         return (dllPath, items);
     }
 
-    /// <summary>Resolves h5.json's output path, expanding the $(OutDir) MSBuild token.</summary>
-    private static string ResolveOutputDir(H5Json config, string projectDir, string configuration)
+    /// <summary>Resolves tps.json's output path, expanding the $(OutDir) MSBuild token.</summary>
+    private static string ResolveOutputDir(TransposeJson config, string projectDir, string configuration)
     {
-        var raw = (config.Output ?? "$(OutDir)/h5/").Replace("$(OutDir)", ResolveBinDir(projectDir, configuration)).Replace('\\', '/');
+        var raw = (config.Output ?? "$(OutDir)/tps/").Replace("$(OutDir)", ResolveBinDir(projectDir, configuration)).Replace('\\', '/');
         return Path.GetFullPath(raw);
     }
 
     /// <summary>The project's build output directory (bin/&lt;config&gt;/netstandard2.0), where the
-    /// emitted assembly and h5 output land — matching the H5 SDK's default output path.</summary>
+    /// emitted assembly and tps output land — matching the Transpose SDK's default output path.</summary>
     private static string ResolveBinDir(string projectDir, string configuration)
         => Path.Combine(projectDir, "bin", configuration, "netstandard2.0");
 
@@ -305,10 +305,10 @@ public static class Program
     private static void ShowHelp()
     {
         Console.WriteLine("""
-            h5-roslyn — Roslyn-only C# → JavaScript translator (experimental)
+            tps — Roslyn-only C# → JavaScript translator (experimental)
 
             Usage:
-              h5-roslyn <project.csproj | directory> [options]
+              tps <project.csproj | directory> [options]
 
             Options:
               -o, --out <file.js>   Output path (default: <project>/bin/<assembly>.js)
@@ -316,12 +316,12 @@ public static class Program
                                     Build configuration (Debug/Release; default Debug). Release
                                     selects the .min.js resource variants where both exist.
               --emit-package        Compile this project as a distributable assembly: emit its
-                                    .NET DLL with the compiled JS + h5.json resources embedded
-                                    (H5.Resources.json manifest), for referencing by other projects.
+                                    .NET DLL with the compiled JS + tps.json resources embedded
+                                    (Transpose.Resources.json manifest), for referencing by other projects.
               --separate-assemblies Consume referenced projects as their built DLLs (extract their
                                     embedded JS) instead of recompiling their source into the bundle.
               --site-dir <dir>      Output directory for the assembled site
-              --with-runtime        Prepend the h5.js runtime + shim to the output
+              --with-runtime        Prepend the tps.js runtime + shim to the output
               --max-errors <n>      Max individual errors to print (default 40)
               -q, --quiet           Suppress warning output
               -h, --help            Show this help

@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Microsoft.CodeAnalysis;
 
-namespace H5.Translator.Roslyn;
+namespace Transpose.Translator;
 
 /// <summary>
 /// Maps C# symbol names onto safe, collision-free JavaScript names.
@@ -52,10 +52,10 @@ public sealed class NameMangler
     /// <summary>Fully-qualified JS name for a type, e.g. <c>App.Foo.Bar</c>.</summary>
     public string TypeFullName(INamedTypeSymbol type)
     {
-        // A type-level [H5.Name("...")] supplies the fully-qualified JS name (namespace + entity),
+        // A type-level [Transpose.Name("...")] supplies the fully-qualified JS name (namespace + entity),
         // overriding the inferred dotted name — this is how a source type maps onto a short runtime
         // name (e.g. [Name("tss.S")] class Stack → tss.S).
-        if (H5Naming.GetName(type) is { } self) return self;
+        if (TransposeNaming.GetName(type) is { } self) return self;
 
         var parts = new List<string>();
 
@@ -63,7 +63,7 @@ public sealed class NameMangler
         {
             // An enclosing type's [Name] fixes the fully-qualified prefix; the nested leaf names
             // collected so far append under it (so [Name("tss.NodeView")] + Graph → tss.NodeView.Graph).
-            if (!SymbolEqualityComparer.Default.Equals(t, type) && H5Naming.GetName(t) is { } enclosing)
+            if (!SymbolEqualityComparer.Default.Equals(t, type) && TransposeNaming.GetName(t) is { } enclosing)
             {
                 var tail = parts.Select(JsIdentifier);
                 return string.Join(".", new[] { enclosing }.Concat(tail));
@@ -89,13 +89,13 @@ public sealed class NameMangler
     /// <summary>BCL types that map onto runtime-provided constructors.</summary>
     private static readonly Dictionary<string, string> BclTypeMap = new(StringComparer.Ordinal)
     {
-        ["System.Collections.Generic.List`1"] = "H5R.List",
-        ["System.Collections.Generic.IList`1"] = "H5R.List",
-        ["System.Collections.Generic.Dictionary`2"] = "H5R.Dictionary",
-        ["System.Collections.Generic.HashSet`1"] = "H5R.HashSet",
-        ["System.Collections.Generic.Queue`1"] = "H5R.List",
-        ["System.Collections.Generic.Stack`1"] = "H5R.List",
-        ["System.Text.StringBuilder"] = "H5R.StringBuilder",
+        ["System.Collections.Generic.List`1"] = "TransposeR.List",
+        ["System.Collections.Generic.IList`1"] = "TransposeR.List",
+        ["System.Collections.Generic.Dictionary`2"] = "TransposeR.Dictionary",
+        ["System.Collections.Generic.HashSet`1"] = "TransposeR.HashSet",
+        ["System.Collections.Generic.Queue`1"] = "TransposeR.List",
+        ["System.Collections.Generic.Stack`1"] = "TransposeR.List",
+        ["System.Text.StringBuilder"] = "TransposeR.StringBuilder",
     };
 
     public string TypeReference(ITypeSymbol type)

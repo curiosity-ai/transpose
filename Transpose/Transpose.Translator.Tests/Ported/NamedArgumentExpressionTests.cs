@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
-namespace H5.Translator.Roslyn.Tests.Ported
+namespace Transpose.Translator.Tests.Ported
 {
     [TestClass]
     public class NamedArgumentExpressionTests : TranslatorTestBase
@@ -41,7 +41,7 @@ public class Program
         public async Task NamedArgumentsWithDynamic()
         {
              // Dynamic often fails in tests due to environment, so we skip Roslyn validation
-             // to test H5 emission specifically.
+             // to test Transpose emission specifically.
             var code = @"
 using System;
 
@@ -58,7 +58,7 @@ public class Program
         Console.WriteLine(val);
     }
 }";
-            // This might still fail if H5 runtime for dynamic is missing in test environment
+            // This might still fail if Transpose runtime for dynamic is missing in test environment
             await RunTest(code, waitForOutput: null, skipRoslyn: true);
         }
 

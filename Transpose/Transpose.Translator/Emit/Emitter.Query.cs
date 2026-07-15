@@ -4,12 +4,12 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
-namespace H5.Translator.Roslyn;
+namespace Transpose.Translator;
 
 public sealed partial class Emitter
 {
     /// <summary>
-    /// Translates a LINQ query expression into the h5.js Enumerable chain
+    /// Translates a LINQ query expression into the tps.js Enumerable chain
     /// (<c>System.Linq.Enumerable.from(src).where(fn).orderBy(fn).select(fn)</c>) — the same
     /// runtime API the method-syntax <c>[Template]</c>s target. Supports single-source
     /// from/where/orderby/select/group by; multi-from, let, and join are reported unsupported.

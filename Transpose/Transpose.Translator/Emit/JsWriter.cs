@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace H5.Translator.Roslyn;
+namespace Transpose.Translator;
 
 /// <summary>
 /// Indentation-aware writer for emitting JavaScript.

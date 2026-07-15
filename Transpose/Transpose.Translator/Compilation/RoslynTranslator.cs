@@ -6,7 +6,7 @@ using System.Reflection;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 
-namespace H5.Translator.Roslyn;
+namespace Transpose.Translator;
 
 /// <summary>
 /// Public entry point for the Roslyn-only C# → JavaScript translator.
@@ -17,7 +17,7 @@ namespace H5.Translator.Roslyn;
 public sealed class RoslynTranslator
 {
     /// <summary>
-    /// Roslyn errors that are artifacts of compiling against the H5 BCL (which targets a
+    /// Roslyn errors that are artifacts of compiling against the Transpose BCL (which targets a
     /// runtime feature-set narrower than the language) but are harmless when the output is
     /// untyped JavaScript. CS8830: covariant return types in overrides — no runtime type
     /// check exists in JS, so the override simply works.
@@ -26,9 +26,9 @@ public sealed class RoslynTranslator
     {
         "CS8830", // covariant return types in overrides — no runtime type check in JS
         "CS5001", // no static Main — library-style snippets simply emit no entry point
-        // async ValueTask: H5.dll's ValueTask lacks the async method-builder attribute, so
-        // Roslyn (against the H5 BCL) rejects it as a task-like return type and then reports
-        // a missing return. We emit ValueTask exactly like Task (a Promise → h5.js Task), so
+        // async ValueTask: Transpose.dll's ValueTask lacks the async method-builder attribute, so
+        // Roslyn (against the Transpose BCL) rejects it as a task-like return type and then reports
+        // a missing return. We emit ValueTask exactly like Task (a Promise → tps.js Task), so
         // both are harmless. (The native comparison compiles against the real BCL, unaffected.)
         "CS1983", // return type of an async method must be void/Task/task-like…
         "CS0161", // not all code paths return a value (fallout of the above; JS returns undefined)
@@ -45,7 +45,7 @@ public sealed class RoslynTranslator
 
     /// <summary>
     /// Translate multiple source files into a single JS bundle, referencing extra assemblies
-    /// (e.g. h5.core, h5.Newtonsoft.Json) alongside H5.dll — used when compiling a real project.
+    /// (e.g. tps.core, tps.Newtonsoft.Json) alongside Transpose.dll — used when compiling a real project.
     /// </summary>
     public TranslationResult Translate(
         IEnumerable<(string path, string text)> sources,
@@ -64,7 +64,7 @@ public sealed class RoslynTranslator
     /// <summary>
     /// Compiles a project as a distributable assembly: builds the Roslyn compilation once, then
     /// (optionally) emits the real .NET DLL AND translates the sources to JavaScript. This mirrors
-    /// the existing compiler, where <c>h5</c> both produces the assembly and the JS that later
+    /// the existing compiler, where <c>tps</c> both produces the assembly and the JS that later
     /// gets embedded into it — so the assembly can be referenced by another project which extracts
     /// the JS back out.
     /// </summary>
@@ -153,22 +153,22 @@ public sealed class RoslynTranslator
     private static string? _shim;
 
     /// <summary>
-    /// The full runtime prelude: the real h5.js followed by the thin H5R shim that
-    /// adapts the emitter's language-level helpers onto h5.js primitives.
+    /// The full runtime prelude: the real tps.js followed by the thin TransposeR shim that
+    /// adapts the emitter's language-level helpers onto tps.js primitives.
     /// </summary>
     public static string LoadRuntime()
     {
-        return H5Assemblies.RuntimeJs + "\n" + RuntimeShim;
+        return TransposeAssemblies.RuntimeJs + "\n" + RuntimeShim;
     }
 
-    /// <summary>The thin H5R shim (the emitter's language-level helpers over h5.js primitives),
-    /// loaded once. A site build ships this as its own script after h5.js and before the bundle.</summary>
+    /// <summary>The thin TransposeR shim (the emitter's language-level helpers over tps.js primitives),
+    /// loaded once. A site build ships this as its own script after tps.js and before the bundle.</summary>
     public static string RuntimeShim => _shim ??= ReadShim();
 
     private static string ReadShim()
     {
         var asm = typeof(RoslynTranslator).Assembly;
-        var name = asm.GetManifestResourceNames().First(n => n.EndsWith("h5roslyn.shim.js", StringComparison.Ordinal));
+        var name = asm.GetManifestResourceNames().First(n => n.EndsWith("tps.shim.js", StringComparison.Ordinal));
         using var stream = asm.GetManifestResourceStream(name)!;
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();

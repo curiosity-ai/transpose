@@ -4,7 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
-namespace H5.Translator.Roslyn.Tests.Ported
+namespace Transpose.Translator.Tests.Ported
 {
     [TestClass]
     public class MathTests : TranslatorTestBase
@@ -66,7 +66,7 @@ public class Program
         Console.WriteLine(Math.CopySign(-1.0, -1.0).ToString(""F1""));
 
         // Test signed zero logic if possible (JS behavior)
-        // H5 implementation uses ((1.0 / {y}) < 0 ? -1.0 : 1.0) * System.Math.abs({x})
+        // Transpose implementation uses ((1.0 / {y}) < 0 ? -1.0 : 1.0) * System.Math.abs({x})
         // Let's verify standard behavior first
         Console.WriteLine(Math.CopySign(5.0, -2.0).ToString(""F1""));
     }

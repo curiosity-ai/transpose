@@ -5,7 +5,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
-namespace H5.Translator.Roslyn;
+namespace Transpose.Translator;
 
 public sealed partial class Emitter
 {
@@ -40,11 +40,11 @@ public sealed partial class Emitter
         if (type is INamedTypeSymbol named)
         {
             // External (BCL / DOM) types are named by their runtime binding: [Name], a
-            // [Scope]/[GlobalMethods] global (e.g. H5.Core.dom's HTMLElement), or the dotted
-            // metadata name. [Name] applies ONLY here — an H5-compiled type ignores it.
-            if (!H5Naming.IsH5CompiledSource(named))
+            // [Scope]/[GlobalMethods] global (e.g. Transpose.Core.dom's HTMLElement), or the dotted
+            // metadata name. [Name] applies ONLY here — an Transpose-compiled type ignores it.
+            if (!TransposeNaming.IsTransposeCompiledSource(named))
             {
-                var name = H5Naming.GetName(named);
+                var name = TransposeNaming.GetName(named);
                 if (name is not null) return name;
 
                 if (ScopedExternalName(named) is { } scoped) return scoped;
@@ -59,8 +59,8 @@ public sealed partial class Emitter
                 return string.IsNullOrEmpty(ns) ? named.Name : ns + "." + named.Name;
             }
 
-            // A type this compiler emits — either from source, or from a referenced H5-compiled
-            // assembly (a package built with --emit-package). Both are defined via H5.define under
+            // A type this compiler emits — either from source, or from a referenced Transpose-compiled
+            // assembly (a package built with --emit-package). Both are defined via Transpose.define under
             // their full nested JS name, so a reference must use the same name (nested-aware).
             // The name carries only the type's OWN arity suffix; the type arguments passed are the
             // EFFECTIVE ones (enclosing + own), so a type nested in a generic (e.g.
@@ -82,11 +82,11 @@ public sealed partial class Emitter
     }
 
     /// <summary>
-    /// The type parameters a type's H5.define is a function of: its enclosing types' parameters
+    /// The type parameters a type's Transpose.define is a function of: its enclosing types' parameters
     /// (outermost first) followed by its own. A type nested in a generic type can reference the
     /// enclosing type parameters in C#, so — like the legacy compiler — its define is emitted as
     /// <c>function (TOuter…) { return {…}; }</c> even when the nested type has no parameters of its
-    /// own (e.g. <c>IconToggle&lt;T&gt;.Item</c> → <c>H5.define("tss.IconToggle.Item", function (T){…})</c>).
+    /// own (e.g. <c>IconToggle&lt;T&gt;.Item</c> → <c>Transpose.define("tss.IconToggle.Item", function (T){…})</c>).
     /// </summary>
     private static List<ITypeParameterSymbol> EffectiveTypeParameters(INamedTypeSymbol type)
     {
@@ -109,7 +109,7 @@ public sealed partial class Emitter
     /// <summary>
     /// The JS name of an external type nested under a <c>[Scope]</c>/<c>[GlobalMethods]</c>
     /// binding: the scope prefix (empty for a global scope) plus the type names between the
-    /// scope and this type — so <c>H5.Core.dom.HTMLElement</c> becomes <c>HTMLElement</c>.
+    /// scope and this type — so <c>Transpose.Core.dom.HTMLElement</c> becomes <c>HTMLElement</c>.
     /// Null when no enclosing scope applies.
     /// </summary>
     /// <summary>
@@ -119,8 +119,8 @@ public sealed partial class Emitter
     /// </summary>
     private string StaticMemberAccess(ISymbol member)
     {
-        var name = H5Naming.MemberJsName(member);
-        var prefix = H5Naming.ScopePrefix(member.ContainingType);
+        var name = TransposeNaming.MemberJsName(member);
+        var prefix = TransposeNaming.ScopePrefix(member.ContainingType);
         if (prefix is null) return $"{TypeRef(member.ContainingType)}.{name}";
         return prefix.Length == 0 ? name : $"{prefix}.{name}";
     }
@@ -130,13 +130,13 @@ public sealed partial class Emitter
         var names = new List<string>();
         for (INamedTypeSymbol? t = named; t is not null; t = t.ContainingType)
         {
-            if (H5Naming.ScopePrefix(t) is { } prefix)
+            if (TransposeNaming.ScopePrefix(t) is { } prefix)
             {
                 if (names.Count == 0) return null; // referencing the scope type itself — not a member
                 var path = string.Join(".", names);
                 return string.IsNullOrEmpty(prefix) ? path : prefix + "." + path;
             }
-            names.Insert(0, H5Naming.GetName(t) ?? StripArity(t.Name));
+            names.Insert(0, TransposeNaming.GetName(t) ?? StripArity(t.Name));
         }
         return null;
     }
@@ -146,21 +146,21 @@ public sealed partial class Emitter
     /// every other mode is a numeric enum at runtime and defaults to 0.</summary>
     private string EnumDefaultLiteral(INamedTypeSymbol enumType)
     {
-        var mode = H5Naming.EnumEmitMode(enumType);
+        var mode = TransposeNaming.EnumEmitMode(enumType);
         if (mode is 3 or 4 or 5 or 6)
         {
             var zero = enumType.GetMembers().OfType<IFieldSymbol>()
                 .FirstOrDefault(f => f.HasConstantValue && Convert.ToInt64(f.ConstantValue) == 0);
-            return zero is not null ? JsString(H5Naming.EnumStringName(zero, mode)) : "null";
+            return zero is not null ? JsString(TransposeNaming.EnumStringName(zero, mode)) : "null";
         }
         return "0";
     }
 
     private void EmitEnum(INamedTypeSymbol type)
     {
-        _w.Write($"H5.define(\"{_names.TypeFullName(type)}\", ");
+        _w.Write($"Transpose.define(\"{_names.TypeFullName(type)}\", ");
         var isFlags = type.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "System.FlagsAttribute");
-        var mode = H5Naming.EnumEmitMode(type);
+        var mode = TransposeNaming.EnumEmitMode(type);
         // Emit.StringName* modes back the enum with strings (its [Name] on each member); every
         // other mode keeps the numeric ordinals. A string-backed enum also declares
         // $utype: System.String so the runtime treats its members as strings (this is what makes
@@ -180,9 +180,9 @@ public sealed partial class Emitter
                     for (var i = 0; i < fields.Count; i++)
                     {
                         var value = stringMode
-                            ? JsString(H5Naming.EnumStringName(fields[i], mode))
+                            ? JsString(TransposeNaming.EnumStringName(fields[i], mode))
                             : Convert.ToInt64(fields[i].ConstantValue).ToString(System.Globalization.CultureInfo.InvariantCulture);
-                        _w.Write($"{NameMangler.JsPropertyKey(H5Naming.MemberJsName(fields[i]))}: {value}");
+                        _w.Write($"{NameMangler.JsPropertyKey(TransposeNaming.MemberJsName(fields[i]))}: {value}");
                         _w.WriteLine(i < fields.Count - 1 ? "," : "");
                     }
                 });
@@ -203,11 +203,11 @@ public sealed partial class Emitter
         var isGeneric = typeParams.Count > 0;
         var fullName = type.Arity > 0 ? _names.TypeFullName(type) + "$" + type.Arity : _names.TypeFullName(type);
 
-        _w.Write($"H5.define(\"{fullName}\", ");
+        _w.Write($"Transpose.define(\"{fullName}\", ");
         if (isGeneric) _w.Write($"function ({string.Join(", ", typeParams.Select(p => p.Name))}) {{ return ");
         // $variance records each OWN type parameter's variance so the runtime can model
         // covariant/contravariant interface assignability: 2 = covariant (out), 1 = contravariant
-        // (in), 0 = invariant. Only emitted when at least one parameter is variant (as H5 does).
+        // (in), 0 = invariant. Only emitted when at least one parameter is variant (as Transpose does).
         var variances = type.TypeParameters.Select(p => p.Variance switch
         {
             VarianceKind.Out => 2,
@@ -219,7 +219,7 @@ public sealed partial class Emitter
         _w.Block(() =>
         {
             _w.Write("$kind: \"interface\"");
-            var bases = type.Interfaces.Where(i => H5Naming.IsInheritableInterface(i)).ToList();
+            var bases = type.Interfaces.Where(i => TransposeNaming.IsInheritableInterface(i)).ToList();
             if (bases.Count > 0)
             {
                 _w.WriteLine(",");
@@ -249,7 +249,7 @@ public sealed partial class Emitter
         var entryPoint = _compilation.GetEntryPoint(System.Threading.CancellationToken.None);
 
         // A generic type is defined as a function of its type parameters, returning the
-        // config object (H5.define("Name$N", function (T) { return { … }; })); the type
+        // config object (Transpose.define("Name$N", function (T) { return { … }; })); the type
         // parameters are then in scope at runtime for new T()/default(T)/typeof(T). A type nested
         // in a generic type is a function of the ENCLOSING parameters too (its own arity may be 0),
         // so the define name carries only its own arity but the function takes every effective one.
@@ -257,7 +257,7 @@ public sealed partial class Emitter
         var isGeneric = typeParams.Count > 0;
         var fullName = type.Arity > 0 ? _names.TypeFullName(type) + "$" + type.Arity : _names.TypeFullName(type);
 
-        _w.Write($"H5.define(\"{fullName}\", ");
+        _w.Write($"Transpose.define(\"{fullName}\", ");
         if (isGeneric) _w.Write($"function ({string.Join(", ", typeParams.Select(p => p.Name))}) {{ return ");
         _w.Block(() =>
         {
@@ -272,32 +272,32 @@ public sealed partial class Emitter
             // $literal marks an [ObjectLiteral] type: instances are plain JS objects (construction
             // emits {} + initializer), and the runtime treats the type as a literal for is/as/typeof
             // rather than a real class. Matches the legacy compiler's $literal:true flag.
-            if (type.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "H5.ObjectLiteralAttribute"))
+            if (type.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "Transpose.ObjectLiteralAttribute"))
             {
                 sections.Add(() => _w.Write("$literal: true"));
             }
 
             // inherits: base class + implemented interfaces the runtime tracks (source or a
-            // referenced H5-compiled library — so `x is IFoo`/`as IFoo` against a library
-            // interface resolves; external BCL interfaces are omitted, matching H5).
+            // referenced Transpose-compiled library — so `x is IFoo`/`as IFoo` against a library
+            // interface resolves; external BCL interfaces are omitted, matching Transpose).
             var inherits = new List<string>();
             if (type.BaseType is { } bt && bt.SpecialType != SpecialType.System_Object
                 && bt.TypeKind != TypeKind.Error && !IsValueTypeBase(bt))
             {
                 inherits.Add(TypeRef(bt));
             }
-            inherits.AddRange(type.Interfaces.Where(i => H5Naming.IsInheritableInterface(i)).Select(TypeRef));
+            inherits.AddRange(type.Interfaces.Where(i => TransposeNaming.IsInheritableInterface(i)).Select(TypeRef));
             if (inherits.Count > 0)
             {
                 // Lazy inherits (a function, as the legacy compiler emits): the config object
-                // is built before H5.define runs, so evaluating an eager array would resolve a
+                // is built before Transpose.define runs, so evaluating an eager array would resolve a
                 // self/forward reference (e.g. class C : IFoo<C>) before the type is registered.
                 sections.Add(() => _w.Write($"inherits: function () {{ return [{string.Join(", ", inherits)}]; }}"));
             }
 
             // alias: maps each implicitly-implemented interface member's plain slot to the
             // mangled interface slot, so access through the interface type resolves.
-            var aliases = H5Naming.InterfaceAliasPairs(type);
+            var aliases = TransposeNaming.InterfaceAliasPairs(type);
             if (aliases.Count > 0)
             {
                 sections.Add(() => _w.Write(
@@ -379,12 +379,12 @@ public sealed partial class Emitter
         {
             if (m.IsStatic) continue;
             if (m is IFieldSymbol f && !f.IsConst && f.AssociatedSymbol is null && f.CanBeReferencedByName)
-                yield return (H5Naming.MemberJsName(f), DefaultValueLiteral(f.Type), f);
+                yield return (TransposeNaming.MemberJsName(f), DefaultValueLiteral(f.Type), f);
             else if (m is IPropertySymbol p && !p.IsAbstract && !p.IsIndexer
                      && (IsAutoProperty(p) || (type.IsRecord && p.IsImplicitlyDeclared && p.Name != "EqualityContract")))
-                yield return (H5Naming.MemberJsName(p), DefaultValueLiteral(p.Type), p);
+                yield return (TransposeNaming.MemberJsName(p), DefaultValueLiteral(p.Type), p);
             else if (m is IEventSymbol ev && IsFieldLikeEvent(ev))
-                yield return (H5Naming.MemberJsName(ev), "null", ev);
+                yield return (TransposeNaming.MemberJsName(ev), "null", ev);
             else if (m is IPropertySymbol fbp && IsFieldBackedProperty(fbp))
                 yield return (PropertyBackingName(fbp), DefaultValueLiteral(fbp.Type), fbp);
         }
@@ -429,8 +429,8 @@ public sealed partial class Emitter
     private string DefaultValueLiteral(ITypeSymbol type)
     {
         // default(T) for an unconstrained/struct type parameter must defer to the runtime, which
-        // picks 0 / false / null based on the *actual* T at construction — exactly what H5 emits
-        // (H5.getDefaultValue(T)). Emitting a bare null here would wrongly seed value-type T
+        // picks 0 / false / null based on the *actual* T at construction — exactly what Transpose emits
+        // (Transpose.getDefaultValue(T)). Emitting a bare null here would wrongly seed value-type T
         // (int/bool/enum/struct) with null instead of its zeroed default. Only safe when T is a
         // type parameter of the type currently being emitted (hence bound as a JS function
         // parameter of the define); a T inherited from an enclosing generic type is not in scope
@@ -443,7 +443,7 @@ public sealed partial class Emitter
             var inScope = _currentEmitType is not null
                 && tp.TypeParameterKind == TypeParameterKind.Type
                 && EffectiveTypeParameters(_currentEmitType).Any(p => SymbolEqualityComparer.Default.Equals(p, tp));
-            return inScope ? $"H5.getDefaultValue({TypeRef(type)})" : "null";
+            return inScope ? $"Transpose.getDefaultValue({TypeRef(type)})" : "null";
         }
         if (type.TypeKind == TypeKind.Enum) return EnumDefaultLiteral((INamedTypeSymbol)type);
         if (type is INamedTypeSymbol { TypeKind: TypeKind.Struct } st && st.Locations.Any(l => l.IsInSource))

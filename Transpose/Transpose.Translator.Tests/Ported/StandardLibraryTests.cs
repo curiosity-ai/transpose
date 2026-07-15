@@ -9,7 +9,7 @@ using System.Globalization;
 using System.Diagnostics;
 using System.Linq;
 
-namespace H5.Translator.Roslyn.Tests.Ported
+namespace Transpose.Translator.Tests.Ported
 {
     [TestClass]
     public class StandardLibraryTests : TranslatorTestBase
@@ -29,7 +29,7 @@ public class Program
         Console.WriteLine(Math.Min(10.5, 20.5));
         Console.WriteLine(Math.Max(10, 20));
         Console.WriteLine(Math.Max(10.5, 20.5));
-        // Explicitly cast to double to avoid ambiguity in H5 (Sign(double) vs Sign(decimal))
+        // Explicitly cast to double to avoid ambiguity in Transpose (Sign(double) vs Sign(decimal))
         Console.WriteLine(Math.Sign((double)-10));
         Console.WriteLine(Math.Sign((double)10));
         Console.WriteLine(Math.Sign((double)0));
@@ -188,7 +188,7 @@ public class Program
         Console.WriteLine(dt.AddHours(25).Day); // Should be 2nd
 
         // Simple format to avoid locale issues
-        // H5 ToString might differ slightly in default formatting or culture, so we test specific format
+        // Transpose ToString might differ slightly in default formatting or culture, so we test specific format
         Console.WriteLine(dt.ToString("yyyy-MM-dd"));
     }
 }
@@ -231,7 +231,7 @@ public class Program
 {
     public static void Main()
     {
-        // Explicitly call ToString() because Console.WriteLine(object) might behave differently for structs in H5
+        // Explicitly call ToString() because Console.WriteLine(object) might behave differently for structs in Transpose
         Console.WriteLine(Guid.Empty.ToString());
 
         var g = Guid.Parse("e849312b-3151-409e-8367-6286c476566d");
@@ -617,7 +617,7 @@ public class Program
     public static void Main()
     {
         var uri = new Uri("http://example.com:8080/path?q=1");
-        // Only AbsoluteUri is currently exposed in H5 Uri implementation
+        // Only AbsoluteUri is currently exposed in Transpose Uri implementation
         Console.WriteLine(uri.AbsoluteUri);
     }
 }
@@ -656,7 +656,7 @@ public class Program
 {
     public static void Main()
     {
-        // H5 implementation might differ for InvariantCulture name
+        // Transpose implementation might differ for InvariantCulture name
         // Just verify it doesn't crash
         Console.WriteLine(CultureInfo.InvariantCulture != null);
         Console.WriteLine(CultureInfo.CurrentCulture != null);
@@ -994,7 +994,7 @@ public class Program
         sb.Insert(6, "C#"); // "Hello C#"
         Console.WriteLine(sb.ToString());
 
-        sb.Replace("C#", "H5");
+        sb.Replace("C#", "Transpose");
         Console.WriteLine(sb.ToString());
 
         sb.Length = 5;
@@ -1276,7 +1276,7 @@ public class Program
         Console.WriteLine(g.ToString("B").Length); // 38
         Console.WriteLine(g.ToString("P").Length); // 38
 
-        // X format is not supported in H5 (returns D format), so we skip comparing it against Roslyn
+        // X format is not supported in Transpose (returns D format), so we skip comparing it against Roslyn
 
         Console.WriteLine(g.ToString("N").ToLower() == "e849312b3151409e83676286c476566d");
     }

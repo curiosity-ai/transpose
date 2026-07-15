@@ -5,7 +5,7 @@ using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 
-namespace H5.Translator.Roslyn;
+namespace Transpose.Translator;
 
 /// <summary>
 /// Builds a <see cref="CSharpCompilation"/> from source, wiring up the reference
@@ -48,7 +48,7 @@ public static class CompilationBuilder
             optimizationLevel: OptimizationLevel.Debug,
             allowUnsafe: true, // allowed by the compiler so we can detect+report it ourselves
             nullableContextOptions: nullable,
-            // Import non-public members of referenced assemblies. A referenced H5-compiled package
+            // Import non-public members of referenced assemblies. A referenced Transpose-compiled package
             // (built with --emit-package) numbers its overloads (e.g. $ctorN) over its FULL member
             // set including private ones; the consumer must see the same set for its call sites to
             // resolve to the same JS names.
@@ -62,22 +62,22 @@ public static class CompilationBuilder
     }
 
     /// <summary>
-    /// References the H5 assembly (H5.dll) as the sole BCL, exactly like the H5
-    /// compiler. H5.dll redefines System.* with the [External]/[Name]/[Template]
-    /// attributes that drive JavaScript emission and interop with the h5.js runtime.
-    /// Any <paramref name="extraReferencePaths"/> (e.g. h5.core, h5.Newtonsoft.Json for a
+    /// References the Transpose assembly (Transpose.dll) as the sole BCL, exactly like the Transpose
+    /// compiler. Transpose.dll redefines System.* with the [External]/[Name]/[Template]
+    /// attributes that drive JavaScript emission and interop with the tps.js runtime.
+    /// Any <paramref name="extraReferencePaths"/> (e.g. tps.core, tps.Newtonsoft.Json for a
     /// real project) are added alongside it.
     /// </summary>
     private static IReadOnlyList<MetadataReference> GetReferenceAssemblies(IEnumerable<string>? extraReferencePaths)
     {
-        var refs = new List<MetadataReference> { MetadataReference.CreateFromFile(H5Assemblies.H5DllPath) };
+        var refs = new List<MetadataReference> { MetadataReference.CreateFromFile(TransposeAssemblies.TransposeDllPath) };
         if (extraReferencePaths is not null)
         {
-            var h5Dll = Path.GetFullPath(H5Assemblies.H5DllPath);
+            var tpsDll = Path.GetFullPath(TransposeAssemblies.TransposeDllPath);
             foreach (var path in extraReferencePaths)
             {
                 if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) continue;
-                if (string.Equals(Path.GetFullPath(path), h5Dll, StringComparison.OrdinalIgnoreCase)) continue;
+                if (string.Equals(Path.GetFullPath(path), tpsDll, StringComparison.OrdinalIgnoreCase)) continue;
                 refs.Add(MetadataReference.CreateFromFile(path));
             }
         }

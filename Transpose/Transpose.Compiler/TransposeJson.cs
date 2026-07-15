@@ -1,18 +1,18 @@
 using System.Text.Json;
 
-namespace H5.Translator.Roslyn.CLI;
+namespace Transpose.Compiler;
 
 /// <summary>
-/// The subset of a project's <c>h5.json</c> the CLI acts on: where output goes, the bundle
+/// The subset of a project's <c>tps.json</c> the CLI acts on: where output goes, the bundle
 /// file name, HTML generation, and the resource files (CSS/images) copied into the output
 /// and linked from index.html. JSONC (comments + trailing commas) is tolerated.
 /// </summary>
-internal sealed class H5Json
+internal sealed class TransposeJson
 {
     public string? Output { get; init; }
     public string FileName { get; init; } = "app.js";
 
-    /// <summary>The h5.json <c>fileName</c> exactly as written (null when unset). A library with
+    /// <summary>The tps.json <c>fileName</c> exactly as written (null when unset). A library with
     /// no explicit fileName outputs &lt;AssemblyName&gt;.js.</summary>
     public string? ExplicitFileName { get; init; }
     public bool HtmlDisabled { get; init; }
@@ -35,9 +35,9 @@ internal sealed class H5Json
         public string? Output { get; init; }
     }
 
-    public static H5Json? TryLoad(string projectDir)
+    public static TransposeJson? TryLoad(string projectDir)
     {
-        var path = Path.Combine(projectDir, "h5.json");
+        var path = Path.Combine(projectDir, "tps.json");
         if (!File.Exists(path)) return null;
 
         var options = new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
@@ -62,7 +62,7 @@ internal sealed class H5Json
             }
         }
 
-        return new H5Json
+        return new TransposeJson
         {
             Output = Str(root, "output"),
             FileName = Str(root, "fileName") ?? "app.js",

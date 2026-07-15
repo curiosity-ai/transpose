@@ -1,18 +1,18 @@
 using System.Threading.Tasks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
-namespace H5.Translator.Roslyn.Tests.Ported
+namespace Transpose.Translator.Tests.Ported
 {
     [TestClass]
-    [Ignore("Requires H5.Core browser (DOM) bindings and Script.Write JS-interop, which the clean-room self-contained runtime intentionally does not model.")]
+    [Ignore("Requires Transpose.Core browser (DOM) bindings and Script.Write JS-interop, which the clean-room self-contained runtime intentionally does not model.")]
     public class WebApiTests : TranslatorTestBase
     {
         [TestMethod]
         public async Task ResizeObserverTest()
         {
             var code = @"
-            using H5;
-            using H5.Core;
+            using Transpose;
+            using Transpose.Core;
             using System;
 
             public class Program
@@ -42,8 +42,8 @@ namespace H5.Translator.Roslyn.Tests.Ported
         public async Task WebCodecsTest()
         {
             var code = @"
-            using H5;
-            using H5.Core;
+            using Transpose;
+            using Transpose.Core;
             using System;
 
             public class Program
@@ -74,8 +74,8 @@ namespace H5.Translator.Roslyn.Tests.Ported
         public async Task MediaSessionTest()
         {
             var code = @"
-            using H5;
-            using H5.Core;
+            using Transpose;
+            using Transpose.Core;
             using System;
 
             public class Program
@@ -102,8 +102,8 @@ namespace H5.Translator.Roslyn.Tests.Ported
         public async Task PictureInPictureTest()
         {
             var code = @"
-            using H5;
-            using H5.Core;
+            using Transpose;
+            using Transpose.Core;
             using System;
 
             public class Program
@@ -129,8 +129,8 @@ namespace H5.Translator.Roslyn.Tests.Ported
         public async Task WebHIDTest()
         {
             var code = @"
-            using H5;
-            using H5.Core;
+            using Transpose;
+            using Transpose.Core;
             using System;
 
             public class Program
@@ -156,8 +156,8 @@ namespace H5.Translator.Roslyn.Tests.Ported
         public async Task WebSerialTest()
         {
             var code = @"
-            using H5;
-            using H5.Core;
+            using Transpose;
+            using Transpose.Core;
             using System;
 
             public class Program
@@ -183,8 +183,8 @@ namespace H5.Translator.Roslyn.Tests.Ported
         public async Task WebMIDITest()
         {
             var code = @"
-            using H5;
-            using H5.Core;
+            using Transpose;
+            using Transpose.Core;
             using System;
 
             public class Program
@@ -211,8 +211,8 @@ namespace H5.Translator.Roslyn.Tests.Ported
         public async Task SensorsTest()
         {
             var code = @"
-            using H5;
-            using H5.Core;
+            using Transpose;
+            using Transpose.Core;
             using System;
 
             public class Program
@@ -238,9 +238,9 @@ namespace H5.Translator.Roslyn.Tests.Ported
         public async Task FileSystemAccessTest()
         {
             var code = @"
-            using H5;
-            using H5.Core;
-            using static H5.Core.dom;
+            using Transpose;
+            using Transpose.Core;
+            using static Transpose.Core.dom;
             using System;
 
             public class Program
@@ -273,8 +273,8 @@ namespace H5.Translator.Roslyn.Tests.Ported
         public async Task WebXRTest()
         {
             var code = @"
-            using H5;
-            using H5.Core;
+            using Transpose;
+            using Transpose.Core;
             using System;
 
             public class Program
@@ -300,8 +300,8 @@ namespace H5.Translator.Roslyn.Tests.Ported
         public async Task WebBluetoothTest()
         {
             var code = @"
-            using H5;
-            using H5.Core;
+            using Transpose;
+            using Transpose.Core;
             using System;
 
             public class Program
@@ -327,8 +327,8 @@ namespace H5.Translator.Roslyn.Tests.Ported
         public async Task WebUSBTest()
         {
             var code = @"
-            using H5;
-            using H5.Core;
+            using Transpose;
+            using Transpose.Core;
             using System;
 
             public class Program
@@ -354,8 +354,8 @@ namespace H5.Translator.Roslyn.Tests.Ported
         public async Task CryptoRandomUUIDTest()
         {
             var code = @"
-            using H5;
-            using H5.Core;
+            using Transpose;
+            using Transpose.Core;
             using System;
 
             public class Program
@@ -381,8 +381,8 @@ namespace H5.Translator.Roslyn.Tests.Ported
         public async Task CompressionStreamTest()
         {
             var code = @"
-            using H5;
-            using H5.Core;
+            using Transpose;
+            using Transpose.Core;
             using System;
 
             public class Program
@@ -408,8 +408,8 @@ namespace H5.Translator.Roslyn.Tests.Ported
         public async Task ScreenOrientationTest()
         {
             var code = @"
-            using H5;
-            using H5.Core;
+            using Transpose;
+            using Transpose.Core;
             using System;
 
             public class Program
@@ -435,8 +435,8 @@ namespace H5.Translator.Roslyn.Tests.Ported
         public async Task PerformanceObserverTest()
         {
             var code = @"
-            using H5;
-            using H5.Core;
+            using Transpose;
+            using Transpose.Core;
             using System;
 
             public class Program
@@ -465,8 +465,8 @@ namespace H5.Translator.Roslyn.Tests.Ported
         public async Task ReportingObserverTest()
         {
             var code = @"
-            using H5;
-            using H5.Core;
+            using Transpose;
+            using Transpose.Core;
             using System;
 
             public class Program

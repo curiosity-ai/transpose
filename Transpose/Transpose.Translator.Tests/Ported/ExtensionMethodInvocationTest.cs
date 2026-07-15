@@ -2,9 +2,9 @@ using System.Threading.Tasks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System.Collections.Generic;
 using System.Linq;
-using H5;
+using Transpose;
 
-namespace H5.Translator.Roslyn.Tests.Ported
+namespace Transpose.Translator.Tests.Ported
 {
     [TestClass]
     public class BugReportTest : TranslatorTestBase
@@ -16,7 +16,7 @@ namespace H5.Translator.Roslyn.Tests.Ported
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using H5;
+using Transpose;
 
 public class Program
 {

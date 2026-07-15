@@ -2,13 +2,13 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json;
 
-namespace H5.Translator.Roslyn.CLI;
+namespace Transpose.Compiler;
 
 /// <summary>
-/// Assembles a runnable H5 site from a translation: writes the compiled bundle, extracts the
-/// JavaScript each referenced package embeds (h5.js, newtonsoft.json.js, … — listed in the
-/// assembly's <c>H5.Resources.json</c>), copies the h5.json resource files (CSS/images), and
-/// generates index.html — mirroring what the existing h5 compiler produces.
+/// Assembles a runnable Transpose site from a translation: writes the compiled bundle, extracts the
+/// JavaScript each referenced package embeds (tps.js, newtonsoft.json.js, … — listed in the
+/// assembly's <c>Transpose.Resources.json</c>), copies the tps.json resource files (CSS/images), and
+/// generates index.html — mirroring what the existing tps compiler produces.
 /// </summary>
 internal static class OutputBuilder
 {
@@ -29,20 +29,20 @@ internal static class OutputBuilder
 </body>
 </html>";
 
-    public static string Build(ResolvedProject project, H5Json config, string javascript, string outputDir, bool minified = false, string? metadataJavascript = null)
+    public static string Build(ResolvedProject project, TransposeJson config, string javascript, string outputDir, bool minified = false, string? metadataJavascript = null)
     {
         Directory.CreateDirectory(outputDir);
 
-        var runtimeScripts = new List<string>();   // h5.js, newtonsoft.json.js, …
+        var runtimeScripts = new List<string>();   // tps.js, newtonsoft.json.js, …
         var libraryScripts = new List<string>();    // tss.js, tss.meta.js, tss-dep.js from referenced projects
-        var resourceScripts = new List<string>();   // tss-dep.js, … (this project's own h5.json resources)
+        var resourceScripts = new List<string>();   // tss-dep.js, … (this project's own tps.json resources)
         var cssLinks = new List<string>();
 
         // In separate-assembly mode, referenced *projects* are consumed as DLLs (their JS is
         // extracted, not recompiled) — exclude them from the runtime-package JS loop below.
         var projectDlls = new HashSet<string>(project.ReferencedProjectDlls, StringComparer.OrdinalIgnoreCase);
 
-        // 1. Runtime JS embedded in referenced packages, in dependency order (H5 core first).
+        // 1. Runtime JS embedded in referenced packages, in dependency order (Transpose core first).
         foreach (var dll in OrderRuntimeAssemblies(project.ReferencePaths.Where(p => !projectDlls.Contains(p))))
         {
             foreach (var (fileName, text) in ExtractEmbeddedJs(dll))
@@ -52,23 +52,23 @@ internal static class OutputBuilder
             }
         }
 
-        // The H5R shim (the translator's language-level helpers over h5.js) loads right after
-        // the H5 runtime and before any generated code that calls into it.
-        File.WriteAllText(Path.Combine(outputDir, "h5r.shim.js"), RoslynTranslator.RuntimeShim);
-        runtimeScripts.Add("h5r.shim.js");
+        // The TransposeR shim (the translator's language-level helpers over tps.js) loads right after
+        // the Transpose runtime and before any generated code that calls into it.
+        File.WriteAllText(Path.Combine(outputDir, "tps.shim.js"), RoslynTranslator.RuntimeShim);
+        runtimeScripts.Add("tps.shim.js");
 
         // 1b. Referenced project assemblies: extract their embedded JS/CSS/resources (deepest
         //     dependency first) so a library loads before the app that uses it.
         foreach (var dll in Enumerable.Reverse(project.ReferencedProjectDlls))
             ExtractProjectDllResources(dll, outputDir, libraryScripts, cssLinks, minified);
 
-        // 2. h5.json resource files from every project in the closure — referenced projects
+        // 2. tps.json resource files from every project in the closure — referenced projects
         //    first (a library's JS deps load before the app that uses them). A resource group
         //    whose name is a .js/.css file concatenates its files into that one bundle; other
         //    groups (globbed images, etc.) copy each file through.
         foreach (var projectDir in Enumerable.Reverse(project.ProjectDirs))
         {
-            var cfg = projectDir == project.ProjectDir ? config : H5Json.TryLoad(projectDir);
+            var cfg = projectDir == project.ProjectDir ? config : TransposeJson.TryLoad(projectDir);
             if (cfg is null) continue;
             // The bundle group names whose files actually resolve in this project — used to
             // decide, for a minified/non-minified pair, which variant the current build takes.
@@ -105,12 +105,12 @@ internal static class OutputBuilder
 
     /// <summary>
     /// The resources a library assembly embeds so a referencing project can extract them: the
-    /// compiled JS (and its .meta.js) plus every h5.json resource group (bundled or copied),
+    /// compiled JS (and its .meta.js) plus every tps.json resource group (bundled or copied),
     /// each tagged with its output subdirectory. Both minified and non-minified resource-group
     /// variants are embedded — the consumer picks per build configuration.
     /// </summary>
     public static List<EmbeddedItem> CollectEmbeddableItems(
-        string projectDir, H5Json config, string mainJsName, string javascript, string? metadataJavascript)
+        string projectDir, TransposeJson config, string mainJsName, string javascript, string? metadataJavascript)
     {
         var items = new List<EmbeddedItem>();
         var utf8 = new UTF8Encoding(false);
@@ -147,7 +147,7 @@ internal static class OutputBuilder
     }
 
     /// <summary>
-    /// Extracts every resource a referenced project assembly embedded (via its H5.Resources.json
+    /// Extracts every resource a referenced project assembly embedded (via its Transpose.Resources.json
     /// manifest) into the output folder, honouring each entry's output subdirectory and the
     /// Debug/Release minified-variant selection. Adds scripts/CSS links (in manifest order) to the
     /// supplied lists. This is the consuming half of the package protocol.
@@ -160,7 +160,7 @@ internal static class OutputBuilder
         try { asm = Assembly.LoadFrom(dllPath); } catch { return; }
 
         var names = asm.GetManifestResourceNames();
-        var manifestName = names.FirstOrDefault(n => n.EndsWith("H5.Resources.json", StringComparison.OrdinalIgnoreCase));
+        var manifestName = names.FirstOrDefault(n => n.EndsWith("Transpose.Resources.json", StringComparison.OrdinalIgnoreCase));
         if (manifestName is null) return;
 
         List<(string fileName, string? path)> entries;
@@ -219,7 +219,7 @@ internal static class OutputBuilder
     }
 
     private static void ProcessResourceGroup(
-        string projectDir, string outputDir, H5Json.ResourceGroup group,
+        string projectDir, string outputDir, TransposeJson.ResourceGroup group,
         List<string> resourceScripts, List<string> cssLinks, HashSet<string> bundleNames, bool minified)
     {
         var destSub = (group.Output ?? "").Replace('\\', '/');
@@ -228,8 +228,8 @@ internal static class OutputBuilder
 
         var name = group.Name ?? "";
 
-        // H5 emits resource groups in minified/non-minified pairs (e.g. tss-dep.js and
-        // tss-dep.min.js — see the "outputFormatting": "Both" note in Tesserae's h5.json). When
+        // Transpose emits resource groups in minified/non-minified pairs (e.g. tss-dep.js and
+        // tss-dep.min.js — see the "outputFormatting": "Both" note in Tesserae's tps.json). When
         // BOTH variants of a bundle are available, a referencing project built in Debug takes the
         // non-minified one and a Release build takes the .min.js one. When only one variant
         // exists, it is used regardless of configuration — otherwise both variants of a matched
@@ -265,12 +265,12 @@ internal static class OutputBuilder
         }
     }
 
-    /// <summary>Orders reference assemblies so the H5 runtime core loads first.</summary>
+    /// <summary>Orders reference assemblies so the Transpose runtime core loads first.</summary>
     private static IEnumerable<string> OrderRuntimeAssemblies(IEnumerable<string> dlls)
-        => dlls.OrderBy(d => Path.GetFileName(d).Equals("H5.dll", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+        => dlls.OrderBy(d => Path.GetFileName(d).Equals("Transpose.dll", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
                .ThenBy(d => Path.GetFileName(d), StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>The JS files a package embeds, in the order its H5.Resources.json lists them.</summary>
+    /// <summary>The JS files a package embeds, in the order its Transpose.Resources.json lists them.</summary>
     private static IEnumerable<(string fileName, string text)> ExtractEmbeddedJs(string dllPath)
     {
         Assembly asm;
@@ -278,7 +278,7 @@ internal static class OutputBuilder
         catch { yield break; }
 
         var resourceNames = asm.GetManifestResourceNames();
-        var manifest = resourceNames.FirstOrDefault(n => n.EndsWith("H5.Resources.json", StringComparison.OrdinalIgnoreCase));
+        var manifest = resourceNames.FirstOrDefault(n => n.EndsWith("Transpose.Resources.json", StringComparison.OrdinalIgnoreCase));
         List<string> order;
         if (manifest is not null)
         {
@@ -317,7 +317,7 @@ internal static class OutputBuilder
             : File.Exists(Path.Combine(searchDir, file)) ? new[] { Path.Combine(searchDir, file) } : Enumerable.Empty<string>();
     }
 
-    private static void WriteHtml(ResolvedProject project, H5Json config, string outputDir, List<string> scripts, List<string> cssLinks)
+    private static void WriteHtml(ResolvedProject project, TransposeJson config, string outputDir, List<string> scripts, List<string> cssLinks)
     {
         var css = new StringBuilder();
         foreach (var link in cssLinks)

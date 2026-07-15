@@ -5,7 +5,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
-namespace H5.Translator.Roslyn;
+namespace Transpose.Translator;
 
 public sealed partial class Emitter
 {
@@ -15,8 +15,8 @@ public sealed partial class Emitter
     {
         var staticFields = type.GetMembers().Where(m => m.IsStatic).Select(m => m switch
         {
-            IFieldSymbol f when !f.IsConst && f.AssociatedSymbol is null => ((string name, string def)?)(H5Naming.MemberJsName(f), DefaultValueLiteral(f.Type)),
-            IPropertySymbol p when IsAutoProperty(p) => (H5Naming.MemberJsName(p), DefaultValueLiteral(p.Type)),
+            IFieldSymbol f when !f.IsConst && f.AssociatedSymbol is null => ((string name, string def)?)(TransposeNaming.MemberJsName(f), DefaultValueLiteral(f.Type)),
+            IPropertySymbol p when IsAutoProperty(p) => (TransposeNaming.MemberJsName(p), DefaultValueLiteral(p.Type)),
             _ => null,
         }).Where(x => x is not null).Select(x => x!.Value).ToList();
 
@@ -147,9 +147,9 @@ public sealed partial class Emitter
         foreach (var m in type.GetMembers().Where(m => m.IsStatic))
         {
             if (m is IFieldSymbol f && !f.IsConst && f.AssociatedSymbol is null && FieldInitializerSyntax(f) is { } fi)
-                yield return (H5Naming.MemberJsName(f), fi);
+                yield return (TransposeNaming.MemberJsName(f), fi);
             else if (m is IPropertySymbol p && IsAutoProperty(p) && AutoPropertyInitializerSyntax(p) is { } pi)
-                yield return (H5Naming.MemberJsName(p), pi);
+                yield return (TransposeNaming.MemberJsName(p), pi);
         }
     }
 
@@ -160,13 +160,13 @@ public sealed partial class Emitter
     private string CtorName(IMethodSymbol ctor)
     {
         ctor = ctor.OriginalDefinition;
-        // External BCL types were baked into h5.js with H5's OverloadsCollection ctor numbering;
-        // match it so e.g. new Guid(string) resolves to $ctor4. A referenced H5-compiled package
+        // External BCL types were baked into tps.js with Transpose's OverloadsCollection ctor numbering;
+        // match it so e.g. new Guid(string) resolves to $ctor4. A referenced Transpose-compiled package
         // (non-source but non-external) was emitted by THIS compiler's own numbering below, so it
         // must be numbered the same way here — over its full ctor set (private ones included,
         // surfaced via MetadataImportOptions.All) — for call sites to resolve to the same $ctorN.
-        if (!H5Naming.IsH5CompiledSource(ctor.ContainingType))
-            return H5Naming.ConstructorName(ctor);
+        if (!TransposeNaming.IsTransposeCompiledSource(ctor.ContainingType))
+            return TransposeNaming.ConstructorName(ctor);
         if (_ctorNames.TryGetValue(ctor, out var cached)) return cached;
 
         var ctors = ctor.ContainingType.InstanceConstructors
@@ -200,9 +200,9 @@ public sealed partial class Emitter
         => c.ContainingType.IsRecord && c.Parameters.Length == 1
            && SymbolEqualityComparer.Default.Equals(c.Parameters[0].Type, c.ContainingType);
 
-    /// <summary>Ctor name honouring that external (h5) types expose only "ctor".</summary>
+    /// <summary>Ctor name honouring that external (tps) types expose only "ctor".</summary>
     private string ExternalAwareCtorName(IMethodSymbol ctor)
-        => H5Naming.IsH5CompiledSource(ctor.ContainingType) ? CtorName(ctor) : "ctor";
+        => TransposeNaming.IsTransposeCompiledSource(ctor.ContainingType) ? CtorName(ctor) : "ctor";
 
     private static bool IsPrimaryCtorSyntax(IMethodSymbol ctor)
         => ctor.MethodKind == MethodKind.Constructor
@@ -386,7 +386,7 @@ public sealed partial class Emitter
                 _ => null,
             };
             if (init is null) continue;
-            _w.Write($"this.{H5Naming.MemberJsName(m)} = ");
+            _w.Write($"this.{TransposeNaming.MemberJsName(m)} = ");
             EmitExpression(init);
             _w.WriteLine(";");
         }
@@ -449,7 +449,7 @@ public sealed partial class Emitter
     private void EmitMethodEntry(IMethodSymbol m)
     {
         var decl = (BaseMethodDeclarationSyntax)m.DeclaringSyntaxReferences[0].GetSyntax();
-        _w.Write($"{H5Naming.MemberJsName(m)}: function (");
+        _w.Write($"{TransposeNaming.MemberJsName(m)}: function (");
         EmitParameterList(m);
         _w.Write(") ");
         if (decl.Body is not null && IsIteratorBody(decl.Body))
@@ -466,7 +466,7 @@ public sealed partial class Emitter
             {
                 var m = methods[i];
                 var decl = (BaseMethodDeclarationSyntax)m.DeclaringSyntaxReferences[0].GetSyntax();
-                _w.Write($"{H5Naming.MemberJsName(m)}: function (");
+                _w.Write($"{TransposeNaming.MemberJsName(m)}: function (");
                 EmitParameterList(m);
                 _w.Write(") ");
                 if (decl.Body is not null && IsIteratorBody(decl.Body))
@@ -485,7 +485,7 @@ public sealed partial class Emitter
             EmitOptionalDefaults(method);
             // A generator function can't be an arrow, so it rebinds `this`; bind it to the
             // enclosing instance so an iterator body that reads `this.field` still works.
-            _w.Write("return H5R.iter((function* () ");
+            _w.Write("return TransposeR.iter((function* () ");
             _w.Block(() => { foreach (var s in body.Statements) EmitStatement(s); });
             _w.WriteLine(").bind(this));");
         });
@@ -519,7 +519,7 @@ public sealed partial class Emitter
         _w.Block(() =>
         {
             foreach (var mi in moduleInits)
-                _w.WriteLine($"{TypeRef(mi.ContainingType)}.{H5Naming.MemberJsName(mi)}();");
+                _w.WriteLine($"{TypeRef(mi.ContainingType)}.{TransposeNaming.MemberJsName(mi)}();");
             EmitOptionalDefaults(entry);
             EmitMaybeAsyncBody(isAsync, () =>
             {
@@ -570,20 +570,20 @@ public sealed partial class Emitter
     /// </summary>
     private static bool ThreadsTypeArgs(IMethodSymbol method)
     {
-        // A generic method threads its type arguments as leading JS parameters when its H5-emitted
+        // A generic method threads its type arguments as leading JS parameters when its Transpose-emitted
         // definition takes them — so the call site passes exactly what the definition expects.
         if (!method.IsGenericMethod) return false;
         var def = method.OriginalDefinition;
-        if (def.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "H5.IgnoreGenericAttribute")) return false;
+        if (def.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "Transpose.IgnoreGenericAttribute")) return false;
         // A templated method's call shape is the template itself — no separate leading type args.
-        if (H5Naming.GetTemplate(def) is not null) return false;
-        // Source / referenced-library generic methods always thread. So do H5.dll BCL generic
+        if (TransposeNaming.GetTemplate(def) is not null) return false;
+        // Source / referenced-library generic methods always thread. So do Transpose.dll BCL generic
         // methods that have a real body (a plain C# generic method, e.g.
         // CollectionExtensions.GetValueOrDefault / TryAdd — compiled with leading type parameters).
-        // A body-less extern (hand-written JS, incl. the DOM externs in H5.Core like
+        // A body-less extern (hand-written JS, incl. the DOM externs in Transpose.Core like
         // querySelector<T>) uses its native form and must NOT thread.
-        if (H5Naming.IsH5CompiledSource(method.ContainingType)) return true;
-        return method.ContainingAssembly?.Name == "H5" && !H5Naming.HasNoBody(def);
+        if (TransposeNaming.IsTransposeCompiledSource(method.ContainingType)) return true;
+        return method.ContainingAssembly?.Name == "Transpose" && !TransposeNaming.HasNoBody(def);
     }
 
     private void EmitOptionalDefaults(IMethodSymbol method)
@@ -601,7 +601,7 @@ public sealed partial class Emitter
             {
                 // A params array invoked with no trailing arguments arrives as undefined at the JS
                 // boundary (e.g. a reflection/JS caller, or an ExpandParams spread with none); default
-                // it to an empty array so the body's enumeration/indexing behaves, matching H5.
+                // it to an empty array so the body's enumeration/indexing behaves, matching Transpose.
                 _w.WriteLine($"if ({name} === undefined) {{ {name} = []; }}");
             }
         }
@@ -633,14 +633,14 @@ public sealed partial class Emitter
 
     /// <summary>
     /// Emits statements directly, or — for an async member — inside a native `async` IIFE
-    /// whose promise is adapted to an h5.js Task via H5R.fromPromise. This gives async
-    /// methods the same contract as h5.js's own state-machine output: they return a Task
+    /// whose promise is adapted to an tps.js Task via TransposeR.fromPromise. This gives async
+    /// methods the same contract as tps.js's own state-machine output: they return a Task
     /// that composes with Task.Run/WhenAll/ContinueWith and carries faults through the Task.
     /// </summary>
     private void EmitMaybeAsyncBody(bool isAsync, Action emitStatements)
     {
         if (!isAsync) { emitStatements(); return; }
-        _w.Write("return H5R.fromPromise((async () => ");
+        _w.Write("return TransposeR.fromPromise((async () => ");
         _w.Block(emitStatements);
         _w.WriteLine(")());");
     }
@@ -667,7 +667,7 @@ public sealed partial class Emitter
             for (var i = 0; i < props.Count; i++)
             {
                 var p = props[i];
-                _w.Write($"{H5Naming.MemberJsName(p)}: ");
+                _w.Write($"{TransposeNaming.MemberJsName(p)}: ");
                 _w.Block(() =>
                 {
                     if (p.GetMethod is not null)
@@ -703,7 +703,7 @@ public sealed partial class Emitter
         return accessors.Accessors.Any(a => a.DescendantNodes().Any(n => n.IsKind(SyntaxKind.FieldExpression)));
     }
 
-    internal static string PropertyBackingName(IPropertySymbol p) => "$" + H5Naming.MemberJsName(p);
+    internal static string PropertyBackingName(IPropertySymbol p) => "$" + TransposeNaming.MemberJsName(p);
 
     private void EmitAccessorBody(IMethodSymbol accessor, bool isGetter)
     {

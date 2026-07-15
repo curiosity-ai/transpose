@@ -1,7 +1,7 @@
 using System.Threading.Tasks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
-namespace H5.Translator.Roslyn.Tests.Ported
+namespace Transpose.Translator.Tests.Ported
 {
     [TestClass]
     public class CSharp13Tests : TranslatorTestBase
@@ -87,7 +87,7 @@ public class Program
 }
 """;
             // Lock is a new type in .NET 9.
-            // H5 might support it via System.Threading.Lock.
+            // Transpose might support it via System.Threading.Lock.
             await RunTest(code, skipRoslyn: true);
         }
 

@@ -3,7 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
 
-namespace H5.Translator.Roslyn.Tests;
+namespace Transpose.Translator.Tests;
 
 /// <summary>
 /// Executes emitted JavaScript on Node.js (V8 — the same engine as Chromium) and
@@ -15,7 +15,7 @@ public static class NodeJsRunner
 {
     public static async Task<string> RunAsync(string jsCode)
     {
-        var tempFile = Path.Combine(Path.GetTempPath(), "h5roslyn_" + Guid.NewGuid().ToString("N") + ".js");
+        var tempFile = Path.Combine(Path.GetTempPath(), "tps_" + Guid.NewGuid().ToString("N") + ".js");
         await File.WriteAllTextAsync(tempFile, jsCode);
 
         try

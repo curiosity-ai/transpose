@@ -1,7 +1,7 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System.Threading.Tasks;
 
-namespace H5.Translator.Roslyn.Tests.Ported
+namespace Transpose.Translator.Tests.Ported
 {
     [TestClass]
     public class CSharp7Tests : TranslatorTestBase
@@ -41,7 +41,7 @@ public class Program
         [TestMethod]
         public async Task OutVariables_RepeatedNameInSameScope()
         {
-            // The H5 SharpSixRewriter hoists each `out var X` to a `var X;` declaration in the
+            // The Transpose SharpSixRewriter hoists each `out var X` to a `var X;` declaration in the
             // enclosing block. When the same name is reused for several `out var X` in what would
             // be the same enclosing block after hoisting, the rewriter previously produced two
             // sibling declarations with the same name, which then failed compilation with CS0128
@@ -49,8 +49,8 @@ public class Program
             //
             // This is not valid C# on its own (Roslyn rejects it too), so we feed Roslyn an
             // equivalent program with unique names via `overrideRoslynCode` and verify that
-            // H5 produces the same output when compiling the version with repeated names.
-            var h5Code = """
+            // Transpose produces the same output when compiling the version with repeated names.
+            var tpsCode = """
 using System;
 using System.Collections.Generic;
 
@@ -102,7 +102,7 @@ public class Program
     }
 }
 """;
-            await RunTest(h5Code, overrideRoslynCode: roslynCode);
+            await RunTest(tpsCode, overrideRoslynCode: roslynCode);
         }
 
         [TestMethod]
