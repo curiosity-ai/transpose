@@ -42,7 +42,12 @@ public static class CompilationBuilder
             OutputKind.ConsoleApplication,
             optimizationLevel: OptimizationLevel.Debug,
             allowUnsafe: true, // allowed by the compiler so we can detect+report it ourselves
-            nullableContextOptions: nullable);
+            nullableContextOptions: nullable,
+            // Import non-public members of referenced assemblies. A referenced H5-compiled package
+            // (built with --emit-package) numbers its overloads (e.g. $ctorN) over its FULL member
+            // set including private ones; the consumer must see the same set for its call sites to
+            // resolve to the same JS names.
+            metadataImportOptions: MetadataImportOptions.All);
 
         return CSharpCompilation.Create(
             assemblyName,

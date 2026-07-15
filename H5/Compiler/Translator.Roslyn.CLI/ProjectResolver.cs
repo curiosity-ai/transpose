@@ -22,11 +22,15 @@ internal sealed class ResolvedProject
     /// <summary>Directories of every project in the closure — the root first, then the
     /// referenced projects it pulls in (each may contribute h5.json resources).</summary>
     public required List<string> ProjectDirs { get; init; }
+
+    /// <summary>In separate-assembly mode, the built output DLLs of referenced projects — the
+    /// consumer extracts their embedded JS/resources instead of recompiling their source.</summary>
+    public List<string> ReferencedProjectDlls { get; init; } = new();
 }
 
 internal static class ProjectResolver
 {
-    public static ResolvedProject Resolve(string csprojPath)
+    public static ResolvedProject Resolve(string csprojPath, string configuration = "Debug", bool separateAssemblies = false)
     {
         csprojPath = Path.GetFullPath(csprojPath);
         var projectDir = Path.GetDirectoryName(csprojPath)!;
@@ -43,15 +47,17 @@ internal static class ProjectResolver
 
         var lang = ParseLangVersion(Property(doc, "LangVersion"));
 
-        // Gather sources + package references across this project and its ProjectReferences,
-        // transitively. H5 compiles each assembly separately, but for a runnable bundle we
-        // translate the whole closure of source projects together into one JS output.
+        // Default (bundle) mode: translate the whole closure of source projects into one JS
+        // output. Separate-assembly mode: compile only this project's own sources and reference
+        // each project dependency as its built DLL (its JS is embedded and extracted, not recompiled).
         var sources = new List<(string, string)>();
         var references = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var visitedProjects = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var projectDirs = new List<string>();
+        var projectDlls = new List<string>();
         var roots = NuGetRoots().Where(Directory.Exists).ToList();
-        CollectProject(csprojPath, sources, references, visitedProjects, projectDirs, roots);
+        CollectProject(csprojPath, sources, references, visitedProjects, projectDirs, roots,
+            separateAssemblies, projectDlls, configuration, isRoot: true);
 
         return new ResolvedProject
         {
@@ -63,26 +69,37 @@ internal static class ProjectResolver
             DefineConstants = defines,
             LanguageVersion = lang,
             ProjectDirs = projectDirs,
+            ReferencedProjectDlls = projectDlls,
         };
     }
 
-    /// <summary>Adds a project's sources and package references, then recurses into its ProjectReferences.</summary>
+    /// <summary>Adds a project's sources and package references, then handles its ProjectReferences —
+    /// recursing into their source (bundle mode) or referencing their built DLL (separate mode).</summary>
     private static void CollectProject(
         string csprojPath,
         List<(string, string)> sources,
         Dictionary<string, string> references,
         HashSet<string> visited,
         List<string> projectDirs,
-        List<string> roots)
+        List<string> roots,
+        bool separate,
+        List<string> projectDlls,
+        string configuration,
+        bool isRoot)
     {
         csprojPath = Path.GetFullPath(csprojPath);
         if (!visited.Add(csprojPath) || !File.Exists(csprojPath)) return;
 
         var doc = XDocument.Load(csprojPath);
         var projectDir = Path.GetDirectoryName(csprojPath)!;
-        projectDirs.Add(projectDir);
 
-        sources.AddRange(ResolveSources(doc, projectDir));
+        // In separate mode only the root contributes source + h5.json resources; a referenced
+        // project contributes its DLL (below) and its own package references for binding.
+        if (!separate || isRoot)
+        {
+            projectDirs.Add(projectDir);
+            sources.AddRange(ResolveSources(doc, projectDir));
+        }
         foreach (var (name, path) in ResolvePackageReferenceDlls(doc, roots))
             references.TryAdd(name, path);
 
@@ -91,8 +108,57 @@ internal static class ProjectResolver
             var include = pr.Attribute("Include")?.Value;
             if (string.IsNullOrWhiteSpace(include)) continue;
             var refPath = Path.GetFullPath(Path.Combine(projectDir, include!.Replace('\\', '/')));
-            CollectProject(refPath, sources, references, visited, projectDirs, roots);
+
+            if (separate)
+            {
+                // Reference the dependency's built DLL; still gather its package refs (and its own
+                // project-ref DLLs) so types it exposes bind, but not its source or resources.
+                var dll = ProjectOutputDll(refPath, configuration);
+                if (dll is not null)
+                {
+                    references[Path.GetFileNameWithoutExtension(dll)] = dll;
+                    if (!projectDlls.Contains(dll)) projectDlls.Add(dll);
+                }
+                if (visited.Add(refPath) && File.Exists(refPath))
+                {
+                    var refDoc = XDocument.Load(refPath);
+                    var refDir = Path.GetDirectoryName(refPath)!;
+                    foreach (var (name, path) in ResolvePackageReferenceDlls(refDoc, roots))
+                        references.TryAdd(name, path);
+                    foreach (var nested in refDoc.Descendants().Where(e => e.Name.LocalName == "ProjectReference"))
+                    {
+                        var ninc = nested.Attribute("Include")?.Value;
+                        if (string.IsNullOrWhiteSpace(ninc)) continue;
+                        var ndll = ProjectOutputDll(Path.GetFullPath(Path.Combine(refDir, ninc!.Replace('\\', '/'))), configuration);
+                        if (ndll is not null)
+                        {
+                            references[Path.GetFileNameWithoutExtension(ndll)] = ndll;
+                            if (!projectDlls.Contains(ndll)) projectDlls.Add(ndll);
+                        }
+                    }
+                }
+            }
+            else
+            {
+                CollectProject(refPath, sources, references, visited, projectDirs, roots,
+                    separate, projectDlls, configuration, isRoot: false);
+            }
         }
+    }
+
+    /// <summary>The built output DLL path of a referenced project: bin/&lt;config&gt;/&lt;tfm&gt;/&lt;asm&gt;.dll.</summary>
+    private static string? ProjectOutputDll(string csprojPath, string configuration)
+    {
+        if (!File.Exists(csprojPath)) return null;
+        var doc = XDocument.Load(csprojPath);
+        var dir = Path.GetDirectoryName(csprojPath)!;
+        var asm = Property(doc, "AssemblyName") ?? Path.GetFileNameWithoutExtension(csprojPath);
+        var tfm = Property(doc, "TargetFramework")
+                  ?? Property(doc, "TargetFrameworks")?.Split(';', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()
+                  ?? "netstandard2.0";
+        var binBase = Path.Combine(dir, "bin", configuration, tfm);
+        var dll = Path.Combine(binBase, asm + ".dll");
+        return dll;
     }
 
     private static List<(string path, string text)> ResolveSources(XDocument doc, string projectDir)

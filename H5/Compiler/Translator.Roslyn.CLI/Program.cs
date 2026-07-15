@@ -27,6 +27,8 @@ public static class Program
         var withRuntime = false;
         var quiet = false;
         var maxErrors = 40;
+        var emitPackage = false;
+        var separateAssemblies = false;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -35,6 +37,8 @@ public static class Program
                 case "--out" or "-o": outPath = args[++i]; break;
                 case "--site-dir": siteDir = args[++i]; break;
                 case "--configuration" or "-c": configuration = args[++i]; break;
+                case "--emit-package": emitPackage = true; separateAssemblies = true; break;
+                case "--separate-assemblies": separateAssemblies = true; break;
                 case "--with-runtime": withRuntime = true; break;
                 case "--quiet" or "-q": quiet = true; break;
                 case "--max-errors": maxErrors = int.Parse(args[++i]); break;
@@ -58,7 +62,7 @@ public static class Program
         ResolvedProject project;
         try
         {
-            project = ProjectResolver.Resolve(csproj);
+            project = ProjectResolver.Resolve(csproj, configuration, separateAssemblies);
         }
         catch (Exception ex)
         {
@@ -66,8 +70,10 @@ public static class Program
             return 1;
         }
 
-        Console.WriteLine($"  sources:    {project.Sources.Count} file(s)");
+        Console.WriteLine($"  sources:    {project.Sources.Count} file(s){(separateAssemblies ? " (own sources only)" : "")}");
         Console.WriteLine($"  references: {project.ReferencePaths.Count} assembly(ies) — {string.Join(", ", project.ReferencePaths.Select(Path.GetFileNameWithoutExtension))}");
+        if (project.ReferencedProjectDlls.Count > 0)
+            Console.WriteLine($"  projects:   {string.Join(", ", project.ReferencedProjectDlls.Select(Path.GetFileName))}");
         Console.WriteLine($"  defines:    {string.Join(";", project.DefineConstants)}");
         Console.WriteLine($"  lang:       {project.LanguageVersion}");
 
@@ -83,17 +89,18 @@ public static class Program
         };
 
         var translator = new RoslynTranslator();
-        TranslationResult result;
+        AssemblyBuildResult result;
         try
         {
-            result = translator.Translate(
+            result = translator.BuildAssembly(
                 project.Sources,
                 project.AssemblyName,
                 project.ReferencePaths,
                 project.DefineConstants,
                 project.LanguageVersion,
                 reflectionEnabled,
-                metadataTarget);
+                metadataTarget,
+                emitAssembly: emitPackage);
         }
         catch (Exception ex)
         {
@@ -112,12 +119,32 @@ public static class Program
 
         var js = result.Javascript!;
         if (!quiet) ReportDiagnostics(result.Diagnostics, maxErrors); // surface warnings
+        var config = h5cfg;
+        var minified = configuration.Equals("Release", StringComparison.OrdinalIgnoreCase);
+
+        // Package mode: compile this project as a distributable assembly — emit the .NET DLL and
+        // embed its JS (+ h5.json resources) so another project can reference it and extract them.
+        if (emitPackage)
+        {
+            var mainJsName = config?.ExplicitFileName ?? project.AssemblyName + ".js";
+            var dllPath = Path.Combine(ResolveBinDir(project.ProjectDir, configuration), project.AssemblyName + ".dll");
+            Directory.CreateDirectory(Path.GetDirectoryName(dllPath)!);
+            File.WriteAllBytes(dllPath, result.AssemblyBytes!);
+
+            var items = config is not null
+                ? OutputBuilder.CollectEmbeddableItems(project.ProjectDir, config, mainJsName, js, result.MetadataJavascript)
+                : new List<EmbeddedItem> { new(mainJsName, System.Text.Encoding.UTF8.GetBytes(js), null) };
+            ResourceEmbedder.Embed(dllPath, items);
+
+            Console.WriteLine($"\nOK — built package {project.AssemblyName}.dll ({result.AssemblyBytes!.Length:N0} bytes) with {items.Count} embedded resource(s) in {sw.ElapsedMilliseconds} ms.");
+            Console.WriteLine($"  dll:      {dllPath}");
+            Console.WriteLine($"  embedded: {string.Join(", ", items.Take(6).Select(i => i.Name))}{(items.Count > 6 ? ", …" : "")}");
+            return 0;
+        }
 
         // Site build: when the project has an h5.json and no single-file --out was requested,
         // assemble a runnable output folder (runtime JS + bundle + resources + index.html),
         // exactly like the existing h5 compiler.
-        var config = h5cfg;
-        var minified = configuration.Equals("Release", StringComparison.OrdinalIgnoreCase);
         if (config is not null && outPath is null)
         {
             var outDir = siteDir ?? ResolveOutputDir(config, project.ProjectDir, configuration);
@@ -138,10 +165,14 @@ public static class Program
     /// <summary>Resolves h5.json's output path, expanding the $(OutDir) MSBuild token.</summary>
     private static string ResolveOutputDir(H5Json config, string projectDir, string configuration)
     {
-        var outBase = Path.Combine(projectDir, "bin", configuration, "netstandard2.0");
-        var raw = (config.Output ?? "$(OutDir)/h5/").Replace("$(OutDir)", outBase).Replace('\\', '/');
+        var raw = (config.Output ?? "$(OutDir)/h5/").Replace("$(OutDir)", ResolveBinDir(projectDir, configuration)).Replace('\\', '/');
         return Path.GetFullPath(raw);
     }
+
+    /// <summary>The project's build output directory (bin/&lt;config&gt;/netstandard2.0), where the
+    /// emitted assembly and h5 output land — matching the H5 SDK's default output path.</summary>
+    private static string ResolveBinDir(string projectDir, string configuration)
+        => Path.Combine(projectDir, "bin", configuration, "netstandard2.0");
 
     private static string? LocateProject(string? arg)
     {
@@ -201,6 +232,11 @@ public static class Program
               -c, --configuration <name>
                                     Build configuration (Debug/Release; default Debug). Release
                                     selects the .min.js resource variants where both exist.
+              --emit-package        Compile this project as a distributable assembly: emit its
+                                    .NET DLL with the compiled JS + h5.json resources embedded
+                                    (H5.Resources.json manifest), for referencing by other projects.
+              --separate-assemblies Consume referenced projects as their built DLLs (extract their
+                                    embedded JS) instead of recompiling their source into the bundle.
               --site-dir <dir>      Output directory for the assembled site
               --with-runtime        Prepend the h5.js runtime + shim to the output
               --max-errors <n>      Max individual errors to print (default 40)

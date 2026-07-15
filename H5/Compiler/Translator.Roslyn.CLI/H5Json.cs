@@ -11,6 +11,10 @@ internal sealed class H5Json
 {
     public string? Output { get; init; }
     public string FileName { get; init; } = "app.js";
+
+    /// <summary>The h5.json <c>fileName</c> exactly as written (null when unset). A library with
+    /// no explicit fileName outputs &lt;AssemblyName&gt;.js.</summary>
+    public string? ExplicitFileName { get; init; }
     public bool HtmlDisabled { get; init; }
     public string? HtmlTitle { get; init; }
     public string HtmlBody { get; init; } = "";
@@ -62,6 +66,7 @@ internal sealed class H5Json
         {
             Output = Str(root, "output"),
             FileName = Str(root, "fileName") ?? "app.js",
+            ExplicitFileName = Str(root, "fileName"),
             HtmlDisabled = html.ValueKind == JsonValueKind.Object && html.TryGetProperty("disabled", out var d) && d.ValueKind == JsonValueKind.True,
             HtmlTitle = html.ValueKind == JsonValueKind.Object ? Str(html, "title") : null,
             HtmlBody = (html.ValueKind == JsonValueKind.Object ? Str(html, "body") : null) ?? "",

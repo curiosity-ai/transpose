@@ -34,11 +34,16 @@ internal static class OutputBuilder
         Directory.CreateDirectory(outputDir);
 
         var runtimeScripts = new List<string>();   // h5.js, newtonsoft.json.js, …
-        var resourceScripts = new List<string>();   // tss-dep.js, …
+        var libraryScripts = new List<string>();    // tss.js, tss.meta.js, tss-dep.js from referenced projects
+        var resourceScripts = new List<string>();   // tss-dep.js, … (this project's own h5.json resources)
         var cssLinks = new List<string>();
 
+        // In separate-assembly mode, referenced *projects* are consumed as DLLs (their JS is
+        // extracted, not recompiled) — exclude them from the runtime-package JS loop below.
+        var projectDlls = new HashSet<string>(project.ReferencedProjectDlls, StringComparer.OrdinalIgnoreCase);
+
         // 1. Runtime JS embedded in referenced packages, in dependency order (H5 core first).
-        foreach (var dll in OrderRuntimeAssemblies(project.ReferencePaths))
+        foreach (var dll in OrderRuntimeAssemblies(project.ReferencePaths.Where(p => !projectDlls.Contains(p))))
         {
             foreach (var (fileName, text) in ExtractEmbeddedJs(dll))
             {
@@ -51,6 +56,11 @@ internal static class OutputBuilder
         // the H5 runtime and before any generated code that calls into it.
         File.WriteAllText(Path.Combine(outputDir, "h5r.shim.js"), RoslynTranslator.RuntimeShim);
         runtimeScripts.Add("h5r.shim.js");
+
+        // 1b. Referenced project assemblies: extract their embedded JS/CSS/resources (deepest
+        //     dependency first) so a library loads before the app that uses it.
+        foreach (var dll in Enumerable.Reverse(project.ReferencedProjectDlls))
+            ExtractProjectDllResources(dll, outputDir, libraryScripts, cssLinks, minified);
 
         // 2. h5.json resource files from every project in the closure — referenced projects
         //    first (a library's JS deps load before the app that uses them). A resource group
@@ -84,13 +94,110 @@ internal static class OutputBuilder
             appScripts.Add(metaName);
         }
 
-        var scripts = runtimeScripts.Concat(resourceScripts).Concat(appScripts).ToList();
+        var scripts = runtimeScripts.Concat(libraryScripts).Concat(resourceScripts).Concat(appScripts).ToList();
 
         // 4. index.html.
         if (!config.HtmlDisabled)
             WriteHtml(project, config, outputDir, scripts, cssLinks);
 
         return outputDir;
+    }
+
+    /// <summary>
+    /// The resources a library assembly embeds so a referencing project can extract them: the
+    /// compiled JS (and its .meta.js) plus every h5.json resource group (bundled or copied),
+    /// each tagged with its output subdirectory. Both minified and non-minified resource-group
+    /// variants are embedded — the consumer picks per build configuration.
+    /// </summary>
+    public static List<EmbeddedItem> CollectEmbeddableItems(
+        string projectDir, H5Json config, string mainJsName, string javascript, string? metadataJavascript)
+    {
+        var items = new List<EmbeddedItem>();
+        var utf8 = new UTF8Encoding(false);
+
+        items.Add(new EmbeddedItem(mainJsName, utf8.GetBytes(javascript), null));
+        if (metadataJavascript is not null)
+        {
+            var metaName = Path.GetFileNameWithoutExtension(mainJsName) + ".meta.js";
+            items.Add(new EmbeddedItem(metaName, utf8.GetBytes(metadataJavascript), null));
+        }
+
+        foreach (var group in config.Resources)
+        {
+            var name = group.Name ?? "";
+            var destSub = string.IsNullOrEmpty(group.Output) ? null : group.Output!.Replace('\\', '/');
+            var files = group.Files.SelectMany(p => ExpandGlob(projectDir, p)).ToList();
+            if (files.Count == 0) continue;
+
+            var isBundle = name.EndsWith(".js", StringComparison.OrdinalIgnoreCase)
+                           || name.EndsWith(".css", StringComparison.OrdinalIgnoreCase);
+            if (isBundle)
+            {
+                var bytes = utf8.GetBytes(string.Join("\n", files.Select(File.ReadAllText)));
+                items.Add(new EmbeddedItem(name, bytes, destSub));
+            }
+            else
+            {
+                // Copy-through group (images, fonts): embed each file under its own name.
+                foreach (var src in files)
+                    items.Add(new EmbeddedItem(Path.GetFileName(src), File.ReadAllBytes(src), destSub));
+            }
+        }
+        return items;
+    }
+
+    /// <summary>
+    /// Extracts every resource a referenced project assembly embedded (via its H5.Resources.json
+    /// manifest) into the output folder, honouring each entry's output subdirectory and the
+    /// Debug/Release minified-variant selection. Adds scripts/CSS links (in manifest order) to the
+    /// supplied lists. This is the consuming half of the package protocol.
+    /// </summary>
+    private static void ExtractProjectDllResources(
+        string dllPath, string outputDir, List<string> scripts, List<string> cssLinks, bool minified)
+    {
+        if (!File.Exists(dllPath)) return;
+        Assembly asm;
+        try { asm = Assembly.LoadFrom(dllPath); } catch { return; }
+
+        var names = asm.GetManifestResourceNames();
+        var manifestName = names.FirstOrDefault(n => n.EndsWith("H5.Resources.json", StringComparison.OrdinalIgnoreCase));
+        if (manifestName is null) return;
+
+        List<(string fileName, string? path)> entries;
+        using (var ms = asm.GetManifestResourceStream(manifestName)!)
+        using (var sr = new StreamReader(ms))
+        using (var doc = JsonDocument.Parse(sr.ReadToEnd(), new JsonDocumentOptions { AllowTrailingCommas = true }))
+        {
+            entries = doc.RootElement.EnumerateArray()
+                .Select(e => (
+                    fileName: e.TryGetProperty("FileName", out var f) ? f.GetString() : null,
+                    path: e.TryGetProperty("Path", out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() : null))
+                .Where(x => !string.IsNullOrEmpty(x.fileName))
+                .Select(x => (x.fileName!, x.path))
+                .ToList();
+        }
+
+        // For a minified/non-minified pair, keep only the variant this configuration wants.
+        var present = entries.Select(e => e.fileName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var (fileName, path) in entries)
+        {
+            if (IsMinifiedName(fileName) == !minified && present.Contains(CounterpartName(fileName)))
+                continue;
+
+            var resName = names.FirstOrDefault(n => n.Equals(fileName, StringComparison.OrdinalIgnoreCase))
+                          ?? names.FirstOrDefault(n => n.EndsWith(fileName, StringComparison.OrdinalIgnoreCase));
+            if (resName is null) continue;
+
+            var rel = string.IsNullOrEmpty(path) ? fileName : path!.Replace('\\', '/') + "/" + fileName;
+            var dest = Path.Combine(outputDir, rel);
+            Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+            using (var s = asm.GetManifestResourceStream(resName)!)
+            using (var fs = File.Create(dest))
+                s.CopyTo(fs);
+
+            if (rel.EndsWith(".css", StringComparison.OrdinalIgnoreCase)) cssLinks.Add(rel);
+            else if (rel.EndsWith(".js", StringComparison.OrdinalIgnoreCase)) scripts.Add(rel);
+        }
     }
 
     /// <summary>A resource group name for a minified bundle (ends in <c>.min.js</c>/<c>.min.css</c>).</summary>

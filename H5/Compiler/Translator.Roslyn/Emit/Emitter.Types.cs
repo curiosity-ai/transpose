@@ -39,37 +39,37 @@ public sealed partial class Emitter
 
         if (type is INamedTypeSymbol named)
         {
-            var name = H5Naming.GetName(named);
-            if (name is not null && !named.Locations.Any(l => l.IsInSource)) return name;
-
-            if (named.Locations.Any(l => l.IsInSource))
+            // External (BCL / DOM) types are named by their runtime binding: [Name], a
+            // [Scope]/[GlobalMethods] global (e.g. H5.Core.dom's HTMLElement), or the dotted
+            // metadata name. [Name] applies ONLY here — an H5-compiled type ignores it.
+            if (!H5Naming.IsH5CompiledSource(named))
             {
-                // Constructed source generic → Name$arity(typeArgs); the type args are the
-                // runtime values passed to the generic type's defining function.
+                var name = H5Naming.GetName(named);
+                if (name is not null) return name;
+
+                if (ScopedExternalName(named) is { } scoped) return scoped;
+
+                var ns = named.ContainingNamespace?.ToDisplayString();
                 if (named.IsGenericType && named.TypeArguments.Length > 0)
                 {
-                    var gBase = _names.TypeFullName(named) + "$" + named.Arity;
-                    var gArgs = string.Join(", ", named.TypeArguments.Select(TypeRef));
-                    return $"{gBase}({gArgs})";
+                    var baseName = (string.IsNullOrEmpty(ns) ? "" : ns + ".") + StripArity(named.Name) + "$" + named.Arity;
+                    var args = string.Join(", ", named.TypeArguments.Select(TypeRef));
+                    return $"{baseName}({args})";
                 }
-                return _names.TypeFullName(named);
+                return string.IsNullOrEmpty(ns) ? named.Name : ns + "." + named.Name;
             }
 
-            // External type living under a [Scope]/[GlobalMethods] binding (e.g. H5.Core.dom's
-            // HTMLElement) → the ambient JS global, with the C# type/namespace path dropped.
-            if (ScopedExternalName(named) is { } scoped) return scoped;
-
-            // External BCL type — dotted metadata name; generics as Name$arity(typeArgs).
-            var ns = named.ContainingNamespace?.ToDisplayString();
-            var simple = named.MetadataName; // includes `arity
-            var full = string.IsNullOrEmpty(ns) ? named.Name : ns + "." + named.Name;
+            // A type this compiler emits — either from source, or from a referenced H5-compiled
+            // assembly (a package built with --emit-package). Both are defined via H5.define under
+            // their full nested JS name, so a reference must use the same name (nested-aware).
+            // Constructed generic → Name$arity(typeArgs).
             if (named.IsGenericType && named.TypeArguments.Length > 0)
             {
-                var baseName = (string.IsNullOrEmpty(ns) ? "" : ns + ".") + StripArity(named.Name) + "$" + named.Arity;
-                var args = string.Join(", ", named.TypeArguments.Select(TypeRef));
-                return $"{baseName}({args})";
+                var gBase = _names.TypeFullName(named) + "$" + named.Arity;
+                var gArgs = string.Join(", ", named.TypeArguments.Select(TypeRef));
+                return $"{gBase}({gArgs})";
             }
-            return full;
+            return _names.TypeFullName(named);
         }
         if (type is IArrayTypeSymbol) return "System.Array";
         return type.Name;
@@ -157,7 +157,7 @@ public sealed partial class Emitter
         _w.Block(() =>
         {
             _w.Write("$kind: \"interface\"");
-            var bases = type.Interfaces.Where(i => i.Locations.Any(l => l.IsInSource)).ToList();
+            var bases = type.Interfaces.Where(i => H5Naming.IsH5CompiledSource(i)).ToList();
             if (bases.Count > 0)
             {
                 _w.WriteLine(",");
@@ -195,14 +195,16 @@ public sealed partial class Emitter
                 sections.Add(() => _w.Write("$kind: \"struct\""));
             }
 
-            // inherits: base class + implemented (source) interfaces.
+            // inherits: base class + implemented interfaces the runtime tracks (source or a
+            // referenced H5-compiled library — so `x is IFoo`/`as IFoo` against a library
+            // interface resolves; external BCL interfaces are omitted, matching H5).
             var inherits = new List<string>();
             if (type.BaseType is { } bt && bt.SpecialType != SpecialType.System_Object
                 && bt.TypeKind != TypeKind.Error && !IsValueTypeBase(bt))
             {
                 inherits.Add(TypeRef(bt));
             }
-            inherits.AddRange(type.Interfaces.Where(i => i.Locations.Any(l => l.IsInSource)).Select(TypeRef));
+            inherits.AddRange(type.Interfaces.Where(i => H5Naming.IsH5CompiledSource(i)).Select(TypeRef));
             if (inherits.Count > 0)
             {
                 // Lazy inherits (a function, as the legacy compiler emits): the config object

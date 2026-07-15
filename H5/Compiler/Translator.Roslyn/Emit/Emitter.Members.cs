@@ -153,9 +153,12 @@ public sealed partial class Emitter
     private string CtorName(IMethodSymbol ctor)
     {
         ctor = ctor.OriginalDefinition;
-        // BCL (non-source) types were emitted into h5.js with H5's OverloadsCollection ctor
-        // numbering; match it so e.g. new Guid(string) resolves to $ctor4.
-        if (!ctor.ContainingType.Locations.Any(l => l.IsInSource))
+        // External BCL types were baked into h5.js with H5's OverloadsCollection ctor numbering;
+        // match it so e.g. new Guid(string) resolves to $ctor4. A referenced H5-compiled package
+        // (non-source but non-external) was emitted by THIS compiler's own numbering below, so it
+        // must be numbered the same way here — over its full ctor set (private ones included,
+        // surfaced via MetadataImportOptions.All) — for call sites to resolve to the same $ctorN.
+        if (!H5Naming.IsH5CompiledSource(ctor.ContainingType))
             return H5Naming.ConstructorName(ctor);
         if (_ctorNames.TryGetValue(ctor, out var cached)) return cached;
 
@@ -192,7 +195,7 @@ public sealed partial class Emitter
 
     /// <summary>Ctor name honouring that external (h5) types expose only "ctor".</summary>
     private string ExternalAwareCtorName(IMethodSymbol ctor)
-        => ctor.ContainingType.Locations.Any(l => l.IsInSource) ? CtorName(ctor) : "ctor";
+        => H5Naming.IsH5CompiledSource(ctor.ContainingType) ? CtorName(ctor) : "ctor";
 
     private static bool IsPrimaryCtorSyntax(IMethodSymbol ctor)
         => ctor.MethodKind == MethodKind.Constructor
@@ -559,8 +562,12 @@ public sealed partial class Emitter
     /// runtime uses of the type parameter (typeof(T), default(T), new T()) resolve.
     /// </summary>
     private static bool ThreadsTypeArgs(IMethodSymbol method)
+        // A generic method this compiler emits threads its type arguments as leading JS parameters
+        // — true for both source methods and generic methods on a referenced H5-compiled assembly
+        // (a package), so a call site threads exactly what the definition expects. External/BCL
+        // generic methods use their native/templated form and are excluded.
         => method.IsGenericMethod
-           && method.OriginalDefinition.Locations.Any(l => l.IsInSource)
+           && H5Naming.IsH5CompiledSource(method.ContainingType)
            && !method.OriginalDefinition.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "H5.IgnoreGenericAttribute");
 
     private void EmitOptionalDefaults(IMethodSymbol method)

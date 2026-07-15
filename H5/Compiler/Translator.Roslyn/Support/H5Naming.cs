@@ -123,6 +123,30 @@ internal static class H5Naming
         return false;
     }
 
+    /// <summary>
+    /// True if a type is emitted by an H5 compiler with source naming conventions — either it is
+    /// in this compilation's source, or it lives in a referenced *user library* assembly (one
+    /// compiled with --emit-package). It is false for external/DOM types and for the H5 runtime
+    /// assemblies (H5, H5.Core, …) whose BCL types are baked into h5.js with fixed names. This is
+    /// the discriminator for names that must agree between a library and the projects that
+    /// reference it — preserving existing source/BCL behaviour while treating a referenced library
+    /// the same as source.
+    /// </summary>
+    public static bool IsH5CompiledSource(ITypeSymbol? type)
+    {
+        if (type is null) return false;
+        if (type.Locations.Any(l => l.IsInSource)) return true;
+        return !IsExternalType(type) && !IsH5RuntimeAssembly(type.ContainingAssembly);
+    }
+
+    /// <summary>An H5 runtime/BCL package (H5.dll, H5.Core.dll, H5.Newtonsoft.Json.dll, …) whose
+    /// types are provided pre-compiled by the runtime, as opposed to a user library.</summary>
+    private static bool IsH5RuntimeAssembly(IAssemblySymbol? asm)
+    {
+        var n = asm?.Name;
+        return n == "H5" || (n is not null && n.StartsWith("H5.", System.StringComparison.Ordinal));
+    }
+
     /// <summary>True if the type (or an enclosing type) is a [Scope]/[GlobalMethods] binding
     /// projected onto ambient JS (e.g. the DOM types under H5.Core.dom).</summary>
     public static bool IsScopedType(ITypeSymbol? type)
@@ -196,10 +220,10 @@ internal static class H5Naming
         // A property/field/event that hides a same-named base member (C# `new`) takes its own
         // slot via a $N suffix (as H5 does), so the hiding member and the base member don't
         // collide — and base access (base.X, emitted as this.X) still reaches the base slot.
-        // Only source members get a slot suffix: an external/native member (e.g. a DOM
-        // NodeListOf<T>.length hiding NodeList.length) maps to a single fixed JS property, so
-        // suffixing it would reference a property that doesn't exist on the runtime object.
-        if (GetName(symbol) is null && symbol.Locations.Any(l => l.IsInSource)
+        // Only H5-compiled members (source or referenced library) get a slot suffix: an
+        // external/native member (e.g. a DOM NodeListOf<T>.length hiding NodeList.length) maps to
+        // a single fixed JS property, so suffixing it would reference a nonexistent property.
+        if (GetName(symbol) is null && IsH5CompiledSource(symbol.ContainingType)
             && symbol is IPropertySymbol { IsIndexer: false } or IFieldSymbol or IEventSymbol)
         {
             var idx = HidingIndex(symbol, raw);
@@ -312,7 +336,10 @@ internal static class H5Naming
     /// <summary>A user-defined (source) interface — its members are dispatched via mangled
     /// interface slots; BCL interfaces resolve through their implementers' plain names.</summary>
     private static bool IsSourceInterface(INamedTypeSymbol iface)
-        => iface.TypeKind == TypeKind.Interface && iface.OriginalDefinition.Locations.Any(l => l.IsInSource);
+        // A user-defined interface — whether from this compilation's source or a referenced
+        // H5-compiled assembly (both mangle their members the same way). Only truly external
+        // (BCL/DOM) interfaces resolve through their implementers' plain names.
+        => iface.TypeKind == TypeKind.Interface && IsH5CompiledSource(iface);
 
     /// <summary>Full type name as a single JS identifier: dotted segments joined by <c>$</c>,
     /// with a generic arity suffix (e.g. <c>System$Collections$Generic$IComparer$1</c>).</summary>
@@ -455,7 +482,9 @@ internal static class H5Naming
     /// <summary>Notation for a library method: member [Convention], else type [Convention], else interface-inherited camelCase, else external, else preserve.</summary>
     private static Notation MethodNotation(IMethodSymbol method)
     {
-        if (method.Locations.Any(l => l.IsInSource)) return Notation.None;
+        // H5-compiled methods (source or referenced library) keep their verbatim name; only the
+        // external-type conventions below apply to BCL/DOM methods.
+        if (IsH5CompiledSource(method.ContainingType)) return Notation.None;
         // A [Convention] applied directly to the method (e.g. IComparer<T>.Compare) wins.
         if (MemberConventionNotation(method) is { } mc) return mc;
         var conv = ResolveNotation(method.ContainingType, ConvMethod);
