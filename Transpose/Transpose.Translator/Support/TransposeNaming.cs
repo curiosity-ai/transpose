@@ -549,8 +549,12 @@ internal static class TransposeNaming
         // interfaces whose members SHOULD camelCase — ICollection.Add etc. — carry an explicit
         // type-level [Convention], handled above before this point.)
         if (GetTemplate(method) is not null) return Notation.None;
-        if (ImplementsInterfaceMember(method)) return Notation.CamelCase;
-        if (IsExternalType(method.ContainingType)) return Notation.CamelCase;
+        // An implementer of an interface member does NOT blanket-camelCase; it inherits the
+        // interface member's own JS name (see JsBaseName -> ImplementedInterfaceMember). So a method
+        // implementing IEnumerator.MoveNext (whose [Convention] camelCases it) becomes "moveNext",
+        // while one implementing IDisposable.Dispose (no [Convention], though IDisposable is
+        // [External]) stays "Dispose". External members are preserved too: their bindings are written
+        // in the target JS casing already (e.g. dom.addEventListener) or mapped via [Name]/[Template].
         return Notation.None;
     }
 
