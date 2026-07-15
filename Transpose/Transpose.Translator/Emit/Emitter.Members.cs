@@ -72,7 +72,7 @@ public sealed partial class Emitter
                 {
                     for (var i = 0; i < staticFields.Count; i++)
                     {
-                        _w.Write($"{staticFields[i].name}: {staticFields[i].def}");
+                        _w.Write($"{NameMangler.JsPropertyKey(staticFields[i].name)}: {staticFields[i].def}");
                         _w.WriteLine(i < staticFields.Count - 1 ? "," : "");
                     }
                 });
@@ -436,7 +436,7 @@ public sealed partial class Emitter
 
     private void EmitAccessorEntry(string name, IMethodSymbol accessor, bool getter)
     {
-        _w.Write($"{name}: function (");
+        _w.Write($"{NameMangler.JsPropertyKey(name)}: function (");
         for (var p = 0; p < accessor.Parameters.Length; p++)
         {
             if (p > 0) _w.Write(", ");
@@ -449,7 +449,7 @@ public sealed partial class Emitter
     private void EmitMethodEntry(IMethodSymbol m)
     {
         var decl = (BaseMethodDeclarationSyntax)m.DeclaringSyntaxReferences[0].GetSyntax();
-        _w.Write($"{TransposeNaming.MemberJsName(m)}: function (");
+        _w.Write($"{NameMangler.JsPropertyKey(TransposeNaming.MemberJsName(m))}: function (");
         EmitParameterList(m);
         _w.Write(") ");
         if (decl.Body is not null && IsIteratorBody(decl.Body))
@@ -466,7 +466,7 @@ public sealed partial class Emitter
             {
                 var m = methods[i];
                 var decl = (BaseMethodDeclarationSyntax)m.DeclaringSyntaxReferences[0].GetSyntax();
-                _w.Write($"{TransposeNaming.MemberJsName(m)}: function (");
+                _w.Write($"{NameMangler.JsPropertyKey(TransposeNaming.MemberJsName(m))}: function (");
                 EmitParameterList(m);
                 _w.Write(") ");
                 if (decl.Body is not null && IsIteratorBody(decl.Body))
@@ -667,7 +667,7 @@ public sealed partial class Emitter
             for (var i = 0; i < props.Count; i++)
             {
                 var p = props[i];
-                _w.Write($"{TransposeNaming.MemberJsName(p)}: ");
+                _w.Write($"{NameMangler.JsPropertyKey(TransposeNaming.MemberJsName(p))}: ");
                 _w.Block(() =>
                 {
                     if (p.GetMethod is not null)

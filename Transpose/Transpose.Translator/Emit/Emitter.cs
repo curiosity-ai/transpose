@@ -125,6 +125,13 @@ public sealed partial class Emitter
             {
                 if (model.GetDeclaredSymbol(node) is INamedTypeSymbol sym && seen.Add(sym))
                 {
+                    // External types ([External] on the type/assembly, or [Scope]/[GlobalMethods]
+                    // bindings) have no emitted body: they are native JS (DOM, browser globals) or
+                    // are supplied by a hand-written runtime file ([Script]/embedded resource, e.g.
+                    // Newtonsoft's JsonConvert). Emitting a Transpose.define for them collides with
+                    // the real definition ("already defined") — so an [assembly: External] binding
+                    // library such as Transpose.Core contributes no runtime defines, matching h5.core.
+                    if (TransposeNaming.IsExternalType(sym)) continue;
                     declared.Add(sym);
                 }
             }

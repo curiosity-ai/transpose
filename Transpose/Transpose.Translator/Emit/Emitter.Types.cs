@@ -96,6 +96,27 @@ public sealed partial class Emitter
         return result;
     }
 
+    /// <summary>
+    /// JS parameter names for a generic type's define function, made unique. A nested generic type
+    /// may reuse an enclosing type parameter's name (legal C# — CS0693 — where the inner shadows the
+    /// outer, e.g. <c>ReturnType&lt;T&gt;.ReturnTypeFnAlias&lt;T&gt;</c>), which would emit an illegal
+    /// <c>function (T, T)</c>. C# resolves an unqualified <c>T</c> in the body to the innermost, so we
+    /// keep the LAST occurrence's original name and suffix earlier duplicates.
+    /// </summary>
+    private static List<string> UniqueTypeParamNames(List<ITypeParameterSymbol> typeParams)
+    {
+        var names = new List<string>(typeParams.Count);
+        for (var i = 0; i < typeParams.Count; i++)
+        {
+            var name = typeParams[i].Name;
+            var shadowedLater = false;
+            for (var j = i + 1; j < typeParams.Count; j++)
+                if (typeParams[j].Name == name) { shadowedLater = true; break; }
+            names.Add(shadowedLater ? name + "$" + i : name);
+        }
+        return names;
+    }
+
     /// <summary>The type arguments to pass when referencing a type: its enclosing types' arguments
     /// (outermost first) then its own — the mirror of <see cref="EffectiveTypeParameters"/>.</summary>
     private static List<ITypeSymbol> EffectiveTypeArguments(INamedTypeSymbol type)
@@ -204,7 +225,7 @@ public sealed partial class Emitter
         var fullName = type.Arity > 0 ? _names.TypeFullName(type) + "$" + type.Arity : _names.TypeFullName(type);
 
         _w.Write($"Transpose.define(\"{fullName}\", ");
-        if (isGeneric) _w.Write($"function ({string.Join(", ", typeParams.Select(p => p.Name))}) {{ return ");
+        if (isGeneric) _w.Write($"function ({string.Join(", ", UniqueTypeParamNames(typeParams))}) {{ return ");
         // $variance records each OWN type parameter's variance so the runtime can model
         // covariant/contravariant interface assignability: 2 = covariant (out), 1 = contravariant
         // (in), 0 = invariant. Only emitted when at least one parameter is variant (as Transpose does).
@@ -258,7 +279,7 @@ public sealed partial class Emitter
         var fullName = type.Arity > 0 ? _names.TypeFullName(type) + "$" + type.Arity : _names.TypeFullName(type);
 
         _w.Write($"Transpose.define(\"{fullName}\", ");
-        if (isGeneric) _w.Write($"function ({string.Join(", ", typeParams.Select(p => p.Name))}) {{ return ");
+        if (isGeneric) _w.Write($"function ({string.Join(", ", UniqueTypeParamNames(typeParams))}) {{ return ");
         _w.Block(() =>
         {
             var sections = new List<Action>();
@@ -367,7 +388,7 @@ public sealed partial class Emitter
         {
             for (var i = 0; i < entries.Count; i++)
             {
-                _w.Write($"{entries[i].name}: {entries[i].def}");
+                _w.Write($"{NameMangler.JsPropertyKey(entries[i].name)}: {entries[i].def}");
                 _w.WriteLine(i < entries.Count - 1 ? "," : "");
             }
         });
