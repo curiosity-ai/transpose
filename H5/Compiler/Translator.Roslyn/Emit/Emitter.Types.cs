@@ -34,6 +34,9 @@ public sealed partial class Emitter
     /// <summary>Full JS name a type is registered / referenced under.</summary>
     private string TypeRef(ITypeSymbol type)
     {
+        // `dynamic` has no runtime type of its own — it is System.Object at runtime.
+        if (type.TypeKind == TypeKind.Dynamic) return "System.Object";
+
         if (type is INamedTypeSymbol named)
         {
             var name = H5Naming.GetName(named);

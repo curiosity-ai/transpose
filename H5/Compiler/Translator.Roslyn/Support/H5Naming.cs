@@ -87,7 +87,10 @@ internal static class H5Naming
         // native JS objects like a DOM element's this[string]. The [External] BCL *collection
         // interfaces* (IReadOnlyList/IReadOnlyDictionary) still route through getItem/setItem.
         if (!indexer.IsIndexer) return false;
-        if (indexer.ContainingType is not { TypeKind: TypeKind.Class } ct || !HasExternalAttribute(ct)) return false;
+        // External (or scope-bound, e.g. a DOM NodeList under H5.Core.dom's [Scope]) non-interface
+        // types are native JS objects, so their indexer is bracket access. Real H5 runtime
+        // collection classes (List<T>, Dictionary<,>, …) are not external and keep getItem/setItem.
+        if (indexer.ContainingType is not { TypeKind: TypeKind.Class } ct || !IsExternalType(ct)) return false;
         if (indexer.ContainingType.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == AccessorsIndexerAttr)) return false;
         if (GetName(indexer) is not null) return false;
         if (GetTemplate(indexer.GetMethod?.OriginalDefinition) is not null) return false;
@@ -193,7 +196,11 @@ internal static class H5Naming
         // A property/field/event that hides a same-named base member (C# `new`) takes its own
         // slot via a $N suffix (as H5 does), so the hiding member and the base member don't
         // collide — and base access (base.X, emitted as this.X) still reaches the base slot.
-        if (GetName(symbol) is null && symbol is IPropertySymbol { IsIndexer: false } or IFieldSymbol or IEventSymbol)
+        // Only source members get a slot suffix: an external/native member (e.g. a DOM
+        // NodeListOf<T>.length hiding NodeList.length) maps to a single fixed JS property, so
+        // suffixing it would reference a property that doesn't exist on the runtime object.
+        if (GetName(symbol) is null && symbol.Locations.Any(l => l.IsInSource)
+            && symbol is IPropertySymbol { IsIndexer: false } or IFieldSymbol or IEventSymbol)
         {
             var idx = HidingIndex(symbol, raw);
             if (idx > 0) return raw + "$" + idx;

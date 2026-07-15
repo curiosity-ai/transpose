@@ -50,11 +50,14 @@ public sealed partial class Emitter
             _w.WriteLine("\"use strict\";");
             _w.WriteLine();
 
-            foreach (var type in CollectTypes())
+            var types = CollectTypes();
+            foreach (var type in types)
             {
                 EmitType(type);
                 _w.WriteLine();
             }
+
+            EmitReflectionMetadata(types);
         });
         _w.WriteLine(");");
         return _w.ToString();

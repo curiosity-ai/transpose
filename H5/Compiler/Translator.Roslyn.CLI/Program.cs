@@ -23,6 +23,7 @@ public static class Program
         string? projectArg = null;
         string? outPath = null;
         string? siteDir = null;
+        var configuration = "Debug";
         var withRuntime = false;
         var quiet = false;
         var maxErrors = 40;
@@ -33,6 +34,7 @@ public static class Program
             {
                 case "--out" or "-o": outPath = args[++i]; break;
                 case "--site-dir": siteDir = args[++i]; break;
+                case "--configuration" or "-c": configuration = args[++i]; break;
                 case "--with-runtime": withRuntime = true; break;
                 case "--quiet" or "-q": quiet = true; break;
                 case "--max-errors": maxErrors = int.Parse(args[++i]); break;
@@ -102,10 +104,11 @@ public static class Program
         // assemble a runnable output folder (runtime JS + bundle + resources + index.html),
         // exactly like the existing h5 compiler.
         var config = H5Json.TryLoad(project.ProjectDir);
+        var minified = configuration.Equals("Release", StringComparison.OrdinalIgnoreCase);
         if (config is not null && outPath is null)
         {
-            var outDir = siteDir ?? ResolveOutputDir(config, project.ProjectDir);
-            OutputBuilder.Build(project, config, js, outDir);
+            var outDir = siteDir ?? ResolveOutputDir(config, project.ProjectDir, configuration);
+            OutputBuilder.Build(project, config, js, outDir, minified);
             Console.WriteLine($"\nOK — built site in {outDir} ({js.Length:N0} bytes of {config.FileName}) in {sw.ElapsedMilliseconds} ms.");
             Console.WriteLine($"  index.html: {(config.HtmlDisabled ? "disabled" : "generated")}");
             return 0;
@@ -120,9 +123,9 @@ public static class Program
     }
 
     /// <summary>Resolves h5.json's output path, expanding the $(OutDir) MSBuild token.</summary>
-    private static string ResolveOutputDir(H5Json config, string projectDir)
+    private static string ResolveOutputDir(H5Json config, string projectDir, string configuration)
     {
-        var outBase = Path.Combine(projectDir, "bin", "Debug", "netstandard2.0");
+        var outBase = Path.Combine(projectDir, "bin", configuration, "netstandard2.0");
         var raw = (config.Output ?? "$(OutDir)/h5/").Replace("$(OutDir)", outBase).Replace('\\', '/');
         return Path.GetFullPath(raw);
     }
@@ -182,6 +185,10 @@ public static class Program
 
             Options:
               -o, --out <file.js>   Output path (default: <project>/bin/<assembly>.js)
+              -c, --configuration <name>
+                                    Build configuration (Debug/Release; default Debug). Release
+                                    selects the .min.js resource variants where both exist.
+              --site-dir <dir>      Output directory for the assembled site
               --with-runtime        Prepend the h5.js runtime + shim to the output
               --max-errors <n>      Max individual errors to print (default 40)
               -q, --quiet           Suppress warning output

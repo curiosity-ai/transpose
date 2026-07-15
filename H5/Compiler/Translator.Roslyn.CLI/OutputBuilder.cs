@@ -29,7 +29,7 @@ internal static class OutputBuilder
 </body>
 </html>";
 
-    public static string Build(ResolvedProject project, H5Json config, string javascript, string outputDir)
+    public static string Build(ResolvedProject project, H5Json config, string javascript, string outputDir, bool minified = false)
     {
         Directory.CreateDirectory(outputDir);
 
@@ -60,8 +60,14 @@ internal static class OutputBuilder
         {
             var cfg = projectDir == project.ProjectDir ? config : H5Json.TryLoad(projectDir);
             if (cfg is null) continue;
+            // The bundle group names whose files actually resolve in this project — used to
+            // decide, for a minified/non-minified pair, which variant the current build takes.
+            var bundleNames = cfg.Resources
+                .Where(g => g.Files.SelectMany(p => ExpandGlob(projectDir, p)).Any())
+                .Select(g => g.Name ?? "")
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (var group in cfg.Resources)
-                ProcessResourceGroup(projectDir, outputDir, group, resourceScripts, cssLinks);
+                ProcessResourceGroup(projectDir, outputDir, group, resourceScripts, cssLinks, bundleNames, minified);
         }
 
         // 3. The compiled bundle — loads last, after runtime + library deps are in place.
@@ -76,15 +82,43 @@ internal static class OutputBuilder
         return outputDir;
     }
 
+    /// <summary>A resource group name for a minified bundle (ends in <c>.min.js</c>/<c>.min.css</c>).</summary>
+    private static bool IsMinifiedName(string name)
+        => name.EndsWith(".min.js", StringComparison.OrdinalIgnoreCase)
+           || name.EndsWith(".min.css", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The paired variant of a bundle name: <c>x.js</c> ↔ <c>x.min.js</c> (and .css).</summary>
+    private static string CounterpartName(string name)
+    {
+        foreach (var ext in new[] { ".js", ".css" })
+        {
+            if (IsMinifiedName(name) && name.EndsWith(".min" + ext, StringComparison.OrdinalIgnoreCase))
+                return name.Substring(0, name.Length - (".min" + ext).Length) + ext;
+            if (!IsMinifiedName(name) && name.EndsWith(ext, StringComparison.OrdinalIgnoreCase))
+                return name.Substring(0, name.Length - ext.Length) + ".min" + ext;
+        }
+        return name;
+    }
+
     private static void ProcessResourceGroup(
         string projectDir, string outputDir, H5Json.ResourceGroup group,
-        List<string> resourceScripts, List<string> cssLinks)
+        List<string> resourceScripts, List<string> cssLinks, HashSet<string> bundleNames, bool minified)
     {
         var destSub = (group.Output ?? "").Replace('\\', '/');
         var files = group.Files.SelectMany(p => ExpandGlob(projectDir, p)).ToList();
         if (files.Count == 0) return;
 
         var name = group.Name ?? "";
+
+        // H5 emits resource groups in minified/non-minified pairs (e.g. tss-dep.js and
+        // tss-dep.min.js — see the "outputFormatting": "Both" note in Tesserae's h5.json). When
+        // BOTH variants of a bundle are available, a referencing project built in Debug takes the
+        // non-minified one and a Release build takes the .min.js one. When only one variant
+        // exists, it is used regardless of configuration — otherwise both variants of a matched
+        // pair would load and the dependency bundle would run twice.
+        if (IsMinifiedName(name) == !minified && bundleNames.Contains(CounterpartName(name)))
+            return;
+
         var isBundle = name.EndsWith(".js", StringComparison.OrdinalIgnoreCase)
                        || name.EndsWith(".css", StringComparison.OrdinalIgnoreCase);
 

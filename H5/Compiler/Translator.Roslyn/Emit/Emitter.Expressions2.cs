@@ -275,7 +275,9 @@ public sealed partial class Emitter
         var byName = new Dictionary<string, string>();
         var byPos = new List<string>();
 
-        _w.Write("(function () { ");
+        // Arrow (not `function`) so a `this`-qualified receiver inside the call resolves to the
+        // enclosing instance rather than being rebound to undefined in strict mode.
+        _w.Write("(() => { ");
         for (var i = 0; i < args.Count; i++)
         {
             var isRef = args[i].RefKindKeyword.IsKind(SyntaxKind.OutKeyword) || args[i].RefKindKeyword.IsKind(SyntaxKind.RefKeyword);
@@ -324,7 +326,9 @@ public sealed partial class Emitter
         var args = invocation.ArgumentList.Arguments;
         var holders = new string?[args.Count];
 
-        _w.Write("(function () { ");
+        // Arrow (not `function`) so a `this`-qualified receiver inside the call resolves to the
+        // enclosing instance rather than being rebound to undefined in strict mode.
+        _w.Write("(() => { ");
 
         for (var i = 0; i < args.Count; i++)
         {
@@ -544,7 +548,7 @@ public sealed partial class Emitter
     {
         if (initializer is { Expressions.Count: > 0 })
         {
-            _w.Write("(function () { var $o = ");
+            _w.Write("(() => { var $o = ");
             EmitBareConstruction(type, ctor, argList);
             _w.Write("; ");
             EmitInitializer("$o", initializer);
@@ -745,9 +749,16 @@ public sealed partial class Emitter
         if (binary.IsKind(SyntaxKind.AsExpression))
         {
             var t = _model.GetTypeInfo(binary.Right).Type;
+            // `x as dynamic` is an identity in JS — member access on the result resolves
+            // dynamically against the value itself, so there's no runtime type to check.
+            if (t is null || t.TypeKind == TypeKind.Dynamic)
+            {
+                EmitExpression(binary.Left);
+                return;
+            }
             _w.Write("H5R.as(");
             EmitExpression(binary.Left);
-            _w.Write($", {TypeRef(t!)})");
+            _w.Write($", {TypeRef(t)})");
             return;
         }
 
@@ -1396,7 +1407,7 @@ public sealed partial class Emitter
 
         // A concrete collection type (e.g. List<T>) — build a fresh instance and add each
         // element (works regardless of the type's constructor overload numbering).
-        _w.Write($"(function () {{ var $c = new ({TypeRef(target)})(); ");
+        _w.Write($"(() => {{ var $c = new ({TypeRef(target)})(); ");
         _w.Write($"var $s = ");
         EmitArray();
         _w.Write("; for (var $i = 0; $i < $s.length; $i++) { $c.add($s[$i]); } return $c; })()");

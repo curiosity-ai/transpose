@@ -473,9 +473,11 @@ public sealed partial class Emitter
         _w.Block(() =>
         {
             EmitOptionalDefaults(method);
-            _w.Write("return H5R.iter(function* () ");
+            // A generator function can't be an arrow, so it rebinds `this`; bind it to the
+            // enclosing instance so an iterator body that reads `this.field` still works.
+            _w.Write("return H5R.iter((function* () ");
             _w.Block(() => { foreach (var s in body.Statements) EmitStatement(s); });
-            _w.WriteLine(");");
+            _w.WriteLine(").bind(this));");
         });
     }
 

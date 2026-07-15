@@ -124,7 +124,8 @@ public sealed partial class Emitter
                 _w.Write(NameMangler.JsIdentifier(d.Identifier.Text));
                 break;
             case ThrowExpressionSyntax throwExpr:
-                _w.Write("(function () { throw ");
+                // Arrow so a `this`-qualified thrown expression keeps the enclosing instance.
+                _w.Write("(() => { throw ");
                 EmitExpression(throwExpr.Expression);
                 _w.Write("; })()");
                 break;
