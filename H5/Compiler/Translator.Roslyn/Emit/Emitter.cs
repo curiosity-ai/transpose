@@ -25,6 +25,13 @@ public sealed partial class Emitter
     /// function parameters (raw names); elsewhere captured params read from the instance.</summary>
     private bool _inPrimaryCtorBody;
 
+    /// <summary>How many loop bodies (for/foreach/while/do) currently enclose the emission point.
+    /// A local declared inside a loop is emitted with `let` (a fresh per-iteration binding) so a
+    /// closure created in the loop captures that iteration's value — C# block scoping. Outside a
+    /// loop (loop depth 0) locals stay `var` (function scope), which tolerates the same-name
+    /// redeclarations across flattened scopes that some code relies on.</summary>
+    private int _loopDepth;
+
     /// <summary>The type whose define body is currently being emitted. Its own type parameters are
     /// the ones actually bound as JS function parameters of the define, so <c>default(T)</c> may
     /// safely reference them via <c>H5.getDefaultValue(T)</c>; a type parameter from an enclosing

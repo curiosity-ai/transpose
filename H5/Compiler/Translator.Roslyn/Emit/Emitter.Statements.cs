@@ -279,10 +279,13 @@ public sealed partial class Emitter
             return;
         }
 
-        // C# locals are function-scoped in H5's model, so emit `var` (as the legacy compiler
-        // does): it matches H5 semantics, persists across a goto state machine's loop, and lets
-        // a Script.Write-injected `var x` coexist with a same-named C# local (which `let` forbids).
-        var kw = "var";
+        // A local declared inside a loop body is emitted with `let` so each iteration gets a fresh
+        // binding — a closure created in the loop then captures that iteration's value (C# block
+        // scoping), not the final one. Outside a loop, `var` (function scope) is kept: it matches
+        // H5's model and tolerates the same-name redeclarations across flattened scopes that some
+        // code relies on (which `let` would reject). A goto state machine also needs `var` so a
+        // local persists across `case` transitions as the loop re-enters the switch.
+        var kw = _loopDepth > 0 && _gotoContexts.Count == 0 ? "let" : "var";
         foreach (var variable in local.Declaration.Variables)
         {
             _w.Write($"{kw} {NameMangler.JsIdentifier(variable.Identifier.Text)}");
@@ -367,7 +370,9 @@ public sealed partial class Emitter
         }
         _w.Write(") ");
         _breakTargets.Push(null);
+        _loopDepth++;
         EmitStatementAsBlock(forStmt.Statement);
+        _loopDepth--;
         _breakTargets.Pop();
     }
 
@@ -377,11 +382,13 @@ public sealed partial class Emitter
         var enumVar = EmitEnumeratorInit(forEach, forEach.Expression);
         _w.Write($"while ({enumVar}.moveNext()) ");
         _breakTargets.Push(null);
+        _loopDepth++;
         _w.Block(() =>
         {
             _w.WriteLine($"let {iterVar} = {enumVar}.current;");
             EmitForEachBody(forEach.Statement);
         });
+        _loopDepth--;
         _breakTargets.Pop();
         _w.WriteLine();
     }
@@ -394,6 +401,7 @@ public sealed partial class Emitter
         var targets = CollectDeconstructionTargets(forEach.Variable).ToList();
         _w.Write($"while ({enumVar}.moveNext()) ");
         _breakTargets.Push(null);
+        _loopDepth++;
         _w.Block(() =>
         {
             var cur = enumVar + "c";
@@ -401,6 +409,7 @@ public sealed partial class Emitter
             EmitDeconstructionBindings(targets, cur, elementIsTuple);
             EmitForEachBody(forEach.Statement);
         });
+        _loopDepth--;
         _breakTargets.Pop();
         _w.WriteLine();
     }
@@ -447,7 +456,9 @@ public sealed partial class Emitter
         EmitExpression(whileStmt.Condition);
         _w.Write(") ");
         _breakTargets.Push(null);
+        _loopDepth++;
         EmitStatementAsBlock(whileStmt.Statement);
+        _loopDepth--;
         _breakTargets.Pop();
     }
 
@@ -455,7 +466,9 @@ public sealed partial class Emitter
     {
         _w.Write("do ");
         _breakTargets.Push(null);
+        _loopDepth++;
         EmitStatementAsBlock(doStmt.Statement);
+        _loopDepth--;
         _breakTargets.Pop();
         _w.Write("while (");
         EmitExpression(doStmt.Condition);
