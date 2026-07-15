@@ -464,7 +464,7 @@ internal static class H5Naming
     /// H5 leaves such members out of a non-external type's overload set, so they take the
     /// bare convention name with no <c>$N</c> suffix.
     /// </summary>
-    private static bool HasNoBody(IMethodSymbol method)
+    public static bool HasNoBody(IMethodSymbol method)
     {
         if (method.Locations.Any(l => l.IsInSource)) return false;
         if (method.ContainingAssembly?.Name != "H5") return false;

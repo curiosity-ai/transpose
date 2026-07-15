@@ -419,6 +419,15 @@ public sealed partial class Emitter
 
     private void EmitFieldAccess(IFieldSymbol field, ExpressionSyntax? thisTarget)
     {
+        // A [Template] on the field defines how the access emits — e.g. the DOM literal fields
+        // dom.InsertPosition.afterend ([Template("<self>\"afterend\"")]) → the string "afterend",
+        // not a Type.member reference that would resolve to undefined.
+        if (H5Naming.GetTemplate(field.OriginalDefinition) is { } template)
+        {
+            var recv = field.IsStatic || thisTarget is null ? null : Capture(() => EmitExpression(thisTarget));
+            WriteTemplate(template, field.IsStatic, isExtension: false, recv, new(), new());
+            return;
+        }
         if (field.IsConst)
         {
             _w.Write(ConstantLiteral(field.ConstantValue, field.Type));

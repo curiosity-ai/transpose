@@ -146,6 +146,76 @@ internal static class ProjectResolver
         }
     }
 
+    /// <summary>
+    /// The referenced projects of <paramref name="rootCsproj"/> in build order — every transitive
+    /// ProjectReference, dependencies before dependents (post-order DFS), excluding the root. So a
+    /// caller can build each one (as a package) before the project that consumes it.
+    /// </summary>
+    public static List<string> ReferencedProjectsInBuildOrder(string rootCsproj)
+    {
+        rootCsproj = Path.GetFullPath(rootCsproj);
+        var order = new List<string>();
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void Visit(string csproj, bool isRoot)
+        {
+            csproj = Path.GetFullPath(csproj);
+            if (!visited.Add(csproj) || !File.Exists(csproj)) return;
+            var dir = Path.GetDirectoryName(csproj)!;
+            var doc = XDocument.Load(csproj);
+            foreach (var pr in doc.Descendants().Where(e => e.Name.LocalName == "ProjectReference"))
+            {
+                var include = pr.Attribute("Include")?.Value;
+                if (string.IsNullOrWhiteSpace(include)) continue;
+                Visit(Path.GetFullPath(Path.Combine(dir, include!.Replace('\\', '/'))), isRoot: false);
+            }
+            if (!isRoot) order.Add(csproj);   // post-order → dependencies precede this project
+        }
+
+        Visit(rootCsproj, isRoot: true);
+        return order;
+    }
+
+    /// <summary>The built output DLL path of a project, or null when the .csproj is missing.</summary>
+    public static string? OutputDll(string csprojPath, string configuration) => ProjectOutputDll(csprojPath, configuration);
+
+    /// <summary>
+    /// True if <paramref name="csprojPath"/>'s package DLL is present, carries embedded H5 resources
+    /// (i.e. was built by the translator, not a plain csc build), and is newer than the project's
+    /// .csproj, all its source files, and every referenced project's DLL — the same incremental
+    /// check the MSBuild-driven compiler relies on. When false, the project must be rebuilt.
+    /// </summary>
+    public static bool IsPackageUpToDate(string csprojPath, string configuration)
+    {
+        csprojPath = Path.GetFullPath(csprojPath);
+        var dll = ProjectOutputDll(csprojPath, configuration);
+        if (dll is null || !File.Exists(dll)) return false;
+        if (!ResourceEmbedder.HasManifest(dll)) return false;   // a plain build with no embedded JS
+
+        var dllTime = File.GetLastWriteTimeUtc(dll);
+        var dir = Path.GetDirectoryName(csprojPath)!;
+
+        if (File.GetLastWriteTimeUtc(csprojPath) > dllTime) return false;
+
+        foreach (var src in Directory.EnumerateFiles(dir, "*.cs", SearchOption.AllDirectories))
+        {
+            if (IsUnderBuildOutput(src, dir)) continue;
+            if (File.GetLastWriteTimeUtc(src) > dllTime) return false;
+        }
+
+        // A dependency rebuilt more recently invalidates this project too.
+        var doc = XDocument.Load(csprojPath);
+        foreach (var pr in doc.Descendants().Where(e => e.Name.LocalName == "ProjectReference"))
+        {
+            var include = pr.Attribute("Include")?.Value;
+            if (string.IsNullOrWhiteSpace(include)) continue;
+            var depDll = ProjectOutputDll(Path.GetFullPath(Path.Combine(dir, include!.Replace('\\', '/'))), configuration);
+            if (depDll is null || !File.Exists(depDll) || File.GetLastWriteTimeUtc(depDll) > dllTime) return false;
+        }
+
+        return true;
+    }
+
     /// <summary>The built output DLL path of a referenced project: bin/&lt;config&gt;/&lt;tfm&gt;/&lt;asm&gt;.dll.</summary>
     private static string? ProjectOutputDll(string csprojPath, string configuration)
     {

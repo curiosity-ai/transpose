@@ -562,13 +562,22 @@ public sealed partial class Emitter
     /// runtime uses of the type parameter (typeof(T), default(T), new T()) resolve.
     /// </summary>
     private static bool ThreadsTypeArgs(IMethodSymbol method)
-        // A generic method this compiler emits threads its type arguments as leading JS parameters
-        // — true for both source methods and generic methods on a referenced H5-compiled assembly
-        // (a package), so a call site threads exactly what the definition expects. External/BCL
-        // generic methods use their native/templated form and are excluded.
-        => method.IsGenericMethod
-           && H5Naming.IsH5CompiledSource(method.ContainingType)
-           && !method.OriginalDefinition.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "H5.IgnoreGenericAttribute");
+    {
+        // A generic method threads its type arguments as leading JS parameters when its H5-emitted
+        // definition takes them — so the call site passes exactly what the definition expects.
+        if (!method.IsGenericMethod) return false;
+        var def = method.OriginalDefinition;
+        if (def.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "H5.IgnoreGenericAttribute")) return false;
+        // A templated method's call shape is the template itself — no separate leading type args.
+        if (H5Naming.GetTemplate(def) is not null) return false;
+        // Source / referenced-library generic methods always thread. So do H5.dll BCL generic
+        // methods that have a real body (a plain C# generic method, e.g.
+        // CollectionExtensions.GetValueOrDefault / TryAdd — compiled with leading type parameters).
+        // A body-less extern (hand-written JS, incl. the DOM externs in H5.Core like
+        // querySelector<T>) uses its native form and must NOT thread.
+        if (H5Naming.IsH5CompiledSource(method.ContainingType)) return true;
+        return method.ContainingAssembly?.Name == "H5" && !H5Naming.HasNoBody(def);
+    }
 
     private void EmitOptionalDefaults(IMethodSymbol method)
     {
@@ -604,6 +613,10 @@ public sealed partial class Emitter
                 }
                 else if (arrow is not null)
                 {
+                    // Hoist out-var / is-pattern variables the expression introduces (e.g.
+                    // `=> TryParse(s, out var n) && n > 0`) so their write-backs and later reads
+                    // resolve — an expression body has no statement to predeclare them otherwise.
+                    PredeclareInlineVars(arrow.Expression);
                     if (returnsVoid) EmitExpressionStatement(arrow.Expression);
                     else { _w.Write("return "); EmitExpressionConverted(arrow.Expression, method.ReturnType); _w.WriteLine(";"); }
                 }

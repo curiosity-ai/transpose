@@ -79,14 +79,17 @@ public static class Program
 
         // Reflection settings come from the project's h5.json (target inline vs a .meta.js file).
         var h5cfg = H5Json.TryLoad(project.ProjectDir);
-        var reflectionEnabled = !(h5cfg?.ReflectionDisabled ?? false);
-        var metadataTarget = (h5cfg?.ReflectionTarget ?? "file").ToLowerInvariant() switch
+        var (reflectionEnabled, metadataTarget) = ReflectionSettings(h5cfg);
+
+        // Chain the referenced projects first (like the MSBuild-driven compiler): in
+        // separate-assembly / package mode this project binds against its dependencies' built DLLs
+        // and extracts their embedded JS, so each must be compiled — in dependency order — before
+        // this one. Up-to-date packages are skipped.
+        if (separateAssemblies && !EnsureReferencedProjectsBuilt(csproj, configuration, maxErrors))
         {
-            "inline" => MetadataTarget.Inline,
-            "type" => MetadataTarget.Type,
-            "assembly" => MetadataTarget.Assembly,
-            _ => MetadataTarget.File,
-        };
+            Console.Error.WriteLine("\nFAILED building referenced projects.");
+            return 1;
+        }
 
         var translator = new RoslynTranslator();
         AssemblyBuildResult result;
@@ -126,16 +129,7 @@ public static class Program
         // embed its JS (+ h5.json resources) so another project can reference it and extract them.
         if (emitPackage)
         {
-            var mainJsName = config?.ExplicitFileName ?? project.AssemblyName + ".js";
-            var dllPath = Path.Combine(ResolveBinDir(project.ProjectDir, configuration), project.AssemblyName + ".dll");
-            Directory.CreateDirectory(Path.GetDirectoryName(dllPath)!);
-            File.WriteAllBytes(dllPath, result.AssemblyBytes!);
-
-            var items = config is not null
-                ? OutputBuilder.CollectEmbeddableItems(project.ProjectDir, config, mainJsName, js, result.MetadataJavascript)
-                : new List<EmbeddedItem> { new(mainJsName, System.Text.Encoding.UTF8.GetBytes(js), null) };
-            ResourceEmbedder.Embed(dllPath, items);
-
+            var (dllPath, items) = WritePackage(project, config, configuration, result);
             Console.WriteLine($"\nOK — built package {project.AssemblyName}.dll ({result.AssemblyBytes!.Length:N0} bytes) with {items.Count} embedded resource(s) in {sw.ElapsedMilliseconds} ms.");
             Console.WriteLine($"  dll:      {dllPath}");
             Console.WriteLine($"  embedded: {string.Join(", ", items.Take(6).Select(i => i.Name))}{(items.Count > 6 ? ", …" : "")}");
@@ -160,6 +154,95 @@ public static class Program
         File.WriteAllText(outPath, js);
         Console.WriteLine($"\nOK — wrote {js.Length:N0} bytes to {outPath} in {sw.ElapsedMilliseconds} ms.");
         return 0;
+    }
+
+    private static (bool reflectionEnabled, MetadataTarget target) ReflectionSettings(H5Json? h5cfg)
+    {
+        var reflectionEnabled = !(h5cfg?.ReflectionDisabled ?? false);
+        var metadataTarget = (h5cfg?.ReflectionTarget ?? "file").ToLowerInvariant() switch
+        {
+            "inline" => MetadataTarget.Inline,
+            "type" => MetadataTarget.Type,
+            "assembly" => MetadataTarget.Assembly,
+            _ => MetadataTarget.File,
+        };
+        return (reflectionEnabled, metadataTarget);
+    }
+
+    /// <summary>
+    /// Builds every referenced project of <paramref name="rootCsproj"/> in dependency order,
+    /// skipping any whose package DLL is already up-to-date. Mirrors the MSBuild-driven compiler,
+    /// which builds project references (each producing a DLL with its JS embedded) before the
+    /// project that consumes them.
+    /// </summary>
+    private static bool EnsureReferencedProjectsBuilt(string rootCsproj, string configuration, int maxErrors)
+    {
+        foreach (var dep in ProjectResolver.ReferencedProjectsInBuildOrder(rootCsproj))
+        {
+            var name = Path.GetFileNameWithoutExtension(dep);
+            if (ProjectResolver.IsPackageUpToDate(dep, configuration))
+            {
+                Console.WriteLine($"  dependency up-to-date: {name}");
+                continue;
+            }
+            Console.WriteLine($"  building dependency: {name}");
+            if (!BuildPackage(dep, configuration, maxErrors))
+            {
+                Console.Error.WriteLine($"  dependency build FAILED: {name}");
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /// <summary>Compiles one project into its H5 package DLL (the .NET assembly with the compiled JS
+    /// and h5.json resources embedded). Its own project references are consumed as their built DLLs,
+    /// so they must already have been built (this is called in dependency order).</summary>
+    private static bool BuildPackage(string csproj, string configuration, int maxErrors)
+    {
+        ResolvedProject project;
+        try { project = ProjectResolver.Resolve(csproj, configuration, separateAssemblies: true); }
+        catch (Exception ex) { Console.Error.WriteLine($"    resolve failed: {ex.Message}"); return false; }
+
+        var h5cfg = H5Json.TryLoad(project.ProjectDir);
+        var (reflectionEnabled, metadataTarget) = ReflectionSettings(h5cfg);
+
+        AssemblyBuildResult result;
+        try
+        {
+            result = new RoslynTranslator().BuildAssembly(
+                project.Sources, project.AssemblyName, project.ReferencePaths,
+                project.DefineConstants, project.LanguageVersion,
+                reflectionEnabled, metadataTarget, emitAssembly: true);
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"    translator threw: {ex.Message}"); return false; }
+
+        if (!result.Success)
+        {
+            ReportDiagnostics(result.Diagnostics, maxErrors);
+            return false;
+        }
+
+        WritePackage(project, h5cfg, configuration, result);
+        return true;
+    }
+
+    /// <summary>Writes a project's emitted assembly and embeds its JS + resources, returning the DLL
+    /// path and the embedded items. The DLL path is the one the resolver references for this
+    /// project, so a consumer finds it.</summary>
+    private static (string dllPath, List<EmbeddedItem> items) WritePackage(
+        ResolvedProject project, H5Json? config, string configuration, AssemblyBuildResult result)
+    {
+        var mainJsName = config?.ExplicitFileName ?? project.AssemblyName + ".js";
+        var dllPath = ProjectResolver.OutputDll(project.CsprojPath, configuration)!;
+        Directory.CreateDirectory(Path.GetDirectoryName(dllPath)!);
+        File.WriteAllBytes(dllPath, result.AssemblyBytes!);
+
+        var items = config is not null
+            ? OutputBuilder.CollectEmbeddableItems(project.ProjectDir, config, mainJsName, result.Javascript!, result.MetadataJavascript)
+            : new List<EmbeddedItem> { new(mainJsName, System.Text.Encoding.UTF8.GetBytes(result.Javascript!), null) };
+        ResourceEmbedder.Embed(dllPath, items);
+        return (dllPath, items);
     }
 
     /// <summary>Resolves h5.json's output path, expanding the $(OutDir) MSBuild token.</summary>
