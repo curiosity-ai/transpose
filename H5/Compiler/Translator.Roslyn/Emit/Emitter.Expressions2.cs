@@ -857,10 +857,15 @@ public sealed partial class Emitter
             return;
         }
 
-        // 64-bit integer arithmetic/comparison → System.Int64/UInt64 method calls.
-        if ((Is64BitInteger(leftType) || Is64BitInteger(rightType)) && Long64Op(binary) is not null)
+        // 64-bit integer arithmetic/comparison → System.Int64/UInt64 method calls. Decide on the
+        // operands' DECLARED types, not the converted ones: `int >= uint` is promoted to `long` by
+        // C#, but int/uint are plain JS numbers (only actual long/ulong are boxed Int64/UInt64
+        // instances with .gte/.add/… methods), so such a comparison must stay a plain operator.
+        var leftDeclared = _model.GetTypeInfo(binary.Left).Type ?? leftType;
+        var rightDeclared = _model.GetTypeInfo(binary.Right).Type ?? rightType;
+        if ((Is64BitInteger(leftDeclared) || Is64BitInteger(rightDeclared)) && Long64Op(binary) is not null)
         {
-            EmitLong64Binary(binary, leftType, rightType);
+            EmitLong64Binary(binary, leftDeclared, rightDeclared);
             return;
         }
 
