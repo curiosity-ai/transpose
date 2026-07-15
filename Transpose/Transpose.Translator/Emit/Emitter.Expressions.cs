@@ -255,9 +255,23 @@ public sealed partial class Emitter
         EmitExpression(expr);
     }
 
-    /// <summary>A user-defined (source) struct — value-copy semantics apply.</summary>
+    /// <summary>A user-defined (source) struct — value-copy semantics apply. Primitive value
+    /// types (int, double, bool, char, …) are excluded: they are backed by JS primitives with
+    /// native value semantics, and cloning them is both unnecessary and wrong. They matter here
+    /// only when self-building the runtime, where System.Int32 &amp; co. are themselves in source.</summary>
     private static bool IsSourceStruct(ITypeSymbol? type)
-        => type is { TypeKind: TypeKind.Struct } && type.Locations.Any(l => l.IsInSource) && !type.IsTupleType;
+        => type is { TypeKind: TypeKind.Struct } && type.Locations.Any(l => l.IsInSource)
+           && !type.IsTupleType && !IsJsPrimitiveValueType(type);
+
+    /// <summary>A value type backed by a JS primitive (number / boolean / string-like) — no clone.</summary>
+    private static bool IsJsPrimitiveValueType(ITypeSymbol type) => type.SpecialType is
+        SpecialType.System_Boolean or SpecialType.System_Char
+        or SpecialType.System_SByte or SpecialType.System_Byte
+        or SpecialType.System_Int16 or SpecialType.System_UInt16
+        or SpecialType.System_Int32 or SpecialType.System_UInt32
+        or SpecialType.System_Int64 or SpecialType.System_UInt64
+        or SpecialType.System_Single or SpecialType.System_Double
+        or SpecialType.System_IntPtr or SpecialType.System_UIntPtr;
 
     /// <summary>An expression that references existing storage (so could alias).</summary>
     private static bool IsReferencingExpression(ExpressionSyntax expr) => expr switch
@@ -658,6 +672,19 @@ public sealed partial class Emitter
                 : int.TryParse(tok, out var i2) && i2 < argsByPos.Count ? argsByPos[i2]
                 : recv;
             return $"Transpose.getType({expr})";
+        });
+
+        // {T:defaultFn} → a factory FUNCTION returning default(T), used where each consumer needs
+        // an independent default value (Array.Clear/Resize fill one struct instance per slot):
+        // System.Array.fill(dst, function () { return default(T); }, index, count). Resolved from
+        // the same precomputed "T:default" value. Handled before {T:default} so it wins the match.
+        template = System.Text.RegularExpressions.Regex.Replace(template, @"\{([A-Za-z_][A-Za-z0-9_]*):defaultFn\}", m =>
+        {
+            var key = m.Groups[1].Value + ":default";
+            var d = argsByName.TryGetValue(key, out var dv) ? dv
+                : typeArgs is not null && typeArgs.TryGetValue(key, out var td) ? td
+                : "null";
+            return "function () { return " + d + "; }";
         });
 
         // {T:default} → the default value of the type argument bound to T (precomputed in

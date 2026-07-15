@@ -36,7 +36,17 @@
         var i = -1; return { moveNext: function () { i++; return i < src.length; }, get current() { return src[i]; } };
     };
     TransposeR.dispose = function (x) { if (x) { if (x.dispose) { x.dispose(); } else if (x.Dispose) { x.Dispose(); } } };
-    TransposeR.array = function (n, d) { var a = new Array(n); for (var i = 0; i < n; i++) { a[i] = d; } return a; };
+    TransposeR.array = function (n, d) {
+        var a = new Array(n);
+        // A struct default (an object) must yield an INDEPENDENT value per slot — sharing one
+        // reference would alias mutations across elements (e.g. Dictionary Entry.next forming a
+        // cycle → infinite probe loop). Primitive/null fills are copied as-is. A function fill is
+        // a per-element factory (matching System.Array.init(n, factory) for value types).
+        if (typeof d === 'function') { for (var i = 0; i < n; i++) { a[i] = d(); } }
+        else if (d && typeof d === 'object') { for (var i = 0; i < n; i++) { a[i] = TransposeR.clone(d); } }
+        else { for (var i = 0; i < n; i++) { a[i] = d; } }
+        return a;
+    };
 
     // Delegate / event helpers (multicast combine + remove) over tps.js's Transpose.fn.
     TransposeR.combine = function (a, b) { return Transpose.fn.combine(a, b); };

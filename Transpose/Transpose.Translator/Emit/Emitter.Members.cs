@@ -15,8 +15,8 @@ public sealed partial class Emitter
     {
         var staticFields = type.GetMembers().Where(m => m.IsStatic).Select(m => m switch
         {
-            IFieldSymbol f when !f.IsConst && f.AssociatedSymbol is null => ((string name, string def)?)(TransposeNaming.MemberJsName(f), DefaultValueLiteral(f.Type)),
-            IPropertySymbol p when IsAutoProperty(p) => (TransposeNaming.MemberJsName(p), DefaultValueLiteral(p.Type)),
+            IFieldSymbol f when !f.IsConst && f.AssociatedSymbol is null => ((string name, string def)?)(TransposeNaming.MemberJsName(f), FieldDefaultLiteral(f.Type)),
+            IPropertySymbol p when IsAutoProperty(p) => (TransposeNaming.MemberJsName(p), FieldDefaultLiteral(p.Type)),
             _ => null,
         }).Where(x => x is not null).Select(x => x!.Value).ToList();
 
@@ -31,11 +31,16 @@ public sealed partial class Emitter
 
         var sections = new List<Action>();
 
-        // Structs expose a getDefaultValue() static returning a zero-initialized value.
+        // Structs expose a getDefaultValue() static returning a zero-initialized value, sharing
+        // the single `methods:` block with the struct's own static methods.
         if (type.TypeKind == TypeKind.Struct)
         {
             var slots = InstanceFieldSlots(type).ToList();
-            staticMethods = staticMethods; // (no-op, keep ordering)
+            // Bind the static methods in a dedicated local: the section runs LATER, and
+            // `staticMethods` is cleared below so the general `methods:` section (further down)
+            // doesn't emit a duplicate key. Capturing the variable directly would see the cleared
+            // list at execution time and silently drop every struct static method.
+            var structStaticMethods = staticMethods;
             sections.Add(() =>
             {
                 _w.Write("methods: ");
@@ -48,13 +53,13 @@ public sealed partial class Emitter
                         foreach (var (name, def, _) in slots) _w.WriteLine($"$.{name} = {def};");
                         _w.WriteLine("return $;");
                     });
-                    if (staticMethods.Count > 0)
+                    if (structStaticMethods.Count > 0)
                     {
                         _w.WriteLine(",");
-                        for (var i = 0; i < staticMethods.Count; i++)
+                        for (var i = 0; i < structStaticMethods.Count; i++)
                         {
-                            EmitMethodEntry(staticMethods[i]);
-                            _w.WriteLine(i < staticMethods.Count - 1 ? "," : "");
+                            EmitMethodEntry(structStaticMethods[i]);
+                            _w.WriteLine(i < structStaticMethods.Count - 1 ? "," : "");
                         }
                     }
                     else { _w.WriteLine(); }
@@ -416,8 +421,8 @@ public sealed partial class Emitter
         foreach (var indexer in type.GetMembers().OfType<IPropertySymbol>().Where(p => !p.IsStatic && p.IsIndexer && !p.IsAbstract))
         {
             var idx = indexer;
-            if (idx.GetMethod is not null) entries.Add(() => EmitAccessorEntry("getItem", idx.GetMethod!, true));
-            if (idx.SetMethod is not null) entries.Add(() => EmitAccessorEntry("setItem", idx.SetMethod!, false));
+            if (idx.GetMethod is not null) entries.Add(() => EmitAccessorEntry(TransposeNaming.IndexerAccessorName(idx, isGet: true), idx.GetMethod!, true));
+            if (idx.SetMethod is not null) entries.Add(() => EmitAccessorEntry(TransposeNaming.IndexerAccessorName(idx, isGet: false), idx.SetMethod!, false));
         }
 
         AddValueTypeMethodEntries(type, entries);

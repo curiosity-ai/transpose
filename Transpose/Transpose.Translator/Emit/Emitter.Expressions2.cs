@@ -673,18 +673,20 @@ public sealed partial class Emitter
         // A generic instantiation like Factory$1(Item) must be parenthesized before `new`.
         var newTarget = typeRef.Contains('(') ? $"({typeRef})" : typeRef;
 
-        if (type.Locations.Any(l => l.IsInSource))
+        if (type.ToDisplayString() == "System.Exception" || TransposeNaming.IsExternalType(type))
         {
-            // User type: new Type(args) for the primary ctor, new Type.$ctorN(args) otherwise.
-            _w.Write(ctorName == "ctor" ? $"new {newTarget}(" : $"new {newTarget}.{ctorName}(");
+            // External / ambient-JS types (StringBuilder, Exception, RegExp, DOM globals like
+            // MutationObserver, …) map to a native constructor that dispatches on arguments.
+            // Checked before the in-source branch: an external stub is also "in source" when
+            // self-building the BCL, but must still emit native `new RegExp(a, b)`, not `.$ctorN`.
+            _w.Write($"new {typeRef}(");
             if (argList is not null) EmitArguments(argList, ctor);
             _w.Write(")");
         }
-        else if (type.ToDisplayString() == "System.Exception" || TransposeNaming.IsExternalType(type))
+        else if (type.Locations.Any(l => l.IsInSource))
         {
-            // External / ambient-JS types (StringBuilder, Exception, DOM globals like
-            // MutationObserver, …) map to a native constructor that dispatches on arguments.
-            _w.Write($"new {typeRef}(");
+            // User type: new Type(args) for the primary ctor, new Type.$ctorN(args) otherwise.
+            _w.Write(ctorName == "ctor" ? $"new {newTarget}(" : $"new {newTarget}.{ctorName}(");
             if (argList is not null) EmitArguments(argList, ctor);
             _w.Write(")");
         }
@@ -797,12 +799,28 @@ public sealed partial class Emitter
         if (_model.GetSymbolInfo(binary).Symbol is IMethodSymbol { MethodKind: MethodKind.UserDefinedOperator, IsImplicitlyDeclared: false } opMethod
             && opMethod.Locations.Any(l => l.IsInSource))
         {
-            _w.Write($"{TypeRef(opMethod.ContainingType)}.{TransposeNaming.MemberJsName(opMethod)}(");
-            EmitExpression(binary.Left);
-            _w.Write(", ");
-            EmitExpression(binary.Right);
-            _w.Write(")");
-            return;
+            // A [Template] operator (e.g. DateTime + TimeSpan) expands via the template.
+            if (TransposeNaming.GetTemplate(opMethod.OriginalDefinition) is { } opTpl)
+            {
+                var l = Capture(() => EmitExpression(binary.Left));
+                var r = Capture(() => EmitExpression(binary.Right));
+                var pars = opMethod.Parameters;
+                WriteTemplate(opTpl, isStatic: true, isExtension: false, null,
+                    new() { [pars[0].Name] = l, [pars[1].Name] = r }, new());
+                return;
+            }
+            // Only call the static op_ method when it is actually implemented (has a body). An
+            // `extern` operator with no [Template] — e.g. System.Type's ==/!= on the [External]
+            // reflection type — is reference equality; fall through to the built-in path below.
+            if (!opMethod.IsExtern)
+            {
+                _w.Write($"{TypeRef(opMethod.ContainingType)}.{TransposeNaming.MemberJsName(opMethod)}(");
+                EmitExpression(binary.Left);
+                _w.Write(", ");
+                EmitExpression(binary.Right);
+                _w.Write(")");
+                return;
+            }
         }
 
         // is / as

@@ -49,6 +49,19 @@ public sealed partial class Emitter
 
                 if (ScopedExternalName(named) is { } scoped) return scoped;
 
+                // A nested BCL runtime type (e.g. System.Collections.Generic.List<T>.Enumerator,
+                // reached here when self-building the runtime) is defined under its full nested JS
+                // name with the enclosing types' arity carried in the name and the effective type
+                // arguments appended once at the leaf — List$1.Enumerator(T), matching its define.
+                if (named.ContainingType is not null)
+                {
+                    var nestedArgs = EffectiveTypeArguments(named);
+                    var nestedName = named.Arity > 0 ? _names.TypeFullName(named) + "$" + named.Arity : _names.TypeFullName(named);
+                    return nestedArgs.Count > 0
+                        ? $"{nestedName}({string.Join(", ", nestedArgs.Select(TypeRef))})"
+                        : nestedName;
+                }
+
                 var ns = named.ContainingNamespace?.ToDisplayString();
                 if (named.IsGenericType && named.TypeArguments.Length > 0)
                 {
@@ -406,14 +419,14 @@ public sealed partial class Emitter
         {
             if (m.IsStatic) continue;
             if (m is IFieldSymbol f && !f.IsConst && f.AssociatedSymbol is null && f.CanBeReferencedByName)
-                yield return (TransposeNaming.MemberJsName(f), DefaultValueLiteral(f.Type), f);
+                yield return (TransposeNaming.MemberJsName(f), FieldDefaultLiteral(f.Type), f);
             else if (m is IPropertySymbol p && !p.IsAbstract && !p.IsIndexer
                      && (IsAutoProperty(p) || (type.IsRecord && p.IsImplicitlyDeclared && p.Name != "EqualityContract")))
-                yield return (TransposeNaming.MemberJsName(p), DefaultValueLiteral(p.Type), p);
+                yield return (TransposeNaming.MemberJsName(p), FieldDefaultLiteral(p.Type), p);
             else if (m is IEventSymbol ev && IsFieldLikeEvent(ev))
                 yield return (TransposeNaming.MemberJsName(ev), "null", ev);
             else if (m is IPropertySymbol fbp && IsFieldBackedProperty(fbp))
-                yield return (PropertyBackingName(fbp), DefaultValueLiteral(fbp.Type), fbp);
+                yield return (PropertyBackingName(fbp), FieldDefaultLiteral(fbp.Type), fbp);
         }
     }
 
@@ -453,6 +466,29 @@ public sealed partial class Emitter
         return null;
     }
 
+    /// <summary>Default value for a field/auto-property SLOT in a define's <c>fields:</c> block:
+    /// like <see cref="DefaultValueLiteral"/>, but a struct-typed slot is <c>null</c> (not
+    /// <c>Struct.getDefaultValue()</c>) — the zeroed struct is assigned in the constructor's
+    /// $initialize, so the slot literal stays order-independent (matching the reference runtime).</summary>
+    private string FieldDefaultLiteral(ITypeSymbol type)
+    {
+        // A struct-typed slot other than a primitive numeric/bool (DateTime, Guid, Nullable<T>, a
+        // user struct) defaults to null in the slot; the zeroed struct is assigned in $initialize.
+        if (type.TypeKind == TypeKind.Struct && !IsPrimitiveNumericOrBool(type))
+            return "null";
+        return DefaultValueLiteral(type);
+    }
+
+    private static bool IsPrimitiveNumericOrBool(ITypeSymbol type) => type.SpecialType switch
+    {
+        SpecialType.System_Boolean or SpecialType.System_Char or SpecialType.System_SByte
+            or SpecialType.System_Byte or SpecialType.System_Int16 or SpecialType.System_UInt16
+            or SpecialType.System_Int32 or SpecialType.System_UInt32 or SpecialType.System_Int64
+            or SpecialType.System_UInt64 or SpecialType.System_Single or SpecialType.System_Double
+            or SpecialType.System_Decimal => true,
+        _ => false,
+    };
+
     private string DefaultValueLiteral(ITypeSymbol type)
     {
         // default(T) for an unconstrained/struct type parameter must defer to the runtime, which
@@ -473,8 +509,9 @@ public sealed partial class Emitter
             return inScope ? $"Transpose.getDefaultValue({TypeRef(type)})" : "null";
         }
         if (type.TypeKind == TypeKind.Enum) return EnumDefaultLiteral((INamedTypeSymbol)type);
-        if (type is INamedTypeSymbol { TypeKind: TypeKind.Struct } st && st.Locations.Any(l => l.IsInSource))
-            return $"{TypeRef(st)}.getDefaultValue()";
+        // Primitives resolve to a literal default FIRST — even during the BCL self-build where
+        // System.Int32 etc. are in-source structs — so a field default is `0`/`false` (order-free)
+        // rather than System.Int32.getDefaultValue() (which would run before System.Int32 is defined).
         switch (type.SpecialType)
         {
             case SpecialType.System_Boolean: return "false";
@@ -491,8 +528,10 @@ public sealed partial class Emitter
             case SpecialType.System_Double:
             case SpecialType.System_Decimal:
                 return "0";
-            default:
-                return "null";
         }
+        // A non-primitive struct (DateTime, Guid, a user struct) gets its zeroed value.
+        if (type is INamedTypeSymbol { TypeKind: TypeKind.Struct } st && st.Locations.Any(l => l.IsInSource))
+            return $"{TypeRef(st)}.getDefaultValue()";
+        return "null";
     }
 }

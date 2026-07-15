@@ -107,7 +107,22 @@ internal static class TransposeNaming
     {
         var name = GetName(indexer);
         var suffix = name ?? "Item";
-        return (isGet ? "get" : "set") + suffix;
+        var accessor = (isGet ? "get" : "set") + suffix;
+
+        // An explicit interface indexer (e.g. `object IDictionary.this[object]`) takes the
+        // interface-qualified mangled slot (Namespace$IFace$getItem/$setItem) so it does not
+        // collide with the public indexer's getItem/setItem — otherwise the public and explicit
+        // setters share one JS name and the explicit body's `this[k] = v` recurses into itself.
+        if (ExplicitlyImplementedMember(indexer)?.ContainingType is { } eiface)
+            return MangledTypeName(eiface) + "$" + accessor;
+
+        // Access through a *source* interface's indexer resolves to the mangled slot every
+        // implementer aliases; BCL interfaces keep the plain accessor (their implementers expose
+        // it directly), mirroring MemberJsName.
+        if (indexer.ContainingType is { TypeKind: TypeKind.Interface } iface && IsSourceInterface(iface))
+            return MangledTypeName(iface) + "$" + accessor;
+
+        return accessor;
     }
 
     /// <summary>
@@ -236,8 +251,18 @@ internal static class TransposeNaming
         if (symbol.ContainingType is { TypeKind: TypeKind.Interface } iface && IsSourceInterface(iface))
             return MangledTypeName(iface) + "$" + LeafJsName(symbol);
 
-        return LeafJsName(symbol);
+        return EscapeStaticReserved(symbol, LeafJsName(symbol));
     }
+
+    // Function own-properties: a static member lives on the type's constructor FUNCTION, so a static
+    // member named one of these would clash with the (read-only) function property (e.g. Class.name).
+    private static readonly HashSet<string> _functionReserved = new(System.StringComparer.Ordinal)
+        { "name", "length", "caller", "arguments", "prototype", "constructor" };
+
+    /// <summary>Prefixes a static member whose JS name collides with a Function own-property
+    /// (name/length/…) with <c>$</c> — matching the reference runtime (enum member `name` → `$name`).</summary>
+    private static string EscapeStaticReserved(ISymbol symbol, string name)
+        => symbol.IsStatic && _functionReserved.Contains(name) ? "$" + name : name;
 
     /// <summary>The un-mangled JS name of a member (ignoring interface qualification).</summary>
     private static string LeafJsName(ISymbol symbol)

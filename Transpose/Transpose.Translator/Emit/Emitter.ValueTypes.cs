@@ -40,7 +40,11 @@ public sealed partial class Emitter
                 _w.Write("$clone: function (to) ");
                 _w.Block(() =>
                 {
-                    _w.WriteLine($"var s = to || new {TypeRef(type)}();");
+                    // A generic instantiation like Entry(TKey, TValue) is a factory call and must
+                    // be parenthesized before `new` (new (Entry(TKey,TValue))(), not new Entry(…)()).
+                    var typeRef = TypeRef(type);
+                    var newTarget = typeRef.Contains('(') ? $"({typeRef})" : typeRef;
+                    _w.WriteLine($"var s = to || new {newTarget}();");
                     foreach (var f in fields) _w.WriteLine($"s.{f} = this.{f};");
                     _w.WriteLine("return s;");
                 });
