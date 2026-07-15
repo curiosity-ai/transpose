@@ -472,7 +472,9 @@
             }
             else
             {
-                for (int i = 0; i < count; i++)
+                // Distinct name from the little-endian loop's `i` above so the emitted JS matches
+                // the raw injected code below without relying on any variable-renaming rule.
+                for (int i1 = 0; i1 < count; i1++)
                 {
                     Transpose.Script.Write("r[System.Array.index(i1, r)] = view.getUint8(Transpose.identity(startIndex, (startIndex = (startIndex + 1) | 0)));");
                 }
@@ -497,7 +499,9 @@
             }
             else
             {
-                for (int i = 0; i < count; i++)
+                // Distinct name from the little-endian loop's `i` above so the emitted JS matches
+                // the raw injected code below without relying on any variable-renaming rule.
+                for (int i1 = 0; i1 < count; i1++)
                 {
                     Transpose.Script.Write("view.setUint8(i1, value[System.Array.index(Transpose.identity(startIndex, (startIndex = (startIndex + 1) | 0)), value)]);");
                 }
