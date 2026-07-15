@@ -22,6 +22,9 @@ namespace System
              _length = length;
         }
 
+        // A Span value is represented as the underlying JS array (the type itself is not emitted),
+        // so Length maps to the array's native `length`.
+        [Transpose.Name("length")]
         public int Length => _length;
 
         public ref T this[int index]

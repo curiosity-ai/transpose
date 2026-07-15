@@ -537,21 +537,30 @@ public sealed partial class Emitter
             var trailing = args.Skip(fixedCount).ToList();
             if (!first) _w.Write(", ");
 
-            var paramsArrayType = (method.Parameters[^1].Type as IArrayTypeSymbol)?.ElementType;
-            // A single array argument is passed through as the params array itself.
-            if (trailing.Count == 1 && _model.GetTypeInfo(trailing[0].Expression).Type is IArrayTypeSymbol)
+            var paramsType = method.Parameters[^1].Type;
+            var paramsElem = ParamsElementType(paramsType);
+            // A single argument that is itself the collection (an array, a List, a collection
+            // expression — anything not convertible to the element type) is passed through as the
+            // params value; otherwise the scattered args are collected into the params collection
+            // (a bare JS array for array/span/interface params; a built instance for List<T> etc.).
+            var soleArgType = trailing.Count == 1 ? _model.GetTypeInfo(trailing[0].Expression).Type : null;
+            if (trailing.Count == 1 && paramsElem is not null
+                && (soleArgType is null || !_compilation.ClassifyConversion(soleArgType, paramsElem).Exists))
             {
-                EmitExpression(trailing[0].Expression);
+                EmitExpressionConverted(trailing[0].Expression, paramsType);
             }
             else
             {
-                _w.Write("[");
-                for (var i = 0; i < trailing.Count; i++)
+                EmitCollectionOf(paramsType, () =>
                 {
-                    if (i > 0) _w.Write(", ");
-                    EmitExpressionConverted(trailing[i].Expression, paramsArrayType);
-                }
-                _w.Write("]");
+                    _w.Write("[");
+                    for (var i = 0; i < trailing.Count; i++)
+                    {
+                        if (i > 0) _w.Write(", ");
+                        EmitExpressionConverted(trailing[i].Expression, paramsElem);
+                    }
+                    _w.Write("]");
+                });
             }
             return;
         }
@@ -851,14 +860,16 @@ public sealed partial class Emitter
         if (_model.GetSymbolInfo(binary).Symbol is IMethodSymbol { MethodKind: MethodKind.UserDefinedOperator, IsImplicitlyDeclared: false } opMethod
             && opMethod.Locations.Any(l => l.IsInSource))
         {
-            // A [Template] operator (e.g. DateTime + TimeSpan) expands via the template.
+            // A [Template] operator (e.g. DateTime + TimeSpan → adddt({0}, {1})) expands via the
+            // template. Bind the operands both by parameter name ({d}/{t}) AND positionally
+            // ({0}/{1}) — operator templates use the positional form.
             if (TransposeNaming.GetTemplate(opMethod.OriginalDefinition) is { } opTpl)
             {
                 var l = Capture(() => EmitExpression(binary.Left));
                 var r = Capture(() => EmitExpression(binary.Right));
                 var pars = opMethod.Parameters;
                 WriteTemplate(opTpl, isStatic: true, isExtension: false, null,
-                    new() { [pars[0].Name] = l, [pars[1].Name] = r }, new());
+                    new() { [pars[0].Name] = l, [pars[1].Name] = r }, new() { l, r });
                 return;
             }
             // Only call the static op_ method when it is actually implemented (has a body). An
@@ -1639,25 +1650,37 @@ public sealed partial class Emitter
             _w.Write("]");
         }
 
-        var target = _model.GetTypeInfo(collection).ConvertedType;
-        // Arrays, spans, and collection interfaces (IEnumerable/IReadOnlyList/…) are all
-        // represented as plain JS arrays (tps.js enumerates arrays natively).
+        EmitCollectionOf(_model.GetTypeInfo(collection).ConvertedType, EmitArray);
+    }
+
+    /// <summary>
+    /// Emits a value of collection type <paramref name="target"/> whose elements are produced by
+    /// <paramref name="emitArrayLiteral"/> (a JS array literal). Arrays, spans, and collection
+    /// interfaces (IEnumerable/IReadOnlyList/…) are the array itself — tps.js enumerates arrays
+    /// natively; a concrete collection (e.g. List&lt;T&gt;) is built and filled via <c>add</c>
+    /// (works regardless of its constructor overload numbering).
+    /// </summary>
+    private void EmitCollectionOf(ITypeSymbol? target, Action emitArrayLiteral)
+    {
         if (target is IArrayTypeSymbol
             || target is { TypeKind: TypeKind.Interface }
             || target?.OriginalDefinition.ToDisplayString() is "System.Span<T>" or "System.ReadOnlySpan<T>"
             || target is null)
         {
-            EmitArray();
+            emitArrayLiteral();
             return;
         }
 
-        // A concrete collection type (e.g. List<T>) — build a fresh instance and add each
-        // element (works regardless of the type's constructor overload numbering).
-        _w.Write($"(() => {{ var $c = new ({TypeRef(target)})(); ");
-        _w.Write($"var $s = ");
-        EmitArray();
+        _w.Write($"(() => {{ var $c = new ({TypeRef(target)})(); var $s = ");
+        emitArrayLiteral();
         _w.Write("; for (var $i = 0; $i < $s.length; $i++) { $c.add($s[$i]); } return $c; })()");
     }
+
+    /// <summary>The element type of a params parameter (array element or the collection's T).</summary>
+    private static ITypeSymbol? ParamsElementType(ITypeSymbol paramType)
+        => paramType is IArrayTypeSymbol arr ? arr.ElementType
+         : paramType is INamedTypeSymbol { TypeArguments.Length: 1 } n ? n.TypeArguments[0]
+         : null;
 
     // ---- lambda ------------------------------------------------------------
 

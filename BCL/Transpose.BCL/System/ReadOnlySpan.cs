@@ -29,6 +29,9 @@ namespace System
              _length = span._length;
         }
 
+        // A ReadOnlySpan value is represented as the underlying JS array (the type itself is not
+        // emitted), so Length maps to the array's native `length`.
+        [Transpose.Name("length")]
         public int Length => _length;
 
         public ref readonly T this[int index]

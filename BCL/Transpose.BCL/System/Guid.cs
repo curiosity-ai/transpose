@@ -384,7 +384,7 @@ namespace System
                 if (m != null)
                 {
                     List<string> list = new List<string>();
-                    for (int i = 1; i <= m.Length; i++)
+                    for (int i = 1; i < m.Length; i++)
                     {
                         if (m[i] != null)
                         {
@@ -408,7 +408,7 @@ namespace System
                     if (m != null)
                     {
                         List<string> list = new List<string>();
-                        for (int i = 1; i <= m.Length; i++)
+                        for (int i = 1; i < m.Length; i++)
                         {
                             if (m[i] != null)
                             {

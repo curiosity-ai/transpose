@@ -173,21 +173,46 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
 
     // ---- Language features not modeled by the runtime ----------------------
 
-    // checked arithmetic: JS numbers do not trap on integer overflow, so an OverflowException
-    // cannot be produced. `unchecked` is fine (it matches JS's wraparound-free default).
+    // checked *primitive integer* arithmetic: JS numbers do not trap on overflow, so an
+    // OverflowException cannot be produced. `unchecked` is fine (it matches JS's default), and
+    // `checked` around user-defined operators is fine too — those dispatch to op_Checked… methods
+    // and need no trapping — so only reject built-in integer arithmetic under `checked`.
     public override void VisitCheckedStatement(CheckedStatementSyntax node)
     {
-        if (node.Keyword.IsKind(SyntaxKind.CheckedKeyword))
+        if (node.Keyword.IsKind(SyntaxKind.CheckedKeyword) && ChecksBuiltinIntegerOverflow(node))
             Report(node, "checked arithmetic (overflow checking) is not supported in the browser environment.");
         base.VisitCheckedStatement(node);
     }
 
     public override void VisitCheckedExpression(CheckedExpressionSyntax node)
     {
-        if (node.Keyword.IsKind(SyntaxKind.CheckedKeyword))
+        if (node.Keyword.IsKind(SyntaxKind.CheckedKeyword) && ChecksBuiltinIntegerOverflow(node))
             Report(node, "checked arithmetic (overflow checking) is not supported in the browser environment.");
         base.VisitCheckedExpression(node);
     }
+
+    /// <summary>True if a `checked` region performs built-in (not user-defined-operator) arithmetic
+    /// on a primitive integer type — the only case that would require runtime overflow trapping.
+    /// A checked region inside a user-defined operator body is exempt (its result is what matters,
+    /// and it emits as ordinary arithmetic).</summary>
+    private bool ChecksBuiltinIntegerOverflow(SyntaxNode node)
+    {
+        if (node.FirstAncestorOrSelf<OperatorDeclarationSyntax>() is not null) return false;
+        foreach (var bin in node.DescendantNodes().OfType<BinaryExpressionSyntax>())
+        {
+            if (!bin.IsKind(SyntaxKind.AddExpression) && !bin.IsKind(SyntaxKind.SubtractExpression)
+                && !bin.IsKind(SyntaxKind.MultiplyExpression)) continue;
+            if (_model.GetSymbolInfo(bin).Symbol is IMethodSymbol { MethodKind: MethodKind.UserDefinedOperator })
+                continue; // user-defined checked operator → supported
+            if (_model.GetTypeInfo(bin).Type is { } t && IsPrimitiveInteger(t)) return true;
+        }
+        return false;
+    }
+
+    private static bool IsPrimitiveInteger(ITypeSymbol t) => t.SpecialType is
+        SpecialType.System_SByte or SpecialType.System_Byte or SpecialType.System_Int16
+        or SpecialType.System_UInt16 or SpecialType.System_Int32 or SpecialType.System_UInt32
+        or SpecialType.System_Int64 or SpecialType.System_UInt64;
 
     // Native-sized integers (nint/nuint) have no JS representation distinct from double.
     public override void VisitIdentifierName(IdentifierNameSyntax node)

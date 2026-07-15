@@ -19,6 +19,15 @@
     TransposeR.clone = function (o) {
         if (!o) { return o; }
         if (o.$clone) { return o.$clone(); }
+        // A DateTime is backed by a native Date; Object.assign onto Object.create(Date.prototype)
+        // would drop the internal [[DateValue]] (d.getTime() then throws). Copy it as a real Date,
+        // preserving the Transpose-attached kind/ticks.
+        if (o instanceof Date) {
+            var d = new Date(o.getTime());
+            if (o.kind !== undefined) { d.kind = o.kind; }
+            if (o.ticks !== undefined) { d.ticks = o.ticks; }
+            return d;
+        }
         return Object.assign(Object.create(Object.getPrototypeOf(o)), o);
     };
     TransposeR.hash = function (v) { return Transpose.getHashCode ? Transpose.getHashCode(v) : 0; };
