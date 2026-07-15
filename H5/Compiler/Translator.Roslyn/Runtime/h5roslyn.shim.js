@@ -72,13 +72,22 @@
     H5R.tsSub = function (a, b) { return System.TimeSpan.sub(a, b); };
 
     // Iterator (yield) support: a re-enumerable wrapper around a generator function.
+    // Built on h5.js's own GeneratorEnumerable so the result is a real
+    // System.Collections.Generic.IEnumerable<object> — recognised by H5.as/H5.getEnumerator
+    // AND by System.Linq.Enumerable.from (which checks H5.as(_, IEnumerable) and otherwise
+    // treats the source as empty). A plain {GetEnumerator} object satisfies the former but not
+    // the latter, so LINQ over an iterator method would silently yield nothing.
     H5R.iter = function (genFn) {
-        var iterable = {};
-        iterable[Symbol.iterator] = genFn;
-        iterable.GetEnumerator = function () {
-            var it = genFn(), cur;
-            return { moveNext: function () { var r = it.next(); cur = r.value; return !r.done; }, get current() { return cur; } };
-        };
-        return iterable;
+        var T = System.Object;
+        return new (H5.GeneratorEnumerable$1(T))(function () {
+            var it = genFn();
+            var en = new (H5.GeneratorEnumerator$1(T))(function () {
+                var r = it.next();
+                if (r.done) { return false; }
+                en.current = r.value;
+                return true;
+            });
+            return en;
+        });
     };
 })(typeof globalThis !== "undefined" ? globalThis : this);

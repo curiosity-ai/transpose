@@ -30,15 +30,44 @@ public sealed class NameMangler
     private readonly Dictionary<ISymbol, string> _methodNameCache = new(SymbolEqualityComparer.Default);
 
     public static string JsIdentifier(string name)
-        => Reserved.Contains(name) ? "$" + name : name;
+    {
+        // Strip a C# verbatim-identifier prefix (@event → event) so it never reaches JS.
+        if (name.Length > 0 && name[0] == '@') name = name.Substring(1);
+        return Reserved.Contains(name) ? "$" + name : name;
+    }
+
+    /// <summary>
+    /// An object-literal property key: bare when it is a valid JS identifier (e.g. from a
+    /// [Name]-free enum member), quoted when it contains characters JS identifiers can't
+    /// (e.g. a [Name("shift-away-subtle")] enum member with hyphens).
+    /// </summary>
+    public static string JsPropertyKey(string name)
+    {
+        var ok = name.Length > 0 && (char.IsLetter(name[0]) || name[0] is '_' or '$');
+        for (var i = 1; ok && i < name.Length; i++)
+            ok = char.IsLetterOrDigit(name[i]) || name[i] is '_' or '$';
+        return ok ? name : "\"" + name.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
+    }
 
     /// <summary>Fully-qualified JS name for a type, e.g. <c>App.Foo.Bar</c>.</summary>
     public string TypeFullName(INamedTypeSymbol type)
     {
+        // A type-level [H5.Name("...")] supplies the fully-qualified JS name (namespace + entity),
+        // overriding the inferred dotted name — this is how a source type maps onto a short runtime
+        // name (e.g. [Name("tss.S")] class Stack → tss.S).
+        if (H5Naming.GetName(type) is { } self) return self;
+
         var parts = new List<string>();
 
         for (INamedTypeSymbol? t = type; t is not null; t = t.ContainingType)
         {
+            // An enclosing type's [Name] fixes the fully-qualified prefix; the nested leaf names
+            // collected so far append under it (so [Name("tss.NodeView")] + Graph → tss.NodeView.Graph).
+            if (!SymbolEqualityComparer.Default.Equals(t, type) && H5Naming.GetName(t) is { } enclosing)
+            {
+                var tail = parts.Select(JsIdentifier);
+                return string.Join(".", new[] { enclosing }.Concat(tail));
+            }
             parts.Insert(0, t.Name);
         }
 

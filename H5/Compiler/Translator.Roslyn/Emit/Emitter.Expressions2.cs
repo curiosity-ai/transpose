@@ -33,11 +33,18 @@ public sealed partial class Emitter
             return;
         }
 
+        // Inside a null-conditional continuation, an invocation whose target is a member
+        // binding (a?.M(...)) resolves M against the captured receiver.
+        var condRecv = invocation.Expression is MemberBindingExpressionSyntax && _condReceiver is not null
+            ? _condReceiver : null;
+
         // Delegate invocation: d(...) or d.Invoke(...) — the delegate is a plain callable.
         if (symbol.MethodKind == MethodKind.DelegateInvoke)
         {
             // For d.Invoke(...) call the receiver directly, dropping the ".Invoke".
-            if (invocation.Expression is MemberAccessExpressionSyntax { Name.Identifier.Text: "Invoke" } dm)
+            if (condRecv is not null)
+                _w.Write(condRecv);
+            else if (invocation.Expression is MemberAccessExpressionSyntax { Name.Identifier.Text: "Invoke" } dm)
                 EmitExpression(dm.Expression);
             else
                 EmitExpression(invocation.Expression);
@@ -103,7 +110,7 @@ public sealed partial class Emitter
             var (byName, byPos) = CaptureArguments(invocation.ArgumentList, symbol);
             var receiver = symbol.IsStatic && !symbol.IsExtensionMethod ? null
                 : receiverExpr is not null ? Capture(() => EmitExpression(receiverExpr))
-                : "this";
+                : condRecv ?? "this";
 
             // Reduced extension method: the receiver binds to the original first
             // parameter (e.g. {source}); actual args map to the remaining params.
@@ -137,12 +144,22 @@ public sealed partial class Emitter
             return;
         }
 
-        // Extension method (no template) → StaticType.Method(receiver, args)
-        if (symbol is { IsExtensionMethod: true, ReducedFrom: not null } && receiverExpr is not null)
+        // Extension method (no template) → StaticType.Method([typeArgs, ] receiver, args).
+        // The static signature is Method(T…, this-param, params…): a generic extension threads
+        // its *inferred* type arguments (from the constructed symbol) as the leading arguments,
+        // then the receiver, then the remaining arguments mapped through the reduced symbol
+        // (whose parameters already exclude `this` and preserve params-array collection).
+        if (symbol is { IsExtensionMethod: true, ReducedFrom: { } reducedFrom } && (receiverExpr is not null || condRecv is not null))
         {
-            _w.Write($"{TypeRef(symbol.ContainingType)}.{H5Naming.MemberJsName(symbol.ReducedFrom)}(");
-            EmitExpression(receiverExpr);
-            if (invocation.ArgumentList.Arguments.Count > 0) { _w.Write(", "); EmitArguments(invocation.ArgumentList, symbol.ReducedFrom); }
+            _w.Write($"{TypeRef(symbol.ContainingType)}.{H5Naming.MemberJsName(reducedFrom)}(");
+            var lead = EmitLeadingTypeArgs(symbol);
+            if (lead) _w.Write(", ");
+            if (receiverExpr is not null) EmitExpression(receiverExpr); else _w.Write(condRecv!);
+            if (invocation.ArgumentList.Arguments.Count > 0)
+            {
+                _w.Write(", ");
+                EmitArguments(invocation.ArgumentList, symbol, threadTypeArgs: false);
+            }
             _w.Write(")");
             return;
         }
@@ -150,12 +167,16 @@ public sealed partial class Emitter
         // Ordinary call.
         if (symbol.IsStatic)
         {
-            _w.Write($"{TypeRef(symbol.ContainingType)}.{H5Naming.MemberJsName(symbol)}");
+            _w.Write(StaticMemberAccess(symbol));
         }
         else if (receiverExpr is not null)
         {
             EmitExpression(receiverExpr);
             _w.Write($".{H5Naming.MemberJsName(symbol)}");
+        }
+        else if (condRecv is not null)
+        {
+            _w.Write($"{condRecv}.{H5Naming.MemberJsName(symbol)}");
         }
         else
         {
@@ -199,14 +220,20 @@ public sealed partial class Emitter
     private void AddTypeArguments(Dictionary<string, string> byName, IMethodSymbol definition, IMethodSymbol constructed)
     {
         for (var i = 0; i < definition.TypeParameters.Length && i < constructed.TypeArguments.Length; i++)
+        {
             byName[definition.TypeParameters[i].Name] = TypeRef(constructed.TypeArguments[i]);
+            byName[definition.TypeParameters[i].Name + ":default"] = DefaultValueLiteral(constructed.TypeArguments[i]);
+        }
 
         var defType = definition.ContainingType;
         var conType = constructed.ContainingType;
         if (defType is not null && conType is not null)
         {
             for (var i = 0; i < defType.TypeParameters.Length && i < conType.TypeArguments.Length; i++)
+            {
                 byName[defType.TypeParameters[i].Name] = TypeRef(conType.TypeArguments[i]);
+                byName[defType.TypeParameters[i].Name + ":default"] = DefaultValueLiteral(conType.TypeArguments[i]);
+            }
         }
     }
 
@@ -227,7 +254,7 @@ public sealed partial class Emitter
     {
         if (symbol.IsStatic)
         {
-            _w.Write($"{TypeRef(symbol.ContainingType)}.{H5Naming.MemberJsName(symbol)}");
+            _w.Write(StaticMemberAccess(symbol));
         }
         else if (invocation.Expression is MemberAccessExpressionSyntax memberAccess)
         {
@@ -248,7 +275,9 @@ public sealed partial class Emitter
         var byName = new Dictionary<string, string>();
         var byPos = new List<string>();
 
-        _w.Write("(function () { ");
+        // Arrow (not `function`) so a `this`-qualified receiver inside the call resolves to the
+        // enclosing instance rather than being rebound to undefined in strict mode.
+        _w.Write("(() => { ");
         for (var i = 0; i < args.Count; i++)
         {
             var isRef = args[i].RefKindKeyword.IsKind(SyntaxKind.OutKeyword) || args[i].RefKindKeyword.IsKind(SyntaxKind.RefKeyword);
@@ -297,7 +326,9 @@ public sealed partial class Emitter
         var args = invocation.ArgumentList.Arguments;
         var holders = new string?[args.Count];
 
-        _w.Write("(function () { ");
+        // Arrow (not `function`) so a `this`-qualified receiver inside the call resolves to the
+        // enclosing instance rather than being rebound to undefined in strict mode.
+        _w.Write("(() => { ");
 
         for (var i = 0; i < args.Count; i++)
         {
@@ -378,10 +409,10 @@ public sealed partial class Emitter
         return true;
     }
 
-    private void EmitArguments(ArgumentListSyntax argList, IMethodSymbol? method)
+    private void EmitArguments(ArgumentListSyntax argList, IMethodSymbol? method, bool threadTypeArgs = true)
     {
         var args = argList.Arguments;
-        var lead = EmitLeadingTypeArgs(method);
+        var lead = threadTypeArgs && EmitLeadingTypeArgs(method);
 
         // Reorder named arguments to parameter order when we know the method.
         if (method is not null && args.Any(a => a.NameColon is not null))
@@ -418,6 +449,41 @@ public sealed partial class Emitter
                     _w.Write(ConstantLiteral(method.Parameters[i].ExplicitDefaultValue, method.Parameters[i].Type));
                 else
                     _w.Write("null");
+            }
+            return;
+        }
+
+        // [ExpandParams]: a native variadic function (e.g. DOMTokenList.add(params string[])).
+        // Its trailing args are spread as individual arguments (add("a","b")), and a single array
+        // argument is spread with JS spread (add(...arr)) so it reaches the native function as
+        // separate tokens. Without this the params would be passed as ONE array argument —
+        // classList.add(["a","b"]) coerces to the single malformed token "a,b".
+        if (method is { Parameters.Length: > 0 } && method.Parameters[^1].IsParams && HasExpandParams(method))
+        {
+            var fixedCount = method.Parameters.Length - 1;
+            var first = !lead;
+            for (var i = 0; i < fixedCount && i < args.Count; i++)
+            {
+                if (!first) _w.Write(", ");
+                first = false;
+                EmitExpressionConverted(args[i].Expression, method.Parameters[i].Type);
+            }
+            var trailing = args.Skip(fixedCount).ToList();
+            var elem = (method.Parameters[^1].Type as IArrayTypeSymbol)?.ElementType;
+            if (trailing.Count == 1 && _model.GetTypeInfo(trailing[0].Expression).Type is IArrayTypeSymbol)
+            {
+                if (!first) _w.Write(", ");
+                _w.Write("...");
+                EmitExpression(trailing[0].Expression);
+            }
+            else
+            {
+                for (var i = 0; i < trailing.Count; i++)
+                {
+                    if (!first) _w.Write(", ");
+                    first = false;
+                    EmitExpressionConverted(trailing[i].Expression, elem);
+                }
             }
             return;
         }
@@ -470,6 +536,12 @@ public sealed partial class Emitter
     /// formatters (Console.Write/WriteLine, String.Format/Concat) take individual
     /// arguments in the runtime, so they are excluded.
     /// </summary>
+    /// <summary>A method whose <c>params</c> array must be expanded (spread) at the call site,
+    /// per H5's <c>[ExpandParams]</c> — the native variadic DOM/JS functions.</summary>
+    private static bool HasExpandParams(IMethodSymbol method)
+        => method.OriginalDefinition.GetAttributes()
+            .Any(a => a.AttributeClass?.ToDisplayString() == "H5.ExpandParamsAttribute");
+
     private static bool ShouldWrapParams(IMethodSymbol method)
     {
         var containing = method.ContainingType?.ToDisplayString();
@@ -493,10 +565,11 @@ public sealed partial class Emitter
 
     private void EmitObjectCreation(ObjectCreationExpressionSyntax creation)
     {
-        // new T() on a generic type parameter (new() constraint) → runtime instantiation.
-        // Only a *type* type-parameter is threaded at runtime (via the generic type's
-        // defining function); method type-parameters aren't yet, so fall through for those.
-        if (_model.GetTypeInfo(creation).Type is ITypeParameterSymbol { TypeParameterKind: TypeParameterKind.Type } tp)
+        // new T() on a generic type parameter (new() constraint) → runtime instantiation. Both a
+        // *type* parameter (threaded via the generic type's defining function) and a *method*
+        // parameter (threaded as a leading JS argument of the generic method — the new() constraint
+        // guarantees the method threads T) are in scope as the identifier tp.Name at runtime.
+        if (_model.GetTypeInfo(creation).Type is ITypeParameterSymbol tp)
         {
             _w.Write($"H5.createInstance({tp.Name})");
             return;
@@ -517,7 +590,7 @@ public sealed partial class Emitter
     {
         if (initializer is { Expressions.Count: > 0 })
         {
-            _w.Write("(function () { var $o = ");
+            _w.Write("(() => { var $o = ");
             EmitBareConstruction(type, ctor, argList);
             _w.Write("; ");
             EmitInitializer("$o", initializer);
@@ -533,6 +606,15 @@ public sealed partial class Emitter
         if (type is null)
         {
             _w.Write("{}");
+            return;
+        }
+
+        // A constructor [Template] defines how `new T(...)` is built — e.g. a DOM element's
+        // ctor maps to document.createElement("span") instead of an (illegal) native `new`.
+        if (ctor is not null && H5Naming.GetTemplate(ctor.OriginalDefinition) is { } ctorTemplate)
+        {
+            var (byName, byPos) = argList is not null ? CaptureArguments(argList, ctor) : (new(), new List<string>());
+            WriteTemplate(ctorTemplate, isStatic: true, isExtension: false, receiver: null, byName, byPos, TemplateTypeArgs(ctor));
             return;
         }
 
@@ -572,10 +654,10 @@ public sealed partial class Emitter
             if (argList is not null) EmitArguments(argList, ctor);
             _w.Write(")");
         }
-        else if (type.ToDisplayString() == "System.Exception" || H5Naming.HasExternalAttribute(type))
+        else if (type.ToDisplayString() == "System.Exception" || H5Naming.IsExternalType(type))
         {
-            // [External] types (StringBuilder, Exception, …) map to a hand-written JS type
-            // whose single native constructor dispatches on arguments — call it directly.
+            // External / ambient-JS types (StringBuilder, Exception, DOM globals like
+            // MutationObserver, …) map to a native constructor that dispatches on arguments.
             _w.Write($"new {typeRef}(");
             if (argList is not null) EmitArguments(argList, ctor);
             _w.Write(")");
@@ -709,9 +791,16 @@ public sealed partial class Emitter
         if (binary.IsKind(SyntaxKind.AsExpression))
         {
             var t = _model.GetTypeInfo(binary.Right).Type;
+            // `x as dynamic` is an identity in JS — member access on the result resolves
+            // dynamically against the value itself, so there's no runtime type to check.
+            if (t is null || t.TypeKind == TypeKind.Dynamic)
+            {
+                EmitExpression(binary.Left);
+                return;
+            }
             _w.Write("H5R.as(");
             EmitExpression(binary.Left);
-            _w.Write($", {TypeRef(t!)})");
+            _w.Write($", {TypeRef(t)})");
             return;
         }
 
@@ -979,6 +1068,16 @@ public sealed partial class Emitter
                 WriteTemplate(setIdxTpl, idx.IsStatic, isExtension: false, recv, new(), args);
                 return;
             }
+            // An [External] type's plain indexer sets via native bracket access (domElement["name"] = v).
+            if (H5Naming.IsNativeIndexer(idx))
+            {
+                EmitExpression(ea.Expression);
+                _w.Write("[");
+                EmitArgumentList(ea.ArgumentList);
+                _w.Write("] = ");
+                EmitExpressionConverted(assignment.Right, leftType);
+                return;
+            }
             EmitExpression(ea.Expression);
             _w.Write("." + H5Naming.IndexerAccessorName(idx, isGet: false) + "(");
             EmitArgumentList(ea.ArgumentList);
@@ -1206,6 +1305,16 @@ public sealed partial class Emitter
                 return;
             }
 
+            // An [External] type's plain indexer is native bracket access (e.g. domElement["name"]).
+            if (H5Naming.IsNativeIndexer(indexer))
+            {
+                EmitExpression(element.Expression);
+                _w.Write("[");
+                EmitArgumentList(element.ArgumentList);
+                _w.Write("]");
+                return;
+            }
+
             // Source types and BCL collections route through the indexer accessor.
             EmitExpression(element.Expression);
             _w.Write("." + H5Naming.IndexerAccessorName(indexer, isGet: true) + "(");
@@ -1340,7 +1449,7 @@ public sealed partial class Emitter
 
         // A concrete collection type (e.g. List<T>) — build a fresh instance and add each
         // element (works regardless of the type's constructor overload numbering).
-        _w.Write($"(function () {{ var $c = new ({TypeRef(target)})(); ");
+        _w.Write($"(() => {{ var $c = new ({TypeRef(target)})(); ");
         _w.Write($"var $s = ");
         EmitArray();
         _w.Write("; for (var $i = 0; $i < $s.length; $i++) { $c.add($s[$i]); } return $c; })()");
@@ -1351,15 +1460,17 @@ public sealed partial class Emitter
     private void EmitLambda(IEnumerable<string> parameters, CSharpSyntaxNode body, bool isAsync,
         SeparatedSyntaxList<ParameterSyntax>? paramSyntax = null)
     {
+        // Emit an arrow function so `this` is captured lexically, matching C# lambda semantics
+        // (a plain `function` would rebind `this` and break `this`-referencing closures).
         // An async lambda returns an h5.js Task (via the H5R.fromPromise wrapper in
         // EmitMaybeAsyncBody), so it composes with Task.Run/WhenAll/ContinueWith; the outer
         // function is therefore not itself `async`.
-        _w.Write("function (");
+        _w.Write("(");
         // Uniquify discard parameters ("_") so JS doesn't see duplicate names.
         var discardN = 0;
         _w.Write(string.Join(", ", parameters.Select(p =>
             p == "_" ? "$d" + discardN++ : NameMangler.JsIdentifier(p))));
-        _w.Write(") ");
+        _w.Write(") => ");
 
         // Optional lambda parameters (C# 12): default when undefined.
         var defaults = paramSyntax?.Where(p => p.Default is not null).ToList();
@@ -1401,6 +1512,11 @@ public sealed partial class Emitter
     private string ConstantLiteral(object? value, ITypeSymbol type)
     {
         if (value is null) return type.SpecialType == SpecialType.System_String ? "null" : DefaultValueLiteral(type);
+        // A string-backed enum ([Enum(Emit.StringName*)]) constant emits its string name, not the
+        // numeric ordinal — so a defaulted enum parameter (e.g. `format = default`) seeds the
+        // string the runtime actually compares against.
+        if (type is INamedTypeSymbol { TypeKind: TypeKind.Enum } en && H5Naming.EnumEmitMode(en) is 3 or 4 or 5 or 6)
+            return EnumConstantLiteral(en, value);
         // 64-bit integer constants (e.g. long.MinValue) must be System.Int64/UInt64 instances.
         if (value is long or ulong && Is64BitInteger(type))
             return Long64Literal(value, Is64BitUnsigned(type));
@@ -1418,6 +1534,16 @@ public sealed partial class Emitter
             IFormattable f => f.ToString(null, CultureInfo.InvariantCulture),
             _ => value.ToString() ?? "null",
         };
+    }
+
+    /// <summary>The string literal for a string-backed enum constant with the given numeric value.</summary>
+    private string EnumConstantLiteral(INamedTypeSymbol enumType, object value)
+    {
+        var mode = H5Naming.EnumEmitMode(enumType);
+        var v = Convert.ToInt64(value);
+        var field = enumType.GetMembers().OfType<IFieldSymbol>()
+            .FirstOrDefault(f => f.HasConstantValue && Convert.ToInt64(f.ConstantValue) == v);
+        return field is not null ? JsString(H5Naming.EnumStringName(field, mode)) : "null";
     }
 
     private static bool IsStringType(ITypeSymbol? type) => type?.SpecialType == SpecialType.System_String;

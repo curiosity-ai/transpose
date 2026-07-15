@@ -153,9 +153,12 @@ public sealed partial class Emitter
     private string CtorName(IMethodSymbol ctor)
     {
         ctor = ctor.OriginalDefinition;
-        // BCL (non-source) types were emitted into h5.js with H5's OverloadsCollection ctor
-        // numbering; match it so e.g. new Guid(string) resolves to $ctor4.
-        if (!ctor.ContainingType.Locations.Any(l => l.IsInSource))
+        // External BCL types were baked into h5.js with H5's OverloadsCollection ctor numbering;
+        // match it so e.g. new Guid(string) resolves to $ctor4. A referenced H5-compiled package
+        // (non-source but non-external) was emitted by THIS compiler's own numbering below, so it
+        // must be numbered the same way here — over its full ctor set (private ones included,
+        // surfaced via MetadataImportOptions.All) — for call sites to resolve to the same $ctorN.
+        if (!H5Naming.IsH5CompiledSource(ctor.ContainingType))
             return H5Naming.ConstructorName(ctor);
         if (_ctorNames.TryGetValue(ctor, out var cached)) return cached;
 
@@ -192,7 +195,7 @@ public sealed partial class Emitter
 
     /// <summary>Ctor name honouring that external (h5) types expose only "ctor".</summary>
     private string ExternalAwareCtorName(IMethodSymbol ctor)
-        => ctor.ContainingType.Locations.Any(l => l.IsInSource) ? CtorName(ctor) : "ctor";
+        => H5Naming.IsH5CompiledSource(ctor.ContainingType) ? CtorName(ctor) : "ctor";
 
     private static bool IsPrimaryCtorSyntax(IMethodSymbol ctor)
         => ctor.MethodKind == MethodKind.Constructor
@@ -300,7 +303,7 @@ public sealed partial class Emitter
                     {
                         EmitConstructorChain(ctor, decl!, type);
                         if (decl?.Body is not null)
-                            foreach (var s in decl.Body.Statements) EmitStatement(s);
+                            EmitStatements(decl.Body.Statements);
                         else if (decl?.ExpressionBody is not null)
                             EmitExpressionStatement(decl.ExpressionBody.Expression);
                     }
@@ -386,6 +389,7 @@ public sealed partial class Emitter
 
     private bool IsEmittableMethod(IMethodSymbol m)
         => m.MethodKind is MethodKind.Ordinary or MethodKind.UserDefinedOperator or MethodKind.Conversion
+               or MethodKind.ExplicitInterfaceImplementation
            && !m.IsAbstract
            && m.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() is BaseMethodDeclarationSyntax d
            && (d.Body is not null || d.ExpressionBody is not null);
@@ -472,9 +476,11 @@ public sealed partial class Emitter
         _w.Block(() =>
         {
             EmitOptionalDefaults(method);
-            _w.Write("return H5R.iter(function* () ");
+            // A generator function can't be an arrow, so it rebinds `this`; bind it to the
+            // enclosing instance so an iterator body that reads `this.field` still works.
+            _w.Write("return H5R.iter((function* () ");
             _w.Block(() => { foreach (var s in body.Statements) EmitStatement(s); });
-            _w.WriteLine(");");
+            _w.WriteLine(").bind(this));");
         });
     }
 
@@ -556,18 +562,32 @@ public sealed partial class Emitter
     /// runtime uses of the type parameter (typeof(T), default(T), new T()) resolve.
     /// </summary>
     private static bool ThreadsTypeArgs(IMethodSymbol method)
+        // A generic method this compiler emits threads its type arguments as leading JS parameters
+        // — true for both source methods and generic methods on a referenced H5-compiled assembly
+        // (a package), so a call site threads exactly what the definition expects. External/BCL
+        // generic methods use their native/templated form and are excluded.
         => method.IsGenericMethod
-           && method.OriginalDefinition.Locations.Any(l => l.IsInSource)
+           && H5Naming.IsH5CompiledSource(method.ContainingType)
            && !method.OriginalDefinition.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "H5.IgnoreGenericAttribute");
 
     private void EmitOptionalDefaults(IMethodSymbol method)
     {
-        foreach (var p in method.Parameters.Where(p => p.HasExplicitDefaultValue))
+        foreach (var p in method.Parameters)
         {
             var name = NameMangler.JsIdentifier(p.Name);
-            _w.Write($"if ({name} === undefined) {{ {name} = ");
-            _w.Write(ConstantLiteral(p.ExplicitDefaultValue, p.Type));
-            _w.WriteLine("; }");
+            if (p.HasExplicitDefaultValue)
+            {
+                _w.Write($"if ({name} === undefined) {{ {name} = ");
+                _w.Write(ConstantLiteral(p.ExplicitDefaultValue, p.Type));
+                _w.WriteLine("; }");
+            }
+            else if (p.IsParams)
+            {
+                // A params array invoked with no trailing arguments arrives as undefined at the JS
+                // boundary (e.g. a reflection/JS caller, or an ExpandParams spread with none); default
+                // it to an empty array so the body's enumeration/indexing behaves, matching H5.
+                _w.WriteLine($"if ({name} === undefined) {{ {name} = []; }}");
+            }
         }
     }
 

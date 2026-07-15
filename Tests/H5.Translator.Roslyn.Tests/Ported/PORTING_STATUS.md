@@ -7,8 +7,14 @@ diffing output against native .NET — the same contract as the original suite.
 
 ## Current results
 
-- **302 passing**, 21 failing, **17 skipped** (`WebApiTests` — need the h5.core browser/DOM
+- **303 passing**, 20 failing, **17 skipped** (`WebApiTests` — need the h5.core browser/DOM
   bindings, out of scope for a runtime-only harness).
+
+Explicit **and** implicit interface dispatch is implemented: a member accessed through a
+source interface routes to H5's mangled interface slot (`Namespace$IFace$member`); explicit
+implementations are emitted under that slot, and implicit implementations publish an
+`alias` mapping their plain slot to it (so both resolve at runtime). BCL interfaces keep
+plain-name access, since their h5.js implementers expose the member directly.
 
 Fixed since the re-target: LINQ/extension templates, enum values/ToString, `[Flags]` enums,
 relative external templates, non-generic/`[External]` BCL `new`, local functions,
@@ -73,8 +79,8 @@ now match h5.js. Exception filters (`when`) bind the catch variable before the g
    `GetType()` details differ.
 3. **Newer/edge C# forms** — C#14 `extension` members and ref-lambda params,
    null-conditional assignment, `params List<T>`/`Span<T>` (C#13), multi-dimensional-array
-   indexing, `System.Threading.Lock`, `nint`/`nuint`, `checked` overflow throwing, explicit
-   interface implementation, and the `[ObjectLiteral]` Ignore/Initializer modes.
+   indexing, `System.Threading.Lock`, `nint`/`nuint`, `checked` overflow throwing,
+   and the `[ObjectLiteral]` Ignore/Initializer modes.
 4. **File I/O** — `MemoryStream`/`BinaryWriter` (largely reported unsupported by design).
 
 These are the same kinds of features the legacy emitter handles via its metadata/overload

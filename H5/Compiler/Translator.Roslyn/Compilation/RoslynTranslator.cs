@@ -41,36 +41,97 @@ public sealed class RoslynTranslator
 
     /// <summary>Translate multiple source files into a single JS bundle.</summary>
     public TranslationResult Translate(IEnumerable<(string path, string text)> sources, string assemblyName = CompilationBuilder.DefaultAssemblyName)
+        => Translate(sources, assemblyName, null);
+
+    /// <summary>
+    /// Translate multiple source files into a single JS bundle, referencing extra assemblies
+    /// (e.g. h5.core, h5.Newtonsoft.Json) alongside H5.dll — used when compiling a real project.
+    /// </summary>
+    public TranslationResult Translate(
+        IEnumerable<(string path, string text)> sources,
+        string assemblyName,
+        IEnumerable<string>? extraReferencePaths,
+        IEnumerable<string>? preprocessorSymbols = null,
+        LanguageVersion languageVersion = LanguageVersion.Latest,
+        bool reflectionEnabled = true,
+        MetadataTarget metadataTarget = MetadataTarget.Inline)
     {
-        var compilation = CompilationBuilder.Build(sources, assemblyName);
+        var r = BuildAssembly(sources, assemblyName, extraReferencePaths, preprocessorSymbols,
+            languageVersion, reflectionEnabled, metadataTarget, emitAssembly: false);
+        return new TranslationResult(r.Javascript, r.Diagnostics, r.MetadataJavascript);
+    }
+
+    /// <summary>
+    /// Compiles a project as a distributable assembly: builds the Roslyn compilation once, then
+    /// (optionally) emits the real .NET DLL AND translates the sources to JavaScript. This mirrors
+    /// the existing compiler, where <c>h5</c> both produces the assembly and the JS that later
+    /// gets embedded into it — so the assembly can be referenced by another project which extracts
+    /// the JS back out.
+    /// </summary>
+    public AssemblyBuildResult BuildAssembly(
+        IEnumerable<(string path, string text)> sources,
+        string assemblyName,
+        IEnumerable<string>? extraReferencePaths,
+        IEnumerable<string>? preprocessorSymbols = null,
+        LanguageVersion languageVersion = LanguageVersion.Latest,
+        bool reflectionEnabled = true,
+        MetadataTarget metadataTarget = MetadataTarget.Inline,
+        bool emitAssembly = true)
+    {
+        var compilation = CompilationBuilder.Build(
+            sources, assemblyName, languageVersion,
+            extraReferencePaths: extraReferencePaths,
+            preprocessorSymbols: preprocessorSymbols);
 
         var diagnostics = new List<Diagnostic>();
         diagnostics.AddRange(compilation.GetDiagnostics()
             .Where(d => d.Severity == DiagnosticSeverity.Error && !BenignForJs.Contains(d.Id)));
-
         if (diagnostics.Count > 0)
-        {
-            return new TranslationResult(null, diagnostics);
-        }
+            return new AssemblyBuildResult(null, null, null, diagnostics);
 
-        // Report browser-incompatible features as compilation errors.
         var unsupported = UnsupportedFeatureScanner.Scan(compilation);
         diagnostics.AddRange(unsupported);
         if (unsupported.Any(d => d.Severity == DiagnosticSeverity.Error))
+            return new AssemblyBuildResult(null, null, null, diagnostics);
+
+        // Emit the real .NET assembly (as a library) so referencing projects can bind to its
+        // types. Emitted before translation so an emit failure is reported like any other error.
+        byte[]? assemblyBytes = null;
+        if (emitAssembly)
         {
-            return new TranslationResult(null, diagnostics);
+            var asmCompilation = compilation.WithOptions(
+                compilation.Options.WithOutputKind(OutputKind.DynamicallyLinkedLibrary));
+            using var ms = new MemoryStream();
+            // Include private members so a referencing project sees the full member set — the
+            // overload numbering (e.g. $ctorN) must match what this assembly emits for itself,
+            // and that numbering counts private overloads too.
+            var emit = asmCompilation.Emit(ms, options: new Microsoft.CodeAnalysis.Emit.EmitOptions(
+                metadataOnly: false,
+                includePrivateMembers: true,
+                debugInformationFormat: Microsoft.CodeAnalysis.Emit.DebugInformationFormat.Embedded));
+            if (!emit.Success)
+            {
+                diagnostics.AddRange(emit.Diagnostics
+                    .Where(d => d.Severity == DiagnosticSeverity.Error && !BenignForJs.Contains(d.Id)));
+                return new AssemblyBuildResult(null, null, null, diagnostics);
+            }
+            assemblyBytes = ms.ToArray();
         }
 
         try
         {
-            var emitter = new Emitter(compilation, assemblyName);
+            var emitter = new Emitter(compilation, assemblyName)
+            {
+                ReflectionEnabled = reflectionEnabled,
+                MetadataTarget = metadataTarget,
+            };
             var js = emitter.Emit();
-            return new TranslationResult(js, diagnostics);
+            return new AssemblyBuildResult(js, emitter.MetadataScript, assemblyBytes, diagnostics);
         }
         catch (TranslationException ex)
         {
             diagnostics.Add(Diagnostics.Create(Diagnostics.Unsupported, ex.Location, ex.Message));
-            return new TranslationResult(null, diagnostics);
+            return new AssemblyBuildResult(null, null, null, diagnostics);
         }
     }
 
@@ -97,9 +158,12 @@ public sealed class RoslynTranslator
     /// </summary>
     public static string LoadRuntime()
     {
-        _shim ??= ReadShim();
-        return H5Assemblies.RuntimeJs + "\n" + _shim;
+        return H5Assemblies.RuntimeJs + "\n" + RuntimeShim;
     }
+
+    /// <summary>The thin H5R shim (the emitter's language-level helpers over h5.js primitives),
+    /// loaded once. A site build ships this as its own script after h5.js and before the bundle.</summary>
+    public static string RuntimeShim => _shim ??= ReadShim();
 
     private static string ReadShim()
     {

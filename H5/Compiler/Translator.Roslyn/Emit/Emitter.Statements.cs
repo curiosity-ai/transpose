@@ -45,6 +45,9 @@ public sealed partial class Emitter
             case ForEachStatementSyntax forEach:
                 EmitForEach(forEach);
                 break;
+            case ForEachVariableStatementSyntax forEachVar:
+                EmitForEachVariable(forEachVar);
+                break;
             case WhileStatementSyntax whileStmt:
                 EmitWhile(whileStmt);
                 break;
@@ -173,9 +176,16 @@ public sealed partial class Emitter
             return;
         }
 
+        // C# local functions are hoisted (callable before their textual position), so emit
+        // them first (as arrow closures) at the top of the block.
+        if (start == 0)
+            foreach (var fn in statements.OfType<LocalFunctionStatementSyntax>())
+                EmitLocalFunction(fn);
+
         for (var i = start; i < statements.Count; i++)
         {
             var s = statements[i];
+            if (s is LocalFunctionStatementSyntax) continue; // already hoisted above
             if (s is LocalDeclarationStatementSyntax { UsingKeyword.RawKind: not 0 } u)
             {
                 var resources = new List<string>();
@@ -268,8 +278,10 @@ public sealed partial class Emitter
             return;
         }
 
-        // Inside a goto state machine, locals must persist across loop iterations → `var`.
-        var kw = _gotoContexts.Count > 0 ? "var" : "let";
+        // C# locals are function-scoped in H5's model, so emit `var` (as the legacy compiler
+        // does): it matches H5 semantics, persists across a goto state machine's loop, and lets
+        // a Script.Write-injected `var x` coexist with a same-named C# local (which `let` forbids).
+        var kw = "var";
         foreach (var variable in local.Declaration.Variables)
         {
             _w.Write($"{kw} {NameMangler.JsIdentifier(variable.Identifier.Text)}");
@@ -361,40 +373,71 @@ public sealed partial class Emitter
     private void EmitForEach(ForEachStatementSyntax forEach)
     {
         var iterVar = NameMangler.JsIdentifier(forEach.Identifier.Text);
-        var enumVar = "$e" + forEach.GetHashCode().ToString("x").Substring(0, 4);
+        var enumVar = EmitEnumeratorInit(forEach, forEach.Expression);
+        _w.Write($"while ({enumVar}.moveNext()) ");
+        _breakTargets.Push(null);
+        _w.Block(() =>
+        {
+            _w.WriteLine($"let {iterVar} = {enumVar}.current;");
+            EmitForEachBody(forEach.Statement);
+        });
+        _breakTargets.Pop();
+        _w.WriteLine();
+    }
 
-        // A foreach may bind to an extension GetEnumerator (C# pattern-based enumeration);
-        // route the source through it so H5R.getEnumerator sees an enumerable/enumerator.
+    /// <summary>foreach with deconstruction: foreach (var (a, b) in seq) — bind each element.</summary>
+    private void EmitForEachVariable(ForEachVariableStatementSyntax forEach)
+    {
+        var enumVar = EmitEnumeratorInit(forEach, forEach.Expression);
+        var elementIsTuple = _model.GetForEachStatementInfo(forEach).ElementType is { IsTupleType: true };
+        var targets = CollectDeconstructionTargets(forEach.Variable).ToList();
+        _w.Write($"while ({enumVar}.moveNext()) ");
+        _breakTargets.Push(null);
+        _w.Block(() =>
+        {
+            var cur = enumVar + "c";
+            _w.WriteLine($"let {cur} = {enumVar}.current;");
+            EmitDeconstructionBindings(targets, cur, elementIsTuple);
+            EmitForEachBody(forEach.Statement);
+        });
+        _breakTargets.Pop();
+        _w.WriteLine();
+    }
+
+    /// <summary>
+    /// Emits <c>var $e = H5R.getEnumerator(source)</c>, routing through an extension
+    /// GetEnumerator when the foreach binds to one, and returns the enumerator variable name.
+    /// </summary>
+    private string EmitEnumeratorInit(CommonForEachStatementSyntax forEach, ExpressionSyntax source)
+    {
+        var enumVar = "$e" + forEach.GetHashCode().ToString("x").Substring(0, 4);
         var getEnum = _model.GetForEachStatementInfo(forEach).GetEnumeratorMethod;
         var ext = getEnum is { IsExtensionMethod: true } ? (getEnum.ReducedFrom ?? getEnum) : null;
         _w.Write($"var {enumVar} = H5R.getEnumerator(");
         if (ext is not null && ext.Locations.Any(l => l.IsInSource))
         {
             _w.Write($"{TypeRef(ext.ContainingType)}.{H5Naming.MemberJsName(ext)}(");
-            EmitExpression(forEach.Expression);
+            EmitExpression(source);
             _w.Write(")");
         }
         else
         {
-            EmitExpression(forEach.Expression);
+            EmitExpression(source);
         }
         _w.WriteLine(");");
-        _w.Write($"while ({enumVar}.moveNext()) ");
-        _breakTargets.Push(null);
-        _w.Block(() =>
+        return enumVar;
+    }
+
+    private void EmitForEachBody(StatementSyntax body)
+    {
+        if (body is BlockSyntax block)
         {
-            _w.WriteLine($"let {iterVar} = {enumVar}.current;");
-            if (forEach.Statement is BlockSyntax block)
-            {
-                foreach (var s in block.Statements) EmitStatement(s);
-            }
-            else
-            {
-                EmitStatement(forEach.Statement);
-            }
-        });
-        _breakTargets.Pop();
-        _w.WriteLine();
+            foreach (var s in block.Statements) EmitStatement(s);
+        }
+        else
+        {
+            EmitStatement(body);
+        }
     }
 
     private void EmitWhile(WhileStatementSyntax whileStmt)
@@ -426,7 +469,7 @@ public sealed partial class Emitter
             return;
         }
         _w.Write("return ");
-        var method = _model.GetEnclosingSymbol(ret.SpanStart) as IMethodSymbol;
+        var method = _model.GetEnclosingSymbol(ret) as IMethodSymbol;
         EmitExpressionConverted(ret.Expression, _model.GetTypeInfo(ret.Expression).ConvertedType);
         _w.WriteLine(";");
     }
@@ -542,7 +585,7 @@ public sealed partial class Emitter
         _w.WriteLine();
     }
 
-    private string ExceptionTypeRef(ITypeSymbol type) => _names.TypeReference(type);
+    private string ExceptionTypeRef(ITypeSymbol type) => TypeRef(type);
 
     private void EmitUsing(UsingStatementSyntax usingStmt)
     {
@@ -706,9 +749,11 @@ public sealed partial class Emitter
     {
         var symbol = _model.GetDeclaredSymbol(localFn) as IMethodSymbol;
         var isAsync = localFn.Modifiers.Any(SyntaxKind.AsyncKeyword);
-        _w.Write($"function {NameMangler.JsIdentifier(localFn.Identifier.Text)}(");
+        // Arrow function so `this` is captured lexically (C# local functions close over `this`);
+        // the `var` binding keeps the name in scope for recursion.
+        _w.Write($"var {NameMangler.JsIdentifier(localFn.Identifier.Text)} = (");
         if (symbol is not null) EmitParameterList(symbol);
-        _w.Write(") ");
+        _w.Write(") => ");
         _w.Block(() =>
         {
             if (symbol is not null) EmitOptionalDefaults(symbol);
@@ -725,6 +770,6 @@ public sealed partial class Emitter
                 }
             });
         });
-        _w.WriteLine();
+        _w.WriteLine(";");
     }
 }

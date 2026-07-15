@@ -18,12 +18,18 @@ public sealed partial class Emitter
     private readonly CSharpCompilation _compilation;
     private JsWriter _w = new();
     private readonly NameMangler _names = new();
-    private SemanticModel _model = null!;
+    private readonly TreeModel _model;
     private readonly string _assemblyName;
 
     /// <summary>While emitting a primary constructor's own body, its parameters are the JS
     /// function parameters (raw names); elsewhere captured params read from the instance.</summary>
     private bool _inPrimaryCtorBody;
+
+    /// <summary>The type whose define body is currently being emitted. Its own type parameters are
+    /// the ones actually bound as JS function parameters of the define, so <c>default(T)</c> may
+    /// safely reference them via <c>H5.getDefaultValue(T)</c>; a type parameter from an enclosing
+    /// type (accessible in C# but not emitted as a parameter here) is not in scope.</summary>
+    private INamedTypeSymbol? _currentEmitType;
 
     /// <summary>
     /// Active goto label-dispatch contexts. When non-empty a statement body is being lowered
@@ -32,10 +38,24 @@ public sealed partial class Emitter
     /// </summary>
     private readonly Stack<(System.Collections.Generic.Dictionary<string, int> labels, string loopLabel, string stateVar)> _gotoContexts = new();
 
+    /// <summary>Whether reflection metadata is emitted at all (h5.json reflection.disabled).</summary>
+    public bool ReflectionEnabled { get; set; } = true;
+
+    /// <summary>Where reflection metadata goes — inline in the assembly, or a separate file.</summary>
+    public MetadataTarget MetadataTarget { get; set; } = MetadataTarget.Inline;
+
+    /// <summary>Assembly version string emitted into a separate metadata file's header.</summary>
+    public string AssemblyVersion { get; set; } = "1.0.0.0";
+
+    /// <summary>When <see cref="MetadataTarget"/> is File/Assembly, the standalone metadata
+    /// script (a full H5.assembly wrapper) produced by the last <see cref="Emit"/>; else null.</summary>
+    public string? MetadataScript { get; private set; }
+
     public Emitter(CSharpCompilation compilation, string assemblyName = CompilationBuilder.DefaultAssemblyName)
     {
         _compilation = compilation;
         _assemblyName = assemblyName;
+        _model = new TreeModel(compilation);
     }
 
     public string Emit()
@@ -43,20 +63,30 @@ public sealed partial class Emitter
         _w.WriteLine("/**");
         _w.WriteLine(" * H5.Translator.Roslyn generated output.");
         _w.WriteLine(" */");
+        var types = CollectTypes();
+
+        // Reflection metadata: either woven into this assembly function (inline target) or
+        // collected into a standalone metadata script (file target), never both.
+        var inlineMeta = ReflectionEnabled && MetadataTarget is MetadataTarget.Inline or MetadataTarget.Type;
+        var fileMeta = ReflectionEnabled && MetadataTarget is MetadataTarget.File or MetadataTarget.Assembly;
+
         _w.Write($"H5.assembly(\"{_assemblyName}\", function ($asm, globals) ");
         _w.Block(() =>
         {
             _w.WriteLine("\"use strict\";");
             _w.WriteLine();
 
-            foreach (var type in CollectTypes())
+            foreach (var type in types)
             {
-                _model = _compilation.GetSemanticModel(type.DeclaringSyntaxReferences[0].SyntaxTree);
                 EmitType(type);
                 _w.WriteLine();
             }
+
+            if (inlineMeta) EmitReflectionMetadata(types);
         });
         _w.WriteLine(");");
+
+        MetadataScript = fileMeta ? BuildMetadataFile(types) : null;
         return _w.ToString();
     }
 
@@ -93,17 +123,56 @@ public sealed partial class Emitter
             }
         }
 
+        // Emit each type after every source type it depends on (base class + implemented/
+        // extended interfaces), so the runtime's H5.define never sees an undefined reference
+        // in `inherits`. Dependency depth gives such an order (the graph is acyclic).
+        var depthCache = new Dictionary<INamedTypeSymbol, int>(SymbolEqualityComparer.Default);
         return declared
-            .OrderBy(t => t.TypeKind == TypeKind.Interface ? 0 : 1)
-            .ThenBy(InheritanceDepth)
+            .OrderBy(t => DependencyDepth(t, depthCache))
+            .ThenBy(t => t.TypeKind == TypeKind.Interface ? 0 : 1)
             .ToList();
     }
 
-    private static int InheritanceDepth(INamedTypeSymbol type)
+    /// <summary>
+    /// The longest chain of source-type dependencies (base class and implemented/extended
+    /// interfaces) below <paramref name="type"/>. Types with a greater depth are emitted later,
+    /// guaranteeing a type's dependencies are defined first. Non-source dependencies live in
+    /// the runtime (loaded before the bundle) and contribute no ordering constraint.
+    /// </summary>
+    private int DependencyDepth(INamedTypeSymbol type, Dictionary<INamedTypeSymbol, int> cache)
     {
+        type = (INamedTypeSymbol)type.OriginalDefinition;
+        if (cache.TryGetValue(type, out var cached)) return cached;
+        cache[type] = 0; // guard against unexpected cycles
+
         var depth = 0;
-        for (var b = type.BaseType; b is not null; b = b.BaseType) depth++;
+        foreach (var dep in Dependencies(type))
+            depth = Math.Max(depth, DependencyDepth(dep, cache) + 1);
+
+        cache[type] = depth;
         return depth;
+    }
+
+    private static IEnumerable<INamedTypeSymbol> Dependencies(INamedTypeSymbol type)
+    {
+        // A type's `inherits` names its base class and interfaces *including their generic
+        // type arguments* (e.g. LayerHost : ComponentBase<Layer, …> references Layer), and all
+        // of those source types must already be defined when the lazy inherits runs.
+        if (type.BaseType is { } bt)
+            foreach (var d in SourceTypesIn(bt)) yield return d;
+        foreach (var iface in type.Interfaces)
+            foreach (var d in SourceTypesIn(iface)) yield return d;
+    }
+
+    /// <summary>The source named types within a type reference — the type itself and, recursively,
+    /// its generic type arguments.</summary>
+    private static IEnumerable<INamedTypeSymbol> SourceTypesIn(ITypeSymbol type)
+    {
+        if (type is not INamedTypeSymbol named) yield break;
+        if (named.Locations.Any(l => l.IsInSource))
+            yield return (INamedTypeSymbol)named.OriginalDefinition;
+        foreach (var arg in named.TypeArguments)
+            foreach (var d in SourceTypesIn(arg)) yield return d;
     }
 
     // ---- helpers -----------------------------------------------------------
