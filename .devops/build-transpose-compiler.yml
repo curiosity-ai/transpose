@@ -70,6 +70,6 @@ steps:
   displayName: 'push nuget'
   inputs:
     command: 'push'
-    packagesToPush: '**/Transpose.Compiler.$(targetVersion).nupkg'
+    packagesToPush: '**/*.nupkg'
     nuGetFeedType: 'external'
     publishFeedCredentials: 'nuget-curiosity-org'
