@@ -1,25 +1,25 @@
 variables:
-  h5webgl2: '$(Build.SourcesDirectory)/H5/H5.Packages/H5.webgl2/H5.webgl2.csproj'
+  transposeCore: '$(Build.SourcesDirectory)/BCL/Transpose.Core/Transpose.Core.csproj'
   buildConfiguration: 'Release'
   targetVersion: yy.M.$(build.buildId)
 
 pool:
   vmImage: 'windows-latest'
 
-trigger: 
+trigger:
   branches:
     include:
     - master
   paths:
     include:
-    - H5/H5.Packages/H5.webgl2/*
-    - .devops/build-h5-webgl2.yml
+    - BCL/Transpose.Core/*
+    - .devops/build-transpose-core.yml
 
 pr: none
 
 steps:
 - checkout: self
-  
+
 - script: |
     echo "Commit message: $(Build.SourceVersionMessage)"
 
@@ -37,35 +37,35 @@ steps:
     targetType: 'inline'
     script: |
       $dottedDate = (Get-Date).ToString("yy.M")
-      $buildID = $($env:BUILD_BUILDID) 
+      $buildID = $($env:BUILD_BUILDID)
       $modBuildID = [int]$buildID % 65536  # ensure fits in int16
       $newTargetVersion = "$dottedDate.$modBuildID"
       Write-Host "##vso[task.setvariable variable=targetVersion;]$newTargetVersion"
       Write-Host "Updated targetVersion to '$newTargetVersion'"
 
 - task: CmdLine@2
-  displayName: 'Install h5 compiler'
+  displayName: 'Install Transpose compiler'
   inputs:
-    script: 'dotnet tool install --global h5-compiler'
+    script: 'dotnet tool install --global Transpose.Compiler'
 
 - task: DotNetCoreCLI@2
   displayName: 'restore nuget'
   inputs:
     command: 'restore'
-    projects: '$(h5webgl2)'
+    projects: '$(transposeCore)'
 
 - task: DotNetCoreCLI@2
   displayName: 'build'
   inputs:
     command: 'build'
-    projects: '$(h5webgl2)'
+    projects: '$(transposeCore)'
     arguments: '-c $(buildConfiguration) /p:Version=$(targetVersion)'
 
 - task: DotNetCoreCLI@2
   displayName: 'pack nuget'
   inputs:
     command: 'pack'
-    packagesToPack: '$(h5webgl2)'
+    packagesToPack: '$(transposeCore)'
     configuration: '$(buildConfiguration)'
     versioningScheme: 'off'
     buildProperties: 'Version="$(targetVersion)";AllowUnsafeBlocks="True";LangVersion="latest"'
@@ -74,6 +74,6 @@ steps:
   displayName: 'push nuget'
   inputs:
     command: 'push'
-    packagesToPush: '**/h5.webgl2.$(targetVersion).nupkg'
+    packagesToPush: '**/Transpose.Core.$(targetVersion).nupkg'
     nuGetFeedType: 'external'
     publishFeedCredentials: 'nuget-curiosity-org'

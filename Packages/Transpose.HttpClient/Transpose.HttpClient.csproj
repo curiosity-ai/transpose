@@ -9,8 +9,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="tps" Version="26.2.64514" />
-    <PackageReference Include="tps.core" Version="26.4.580" />
+    <PackageReference Include="Transpose" Version="26.2.64514" />
+    <PackageReference Include="Transpose.Core" Version="26.4.580" />
   </ItemGroup>
 
   <ItemGroup>
@@ -22,7 +22,7 @@
     <IncludeSymbols>false</IncludeSymbols>
     <PackageIcon>transpose.png</PackageIcon>
     <LangVersion>7.2</LangVersion>
-    <PackageId>tps.httpclient</PackageId>
+    <PackageId>Transpose.HttpClient</PackageId>
     <Authors>Curiosity GmbH, .NET Foundation and Contributors</Authors>
     <Company>Curiosity GmbH</Company>
     <Description>HttpClient-like for Transpose, the .NET C# to JavaScript compiler 🚀</Description>

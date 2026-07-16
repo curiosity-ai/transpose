@@ -13,8 +13,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="tps" Version="26.2.64514" />
-    <PackageReference Include="tps.core" Version="26.4.580" />
+    <PackageReference Include="Transpose" Version="26.2.64514" />
+    <PackageReference Include="Transpose.Core" Version="26.4.580" />
   </ItemGroup>
 
   <ItemGroup>
@@ -26,7 +26,7 @@
     <IncludeSymbols>false</IncludeSymbols>
     <PackageIcon>transpose.png</PackageIcon>
     <LangVersion>7.2</LangVersion>
-    <PackageId>tps.p2</PackageId>
+    <PackageId>Transpose.P2</PackageId>
     <Authors>Curiosity GmbH, Object.NET, Inc.</Authors>
     <Company>Curiosity GmbH, Object.NET, Inc.</Company>
     <Description>p2 support for Transpose, the C# to JavaScript compiler 🚀</Description>

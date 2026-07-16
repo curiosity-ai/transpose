@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Bootstrap the Transpose BCL with the tps compiler.
 #
-# The base runtime library (BCL/Transpose.BCL, package "tps") is special: it *defines* the C#
+# The base runtime library (BCL/Transpose.BCL, package "Transpose") is special: it *defines* the C#
 # BCL (System.*), so it is compiled to a self-contained reference assembly (Transpose.dll) rather
 # than transpiled. Every other project (Transpose.Core and the Packages) is a JavaScript binding
 # library ([assembly: External]) that the tps compiler transpiles to JS, binding against the base.

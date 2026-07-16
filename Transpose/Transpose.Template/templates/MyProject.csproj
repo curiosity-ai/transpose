@@ -5,9 +5,9 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="tps" Version="25.11.62743" />
-        <PackageReference Include="tps.core" Version="25.11.62746" />
-        <PackageReference Include="tps.Newtonsoft.Json" Version="25.11.62749" />
+        <PackageReference Include="Transpose" Version="25.11.62743" />
+        <PackageReference Include="Transpose.Core" Version="25.11.62746" />
+        <PackageReference Include="Transpose.Newtonsoft.Json" Version="25.11.62749" />
         <PackageReference Include="Tesserae" Version="2026.1.63737" />
     </ItemGroup>
 </Project>

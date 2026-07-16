@@ -1,26 +1,25 @@
 variables:
-  compiler:  '$(Build.SourcesDirectory)/H5/Compiler/Compiler/H5.Compiler.csproj'
-  compilerService: '$(Build.SourcesDirectory)/H5/Compiler/Compiler.Service/H5.Compiler.Service.csproj'
+  transposeHttpClient: '$(Build.SourcesDirectory)/Packages/Transpose.HttpClient/Transpose.HttpClient.csproj'
   buildConfiguration: 'Release'
   targetVersion: yy.M.$(build.buildId)
 
 pool:
   vmImage: 'windows-latest'
 
-trigger: 
+trigger:
   branches:
     include:
     - master
   paths:
     include:
-    - H5/Compiler/*
-    - .devops/build-dotnet-tool.yml
+    - Packages/Transpose.HttpClient/*
+    - .devops/build-transpose-httpclient.yml
 
 pr: none
 
 steps:
 - checkout: self
-  
+
 - script: |
     echo "Commit message: $(Build.SourceVersionMessage)"
 
@@ -38,53 +37,36 @@ steps:
     targetType: 'inline'
     script: |
       $dottedDate = (Get-Date).ToString("yy.M")
-      $buildID = $($env:BUILD_BUILDID) 
+      $buildID = $($env:BUILD_BUILDID)
       $modBuildID = [int]$buildID % 65536  # ensure fits in int16
       $newTargetVersion = "$dottedDate.$modBuildID"
       Write-Host "##vso[task.setvariable variable=targetVersion;]$newTargetVersion"
       Write-Host "Updated targetVersion to '$newTargetVersion'"
 
-- task: DotNetCoreCLI@2
-  displayName: 'restore nuget compiler'
+- task: CmdLine@2
+  displayName: 'Install Transpose compiler'
   inputs:
-    command: 'restore'
-    projects: '$(compiler)'
+    script: 'dotnet tool install --global Transpose.Compiler'
 
 - task: DotNetCoreCLI@2
-  displayName: 'restore nuget compiler-as-a-service'
+  displayName: 'restore nuget'
   inputs:
     command: 'restore'
-    projects: '$(compilerService)'
+    projects: '$(transposeHttpClient)'
 
 - task: DotNetCoreCLI@2
-  displayName: 'build compiler'
+  displayName: 'build'
   inputs:
     command: 'build'
-    projects: '$(compiler)'
+    projects: '$(transposeHttpClient)'
     arguments: '-c $(buildConfiguration) /p:Version=$(targetVersion)'
 
 - task: DotNetCoreCLI@2
-  displayName: 'build compiler-as-a-service'
-  inputs:
-    command: 'build'
-    projects: '$(compilerService)'
-    arguments: '-c $(buildConfiguration) /p:Version=$(targetVersion)'
-
-- task: DotNetCoreCLI@2
-  displayName: 'pack nuget compiler'
+  displayName: 'pack nuget'
   inputs:
     command: 'pack'
+    packagesToPack: '$(transposeHttpClient)'
     configuration: '$(buildConfiguration)'
-    packagesToPack: '$(compiler)'
-    versioningScheme: 'off'
-    buildProperties: 'Version="$(targetVersion)";AllowUnsafeBlocks="True";LangVersion="latest"'
-
-- task: DotNetCoreCLI@2
-  displayName: 'pack nuget compiler-as-a-service'
-  inputs:
-    command: 'pack'
-    configuration: '$(buildConfiguration)'
-    packagesToPack: '$(compilerService)'
     versioningScheme: 'off'
     buildProperties: 'Version="$(targetVersion)";AllowUnsafeBlocks="True";LangVersion="latest"'
 
@@ -92,14 +74,6 @@ steps:
   displayName: 'push nuget'
   inputs:
     command: 'push'
-    packagesToPush: '**/h5-compiler.$(targetVersion).nupkg'
-    nuGetFeedType: 'external'
-    publishFeedCredentials: 'nuget-curiosity-org'
-
-- task: NuGetCommand@2
-  displayName: 'push nuget'
-  inputs:
-    command: 'push'
-    packagesToPush: '**/h5.Compiler.Service.$(targetVersion).nupkg'
+    packagesToPush: '**/Transpose.HttpClient.$(targetVersion).nupkg'
     nuGetFeedType: 'external'
     publishFeedCredentials: 'nuget-curiosity-org'

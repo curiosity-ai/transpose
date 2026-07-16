@@ -1,25 +1,25 @@
 variables:
-  h5httpclient: '$(Build.SourcesDirectory)/H5/H5.Packages/H5.httpclient/H5.httpclient.csproj'
+  targetPath: '$(Build.SourcesDirectory)/Transpose/Transpose.Build.Target/Transpose.Build.Target.csproj'
   buildConfiguration: 'Release'
   targetVersion: yy.M.$(build.buildId)
 
 pool:
   vmImage: 'windows-latest'
 
-trigger: 
+trigger:
   branches:
     include:
     - master
   paths:
     include:
-    - H5/H5.Packages/H5.httpclient/*
-    - .devops/build-h5-httpclient.yml
+    - Transpose/Transpose.Build.Target/*
+    - .devops/build-transpose-target.yml
 
 pr: none
 
 steps:
 - checkout: self
-  
+
 - script: |
     echo "Commit message: $(Build.SourceVersionMessage)"
 
@@ -37,43 +37,31 @@ steps:
     targetType: 'inline'
     script: |
       $dottedDate = (Get-Date).ToString("yy.M")
-      $buildID = $($env:BUILD_BUILDID) 
+      $buildID = $($env:BUILD_BUILDID)
       $modBuildID = [int]$buildID % 65536  # ensure fits in int16
       $newTargetVersion = "$dottedDate.$modBuildID"
       Write-Host "##vso[task.setvariable variable=targetVersion;]$newTargetVersion"
       Write-Host "Updated targetVersion to '$newTargetVersion'"
 
-- task: CmdLine@2
-  displayName: 'Install h5 compiler'
-  inputs:
-    script: 'dotnet tool install --global h5-compiler'
-
 - task: DotNetCoreCLI@2
   displayName: 'restore nuget'
   inputs:
     command: 'restore'
-    projects: '$(h5httpclient)'
-
-- task: DotNetCoreCLI@2
-  displayName: 'build'
-  inputs:
-    command: 'build'
-    projects: '$(h5httpclient)'
-    arguments: '-c $(buildConfiguration) /p:Version=$(targetVersion)'
+    projects: '$(targetPath)'
 
 - task: DotNetCoreCLI@2
   displayName: 'pack nuget'
   inputs:
     command: 'pack'
-    packagesToPack: '$(h5httpclient)'
+    packagesToPack: '$(targetPath)'
     configuration: '$(buildConfiguration)'
     versioningScheme: 'off'
-    buildProperties: 'Version="$(targetVersion)";AllowUnsafeBlocks="True";LangVersion="latest"'
+    buildProperties: 'Version="$(targetVersion)"'
 
 - task: NuGetCommand@2
   displayName: 'push nuget'
   inputs:
     command: 'push'
-    packagesToPush: '**/h5.httpclient.$(targetVersion).nupkg'
+    packagesToPush: '**/Transpose.Build.Target.$(targetVersion).nupkg'
     nuGetFeedType: 'external'
     publishFeedCredentials: 'nuget-curiosity-org'

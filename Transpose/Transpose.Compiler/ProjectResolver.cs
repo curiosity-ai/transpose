@@ -6,8 +6,8 @@ namespace Transpose.Compiler;
 /// <summary>
 /// Minimal resolver for an Transpose project: gathers the C# sources (the SDK's default glob),
 /// and resolves the package references — transitively — to their assemblies in the NuGet
-/// global-packages cache. Transpose projects reference Transpose.dll as their whole BCL plus a few tps.*
-/// packages (tps.core, tps.Newtonsoft.Json), all of which live in the cache once restored.
+/// global-packages cache. Transpose projects reference Transpose.dll as their whole BCL plus a few Transpose.*
+/// packages (Transpose.Core, Transpose.Newtonsoft.Json), all of which live in the cache once restored.
 /// </summary>
 internal sealed class ResolvedProject
 {
