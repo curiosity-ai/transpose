@@ -108,9 +108,13 @@ dotnet build Transpose.slnx
 ```
 
 This builds `Transpose.Translator`, the `tps` compiler, the tests, and the template. (The
-`Transpose.Build.Target` SDK and the BCL/Packages projects are **not** in the solution: their
-`Sdk="Transpose.Build.Target/..."` is not a resolvable NuGet package in a dev tree, and the BCL is
-compiled by `tps`, not `dotnet`.)
+`Transpose.Build.Target` SDK and the BCL/Packages projects are **listed** in the solution — grouped
+under the `/Transpose/`, `/BCL/`, and `/Packages/` folders for IDE navigation — but are **excluded
+from the build** (`<Build ... Project="false" />` in `Transpose.slnx`): their
+`Sdk="Transpose.Build.Target/..."` is not `dotnet`-buildable in a dev tree, and the BCL is compiled
+by `tps`, not `dotnet`. Only the five .NET toolchain projects — `Transpose.Translator`, the `tps`
+compiler, the tests, the template, and `Transpose.Placeholders` — actually build with `dotnet`; the
+rest are bootstrapped via `bootstrap.sh`/`tps`.)
 
 ### 2. Bootstrap the BCL/Packages
 
