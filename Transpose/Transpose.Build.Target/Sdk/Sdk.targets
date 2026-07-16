@@ -457,7 +457,7 @@
 
   <!-- The Transpose (tps) compiler is a plain Roslyn-based CLI: no compilation server and no
        online check. It is invoked once per project. Install it as a global dotnet tool
-       (`dotnet tool install --global Transpose.Compiler`) or reference it as a local tool and set
+       (`dotnet tool install -g Transpose.Compiler`) or reference it as a local tool and set
        UseLocalTranspose=true. -->
   <Target Name="_TransposeBuild"
       DependsOnTargets="SourceFilesProjectOutputGroup;GenerateBuildDependencyFile;GenerateBuildRuntimeConfigurationFiles;_ComputeReferenceAssemblies;_ComputeUserRuntimeAssemblies;_CopyReferenceOnlyAssembliesForBuild"
