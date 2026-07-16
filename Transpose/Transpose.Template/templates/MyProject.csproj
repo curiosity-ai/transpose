@@ -1,4 +1,4 @@
-<Project Sdk="Transpose.Build.Target/26.7.2669">
+<Project Sdk="Transpose.Build.Target/26.7.2685">
     <PropertyGroup>
         <TargetFramework>netstandard2.1</TargetFramework>
         <LangVersion>7.2</LangVersion>
