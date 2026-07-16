@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
@@ -32,14 +33,20 @@ public static class TransposeAssemblies
         var env = Environment.GetEnvironmentVariable("TRANSPOSE_DLL_PATH");
         if (!string.IsNullOrEmpty(env) && File.Exists(env)) return env;
 
+        // Resolve Transpose.dll from the NuGet global-packages cache using the same flow as h5
+        // (Translator.GetPackagesCacheFolder): honour NUGET_PACKAGES first, then the per-platform
+        // user-profile default. NuGet lower-cases the package-id folder on case-sensitive
+        // filesystems (Linux/macOS) but preserves it on Windows, so probe both casings.
         var candidates =
             from root in NuGetRoots()
-            let pkg = Path.Combine(root, "transpose")
+            where Directory.Exists(root)
+            from id in new[] { "Transpose", "transpose" }
+            let pkg = Path.Combine(root, id)
             where Directory.Exists(pkg)
             from versionDir in Directory.GetDirectories(pkg)
             let dll = Path.Combine(versionDir, "lib", "netstandard2.0", "Transpose.dll")
             where File.Exists(dll)
-            orderby versionDir
+            orderby Path.GetFileName(versionDir)
             select dll;
 
         var found = candidates.LastOrDefault();
@@ -51,12 +58,23 @@ public static class TransposeAssemblies
         return found;
     }
 
+    /// <summary>
+    /// The NuGet global-packages cache roots, mirroring how h5's <c>GetPackagesCacheFolder</c>
+    /// resolves the cache: the <c>NUGET_PACKAGES</c> override first (expanded), then the
+    /// per-platform user-profile default (<c>%userprofile%\.nuget\packages</c> on Windows,
+    /// <c>~/.nuget/packages</c> elsewhere).
+    /// </summary>
     private static System.Collections.Generic.IEnumerable<string> NuGetRoots()
     {
-        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        yield return Path.Combine(home, ".nuget", "packages");
         var env = Environment.GetEnvironmentVariable("NUGET_PACKAGES");
-        if (!string.IsNullOrEmpty(env)) yield return env;
+        if (!string.IsNullOrWhiteSpace(env))
+            yield return Path.GetFullPath(Environment.ExpandEnvironmentVariables(env));
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            yield return Path.GetFullPath(Environment.ExpandEnvironmentVariables(@"%userprofile%\.nuget\packages"));
+        else
+            yield return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nuget", "packages");
+
         yield return "/root/.nuget/packages";
     }
 

@@ -22,6 +22,14 @@ internal sealed class TransposeJson
     public string HtmlMeta { get; init; } = "";
     public List<ResourceGroup> Resources { get; init; } = new();
 
+    /// <summary>
+    /// <c>outputBy</c> — the file-layout mode (Class/ClassPath/Namespace/…). The base runtime
+    /// library (Transpose.BCL) uses <c>ClassPath</c>: this is the marker that the project *defines*
+    /// the BCL and must be compiled self-contained (no Transpose.dll reference) into the tps.js
+    /// runtime bundle, rather than transpiled against Transpose.dll like a normal project.
+    /// </summary>
+    public string? OutputBy { get; init; }
+
     /// <summary>reflection.disabled — when true, no reflection metadata is emitted.</summary>
     public bool ReflectionDisabled { get; init; }
 
@@ -65,6 +73,7 @@ internal sealed class TransposeJson
         return new TransposeJson
         {
             Output = Str(root, "output"),
+            OutputBy = Str(root, "outputBy"),
             FileName = Str(root, "fileName") ?? "app.js",
             ExplicitFileName = Str(root, "fileName"),
             HtmlDisabled = html.ValueKind == JsonValueKind.Object && html.TryGetProperty("disabled", out var d) && d.ValueKind == JsonValueKind.True,
