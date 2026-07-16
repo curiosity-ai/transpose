@@ -99,14 +99,20 @@ public static class Program
         Console.WriteLine($"  defines:    {string.Join(";", project.DefineConstants)}");
         Console.WriteLine($"  lang:       {project.LanguageVersion}");
 
+        // The project's tps.json drives runtime-package detection and reflection settings.
+        var tpscfg = TransposeJson.TryLoad(project.ProjectDir);
+
         // Base runtime package build: compile Transpose.BCL self-contained, transpile it with
         // outputBy: ClassPath, stitch the per-class files with the hand-written Resources primitives
         // into tps.js per the project's tps.json, and embed tps.js + tps.meta.js into Transpose.dll.
-        if (buildRuntime)
+        //
+        // A project that declares outputBy: ClassPath in its tps.json *defines* the BCL (it is the
+        // base runtime library), so it is always built this way — self-contained, with no
+        // Transpose.dll reference — even when the SDK invokes tps without an explicit --build-runtime.
+        if (buildRuntime || string.Equals(tpscfg?.OutputBy, "ClassPath", StringComparison.OrdinalIgnoreCase))
             return BuildRuntime(project, configuration, sw, outPath);
 
         // Reflection settings come from the project's tps.json (target inline vs a .meta.js file).
-        var tpscfg = TransposeJson.TryLoad(project.ProjectDir);
         var (reflectionEnabled, metadataTarget) = ReflectionSettings(tpscfg);
 
         // Chain the referenced projects first (like the MSBuild-driven compiler): in
