@@ -1,4 +1,4 @@
-<Project Sdk="Transpose.Build.Target/25.11.62725">
+<Project Sdk="Transpose.Build.Target/26.7.2669">
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
     <AssemblyName>Transpose.P2</AssemblyName>
