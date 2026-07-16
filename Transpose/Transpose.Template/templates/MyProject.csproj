@@ -1,7 +1,8 @@
 <Project Sdk="Transpose.Build.Target/26.7.2685">
     <PropertyGroup>
         <TargetFramework>netstandard2.1</TargetFramework>
-        <LangVersion>7.2</LangVersion>
+        <!-- Inherits LangVersion=latest from the Transpose.Build.Target SDK; pin an older
+             version here only if a project needs it. -->
     </PropertyGroup>
 
     <ItemGroup>

@@ -149,6 +149,13 @@ public sealed partial class Emitter
             case CheckedExpressionSyntax checkedExpr:
                 EmitExpression(checkedExpr.Expression);
                 break;
+            case RefExpressionSyntax refExpr:
+                // JavaScript has no by-ref aliases, so `ref <expr>` (e.g. a ref-returning indexer's
+                // `return ref _array[i]`) collapses to the referenced expression's value. This is
+                // correct for the ref structs the BCL defines (Span/ReadOnlySpan), which are
+                // represented as the underlying JS array — element access yields the value directly.
+                EmitExpression(refExpr.Expression);
+                break;
             case AwaitExpressionSyntax await:
                 // tps.js Tasks are not natively thenable; Transpose.toPromise adapts a Task (or an
                 // already-native Promise) into something JS `await` can drive.
