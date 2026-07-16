@@ -9,7 +9,7 @@
     <Company>Curiosity GmbH, Object.NET, Inc.</Company>
     <Copyright>Copyright (c) 2008-2019, Object.NET, Inc. Copyright (c) 2019-2022, Curiosity GmbH. All rights reserved.</Copyright>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
-    <PackageId>tps.Placeholders</PackageId>
+    <PackageId>Transpose.Placeholders</PackageId>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/curiosity-ai/transpose</PackageProjectUrl>
     <PackageIcon>transpose.png</PackageIcon>

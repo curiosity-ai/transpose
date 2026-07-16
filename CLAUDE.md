@@ -7,13 +7,18 @@ clean-room Roslyn translator. The legacy Bridge/NRefactory pipeline has been rem
 
 - **Runtime global** in generated JavaScript: `Transpose` (e.g. `Transpose.assembly(...)`,
   `Transpose.define(...)`). The language-helper shim is `TransposeR`.
-- **Short form** for the JavaScript library / packages / files: `tps` (e.g. the runtime bundle
-  `tps.js`, the NuGet package `tps`, the config file `tps.json`, the compiler command `tps`).
+- **Short form** for the JavaScript runtime / config / files: `tps` (e.g. the runtime bundle
+  `tps.js`, the config file `tps.json`, the JS module name `tps`, the compiler command `tps`).
+- **NuGet package ids** use the `Transpose` / `Transpose.*` naming and match each project's
+  `AssemblyName` (e.g. `Transpose`, `Transpose.Core`, `Transpose.Newtonsoft.Json`,
+  `Transpose.Compiler`).
 
 > Historical note: the codebase was renamed from H5 with a case-sensitive mapping — `H5` →
-> `Transpose` (namespaces, runtime global, assembly names) and `h5` → `tps` (package ids, file
-> names, config, module name). Non-library tokens were deliberately preserved (e.g. the `<h5>`
-> HTML tag binding in `Transpose.Core`, hash locals `h1..h5` in `ValueTuple`).
+> `Transpose` (namespaces, runtime global, assembly names) and `h5` → `tps` (JS runtime file
+> names, config, module name). NuGet **package ids** were subsequently renamed from `tps` /
+> `tps.*` to `Transpose` / `Transpose.*` to match the assembly names. Non-library tokens were
+> deliberately preserved (e.g. the `<h5>` HTML tag binding in `Transpose.Core`, hash locals
+> `h1..h5` in `ValueTuple`).
 
 ## Repository layout
 
@@ -38,20 +43,20 @@ Transpose/                     # The compiler toolchain
 └── Transpose.Translator.Tests/# MSTest suite; transpiles snippets and diffs vs native .NET via Playwright
 
 BCL/                           # The base runtime libraries
-├── Transpose.BCL/             # Base library. AssemblyName Transpose, package id `tps`, namespace Transpose
+├── Transpose.BCL/             # Base library. AssemblyName Transpose, package id `Transpose`, namespace Transpose
 │   ├── Transpose/             #   codegen attributes ([External],[Template],[Name],[Script],...) + markers
 │   ├── System/, shared/       #   C# definitions of the .NET BCL (System.Object, string, collections, ...)
 │   ├── Resources/*.js         #   hand-written JavaScript runtime primitives (Core.js, Class.js, ...)
 │   └── tps.json               #   declares how Resources + generated JS combine into tps.js
-└── Transpose.Core/            # Web API bindings (DOM, ES5/ES6). package id `tps.core`, ns Transpose.Core
+└── Transpose.Core/            # Web API bindings (DOM, ES5/ES6). package id `Transpose.Core`, ns Transpose.Core
 
 Packages/                      # Additional binding libraries (all [assembly: External])
-├── Transpose.Newtonsoft.Json/ #   package tps.Newtonsoft.Json
-├── Transpose.Howler/          #   package tps.howler
-├── Transpose.WebGL2/          #   package tps.webgl2
-├── Transpose.P2/              #   package tps.p2
-├── Transpose.HttpClient/      #   package tps.httpclient
-└── Transpose.Placeholders/    #   placeholder attributes (package tps.Placeholders)
+├── Transpose.Newtonsoft.Json/ #   package Transpose.Newtonsoft.Json
+├── Transpose.Howler/          #   package Transpose.Howler
+├── Transpose.WebGL2/          #   package Transpose.WebGL2
+├── Transpose.P2/              #   package Transpose.P2
+├── Transpose.HttpClient/      #   package Transpose.HttpClient
+└── Transpose.Placeholders/    #   placeholder attributes (package Transpose.Placeholders)
 
 docs/, logo/, lib/, External-less # docs, transpose.png/svg, misc
 ```
@@ -76,7 +81,7 @@ and the feature-by-feature roadmap (naming there predates the rebrand).
 ### The base reference assembly (`Transpose.dll`) and the runtime (`tps.js`)
 
 `CompilationBuilder` always injects `Transpose.dll` as the sole BCL reference (`TransposeAssemblies`
-locates it in the NuGet cache under package `tps`, or via the `TRANSPOSE_DLL_PATH` env var).
+locates it in the NuGet cache under package `Transpose`, or via the `TRANSPOSE_DLL_PATH` env var).
 `Transpose.dll` redefines `System.*` with the codegen attributes that drive emission, and embeds the
 JS runtime `tps.js`. Generated code runs against that runtime.
 

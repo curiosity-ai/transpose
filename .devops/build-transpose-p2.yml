@@ -1,29 +1,25 @@
 variables:
-  h5base: '$(Build.SourcesDirectory)/H5/H5/H5.csproj'
-  h5core: '$(Build.SourcesDirectory)/H5/H5.Core/H5.Core.csproj'
-  h5json: '$(Build.SourcesDirectory)/H5/H5.Newtonsoft.Json/H5.Newtonsoft.Json.csproj'
+  transposeP2: '$(Build.SourcesDirectory)/Packages/Transpose.P2/Transpose.P2.csproj'
   buildConfiguration: 'Release'
   targetVersion: yy.M.$(build.buildId)
-
-
 
 pool:
   vmImage: 'windows-latest'
 
-trigger: 
+trigger:
   branches:
     include:
     - master
   paths:
     include:
-    - H5/H5.Core/*
-    - .devops/build-h5-core.yml
+    - Packages/Transpose.P2/*
+    - .devops/build-transpose-p2.yml
 
 pr: none
 
 steps:
 - checkout: self
-  
+
 - script: |
     echo "Commit message: $(Build.SourceVersionMessage)"
 
@@ -41,35 +37,35 @@ steps:
     targetType: 'inline'
     script: |
       $dottedDate = (Get-Date).ToString("yy.M")
-      $buildID = $($env:BUILD_BUILDID) 
+      $buildID = $($env:BUILD_BUILDID)
       $modBuildID = [int]$buildID % 65536  # ensure fits in int16
       $newTargetVersion = "$dottedDate.$modBuildID"
       Write-Host "##vso[task.setvariable variable=targetVersion;]$newTargetVersion"
       Write-Host "Updated targetVersion to '$newTargetVersion'"
 
 - task: CmdLine@2
-  displayName: 'Install h5 compiler'
+  displayName: 'Install Transpose compiler'
   inputs:
-    script: 'dotnet tool install --global h5-compiler'
+    script: 'dotnet tool install --global Transpose.Compiler'
 
 - task: DotNetCoreCLI@2
   displayName: 'restore nuget'
   inputs:
     command: 'restore'
-    projects: '$(h5core)'
+    projects: '$(transposeP2)'
 
 - task: DotNetCoreCLI@2
   displayName: 'build'
   inputs:
     command: 'build'
-    projects: '$(h5core)'
+    projects: '$(transposeP2)'
     arguments: '-c $(buildConfiguration) /p:Version=$(targetVersion)'
 
 - task: DotNetCoreCLI@2
   displayName: 'pack nuget'
   inputs:
     command: 'pack'
-    packagesToPack: '$(h5core)'
+    packagesToPack: '$(transposeP2)'
     configuration: '$(buildConfiguration)'
     versioningScheme: 'off'
     buildProperties: 'Version="$(targetVersion)";AllowUnsafeBlocks="True";LangVersion="latest"'
@@ -78,6 +74,6 @@ steps:
   displayName: 'push nuget'
   inputs:
     command: 'push'
-    packagesToPush: '**/h5.core.$(targetVersion).nupkg'
+    packagesToPush: '**/Transpose.P2.$(targetVersion).nupkg'
     nuGetFeedType: 'external'
     publishFeedCredentials: 'nuget-curiosity-org'

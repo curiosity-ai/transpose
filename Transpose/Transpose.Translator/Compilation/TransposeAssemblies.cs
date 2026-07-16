@@ -34,7 +34,7 @@ public static class TransposeAssemblies
 
         var candidates =
             from root in NuGetRoots()
-            let pkg = Path.Combine(root, "tps")
+            let pkg = Path.Combine(root, "transpose")
             where Directory.Exists(pkg)
             from versionDir in Directory.GetDirectories(pkg)
             let dll = Path.Combine(versionDir, "lib", "netstandard2.0", "Transpose.dll")

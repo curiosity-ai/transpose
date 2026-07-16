@@ -14,7 +14,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="tps" Version="26.2.64514" />
+    <PackageReference Include="Transpose" Version="26.2.64514" />
   </ItemGroup>
 
   <ItemGroup>
@@ -26,7 +26,7 @@
     <IncludeSymbols>false</IncludeSymbols>
     <PackageIcon>transpose.png</PackageIcon>
     <LangVersion>7.2</LangVersion>
-    <PackageId>tps.core</PackageId>
+    <PackageId>Transpose.Core</PackageId>
     <Authors>Curiosity GmbH, Object.NET, Inc.</Authors>
     <Company>Curiosity GmbH, Object.NET, Inc.</Company>
     <Description>Core library used by the C# to JavaScript compiler 🚀</Description>
