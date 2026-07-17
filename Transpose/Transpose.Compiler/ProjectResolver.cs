@@ -14,6 +14,12 @@ internal sealed class ResolvedProject
     public required string CsprojPath { get; init; }
     public required string ProjectDir { get; init; }
     public required string AssemblyName { get; init; }
+
+    /// <summary>The project's target framework (e.g. <c>netstandard2.0</c>), used to compute the
+    /// build-output directory (<c>bin/&lt;config&gt;/&lt;tfm&gt;</c>) so tps writes the emitted assembly
+    /// where the SDK/<c>dotnet pack</c> expects it. Defaults to <c>netstandard2.0</c> — the framework
+    /// the Transpose packages ship (and the one the Transpose.Build.Target SDK forces).</summary>
+    public required string TargetFramework { get; init; }
     public required List<(string path, string text)> Sources { get; init; }
     public required List<string> ReferencePaths { get; init; }
     public required List<string> DefineConstants { get; init; }
@@ -37,6 +43,10 @@ internal static class ProjectResolver
         var doc = XDocument.Load(csprojPath);
 
         var assemblyName = Property(doc, "AssemblyName") ?? Path.GetFileNameWithoutExtension(csprojPath);
+
+        var targetFramework = Property(doc, "TargetFramework")
+                  ?? Property(doc, "TargetFrameworks")?.Split(';', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim()
+                  ?? "netstandard2.0";
 
         var defines = (Property(doc, "DefineConstants") ?? "")
             .Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries)
@@ -64,6 +74,7 @@ internal static class ProjectResolver
             CsprojPath = csprojPath,
             ProjectDir = projectDir,
             AssemblyName = assemblyName,
+            TargetFramework = targetFramework,
             Sources = sources,
             ReferencePaths = references.Values.ToList(),
             DefineConstants = defines,

@@ -35,12 +35,14 @@ public static class TransposeAssemblies
 
         // Resolve Transpose.dll from the NuGet global-packages cache using the same flow as h5
         // (Translator.GetPackagesCacheFolder): honour NUGET_PACKAGES first, then the per-platform
-        // user-profile default. NuGet lower-cases the package-id folder on case-sensitive
-        // filesystems (Linux/macOS) but preserves it on Windows, so probe both casings.
+        // user-profile default. The base library ships as the "Transpose.BCL" package (its assembly
+        // is still Transpose.dll). NuGet lower-cases the package-id folder on case-sensitive
+        // filesystems (Linux/macOS) but preserves it on Windows, so probe both casings. The
+        // historical "Transpose" id is still probed for backwards compatibility with older caches.
         var candidates =
             from root in NuGetRoots()
             where Directory.Exists(root)
-            from id in new[] { "Transpose", "transpose" }
+            from id in new[] { "Transpose.BCL", "transpose.bcl", "Transpose", "transpose" }
             let pkg = Path.Combine(root, id)
             where Directory.Exists(pkg)
             from versionDir in Directory.GetDirectories(pkg)

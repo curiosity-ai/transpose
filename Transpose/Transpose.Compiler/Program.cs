@@ -241,7 +241,9 @@ public static class Program
 
         // Assemble the resource bundles (tps.js, tps.meta.js, …) declared in tps.json.
         var bundles = RuntimeAssembler.Assemble(project.ProjectDir);
-        var dllPath = outPath ?? Path.Combine(project.ProjectDir, "bin", configuration, "netstandard2.1", project.AssemblyName + ".dll");
+        // Write the assembly to bin/<config>/<tfm>/, matching the SDK's output path so `dotnet pack`
+        // finds it (the Transpose.Build.Target SDK forces netstandard2.0, so that is the effective tfm).
+        var dllPath = outPath ?? Path.Combine(project.ProjectDir, "bin", configuration, project.TargetFramework, project.AssemblyName + ".dll");
         var outDir = Path.GetDirectoryName(Path.GetFullPath(dllPath))!;
         Directory.CreateDirectory(outDir);
         foreach (var (name, bytes) in bundles)
