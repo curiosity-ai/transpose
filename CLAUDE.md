@@ -155,16 +155,16 @@ plain CLI, by design.
 
 ## Known remaining work (compilation-related)
 
-- **Runtime assembly must be a clean corlib.** `tps --build-runtime` (auto-selected when a project's
-  `tps.json` declares `outputBy: ClassPath`) already transpiles `Transpose.BCL` into
-  `Resources/.generated/*.js`, stitches those with the hand-written `Resources/*.js` primitives per
-  `BCL/Transpose.BCL/tps.json` into `tps.js` + `tps.meta.js`, embeds them into `Transpose.dll`, and
-  `dotnet build`/`pack` wraps that DLL into the **`Transpose.BCL`** NuGet package. The remaining gap:
-  the DLL it emits is not a clean core library — Roslyn adds an `mscorlib` assembly reference (and the
-  Mono.Cecil resource-embed step re-adds one), so Roslyn will not treat it as the corlib downstream
-  (`CS0518: predefined type … not defined`). The translator tests therefore still need a clean
-  `NoStdLib` reference assembly (as `bootstrap.sh` builds via csc) with `tps.js` embedded at compile
-  time; making `tps --build-runtime` emit such a corlib directly is the main outstanding item.
+- **Runtime assembly build (done).** `tps --build-runtime` (auto-selected when a project's `tps.json`
+  declares `outputBy: ClassPath`) transpiles `Transpose.BCL` into `Resources/.generated/*.js`,
+  stitches those with the hand-written `Resources/*.js` primitives per `BCL/Transpose.BCL/tps.json`
+  into `tps.js` + `tps.meta.js`, and emits `Transpose.dll` with those bundles embedded as manifest
+  resources **through Roslyn's emitter** (the bundles are passed to `Compilation.Emit`, never via a
+  Mono.Cecil post-process — Cecil's writer injects an `mscorlib` assembly reference that would stop
+  Roslyn from treating the runtime as the corlib downstream, i.e. `CS0518: predefined type … not
+  defined`). The result is a clean core library (zero assembly references) that doubles as the sole
+  BCL reference. `dotnet build`/`pack` wraps it into the **`Transpose.BCL`** NuGet package
+  (`lib/netstandard2.0/Transpose.dll`), and the translator tests run end-to-end against it.
 - **`outputBy` file-layout modes** (Class/ClassPath/Namespace/…): `ClassPath` (used by the runtime
   build above) is implemented; the other layouts still emit a single bundle.
 - **Bundle minification and source maps** for the emitted bundle (Release only selects pre-minified

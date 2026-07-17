@@ -176,22 +176,33 @@ public sealed class RoslynTranslator
 
         var asmCompilation = compilation.WithOptions(
             compilation.Options.WithOutputKind(OutputKind.DynamicallyLinkedLibrary));
-        using var ms = new MemoryStream();
-        // No embedded debug info: the base library ships with none (matching its csproj), and an
-        // embedded PDB makes the emitted corlib reference harder for Roslyn to consume downstream.
-        var emit = asmCompilation.Emit(ms, options: new Microsoft.CodeAnalysis.Emit.EmitOptions(
-            metadataOnly: false, includePrivateMembers: true));
-        if (!emit.Success)
-        {
-            diagnostics.AddRange(emit.Diagnostics
-                .Where(d => d.Severity == DiagnosticSeverity.Error && !BenignForJs.Contains(d.Id)));
-            return new RuntimePackageResult(null, null, diagnostics);
-        }
-        var assemblyBytes = ms.ToArray();
 
         var emitter = new Emitter(compilation, assemblyName) { ReflectionEnabled = reflectionEnabled };
         var classPath = emitter.EmitClassPath();
-        return new RuntimePackageResult(assemblyBytes, classPath, diagnostics);
+
+        // Emit the assembly with the runtime JS bundles embedded as manifest resources, through
+        // Roslyn — see RuntimePackageResult.EmitAssembly for why this must not be a Mono.Cecil
+        // post-process. No embedded debug info: the base library ships with none (matching its
+        // csproj), and an embedded PDB makes the emitted corlib harder for Roslyn to consume.
+        byte[] EmitAssembly(IReadOnlyList<(string name, byte[] bytes)> resources)
+        {
+            var descriptions = resources
+                .Select(r => new ResourceDescription(r.name, () => new MemoryStream(r.bytes), isPublic: false))
+                .ToList();
+            using var ms = new MemoryStream();
+            var emit = asmCompilation.Emit(ms, manifestResources: descriptions,
+                options: new Microsoft.CodeAnalysis.Emit.EmitOptions(metadataOnly: false, includePrivateMembers: true));
+            if (!emit.Success)
+            {
+                var errors = string.Join("\n", emit.Diagnostics
+                    .Where(d => d.Severity == DiagnosticSeverity.Error && !BenignForJs.Contains(d.Id))
+                    .Select(d => d.GetMessage()));
+                throw new TranslationException($"Emitting the runtime assembly failed:\n{errors}");
+            }
+            return ms.ToArray();
+        }
+
+        return new RuntimePackageResult(EmitAssembly, classPath, diagnostics);
     }
 
     /// <summary>
