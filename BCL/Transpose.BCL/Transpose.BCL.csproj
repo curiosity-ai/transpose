@@ -12,7 +12,7 @@
   <PropertyGroup>
     <IncludeSymbols>false</IncludeSymbols>
     <PackageIcon>transpose.png</PackageIcon>
-    <PackageId>Transpose</PackageId>
+    <PackageId>Transpose.BCL</PackageId>
     <LangVersion>7.2</LangVersion>
     <Authors>Curiosity GmbH, Object.NET, Inc.</Authors>
     <Company>Curiosity GmbH, Object.NET, Inc.</Company>
