@@ -13,7 +13,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Transpose" Version="26.2.64514" />
+    <PackageReference Include="Transpose.BCL" Version="26.2.64514" />
     <PackageReference Include="Transpose.Core" Version="26.4.580" />
   </ItemGroup>
 

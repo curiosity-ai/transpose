@@ -36,17 +36,29 @@ public sealed class AssemblyBuildResult
 /// </summary>
 public sealed class RuntimePackageResult
 {
-    public RuntimePackageResult(byte[]? assemblyBytes, Emitter.ClassPathOutput? classPath,
+    public RuntimePackageResult(
+        System.Func<IReadOnlyList<(string name, byte[] bytes)>, byte[]>? emitAssembly,
+        Emitter.ClassPathOutput? classPath,
         IReadOnlyList<Diagnostic> diagnostics)
     {
-        AssemblyBytes = assemblyBytes;
+        EmitAssembly = emitAssembly;
         ClassPath = classPath;
         Diagnostics = diagnostics;
     }
 
-    public byte[]? AssemblyBytes { get; }
+    /// <summary>
+    /// Emits the final runtime assembly with the given JS bundles (tps.js, tps.meta.js, …) embedded
+    /// as manifest resources, returning the assembly bytes. The embedding is done through Roslyn's
+    /// emitter — not a post-processing pass — precisely so the result stays a clean core library:
+    /// Mono.Cecil's assembly writer injects an <c>mscorlib</c> assembly reference, which stops
+    /// Roslyn from recognising the runtime as the corlib when it is later used as the sole BCL
+    /// reference (every downstream type would fail with CS0518 "predefined type … not defined").
+    /// Deferred (rather than eagerly emitted) because the bundles are assembled by the CLI from the
+    /// ClassPath output only after this method returns.
+    /// </summary>
+    public System.Func<IReadOnlyList<(string name, byte[] bytes)>, byte[]>? EmitAssembly { get; }
     public Emitter.ClassPathOutput? ClassPath { get; }
     public IReadOnlyList<Diagnostic> Diagnostics { get; }
     public IEnumerable<Diagnostic> Errors => Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error);
-    public bool Success => AssemblyBytes is not null && ClassPath is not null && !Errors.Any();
+    public bool Success => EmitAssembly is not null && ClassPath is not null && !Errors.Any();
 }

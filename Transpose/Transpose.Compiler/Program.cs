@@ -241,7 +241,9 @@ public static class Program
 
         // Assemble the resource bundles (tps.js, tps.meta.js, …) declared in tps.json.
         var bundles = RuntimeAssembler.Assemble(project.ProjectDir);
-        var dllPath = outPath ?? Path.Combine(project.ProjectDir, "bin", configuration, "netstandard2.1", project.AssemblyName + ".dll");
+        // Write the assembly to bin/<config>/<tfm>/, matching the SDK's output path so `dotnet pack`
+        // finds it (the Transpose.Build.Target SDK forces netstandard2.0, so that is the effective tfm).
+        var dllPath = outPath ?? Path.Combine(project.ProjectDir, "bin", configuration, project.TargetFramework, project.AssemblyName + ".dll");
         var outDir = Path.GetDirectoryName(Path.GetFullPath(dllPath))!;
         Directory.CreateDirectory(outDir);
         foreach (var (name, bytes) in bundles)
@@ -250,12 +252,16 @@ public static class Program
             Console.WriteLine($"  assembled:  {name} ({bytes.Length:N0} bytes)");
         }
 
-        // Embed the assembled JS bundles into the emitted reference assembly.
-        File.WriteAllBytes(dllPath, result.AssemblyBytes!);
-        var items = bundles.Select(b => new EmbeddedItem(b.name, b.bytes, null)).ToList();
-        ResourceEmbedder.Embed(dllPath, items);
+        // Emit the reference assembly with the JS bundles embedded as manifest resources, via
+        // Roslyn (not a Mono.Cecil post-process) so the DLL stays a clean core library — Cecil's
+        // writer injects an mscorlib reference, which stops Roslyn from treating the runtime as the
+        // corlib when compiling user code against it (every type would fail with CS0518).
+        byte[] assemblyBytes;
+        try { assemblyBytes = result.EmitAssembly!(bundles); }
+        catch (Exception ex) { Console.Error.WriteLine($"Runtime assembly emit failed: {ex.Message}"); return 2; }
+        File.WriteAllBytes(dllPath, assemblyBytes);
 
-        Console.WriteLine($"\nOK — built runtime {Path.GetFileName(dllPath)} with {items.Count} embedded bundle(s) in {sw.ElapsedMilliseconds} ms.");
+        Console.WriteLine($"\nOK — built runtime {Path.GetFileName(dllPath)} with {bundles.Count} embedded bundle(s) in {sw.ElapsedMilliseconds} ms.");
         Console.WriteLine($"  dll:      {dllPath}");
         Console.WriteLine($"  bundles:  written to {outDir}");
         return 0;

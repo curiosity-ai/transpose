@@ -6,7 +6,7 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="Transpose" Version="25.11.62743" />
+        <PackageReference Include="Transpose.BCL" Version="25.11.62743" />
         <PackageReference Include="Transpose.Core" Version="25.11.62746" />
         <PackageReference Include="Transpose.Newtonsoft.Json" Version="25.11.62749" />
         <PackageReference Include="Tesserae" Version="2026.1.63737" />

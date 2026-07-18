@@ -9,14 +9,17 @@ clean-room Roslyn translator. The legacy Bridge/NRefactory pipeline has been rem
   `Transpose.define(...)`). The language-helper shim is `TransposeR`.
 - **Short form** for the JavaScript runtime / config / files: `tps` (e.g. the runtime bundle
   `tps.js`, the config file `tps.json`, the JS module name `tps`, the compiler command `tps`).
-- **NuGet package ids** use the `Transpose` / `Transpose.*` naming and match each project's
-  `AssemblyName` (e.g. `Transpose`, `Transpose.Core`, `Transpose.Newtonsoft.Json`,
-  `Transpose.Compiler`).
+- **NuGet package ids** use the `Transpose` / `Transpose.*` naming and (except for the base
+  library) match each project's `AssemblyName` (e.g. `Transpose.Core`, `Transpose.Newtonsoft.Json`,
+  `Transpose.Compiler`). The one exception is the base library: its `AssemblyName` is `Transpose`
+  (so the DLL and runtime-detection stay `Transpose.dll` / assembly `Transpose`) but its package id
+  is **`Transpose.BCL`**.
 
 > Historical note: the codebase was renamed from H5 with a case-sensitive mapping — `H5` →
 > `Transpose` (namespaces, runtime global, assembly names) and `h5` → `tps` (JS runtime file
 > names, config, module name). NuGet **package ids** were subsequently renamed from `tps` /
-> `tps.*` to `Transpose` / `Transpose.*` to match the assembly names. Non-library tokens were
+> `tps.*` to `Transpose` / `Transpose.*` to match the assembly names (the base library's package id
+> was later changed again to `Transpose.BCL`, though its assembly stays `Transpose`). Non-library tokens were
 > deliberately preserved (e.g. the `<h5>` HTML tag binding in `Transpose.Core`, hash locals
 > `h1..h5` in `ValueTuple`).
 
@@ -43,7 +46,7 @@ Transpose/                     # The compiler toolchain
 └── Transpose.Translator.Tests/# MSTest suite; transpiles snippets and diffs vs native .NET via Playwright
 
 BCL/                           # The base runtime libraries
-├── Transpose.BCL/             # Base library. AssemblyName Transpose, package id `Transpose`, namespace Transpose
+├── Transpose.BCL/             # Base library. AssemblyName Transpose, package id `Transpose.BCL`, namespace Transpose
 │   ├── Transpose/             #   codegen attributes ([External],[Template],[Name],[Script],...) + markers
 │   ├── System/, shared/       #   C# definitions of the .NET BCL (System.Object, string, collections, ...)
 │   ├── Resources/*.js         #   hand-written JavaScript runtime primitives (Core.js, Class.js, ...)
@@ -81,7 +84,8 @@ and the feature-by-feature roadmap (naming there predates the rebrand).
 ### The base reference assembly (`Transpose.dll`) and the runtime (`tps.js`)
 
 `CompilationBuilder` always injects `Transpose.dll` as the sole BCL reference (`TransposeAssemblies`
-locates it in the NuGet cache under package `Transpose`, or via the `TRANSPOSE_DLL_PATH` env var).
+locates it in the NuGet cache under package `Transpose.BCL` — the historical `Transpose` id is still
+probed for older caches — or via the `TRANSPOSE_DLL_PATH` env var).
 `Transpose.dll` redefines `System.*` with the codegen attributes that drive emission, and embeds the
 JS runtime `tps.js`. Generated code runs against that runtime.
 
@@ -151,14 +155,18 @@ plain CLI, by design.
 
 ## Known remaining work (compilation-related)
 
-- **Full `tps.js` runtime assembly.** The base package build must transpile `Transpose.BCL` with
-  `outputBy: ClassPath` into `Resources/.generated/*.js`, then stitch those with the hand-written
-  `Resources/*.js` primitives per `BCL/Transpose.BCL/tps.json` (header/remark/files) into `tps.js`,
-  and embed it into `Transpose.dll`. `bootstrap.sh` currently produces the reference assembly and
-  transpiles the binding libraries; wiring the runtime-bundle assembly + embedding into a first-class
-  `tps` mode is the main outstanding item, and is what the translator tests need to run end-to-end.
-- **`outputBy` file-layout modes** (Class/ClassPath/Namespace/…): the CLI currently emits a single
-  bundle; `ClassPath` (needed above) is not yet implemented.
+- **Runtime assembly build (done).** `tps --build-runtime` (auto-selected when a project's `tps.json`
+  declares `outputBy: ClassPath`) transpiles `Transpose.BCL` into `Resources/.generated/*.js`,
+  stitches those with the hand-written `Resources/*.js` primitives per `BCL/Transpose.BCL/tps.json`
+  into `tps.js` + `tps.meta.js`, and emits `Transpose.dll` with those bundles embedded as manifest
+  resources **through Roslyn's emitter** (the bundles are passed to `Compilation.Emit`, never via a
+  Mono.Cecil post-process — Cecil's writer injects an `mscorlib` assembly reference that would stop
+  Roslyn from treating the runtime as the corlib downstream, i.e. `CS0518: predefined type … not
+  defined`). The result is a clean core library (zero assembly references) that doubles as the sole
+  BCL reference. `dotnet build`/`pack` wraps it into the **`Transpose.BCL`** NuGet package
+  (`lib/netstandard2.0/Transpose.dll`), and the translator tests run end-to-end against it.
+- **`outputBy` file-layout modes** (Class/ClassPath/Namespace/…): `ClassPath` (used by the runtime
+  build above) is implemented; the other layouts still emit a single bundle.
 - **Bundle minification and source maps** for the emitted bundle (Release only selects pre-minified
   resource variants today).
 - **Reference resolution beyond the NuGet cache** — `<Reference HintPath>` and `tps.json`
