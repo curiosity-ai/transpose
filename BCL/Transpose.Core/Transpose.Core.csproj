@@ -1,6 +1,6 @@
-<Project Sdk="Transpose.Build.Target/26.7.2685">
+<Project Sdk="Transpose.Build.Target/26.7.2692">
   <PropertyGroup>
-    <TargetFramework>netstandard2.1</TargetFramework>
+    <TargetFramework>netstandard2.0</TargetFramework>
     <AssemblyName>Transpose.Core</AssemblyName>
     <DebugType>None</DebugType>
     <DebugSymbols>false</DebugSymbols>
