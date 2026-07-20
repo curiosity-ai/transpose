@@ -1,4 +1,4 @@
-﻿<Project Sdk="Transpose.Build.Target/26.7.2669">
+﻿<Project Sdk="Transpose.Build.Target/26.7.2692">
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
     <AssemblyName>Transpose.Newtonsoft.Json</AssemblyName>
@@ -8,7 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Transpose.BCL" Version="26.2.64514" />
+    <PackageReference Include="Transpose.BCL" Version="26.7.2749" />
   </ItemGroup>
 
   <ItemGroup>
