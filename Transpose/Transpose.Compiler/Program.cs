@@ -66,6 +66,20 @@ public static class Program
             return 1;
         }
 
+        // When the Transpose SDK invokes `tps --project` for a plain library — no explicit `--out`,
+        // not the `--build-runtime` corlib, and no `tps.json` (so it is neither the ClassPath runtime
+        // nor an app that builds a site) — produce the distributable package assembly, exactly as
+        // `--emit-package` does: the .NET DLL (with the compiled JS + Transpose.Resources.json manifest
+        // embedded) that `dotnet pack` wraps into `lib/<tfm>/<Assembly>.dll`. Without this the SDK
+        // build emits only a stray .js and `dotnet pack` fails with NU5026 (<Assembly>.dll not found).
+        // Projects that pass `--out` (bootstrap, tooling) keep writing a single .js bundle unchanged.
+        if (!emitPackage && !buildRuntime && outPath is null
+            && TransposeJson.TryLoad(Path.GetDirectoryName(csproj)!) is null)
+        {
+            emitPackage = true;
+            separateAssemblies = true;
+        }
+
         Console.WriteLine($"tps: compiling {Path.GetFileName(csproj)}");
         var sw = Stopwatch.StartNew();
 
