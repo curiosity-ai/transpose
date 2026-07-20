@@ -66,15 +66,20 @@ public static class Program
             return 1;
         }
 
-        // When the Transpose SDK invokes `tps --project` for a plain library — no explicit `--out`,
-        // not the `--build-runtime` corlib, and no `tps.json` (so it is neither the ClassPath runtime
-        // nor an app that builds a site) — produce the distributable package assembly, exactly as
+        // When the Transpose SDK invokes `tps --project` for a library — no explicit `--out` and not
+        // the `--build-runtime` corlib — produce the distributable package assembly, exactly as
         // `--emit-package` does: the .NET DLL (with the compiled JS + Transpose.Resources.json manifest
         // embedded) that `dotnet pack` wraps into `lib/<tfm>/<Assembly>.dll`. Without this the SDK
-        // build emits only a stray .js and `dotnet pack` fails with NU5026 (<Assembly>.dll not found).
+        // build emits only a stray .js (or a runnable site folder) and `dotnet pack` fails with
+        // NU5026 (<Assembly>.dll not found).
+        //
+        // A binding library needs this even when it carries a tps.json (which only configures its JS
+        // layout / embedded resources): tps.json presence alone does not make it a site app. Only a
+        // *non-packable* project with a tps.json builds a runnable site; a packable one is a library.
         // Projects that pass `--out` (bootstrap, tooling) keep writing a single .js bundle unchanged.
         if (!emitPackage && !buildRuntime && outPath is null
-            && TransposeJson.TryLoad(Path.GetDirectoryName(csproj)!) is null)
+            && (ProjectResolver.IsPackable(csproj)
+                || TransposeJson.TryLoad(Path.GetDirectoryName(csproj)!) is null))
         {
             emitPackage = true;
             separateAssemblies = true;
@@ -120,10 +125,15 @@ public static class Program
         // outputBy: ClassPath, stitch the per-class files with the hand-written Resources primitives
         // into tps.js per the project's tps.json, and embed tps.js + tps.meta.js into Transpose.dll.
         //
-        // A project that declares outputBy: ClassPath in its tps.json *defines* the BCL (it is the
-        // base runtime library), so it is always built this way — self-contained, with no
-        // Transpose.dll reference — even when the SDK invokes tps without an explicit --build-runtime.
-        if (buildRuntime || string.Equals(tpscfg?.OutputBy, "ClassPath", StringComparison.OrdinalIgnoreCase))
+        // This path is ONLY for the base library, which *defines* the BCL and therefore references no
+        // Transpose.dll of its own. A binding library (Transpose.Newtonsoft.Json, Transpose.WebGL2, …)
+        // may also declare outputBy: ClassPath for its JS layout, but it references the Transpose BCL
+        // and must bind against it — compiling it self-contained would leave System.Object and every
+        // other predefined type undefined (CS0518 ×N). Such libraries fall through to the package path.
+        var referencesTransposeBcl = project.ReferencePaths.Any(p =>
+            string.Equals(Path.GetFileNameWithoutExtension(p), "Transpose", StringComparison.OrdinalIgnoreCase));
+        if (buildRuntime
+            || (string.Equals(tpscfg?.OutputBy, "ClassPath", StringComparison.OrdinalIgnoreCase) && !referencesTransposeBcl))
             return BuildRuntime(project, configuration, sw, outPath);
 
         // Reflection settings come from the project's tps.json (target inline vs a .meta.js file).

@@ -44,9 +44,7 @@ internal static class ProjectResolver
 
         var assemblyName = Property(doc, "AssemblyName") ?? Path.GetFileNameWithoutExtension(csprojPath);
 
-        var targetFramework = Property(doc, "TargetFramework")
-                  ?? Property(doc, "TargetFrameworks")?.Split(';', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim()
-                  ?? "netstandard2.0";
+        var targetFramework = EffectiveTargetFramework(doc);
 
         var defines = (Property(doc, "DefineConstants") ?? "")
             .Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries)
@@ -216,6 +214,20 @@ internal static class ProjectResolver
     public static string? OutputDll(string csprojPath, string configuration) => ProjectOutputDll(csprojPath, configuration);
 
     /// <summary>
+    /// True when the project produces a NuGet package (<c>GeneratePackageOnBuild</c> or
+    /// <c>IsPackable</c> set to true). Such a project must emit the package assembly that
+    /// <c>dotnet pack</c> wraps — even when it also carries a tps.json (which only configures its JS
+    /// layout / embedded resources), so it must not be mistaken for a runnable site app.
+    /// </summary>
+    public static bool IsPackable(string csprojPath)
+    {
+        if (!File.Exists(csprojPath)) return false;
+        var doc = XDocument.Load(csprojPath);
+        static bool IsTrue(string? v) => string.Equals(v?.Trim(), "true", StringComparison.OrdinalIgnoreCase);
+        return IsTrue(Property(doc, "GeneratePackageOnBuild")) || IsTrue(Property(doc, "IsPackable"));
+    }
+
+    /// <summary>
     /// True if <paramref name="csprojPath"/>'s package DLL is present, carries embedded Transpose resources
     /// (i.e. was built by the translator, not a plain csc build), and is newer than the project's
     /// .csproj, all its source files, and every referenced project's DLL — the same incremental
@@ -259,9 +271,7 @@ internal static class ProjectResolver
         var doc = XDocument.Load(csprojPath);
         var dir = Path.GetDirectoryName(csprojPath)!;
         var asm = Property(doc, "AssemblyName") ?? Path.GetFileNameWithoutExtension(csprojPath);
-        var tfm = Property(doc, "TargetFramework")
-                  ?? Property(doc, "TargetFrameworks")?.Split(';', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()
-                  ?? "netstandard2.0";
+        var tfm = EffectiveTargetFramework(doc);
         var binBase = Path.Combine(dir, "bin", configuration, tfm);
         var dll = Path.Combine(binBase, asm + ".dll");
         return dll;
@@ -392,6 +402,27 @@ internal static class ProjectResolver
 
     private static string? Property(XDocument doc, string name)
         => doc.Descendants().FirstOrDefault(e => e.Name.LocalName == name)?.Value;
+
+    /// <summary>
+    /// The target framework the build actually produces its assembly under — the path
+    /// <c>dotnet pack</c> then looks for it at (<c>bin/&lt;config&gt;/&lt;tfm&gt;/&lt;Assembly&gt;.dll</c>).
+    /// The Transpose.Build.Target SDK forcibly overrides <c>&lt;TargetFramework&gt;</c> to
+    /// <c>netstandard2.0</c> in its Sdk.targets (regardless of what the csproj declares), so a
+    /// binding library that declares e.g. <c>netstandard2.1</c> is still built and packed as
+    /// <c>netstandard2.0</c>. Honour that here, otherwise tps writes the DLL under the declared tfm
+    /// and <c>dotnet pack</c> fails with NU5026 (<c>&lt;Assembly&gt;.dll</c> not found).
+    /// </summary>
+    private static string EffectiveTargetFramework(XDocument doc)
+    {
+        var sdk = doc.Root?.Attribute("Sdk")?.Value
+                  ?? doc.Descendants().FirstOrDefault(e => e.Name.LocalName == "Sdk")?.Attribute("Name")?.Value
+                  ?? "";
+        if (sdk.StartsWith("Transpose.Build.Target", StringComparison.OrdinalIgnoreCase))
+            return "netstandard2.0";
+        return Property(doc, "TargetFramework")
+               ?? Property(doc, "TargetFrameworks")?.Split(';', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim()
+               ?? "netstandard2.0";
+    }
 
     private static LanguageVersion ParseLangVersion(string? v)
     {
