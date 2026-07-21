@@ -388,12 +388,54 @@ public sealed partial class Emitter
             EmitExpression(extReceiver);
             first = false;
         }
-        for (var i = 0; i < args.Count; i++)
+        if (args.Any(a => a.NameColon is not null))
         {
-            if (!first) _w.Write(", ");
-            first = false;
-            if (holders[i] is not null) _w.Write(holders[i]!);
-            else EmitExpressionConverted(args[i].Expression, i < symbol.Parameters.Length ? symbol.Parameters[i].Type : null);
+            // Named arguments: rebuild the positional list in parameter order and fill any omitted
+            // optional that precedes a provided one with its default (a JS call can't skip a hole).
+            // Without this a skipped optional shifted every later argument by one — e.g. Popover's
+            // `Tippy.ShowFor(anchor, content, out hide, …, manualTrigger: true, …)` (no onClickOutside)
+            // put `true` into the onClickOutside slot, so tippy's `props.onClickOutside` was a boolean
+            // and its `.apply` threw. The out/ref holders are keyed by source-arg index, so they carry
+            // across the reorder. (Any extension-method receiver was already emitted above.)
+            var slotArg = new int[symbol.Parameters.Length];
+            for (var k = 0; k < slotArg.Length; k++) slotArg[k] = -1;
+            var pos = 0;
+            for (var i = 0; i < args.Count; i++)
+            {
+                if (args[i].NameColon is { } nc)
+                {
+                    var pi = symbol.Parameters.ToList().FindIndex(p => p.Name == nc.Name.Identifier.Text);
+                    if (pi >= 0) slotArg[pi] = i;
+                }
+                else if (pos < slotArg.Length) slotArg[pos++] = i;
+            }
+            var lastSlot = -1;
+            for (var k = 0; k < slotArg.Length; k++) if (slotArg[k] >= 0) lastSlot = k;
+            for (var k = 0; k <= lastSlot; k++)
+            {
+                if (!first) _w.Write(", ");
+                first = false;
+                var ai = slotArg[k];
+                if (ai >= 0)
+                {
+                    if (holders[ai] is not null) _w.Write(holders[ai]!);
+                    else EmitExpressionConverted(args[ai].Expression, symbol.Parameters[k].Type);
+                }
+                else if (symbol.Parameters[k].HasExplicitDefaultValue)
+                    _w.Write(ConstantLiteral(symbol.Parameters[k].ExplicitDefaultValue, symbol.Parameters[k].Type));
+                else
+                    _w.Write("null");
+            }
+        }
+        else
+        {
+            for (var i = 0; i < args.Count; i++)
+            {
+                if (!first) _w.Write(", ");
+                first = false;
+                if (holders[i] is not null) _w.Write(holders[i]!);
+                else EmitExpressionConverted(args[i].Expression, i < symbol.Parameters.Length ? symbol.Parameters[i].Type : null);
+            }
         }
         _w.Write("); ");
 
