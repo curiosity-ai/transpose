@@ -459,9 +459,13 @@ internal static class OutputBuilder
             if (formattedPath is not null)
                 js.Append("\n    ").Append($"<script src=\"{formattedPath}\" defer></script>");
 
-            // Minified HTML links the minified sibling when the formatted variant exists (Both mode).
-            if (!o.IsEmpty && o.MinifiedPath is not null && minSeen.Add(o.MinifiedPath))
-                jsMin.Append("\n    ").Append($"<script src=\"{o.MinifiedPath}\" defer></script>");
+            // Minified HTML links the minified sibling, falling back to the formatted path when no
+            // minified variant exists. (The legacy compiler dropped such files from the minified
+            // HTML entirely — so a resource declared once, with no .min sibling, silently failed to
+            // load in a Release build. Transpose keeps it: a missing .min just loads the plain file.)
+            var minifiedPath = o.MinifiedPath ?? (o.IsEmpty ? null : o.Path);
+            if (minifiedPath is not null && minSeen.Add(minifiedPath))
+                jsMin.Append("\n    ").Append($"<script src=\"{minifiedPath}\" defer></script>");
         }
 
         string? htmlName = (js.Length > 0 || css.Length > 0) ? "index.html" : null;
