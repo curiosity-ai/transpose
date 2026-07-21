@@ -236,6 +236,45 @@ public class Program
         }
 
         [TestMethod]
+        public async Task IntegerArithmeticOverflowWrapsAsync()
+        {
+            // "Managed" integer arithmetic (H5 default, matching Tesserae's h5.json `integer: Managed`):
+            // 32-bit +/-/*/ / and unary/bitwise/shift wrap on overflow like .NET unchecked, rather
+            // than growing as JS Numbers. Non-compound and compound forms must agree.
+            await RunTest(@"
+using System;
+public class Program
+{
+    static void P(object o) => Console.WriteLine(o);
+    public static void Main()
+    {
+        int a = 2000000000, b = 2000000000, c = -2000000000;
+        P(a + b);          // -294967296
+        P(a - c);          // -294967296
+        P(a * b);          // -1651507200
+        P(a + b + b);      // 1705032704
+        int big = 1500000000; P(big + big); P(big * 3);
+        int imin = int.MinValue; P(imin - 1);     // 2147483647
+        P(-imin);                                  // -2147483648
+        // compound must agree with the expanded form
+        int s = a; s += b;  P(s);                  // -294967296
+        int t = a; t *= 2;  P(t);                  // -294967296
+        // unsigned
+        uint ua = 3000000000, ub = 2000000000;
+        P(ua + ub);        // 705032704
+        P(ub - ua);        // 3294967296
+        P(ua * 2u);        // 1705032704
+        P(ua << 1);        // 1705032704
+        P(0xF0000000u | 0xFu); // 4026531855
+        uint big2 = 0xFF000000u; int four = 4; P(big2 >> four); // 267386880
+        uint uc = ua; uc += ub; P(uc);             // 705032704
+        // sub-word arithmetic promotes to int
+        byte p = 200, q = 100; P(p + q);           // 300
+    }
+}");
+        }
+
+        [TestMethod]
         public async Task IncrementDecrementNarrowingAsync()
         {
             // ++/-- on a sub-word integer wraps at the type boundary (`byte 255 + 1` == 0), and a
