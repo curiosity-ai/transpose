@@ -83,10 +83,12 @@ public sealed partial class Emitter
             _w.WriteLine("\"use strict\";");
             _w.WriteLine();
 
+            var done = 0;
             foreach (var type in types)
             {
                 EmitType(type);
                 _w.WriteLine();
+                CompileProgress.ReportStep("emitting JavaScript", ++done, types.Count);
             }
 
             if (inlineMeta) EmitReflectionMetadata(types);

@@ -96,6 +96,9 @@ public static class Program
         }
 
         Console.WriteLine($"tps: compiling {Path.GetFileName(csproj)}");
+        // Surface the translator's phase/step progress (binding, scanning, JS emit) so the long
+        // silent phases show visible movement. Quiet mode suppresses it.
+        if (!quiet) CompileProgress.Sink = msg => Console.WriteLine($"  {msg}");
         var sw = Stopwatch.StartNew();
 
         ResolvedProject project;

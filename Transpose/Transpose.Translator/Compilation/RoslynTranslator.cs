@@ -82,6 +82,7 @@ public sealed class RoslynTranslator
         MetadataTarget metadataTarget = MetadataTarget.Inline,
         bool emitAssembly = true)
     {
+        CompileProgress.Report("parsing sources + resolving references");
         var compilation = PhaseTimings.Measure("build compilation (parse + references)", () =>
             CompilationBuilder.Build(
                 sources, assemblyName, languageVersion,
@@ -89,6 +90,7 @@ public sealed class RoslynTranslator
                 preprocessorSymbols: preprocessorSymbols));
 
         var diagnostics = new List<Diagnostic>();
+        CompileProgress.Report("binding + analyzing");
         var roslynErrors = PhaseTimings.Measure("bind + diagnostics", () => compilation.GetDiagnostics()
             .Where(d => d.Severity == DiagnosticSeverity.Error && !BenignForJs.Contains(d.Id))
             .ToList());
@@ -99,6 +101,7 @@ public sealed class RoslynTranslator
         // alongside it. Scanning a compilation with errors is safe — the scanner tolerates missing
         // symbols — but guard against an unexpected throw so the Roslyn errors are never lost.
         IReadOnlyList<Diagnostic> unsupported;
+        CompileProgress.Report("scanning for unsupported features");
         try { unsupported = PhaseTimings.Measure("scan unsupported features", () => UnsupportedFeatureScanner.Scan(compilation)); }
         catch { unsupported = new List<Diagnostic>(); }
         diagnostics.AddRange(unsupported);
@@ -114,6 +117,7 @@ public sealed class RoslynTranslator
             var asmCompilation = compilation.WithOptions(
                 compilation.Options.WithOutputKind(OutputKind.DynamicallyLinkedLibrary));
             using var ms = new MemoryStream();
+            CompileProgress.Report("emitting .NET assembly");
             // Include private members so a referencing project sees the full member set — the
             // overload numbering (e.g. $ctorN) must match what this assembly emits for itself,
             // and that numbering counts private overloads too.
@@ -137,6 +141,7 @@ public sealed class RoslynTranslator
                 ReflectionEnabled = reflectionEnabled,
                 MetadataTarget = metadataTarget,
             };
+            CompileProgress.Report("emitting JavaScript");
             var js = PhaseTimings.Measure("emit JavaScript", () => emitter.Emit());
             return new AssemblyBuildResult(js, emitter.MetadataScript, assemblyBytes, diagnostics);
         }
