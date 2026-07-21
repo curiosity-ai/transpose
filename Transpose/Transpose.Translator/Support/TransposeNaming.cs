@@ -533,15 +533,26 @@ internal static class TransposeNaming
     /// <summary>The interface member this method implements (implicitly), or null.</summary>
     private static IMethodSymbol? ImplementedInterfaceMember(IMethodSymbol method)
     {
-        var type = method.ContainingType;
-        if (type is null) return null;
-        foreach (var iface in type.AllInterfaces)
+        // Walk the override chain: an override implements whatever interface member its overridden
+        // base declared as the implementation. Roslyn's FindImplementationForInterfaceMember resolves
+        // an interface member to the type that *declares* the implementing member (an abstract base),
+        // not a derived override — so an override must inherit its base's interface-member JS name to
+        // land in the same runtime slot. Without this, e.g. OrdinalComparer.Compare (overriding the
+        // abstract StringComparer.Compare that implements IComparer<T>.Compare) misses the interface
+        // member's camelCase [Convention] and emits PascalCase "Compare" while every caller uses
+        // camelCase "compare".
+        for (var m = method; m is not null; m = m.OverriddenMethod?.OriginalDefinition)
         {
-            foreach (var member in iface.GetMembers().OfType<IMethodSymbol>())
+            var type = m.ContainingType;
+            if (type is null) continue;
+            foreach (var iface in type.AllInterfaces)
             {
-                if (type.FindImplementationForInterfaceMember(member) is IMethodSymbol impl
-                    && SymbolEqualityComparer.Default.Equals(impl.OriginalDefinition, method.OriginalDefinition))
-                    return member.OriginalDefinition;
+                foreach (var member in iface.GetMembers().OfType<IMethodSymbol>())
+                {
+                    if (type.FindImplementationForInterfaceMember(member) is IMethodSymbol impl
+                        && SymbolEqualityComparer.Default.Equals(impl.OriginalDefinition, m.OriginalDefinition))
+                        return member.OriginalDefinition;
+                }
             }
         }
         return null;

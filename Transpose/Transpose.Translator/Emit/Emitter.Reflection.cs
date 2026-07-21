@@ -274,9 +274,16 @@ public sealed partial class Emitter
         }
 
         var fn = TransposeNaming.MemberJsName(prop);
-        if (prop.GetMethod is { } getter && !SkipMember(getter))
+        // Emit the getter/setter as the property's g/s accessor records (each carries fg/fs = the
+        // backing-field name, so midel reads/writes field-backed auto-properties directly). These
+        // records back PropertyInfo.CanRead/CanWrite (`!!this.g` / `!!this.s`) and GetValue/SetValue.
+        // Do NOT gate this on the general SkipMember, which blanket-skips every PropertyGet/PropertySet
+        // accessor (and any member with an AssociatedSymbol) — that left every property with no g/s,
+        // so CanRead/CanWrite were always false. Only explicit-interface and [NonScriptable] accessors
+        // are excluded here.
+        if (prop.GetMethod is { } getter && !SkipAccessor(getter))
             o.Raw("g", ConstructAccessor(getter, fn, isGetter: true, prop));
-        if (prop.SetMethod is { } setter && !SkipMember(setter))
+        if (prop.SetMethod is { } setter && !SkipAccessor(setter))
             o.Raw("s", ConstructAccessor(setter, fn, isGetter: false, prop));
         if (!prop.IsIndexer) o.Str("fn", fn);
         return o.ToString();
@@ -384,6 +391,17 @@ public sealed partial class Emitter
         if (SkipMember(m)) return false;
         if (m is IMethodSymbol { MethodKind: MethodKind.Constructor }) return true;
         return m.Kind is SymbolKind.Method or SymbolKind.Field or SymbolKind.Property or SymbolKind.Event;
+    }
+
+    /// <summary>Whether a property/event accessor should NOT be emitted as a g/s/ad/r accessor
+    /// record. Unlike <see cref="SkipMember"/>, a PropertyGet/PropertySet kind (and an
+    /// AssociatedSymbol) is expected here — that is the accessor we are emitting; only
+    /// explicit-interface implementations and [NonScriptable] accessors are excluded.</summary>
+    private static bool SkipAccessor(IMethodSymbol accessor)
+    {
+        if (!accessor.ExplicitInterfaceImplementations().IsEmpty()) return true;
+        if (accessor.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "Transpose.NonScriptableAttribute")) return true;
+        return false;
     }
 
     private static bool SkipMember(ISymbol m)
