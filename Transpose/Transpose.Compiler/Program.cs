@@ -77,11 +77,20 @@ public static class Program
         // layout / embedded resources): tps.json presence alone does not make it a site app. Only a
         // *non-packable* project with a tps.json builds a runnable site; a packable one is a library.
         // Projects that pass `--out` (bootstrap, tooling) keep writing a single .js bundle unchanged.
+        var hasTpsJson = TransposeJson.TryLoad(Path.GetDirectoryName(csproj)!) is not null;
         if (!emitPackage && !buildRuntime && outPath is null
-            && (ProjectResolver.IsPackable(csproj)
-                || TransposeJson.TryLoad(Path.GetDirectoryName(csproj)!) is null))
+            && (ProjectResolver.IsPackable(csproj) || !hasTpsJson))
         {
             emitPackage = true;
+            separateAssemblies = true;
+        }
+        // A site build (a non-packable project with a tps.json) consumes each referenced project's
+        // already-built package DLL — extracting its compiled JS — instead of recompiling that
+        // project's sources into this bundle. A dependency is therefore compiled once and reused:
+        // editing the app re-transpiles only the app's own files, not the whole referenced library.
+        // (With no project references this is equivalent to the old bundle build.)
+        else if (!emitPackage && !buildRuntime && outPath is null && hasTpsJson)
+        {
             separateAssemblies = true;
         }
 
