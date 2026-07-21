@@ -1344,7 +1344,21 @@ public sealed partial class Emitter
         }
         if (Is64BitInteger(sourceType) && !Is64BitInteger(targetType) && (IsIntegerType(targetType) || IsFloatingType(targetType)))
         {
-            _w.Write("("); EmitExpression(cast.Expression); _w.Write(").toNumber()");
+            if (IsFloatingType(targetType))
+            {
+                _w.Write("("); EmitExpression(cast.Expression); _w.Write(").toNumber()");
+            }
+            else
+            {
+                // long → int/uint/short/… wraps to the low 32 bits (C# truncation). Use the runtime's
+                // Int64.clip32/clipu32, which read the exact low word off the Int64. Plain .toNumber()
+                // keeps the full magnitude (and loses precision above 2^53), so e.g.
+                // `(int)DateTime.Now.Ticks` stayed a huge value — giving `new Random()` a garbage seed
+                // and making Guid.NewGuid()/Random produce a constant value.
+                _w.Write(IsUnsignedIntegerTarget(targetType) ? "System.Int64.clipu32(" : "System.Int64.clip32(");
+                EmitExpression(cast.Expression);
+                _w.Write(")");
+            }
             return;
         }
 
@@ -1367,6 +1381,22 @@ public sealed partial class Emitter
             _w.Write("TransposeR.trunc(");
             EmitExpression(cast.Expression);
             _w.Write(")");
+            return;
+        }
+
+        // Integer → unsigned-integer reinterpretation (≤32-bit source). C# reinterprets the bit
+        // pattern, so a negative value becomes its unsigned equivalent; without this the cast was
+        // erased and a negative int stayed negative — e.g. `(uint)_a` in Guid.ToString() formatted
+        // as "-7b…" and broke the format regex. `>>> 0` / mask matches the reinterpretation.
+        if (IsIntegerType(sourceType) && !Is64BitInteger(sourceType) && IsUnsignedIntegerTarget(targetType))
+        {
+            var mask = targetType!.SpecialType switch
+            {
+                SpecialType.System_Byte => " & 0xff)",
+                SpecialType.System_UInt16 or SpecialType.System_Char => " & 0xffff)",
+                _ => " >>> 0)", // uint
+            };
+            _w.Write("(("); EmitExpression(cast.Expression); _w.Write(")"); _w.Write(mask);
             return;
         }
 
@@ -1798,4 +1828,10 @@ public sealed partial class Emitter
 
     private static bool Is64BitUnsigned(ITypeSymbol? type)
         => type?.SpecialType == SpecialType.System_UInt64;
+
+    /// <summary>An unsigned 32-bit-or-narrower integer target (uint/ushort/byte/char) — a
+    /// long→unsigned narrowing takes the low bits as unsigned.</summary>
+    private static bool IsUnsignedIntegerTarget(ITypeSymbol? type)
+        => type?.SpecialType is SpecialType.System_Byte or SpecialType.System_UInt16
+            or SpecialType.System_UInt32 or SpecialType.System_Char;
 }
