@@ -624,7 +624,7 @@ public sealed partial class Emitter
     /// per Transpose's <c>[ExpandParams]</c> — the native variadic DOM/JS functions.</summary>
     private static bool HasExpandParams(IMethodSymbol method)
         => method.OriginalDefinition.GetAttributes()
-            .Any(a => a.AttributeClass?.ToDisplayString() == "Transpose.ExpandParamsAttribute");
+            .Any(a => TransposeNaming.AttrIs(a, "Transpose.ExpandParamsAttribute"));
 
     private static bool ShouldWrapParams(IMethodSymbol method)
     {
@@ -724,7 +724,7 @@ public sealed partial class Emitter
         // ObjectInitializationMode controls which property initializers seed the object:
         // Initializer(1) emits the members that carry a `= value` initializer, DefaultValue(2)
         // emits every property, Ignore(0)/unspecified emits an empty object.
-        if (type.GetAttributes().FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == "Transpose.ObjectLiteralAttribute") is { } objLit)
+        if (type.GetAttributes().FirstOrDefault(a => TransposeNaming.AttrIs(a, "Transpose.ObjectLiteralAttribute")) is { } objLit)
         {
             var mode = ObjectLiteralInitMode(objLit);
             _w.Write("{");

@@ -129,7 +129,7 @@ public sealed partial class Emitter
 
         // AttributeUsage → not-inherited (ni) / allow-multiple (am) flags.
         var aua = type.GetAttributes().FirstOrDefault(a =>
-            a.AttributeClass?.ToDisplayString() == "System.AttributeUsageAttribute");
+            TransposeNaming.AttrIs(a, "System.AttributeUsageAttribute"));
         if (aua is not null)
         {
             var inherited = true;
@@ -380,7 +380,7 @@ public sealed partial class Emitter
         if (!type.Locations.Any(l => l.IsInSource)) return false;
         if (type.IsImplicitlyDeclared) return false;
         if (TransposeNaming.IsExternalType(type)) return false;
-        if (type.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "Transpose.NonScriptableAttribute")) return false;
+        if (type.GetAttributes().Any(a => TransposeNaming.AttrIs(a, "Transpose.NonScriptableAttribute"))) return false;
         return true;
     }
 
@@ -400,14 +400,14 @@ public sealed partial class Emitter
     private static bool SkipAccessor(IMethodSymbol accessor)
     {
         if (!accessor.ExplicitInterfaceImplementations().IsEmpty()) return true;
-        if (accessor.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "Transpose.NonScriptableAttribute")) return true;
+        if (accessor.GetAttributes().Any(a => TransposeNaming.AttrIs(a, "Transpose.NonScriptableAttribute"))) return true;
         return false;
     }
 
     private static bool SkipMember(ISymbol m)
     {
         if (!m.ExplicitInterfaceImplementations().IsEmpty()) return true;
-        if (m.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "Transpose.NonScriptableAttribute")) return true;
+        if (m.GetAttributes().Any(a => TransposeNaming.AttrIs(a, "Transpose.NonScriptableAttribute"))) return true;
         if (m is IMethodSymbol meth)
         {
             if (meth.MethodKind is MethodKind.PropertyGet or MethodKind.PropertySet
@@ -420,12 +420,12 @@ public sealed partial class Emitter
     }
 
     private static bool IsIgnoreGeneric(ISymbol s)
-        => s.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "Transpose.IgnoreGenericAttribute");
+        => s.GetAttributes().Any(a => TransposeNaming.AttrIs(a, "Transpose.IgnoreGenericAttribute"));
 
     private static List<AttributeData> ReflectableAttributes(IEnumerable<AttributeData> attrs)
         => attrs.Where(a => a.AttributeClass is { } ac
                             && ac.Locations.Any(l => l.IsInSource)
-                            && !ac.GetAttributes().Any(x => x.AttributeClass?.ToDisplayString() == "Transpose.NonScriptableAttribute"))
+                            && !ac.GetAttributes().Any(x => TransposeNaming.AttrIs(x, "Transpose.NonScriptableAttribute")))
                 .ToList();
 
     // ---- attribute codes / type names -------------------------------------

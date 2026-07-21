@@ -197,7 +197,7 @@ public sealed partial class Emitter
     private void EmitEnum(INamedTypeSymbol type)
     {
         _w.Write($"Transpose.define(\"{_names.TypeFullName(type)}\", ");
-        var isFlags = type.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "System.FlagsAttribute");
+        var isFlags = type.GetAttributes().Any(a => TransposeNaming.AttrIs(a, "System.FlagsAttribute"));
         var mode = TransposeNaming.EnumEmitMode(type);
         // Emit.StringName* modes back the enum with strings (its [Name] on each member); every
         // other mode keeps the numeric ordinals. A string-backed enum also declares
@@ -316,7 +316,7 @@ public sealed partial class Emitter
             // $literal marks an [ObjectLiteral] type: instances are plain JS objects (construction
             // emits {} + initializer), and the runtime treats the type as a literal for is/as/typeof
             // rather than a real class. Matches the legacy compiler's $literal:true flag.
-            if (type.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "Transpose.ObjectLiteralAttribute"))
+            if (type.GetAttributes().Any(a => TransposeNaming.AttrIs(a, "Transpose.ObjectLiteralAttribute")))
             {
                 sections.Add(() => _w.Write("$literal: true"));
             }
