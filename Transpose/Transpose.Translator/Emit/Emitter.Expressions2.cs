@@ -1604,8 +1604,15 @@ public sealed partial class Emitter
         // `(int)someObject` all verify the runtime type. Upcasts, identity, numeric/enum, boxing,
         // user-defined operators, dynamic, `null`, casts to a type parameter, and casts to an
         // external (native-JS) type stay erased — the same set H5's CastBlock skips.
+        //
+        // Array and delegate targets are also erased: a native JS array carries no element-type
+        // metadata to verify (`(Emoji[])Enum.GetValues(...)` cannot be checked, and its runtime type
+        // token is the un-parameterised System.Array), and a delegate is a plain JS function whose
+        // generic type token (`ComponentEventHandler$2(T, MouseEvent)`) is not a constructible/callable
+        // runtime type — emitting a checked cast for either throws where .NET/H5 would succeed.
         if (targetType is not null && sourceType is not null
-            && targetType.TypeKind is not (TypeKind.TypeParameter or TypeKind.Dynamic)
+            && targetType.TypeKind is not (TypeKind.TypeParameter or TypeKind.Dynamic
+                                            or TypeKind.Array or TypeKind.Delegate)
             && targetType.SpecialType != SpecialType.System_Object
             && !targetType.IsTupleType
             && !IsUncheckableExternalCast(targetType)
