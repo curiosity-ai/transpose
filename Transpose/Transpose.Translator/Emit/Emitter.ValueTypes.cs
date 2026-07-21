@@ -15,13 +15,27 @@ public sealed partial class Emitter
                 .Where(p => !p.IsStatic && !p.IsIndexer && p.IsImplicitlyDeclared && p.Name != "EqualityContract")
             : Enumerable.Empty<IPropertySymbol>();
 
-    /// <summary>All instance properties that participate in a record's value equality / ToString.</summary>
+    /// <summary>All instance properties that participate in a record's value equality / ToString,
+    /// ordered base-record members first — matching C#'s synthesized PrintMembers / Equals /
+    /// GetHashCode, which chain to the base record before the derived members. A derived record
+    /// that only listed its own members would drop the inherited ones from ToString/equality.</summary>
     private List<string> RecordValuePropNames(INamedTypeSymbol type)
-        => type.GetMembers().OfType<IPropertySymbol>()
-            .Where(p => !p.IsStatic && p.GetMethod is not null && !p.IsIndexer && p.Name != "EqualityContract")
-            .Select(p => TransposeNaming.MemberJsName(p))
-            .Distinct()
-            .ToList();
+    {
+        var chain = new List<INamedTypeSymbol>();
+        for (var t = type; t is not null && t.IsRecord; t = t.BaseType)
+            chain.Add(t);
+        chain.Reverse(); // base → derived
+
+        var names = new List<string>();
+        foreach (var t in chain)
+            foreach (var p in t.GetMembers().OfType<IPropertySymbol>()
+                         .Where(p => !p.IsStatic && p.GetMethod is not null && !p.IsIndexer && p.Name != "EqualityContract"))
+            {
+                var n = TransposeNaming.MemberJsName(p);
+                if (!names.Contains(n)) names.Add(n);
+            }
+        return names;
+    }
 
     /// <summary>Appends synthesized value-type methods (struct $clone/equals, record members).</summary>
     private void AddValueTypeMethodEntries(INamedTypeSymbol type, List<Action> entries)
@@ -64,16 +78,27 @@ public sealed partial class Emitter
                     _w.WriteLine($"return \"{type.Name} {{ \" + {parts} + \" }}\";");
                 });
             });
+            // The value-equality body, shared by the object override `equals(obj)` and the
+            // strongly-typed IEquatable<T> `equalsT(other)` a record synthesizes. Both are needed:
+            // `a.Equals(b)` binds to IEquatable<T>.Equals → `equalsT`, while ==/collections go
+            // through `equals`. Without `equalsT` a direct `.Equals(record)` call threw
+            // "equalsT is not a function".
+            void EmitRecordEqualsBody(string param)
+            {
+                _w.WriteLine($"if ({param} == null || {param}.constructor !== this.constructor) {{ return false; }}");
+                _w.Write("return ");
+                _w.Write(props.Count == 0 ? "true" : string.Join(" && ", props.Select(p => $"TransposeR.equals(this.{p}, {param}.{p})")));
+                _w.WriteLine(";");
+            }
             entries.Add(() =>
             {
                 _w.Write("equals: function (o) ");
-                _w.Block(() =>
-                {
-                    _w.WriteLine("if (o == null || o.constructor !== this.constructor) { return false; }");
-                    _w.Write("return ");
-                    _w.Write(props.Count == 0 ? "true" : string.Join(" && ", props.Select(p => $"TransposeR.equals(this.{p}, o.{p})")));
-                    _w.WriteLine(";");
-                });
+                _w.Block(() => EmitRecordEqualsBody("o"));
+            });
+            entries.Add(() =>
+            {
+                _w.Write("equalsT: function (other) ");
+                _w.Block(() => EmitRecordEqualsBody("other"));
             });
             entries.Add(() =>
             {
@@ -125,21 +150,40 @@ public sealed partial class Emitter
                 _w.WriteLine("this.$initialize();");
                 var baseType = type.BaseType;
                 if (baseType is { } bt && bt.SpecialType != SpecialType.System_Object && bt.TypeKind != TypeKind.Error && bt.IsRecord)
-                    _w.WriteLine($"{TypeRef(bt)}.ctor.call(this);");
+                {
+                    // A derived record forwards to the base record's positional ctor with the args
+                    // from `: Base(a, b)` on the record header — without them the base's positional
+                    // members stay at their defaults (e.g. `record D(...) : B(A, B)` dropped A/B).
+                    var primaryBase = recordDecl?.BaseList?.Types.OfType<PrimaryConstructorBaseTypeSyntax>().FirstOrDefault();
+                    if (primaryBase is not null && _model.GetSymbolInfo(primaryBase).Symbol is IMethodSymbol baseCtor)
+                    {
+                        _w.Write($"{TypeRef(bt)}.{ExternalAwareCtorName(baseCtor)}.call(this");
+                        if (primaryBase.ArgumentList.Arguments.Count > 0) { _w.Write(", "); EmitArguments(primaryBase.ArgumentList, baseCtor); }
+                        _w.WriteLine(");");
+                    }
+                    else
+                    {
+                        _w.WriteLine($"{TypeRef(bt)}.ctor.call(this);");
+                    }
+                }
                 foreach (var p in positional) _w.WriteLine($"this.{p} = {p};");
             });
             _w.WriteLine(explicitCtors.Count > 0 ? "," : "");
-            // explicit ctors kept as $ctorN
+            // explicit ctors kept as $ctorN. C# requires each to chain `: this(...)` back to the
+            // positional primary; emit that delegation (EmitConstructorChain) then the body — else
+            // the delegated-to primary never runs and the record's members stay unset.
             for (var i = 0; i < explicitCtors.Count; i++)
             {
-                var decl = explicitCtors[i].DeclaringSyntaxReferences[0].GetSyntax() as ConstructorDeclarationSyntax;
+                var decl = (ConstructorDeclarationSyntax)explicitCtors[i].DeclaringSyntaxReferences[0].GetSyntax();
                 _w.Write($"{CtorName(explicitCtors[i])}: function (");
                 EmitParameterList(explicitCtors[i]);
                 _w.Write(") ");
                 _w.Block(() =>
                 {
                     _w.WriteLine("this.$initialize();");
-                    if (decl?.Body is not null) foreach (var s in decl.Body.Statements) EmitStatement(s);
+                    EmitConstructorChain(explicitCtors[i], decl, type);
+                    if (decl.Body is not null) EmitStatements(decl.Body.Statements);
+                    else if (decl.ExpressionBody is not null) EmitExpressionStatement(decl.ExpressionBody.Expression);
                 });
                 _w.WriteLine(i < explicitCtors.Count - 1 ? "," : "");
             }
