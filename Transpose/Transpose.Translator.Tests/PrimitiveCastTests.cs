@@ -301,6 +301,86 @@ public class Program
         }
 
         [TestMethod]
+        public async Task ArrayBoundsCheckingAsync()
+        {
+            // ArrayIndex = Managed (H5/Tesserae default): out-of-range access throws
+            // IndexOutOfRangeException instead of reading/writing `undefined`.
+            await RunTest(@"
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        int[] a = { 10, 20, 30 };
+        Console.WriteLine(a[1]);                 // 20
+        a[2] = 99; Console.WriteLine(a[2]);      // 99
+        try { int x = a[5]; Console.WriteLine(x); } catch (IndexOutOfRangeException) { Console.WriteLine(""IOR read""); }
+        try { a[10] = 1; } catch (IndexOutOfRangeException) { Console.WriteLine(""IOR write""); }
+        try { int y = a[-1]; } catch (IndexOutOfRangeException) { Console.WriteLine(""IOR neg""); }
+        int sum = 0; for (int i = 0; i < a.Length; i++) sum += a[i];
+        Console.WriteLine(sum);                  // 129
+        int[][] j = new int[2][]; j[0] = new[] { 1, 2 };
+        Console.WriteLine(j[0][1]);              // 2
+        string[] s = { ""x"", ""y"" }; Console.WriteLine(s[1]);   // y
+    }
+}");
+        }
+
+        [TestMethod]
+        public async Task CheckedReferenceAndUnboxCastsAsync()
+        {
+            // IgnoreCast = false (H5/Tesserae default): an invalid reference downcast or unboxing
+            // throws InvalidCastException; upcasts / valid casts / null pass through.
+            await RunTest(@"
+using System;
+public class Animal { public virtual string S() => ""a""; }
+public class Dog : Animal { public override string S() => ""dog""; }
+public class Cat : Animal { public override string S() => ""cat""; }
+interface IThing { int V(); }
+public class Thing : IThing { public int V() => 7; }
+public class Program
+{
+    public static void Main()
+    {
+        Animal a = new Cat();
+        try { Dog d = (Dog)a; Console.WriteLine(d.S()); } catch (InvalidCastException) { Console.WriteLine(""IC down""); }
+        Dog ok = (Dog)(Animal)new Dog(); Console.WriteLine(ok.S());        // dog
+        object o = ""hi"";
+        try { int n = (int)o; Console.WriteLine(n); } catch (InvalidCastException) { Console.WriteLine(""IC unbox""); }
+        object bi = 42; Console.WriteLine((int)bi);                        // 42
+        object t = new Thing(); Console.WriteLine(((IThing)t).V());        // 7
+        Animal up = new Dog(); Console.WriteLine(up.S());                  // dog (upcast)
+        object n2 = null; string sn = (string)n2; Console.WriteLine(sn == null); // True
+        object so = ""world""; Console.WriteLine((string)so);              // world
+        try { object io = 5; Console.WriteLine((string)io); } catch (InvalidCastException) { Console.WriteLine(""IC str""); }
+    }
+}");
+        }
+
+        [TestMethod]
+        public async Task EnumBoxedToObjectKeepsTypeAsync()
+        {
+            await RunTest(@"
+using System;
+enum Color { Red, Green, Blue }
+public class Program
+{
+    public static void Main()
+    {
+        object e = DayOfWeek.Monday;
+        Console.WriteLine(e.GetType().Name);   // DayOfWeek
+        Console.WriteLine(e.ToString());       // Monday
+        Console.WriteLine(e);                  // Monday
+        object c = Color.Green;
+        Console.WriteLine(c.GetType().Name);   // Color
+        Console.WriteLine(c.ToString());       // Green
+        Console.WriteLine(c.Equals(Color.Green)); // True
+        Console.WriteLine((int)Color.Blue);    // 2
+    }
+}");
+        }
+
+        [TestMethod]
         public async Task UnsignedFormattingRoundTripAsync()
         {
             // The original Guid.ToString() breakage: a negative int cast to uint kept its sign and

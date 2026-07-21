@@ -277,17 +277,32 @@ public sealed partial class Emitter
             return;
         }
 
-        // Enum → object/string uses the enum's name (System.Enum.toString) — but only for
-        // the Name/default modes, whose runtime value is numeric. Under Emit.Value the value
-        // is already the number, and under the Emit.StringName* modes it is already the name
-        // string, so those box to themselves without a lookup.
+        // Enum → string / object (boxing). Under a StringName* mode (2–6) the runtime value is
+        // already the name string, so it stringifies and boxes to itself (a raw string — matching
+        // Transpose's StringName contract, where the boxed value `is string`). Under the numeric
+        // modes: enum → string looks up the name (System.Enum.toString); enum → object / interface
+        // boxes the value with its enum type so GetType() is the enum (not Int32) and ToString() is
+        // the name, rather than boxing to a bare number.
         if (sourceType is { TypeKind: TypeKind.Enum }
-            && targetType?.SpecialType is SpecialType.System_Object or SpecialType.System_String
-            && TransposeNaming.EnumEmitMode(sourceType) is not (2 or 3 or 4 or 5 or 6))
+            && targetType is { IsReferenceType: true })
         {
-            _w.Write($"System.Enum.toString({TypeRef(sourceType)}, ");
-            EmitExpression(expr);
-            _w.Write(")");
+            var stringMode = TransposeNaming.EnumEmitMode(sourceType) is 2 or 3 or 4 or 5 or 6;
+            if (stringMode)
+            {
+                EmitExpression(expr); // already a name string
+            }
+            else if (targetType.SpecialType == SpecialType.System_String)
+            {
+                _w.Write($"System.Enum.toString({TypeRef(sourceType)}, ");
+                EmitExpression(expr);
+                _w.Write(")");
+            }
+            else
+            {
+                _w.Write($"Transpose.box(");
+                EmitExpression(expr);
+                _w.Write($", {TypeRef(sourceType)}, function ($v) {{ return System.Enum.toString({TypeRef(sourceType)}, $v); }})");
+            }
             return;
         }
 

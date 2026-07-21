@@ -1557,10 +1557,39 @@ public sealed partial class Emitter
             return;
         }
 
-        // char <-> int (chars are their code point), int → 64-bit float, widening, and reference
-        // casts are all representation-preserving and so erased.
+        // Reference downcast / unboxing conversion → a checked cast (Transpose.cast throws
+        // InvalidCastException) matching .NET (H5 IgnoreCast=false). `(Dog)someAnimal`, `(IFoo)obj`,
+        // `(int)someObject` all verify the runtime type. Upcasts, identity, numeric/enum, boxing,
+        // user-defined operators, dynamic, `null`, casts to a type parameter, and casts to an
+        // external (native-JS) type stay erased — the same set H5's CastBlock skips.
+        if (targetType is not null && sourceType is not null
+            && targetType.TypeKind is not (TypeKind.TypeParameter or TypeKind.Dynamic)
+            && targetType.SpecialType != SpecialType.System_Object
+            && !targetType.IsTupleType
+            && !IsUncheckableExternalCast(targetType)
+            && !expr.IsKind(SyntaxKind.NullLiteralExpression))
+        {
+            var conv = _compilation.ClassifyConversion(sourceType, targetType);
+            if ((conv.IsReference && conv.IsExplicit) || conv.IsUnboxing)
+            {
+                _w.Write("Transpose.cast(");
+                EmitExpression(expr);
+                _w.Write($", {TypeRef(targetType)})");
+                return;
+            }
+        }
+
+        // char <-> int (chars are their code point), int → 64-bit float, widening, and safe
+        // reference conversions are representation-preserving and so erased.
         EmitExpression(expr);
     }
+
+    /// <summary>A cast target that can't be runtime type-checked: an external (native-JS) type
+    /// from a DOM / binding library. The base BCL (assembly "Transpose") marks primitives like
+    /// System.String/Int32 [External] too, but those ARE checkable, so they are NOT excluded here —
+    /// matching H5, which erases H5.Core casts yet checks System.* casts.</summary>
+    private static bool IsUncheckableExternalCast(ITypeSymbol type)
+        => TransposeNaming.IsExternalType(type) && type.ContainingAssembly?.Name != "Transpose";
 
     /// <summary>A ≤32-bit integer or char target — a narrowing/reinterpretation to a fixed
     /// bit width. Enums (SpecialType.None) are excluded: they carry their underlying value as-is.</summary>
@@ -1734,7 +1763,19 @@ public sealed partial class Emitter
             return;
         }
 
-        // Arrays: native element access.
+        // Arrays: bounds-checked element access (ArrayIndex = Managed). `arr[System.Array.index(i,
+        // arr)]` throws IndexOutOfRangeException for an out-of-range index, matching .NET (plain JS
+        // would read/write undefined). Used for both reads and — when this is an assignment target —
+        // writes. Non-array element access (dynamic, etc.) stays a plain bracket access.
+        if (_model.GetTypeInfo(element.Expression).Type is IArrayTypeSymbol)
+        {
+            var arr = Capture(() => EmitExpression(element.Expression));
+            _w.Write($"{arr}[System.Array.index(");
+            EmitArgumentList(element.ArgumentList);
+            _w.Write($", {arr})]");
+            return;
+        }
+
         EmitExpression(element.Expression);
         _w.Write("[");
         EmitArgumentList(element.ArgumentList);
