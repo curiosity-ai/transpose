@@ -123,8 +123,13 @@ internal static class OutputBuilder
                     }
                     else
                     {
-                        var minRel = ToMinName(f.Rel);      // fallback: minify at compile time
-                        WriteText(minRel, JsMinifier.Minify(f.Text, f.FileName, minifyLocals));
+                        // No pre-built .min.js sibling: this JS was not emitted by *this* compilation
+                        // — it is an authored/third-party resource (e.g. Monaco's editor.main.js, which
+                        // NUglify cannot even parse) or an old package that shipped no .min.js. Only
+                        // Transpose-emitted output is a minification candidate, so ship it as authored
+                        // under the .min name rather than running it through the JS minifier.
+                        var minRel = ToMinName(f.Rel);
+                        WriteText(minRel, f.Text);
                         o.MinifiedPath = minRel;
                     }
                 }
