@@ -32,10 +32,20 @@ internal static class ResourceEmbedder
         catch { return false; }
     }
 
-    public static void Embed(string assemblyPath, IReadOnlyList<EmbeddedItem> items)
+    public static void Embed(string assemblyPath, IReadOnlyList<EmbeddedItem> items, IEnumerable<string>? referencePaths = null)
     {
+        // Cecil resolves referenced assemblies when it re-serializes metadata on Write() — e.g. to
+        // determine the underlying type of a parameter's default value whose type is a referenced
+        // enum. The default resolver only searches the assembly's own directory, so seed it with the
+        // directories of the project's references (NuGet-cache DLLs, sibling project bin folders).
+        var resolver = new DefaultAssemblyResolver();
+        resolver.AddSearchDirectory(Path.GetDirectoryName(Path.GetFullPath(assemblyPath))!);
+        if (referencePaths is not null)
+            foreach (var dir in referencePaths.Select(p => Path.GetDirectoryName(Path.GetFullPath(p))!).Distinct())
+                resolver.AddSearchDirectory(dir);
+
         // Read → modify → write back the assembly in place (ReadWrite so we can overwrite it).
-        using var asm = AssemblyDefinition.ReadAssembly(assemblyPath, new ReaderParameters { ReadWrite = true });
+        using var asm = AssemblyDefinition.ReadAssembly(assemblyPath, new ReaderParameters { ReadWrite = true, AssemblyResolver = resolver });
         var resources = asm.MainModule.Resources;
 
         void Replace(string name, byte[] bytes)

@@ -132,11 +132,11 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
     }
 
     private static bool IsCodegenAttributeName(string n) =>
-        n is "Template" or "Name" or "External" or "Script" or "GlobalMethods" or "ObjectLiteral"
+        n is "Template" or "Name" or "External" or "Script" or "GlobalMethods" or "ObjectLiteral" or "GlobalTarget"
           or "Transpose.Template" or "Transpose.Name" or "Transpose.External" or "Transpose.Script"
-          or "Transpose.GlobalMethods" or "Transpose.ObjectLiteral"
+          or "Transpose.GlobalMethods" or "Transpose.ObjectLiteral" or "Transpose.GlobalTarget"
           or "TemplateAttribute" or "NameAttribute" or "ExternalAttribute" or "ScriptAttribute"
-          or "GlobalMethodsAttribute" or "ObjectLiteralAttribute";
+          or "GlobalMethodsAttribute" or "ObjectLiteralAttribute" or "GlobalTargetAttribute";
 
     private static bool HasCodegenAttribute(ISymbol symbol) =>
         symbol.GetAttributes().Any(a =>
@@ -144,7 +144,7 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
             var n = a.AttributeClass?.ToDisplayString();
             return n is "Transpose.ExternalAttribute" or "Transpose.TemplateAttribute" or "Transpose.NameAttribute"
                 or "Transpose.ScriptAttribute" or "Transpose.GlobalMethodsAttribute" or "Transpose.ObjectLiteralAttribute"
-                or "Transpose.ExternalInterfaceAttribute";
+                or "Transpose.ExternalInterfaceAttribute" or "Transpose.GlobalTargetAttribute";
         });
 
     public override void VisitMethodDeclaration(MethodDeclarationSyntax node)
@@ -293,7 +293,14 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
         (new[] { "System", "Threading" },       "Threading primitives ({0}) are not supported in the browser environment."),
     };
 
-    // Threading types that are allowed because they are modeled (Task-based async, etc.)
+    // Types inside the denied namespaces that ARE modeled by the Transpose runtime and so are allowed
+    // (matching what h5 compiled). Two groups:
+    //   * Task-based async + cancellation (System.Threading.*): Task/ValueTask, the completion source,
+    //     cancellation tokens, and the cancellation exceptions — the runtime models cooperative
+    //     cancellation, so `catch (TaskCanceledException)` etc. must compile.
+    //   * In-memory streams / text readers-writers (System.IO.*): these operate on memory, not the OS
+    //     file system, and the runtime provides them. The genuinely OS-bound types (File, FileStream,
+    //     Directory, …) are NOT listed and stay denied.
     private static readonly HashSet<string> AllowedThreadingTypes = new()
     {
         "System.Threading.Tasks.Task",
@@ -302,11 +309,31 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
         "System.Threading.Tasks.ValueTask`1",
         "System.Threading.Tasks.TaskCompletionSource",
         "System.Threading.Tasks.TaskCompletionSource`1",
+        "System.Threading.Tasks.TaskCanceledException",
+        "System.Threading.Tasks.TaskStatus",
         "System.Threading.CancellationToken",
         "System.Threading.CancellationTokenSource",
         "System.Threading.CancellationTokenRegistration",
         "System.Threading.Timeout",
+        // In-memory streams and text readers/writers (no OS file access) — modeled by the runtime.
+        // Binary serialization (BinaryReader/BinaryWriter) is intentionally NOT here: it is not fully
+        // modeled at runtime, so it stays denied with a clear compile-time error rather than failing
+        // mysteriously in the browser.
+        "System.IO.Stream",
+        "System.IO.MemoryStream",
+        "System.IO.BufferedStream",
+        "System.IO.StringReader",
+        "System.IO.StringWriter",
+        "System.IO.StreamReader",
+        "System.IO.StreamWriter",
+        "System.IO.TextReader",
+        "System.IO.TextWriter",
+        "System.IO.SeekOrigin",
+        "System.IO.IOException",
+        "System.IO.EndOfStreamException",
     };
+
+    private static readonly string[] TasksNamespaceSegments = { "System", "Threading", "Tasks" };
 
     private readonly HashSet<Location> _reportedApiLocations = new();
 
@@ -325,6 +352,12 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
             if (NamespaceMatches(containing, segments)) { message = msg; break; }
         }
         if (message is null) return;
+
+        // System.Threading.Tasks.* is the supported async model (Task, ValueTask, IPromise, the
+        // completion source, cancellation exceptions, …) — allow the whole sub-namespace even though
+        // its parent System.Threading is denied. The genuinely-unsupported threading primitives
+        // (Thread, Monitor, locks, wait handles) live directly in System.Threading and stay denied.
+        if (NamespaceMatches(containing, TasksNamespaceSegments)) return;
 
         var metadataName = type.ConstructUnboundGenericTypeSafeName();
         if (AllowedThreadingTypes.Contains(metadataName)) return;

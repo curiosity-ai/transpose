@@ -54,9 +54,18 @@ public sealed partial class Emitter
             return;
         }
 
-        // Local function call → bare name.
+        // Local function call → bare name. by-ref/out arguments still need the holder-object
+        // mechanism (the local function's out param is emitted as a { v: … } holder), so route those
+        // through EmitByRefInvocation exactly like a regular method call — otherwise an `out var _`
+        // discard (or a named out arg) would be emitted as a raw argument and never write back.
         if (symbol.MethodKind == MethodKind.LocalFunction)
         {
+            if (TransposeNaming.GetTemplate(symbol.OriginalDefinition) is null
+                && HasByRefArguments(invocation.ArgumentList, symbol))
+            {
+                EmitByRefInvocation(invocation, symbol);
+                return;
+            }
             _w.Write(NameMangler.JsIdentifier(symbol.Name));
             _w.Write("(");
             EmitArguments(invocation.ArgumentList, symbol);
@@ -281,7 +290,11 @@ public sealed partial class Emitter
 
     private void EmitCallee(InvocationExpressionSyntax invocation, IMethodSymbol symbol)
     {
-        if (symbol.IsStatic)
+        if (symbol.MethodKind == MethodKind.LocalFunction)
+        {
+            _w.Write(NameMangler.JsIdentifier(symbol.Name)); // local functions are called by bare name
+        }
+        else if (symbol.IsStatic)
         {
             _w.Write(StaticMemberAccess(symbol));
         }
