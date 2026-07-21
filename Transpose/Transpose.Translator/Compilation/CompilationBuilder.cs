@@ -54,7 +54,7 @@ public static class CompilationBuilder
             // set including private ones; the consumer must see the same set for its call sites to
             // resolve to the same JS names.
             metadataImportOptions: MetadataImportOptions.All);
-
+        
         // The base runtime library (Transpose.BCL) *defines* the BCL (System.Object, …), so it is
         // compiled self-contained with no base reference — like compiling corlib. Every other
         // project references Transpose.dll as its whole BCL.

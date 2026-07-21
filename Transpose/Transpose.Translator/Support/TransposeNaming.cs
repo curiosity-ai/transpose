@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Linq;
 using Microsoft.CodeAnalysis;
 
@@ -471,7 +472,7 @@ internal static class TransposeNaming
         return type.Arity > 0 ? mangled + "$" + type.Arity : mangled;
     }
 
-    private static readonly System.Collections.Generic.Dictionary<ISymbol, string> _methodCache = new(SymbolEqualityComparer.Default);
+    private static readonly ConcurrentDictionary<ISymbol, string> _methodCache = new(SymbolEqualityComparer.Default);
 
     private static string MethodJsName(IMethodSymbol method)
     {

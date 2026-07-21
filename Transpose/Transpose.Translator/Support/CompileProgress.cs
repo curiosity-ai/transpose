@@ -21,7 +21,7 @@ public static class CompileProgress
     /// coarse cadence — at most ~<paramref name="steps"/> messages total plus the final one — so a
     /// large item count does not flood the output. Call once per item with the 1-based
     /// <paramref name="done"/> count.</summary>
-    public static void ReportStep(string label, int done, int total, int steps = 10)
+    public static void ReportStep(string label, long done, long total, long steps = 10)
     {
         if (Sink is null || total <= 0) return;
         // Emit on every `stride`-th item and on the last item, so the user sees steady movement

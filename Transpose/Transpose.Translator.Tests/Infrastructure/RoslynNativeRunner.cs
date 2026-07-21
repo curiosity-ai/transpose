@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -18,6 +19,11 @@ public static class RoslynNativeRunner
 {
     public static string CompileAndRun(string source)
     {
+        AppContext.SetSwitch("System.Globalization.Invariant", true);
+        AppContext.SetSwitch("System.TimeZoneInfo.Invariant", true);
+        CultureInfo.DefaultThreadCurrentCulture = CultureInfo.InvariantCulture;
+        CultureInfo.DefaultThreadCurrentUICulture = CultureInfo.InvariantCulture;
+
         var tree = CSharpSyntaxTree.ParseText(source, new CSharpParseOptions(LanguageVersion.Latest));
 
         var refs = ((AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string) ?? "")
@@ -25,6 +31,7 @@ public static class RoslynNativeRunner
             .Where(p => p.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) && File.Exists(p))
             .Select(p => (MetadataReference)MetadataReference.CreateFromFile(p))
             .ToList();
+
 
         var compilation = CSharpCompilation.Create(
             "NativeRun_" + Guid.NewGuid().ToString("N"),

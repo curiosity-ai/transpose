@@ -24,14 +24,24 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
 
     public static IReadOnlyList<Diagnostic> Scan(CSharpCompilation compilation)
     {
-        var diagnostics = new List<Diagnostic>();
-        foreach (var tree in compilation.SyntaxTrees)
+        var allDiagnostics = new List<List<Diagnostic>>();
+        Parallel.ForEach(compilation.SyntaxTrees, tree =>
         {
+            var diagnostics = new List<Diagnostic>();
+
             var model = compilation.GetSemanticModel(tree);
             var scanner = new UnsupportedFeatureScanner(model, diagnostics);
             scanner.Visit(tree.GetRoot());
-        }
-        return diagnostics;
+
+            if (diagnostics.Any())
+            {
+                lock (allDiagnostics)
+                {
+                    allDiagnostics.Add(diagnostics);
+                }
+            }
+        });
+        return allDiagnostics.SelectMany(d => d).ToArray();
     }
 
     private void Report(SyntaxNode node, string message)

@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -65,6 +67,15 @@ public sealed partial class Emitter
         _model = new TreeModel(compilation);
     }
 
+    private Emitter(CSharpCompilation compilation, string assemblyName, NameMangler names)
+    {
+        _compilation = compilation;
+        _assemblyName = assemblyName;
+        _names = names;
+        _model = new TreeModel(compilation);
+        _w.Indent();
+    }
+
     public string Emit()
     {
         _w.WriteLine("/**");
@@ -83,13 +94,31 @@ public sealed partial class Emitter
             _w.WriteLine("\"use strict\";");
             _w.WriteLine();
 
-            var done = 0;
-            foreach (var type in types)
+            long done = 0;
+
+#pragma warning disable RS1024 // Symbols should be compared for equality - we don't the symbol comparer here as we want the actual object to define the order, not the "kind" of symbol
+            var results = new ConcurrentDictionary<INamedTypeSymbol, JsWriter>();
+#pragma warning restore RS1024 // Symbols should be compared for equality
+
+            Parallel.ForEach(types, type =>
             {
-                EmitType(type);
+                results[type] = EmitOnlyType(this, type);
+                var count = Interlocked.Increment(ref done);
+                CompileProgress.ReportStep("emitting JavaScript", count, types.Count);
+            });
+
+            foreach(var type in types)
+            {
+                _w.Write(results[type]);
                 _w.WriteLine();
-                CompileProgress.ReportStep("emitting JavaScript", ++done, types.Count);
             }
+
+            //foreach (var type in types)
+            //{
+            //    EmitType(type);
+            //    _w.WriteLine();
+            //    CompileProgress.ReportStep("emitting JavaScript", ++done, types.Count);
+            //}
 
             if (inlineMeta) EmitReflectionMetadata(types);
         });
@@ -97,6 +126,18 @@ public sealed partial class Emitter
 
         MetadataScript = fileMeta ? BuildMetadataFile(types) : null;
         return _w.ToString();
+    }
+
+    public static JsWriter EmitOnlyType(Emitter emitter, INamedTypeSymbol type)
+    {
+        var clonedEmitter = emitter.Clone();
+        clonedEmitter.EmitType(type);
+        return clonedEmitter._w;
+    }
+
+    private Emitter Clone()
+    {
+        return new Emitter(_compilation, _assemblyName, _names);
     }
 
     /// <summary>The result of an <c>outputBy: ClassPath</c> emission: one bare

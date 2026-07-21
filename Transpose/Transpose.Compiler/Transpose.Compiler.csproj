@@ -9,6 +9,10 @@
     <RootNamespace>Transpose.Compiler</RootNamespace>
     <AssemblyName>tps</AssemblyName>
     <StartupObject>Transpose.Compiler.Program</StartupObject>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <InvariantTimezone>true</InvariantTimezone>
+    <PublishReadyToRun>true</PublishReadyToRun>
+
 
     <!-- Packable as a dotnet global/local tool: `tps` is the compiler command the
          Transpose.Build.Target SDK invokes. -->

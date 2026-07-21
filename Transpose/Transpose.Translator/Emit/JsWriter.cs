@@ -34,6 +34,14 @@ public sealed class JsWriter
         }
     }
 
+    internal JsWriter Write(JsWriter jsWriter)
+    {
+        if (jsWriter._sb.Length == 0) return this;
+        _sb.Append(jsWriter._sb);
+        return this;
+    }
+
+
     public JsWriter Write(string text)
     {
         if (string.IsNullOrEmpty(text)) return this;

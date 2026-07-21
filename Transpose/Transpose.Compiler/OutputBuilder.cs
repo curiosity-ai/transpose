@@ -202,12 +202,21 @@ internal static class OutputBuilder
         // work the consumer would otherwise repeat on every build (see BuildRuntime for the same
         // for the runtime bundles).
         items.Add(new EmbeddedItem(mainJsName, utf8.GetBytes(javascript), null));
-        items.Add(new EmbeddedItem(ToMinName(mainJsName), utf8.GetBytes(JsMinifier.Minify(javascript, mainJsName, minifyLocalVariables)), null));
+
+        if (config.OutputFormatting != JsOutputFormatting.Formatted)
+        {
+            items.Add(new EmbeddedItem(ToMinName(mainJsName), utf8.GetBytes(JsMinifier.Minify(javascript, mainJsName, minifyLocalVariables)), null));
+        }
+
         if (metadataJavascript is not null)
         {
             var metaName = Path.GetFileNameWithoutExtension(mainJsName) + ".meta.js";
             items.Add(new EmbeddedItem(metaName, utf8.GetBytes(metadataJavascript), null));
-            items.Add(new EmbeddedItem(ToMinName(metaName), utf8.GetBytes(JsMinifier.Minify(metadataJavascript, metaName, minifyLocalVariables)), null));
+
+            if (config.OutputFormatting != JsOutputFormatting.Formatted)
+            {
+                items.Add(new EmbeddedItem(ToMinName(metaName), utf8.GetBytes(JsMinifier.Minify(metadataJavascript, metaName, minifyLocalVariables)), null));
+            }
         }
 
         foreach (var group in config.Resources)

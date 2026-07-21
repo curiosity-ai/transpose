@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.CodeAnalysis;
@@ -27,7 +28,7 @@ public sealed class NameMangler
         "interface","private","public","null","true","false","arguments","eval",
     };
 
-    private readonly Dictionary<ISymbol, string> _methodNameCache = new(SymbolEqualityComparer.Default);
+    private readonly ConcurrentDictionary<ISymbol, string> _methodNameCache = new(SymbolEqualityComparer.Default);
 
     public static string JsIdentifier(string name)
     {
@@ -92,7 +93,7 @@ public sealed class NameMangler
     /// types resolve under the runtime's namespace tree (e.g. System.Exception).
     /// </summary>
     /// <summary>BCL types that map onto runtime-provided constructors.</summary>
-    private static readonly Dictionary<string, string> BclTypeMap = new(StringComparer.Ordinal)
+    private static readonly ConcurrentDictionary<string, string> BclTypeMap = new(StringComparer.Ordinal)
     {
         ["System.Collections.Generic.List`1"] = "TransposeR.List",
         ["System.Collections.Generic.IList`1"] = "TransposeR.List",

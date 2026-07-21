@@ -129,6 +129,7 @@ public static class Program
         if (project.ReferencedProjectDlls.Count > 0)
             Console.WriteLine($"  projects:   {string.Join(", ", project.ReferencedProjectDlls.Select(Path.GetFileName))}");
         Console.WriteLine($"  defines:    {string.Join(";", project.DefineConstants)}");
+        Console.WriteLine($"  config:     {configuration}");
         Console.WriteLine($"  lang:       {project.LanguageVersion}");
 
         // The project's tps.json drives runtime-package detection and reflection settings. A

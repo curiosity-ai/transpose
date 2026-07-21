@@ -1,0 +1,9 @@
+{
+  "profiles": {
+    "Transpose.Compiler": {
+      "commandName": "Project",
+      "commandLineArgs": "Tesserae.csproj",
+      "workingDirectory": "d:\\work\\Tesserae\\Tesserae\\"
+    }
+  }
+}
