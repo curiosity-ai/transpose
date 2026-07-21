@@ -1025,14 +1025,18 @@ public sealed partial class Emitter
             return;
         }
 
-        // Integer division
+        // Integer division. A 32-bit result is clipped for parity with .NET's unchecked wrapping —
+        // int.MinValue / -1 overflows to int.MinValue (JS would give 2147483648).
         if (binary.IsKind(SyntaxKind.DivideExpression) && IsIntegerType(leftType) && IsIntegerType(rightType))
         {
+            var divClip = Integer32Clip(resultType);
+            if (divClip is not null) { _w.Write(divClip); _w.Write("("); }
             _w.Write("TransposeR.idiv(");
             EmitExpression(binary.Left);
             _w.Write(", ");
             EmitExpression(binary.Right);
             _w.Write(")");
+            if (divClip is not null) _w.Write(")");
             return;
         }
 
@@ -1088,6 +1092,11 @@ public sealed partial class Emitter
             return;
         }
 
+        // Managed (H5-parity) 32-bit integer arithmetic: wrap results that overflow / need
+        // unsigned reinterpretation, so `int + int`, `uint << n`, etc. match .NET's unchecked
+        // semantics rather than JS Number arithmetic.
+        if (TryEmitInteger32Binary(binary, resultType)) return;
+
         var jsOp = op switch
         {
             "==" => "===",
@@ -1098,6 +1107,60 @@ public sealed partial class Emitter
         EmitExpression(binary.Left);
         _w.Write($" {jsOp} ");
         EmitExpression(binary.Right);
+    }
+
+    /// <summary>The runtime clip helper for a 32-bit integer result type (int → clip32,
+    /// uint → clipu32), or null for any other type.</summary>
+    private static string? Integer32Clip(ITypeSymbol? type) => type?.SpecialType switch
+    {
+        SpecialType.System_Int32 => "Transpose.Int.clip32",
+        SpecialType.System_UInt32 => "Transpose.Int.clipu32",
+        _ => null,
+    };
+
+    /// <summary>
+    /// Emits a 32-bit integer <c>+ - &amp; | ^ &lt;&lt; &gt;&gt;</c> with .NET unchecked semantics
+    /// (H5's "managed" integer rule): an int32 result that JS could push past 2^31 is clipped with
+    /// clip32; a uint32 result is reinterpreted unsigned (clipu32) because JS <c>+</c>/bitwise yield
+    /// a signed number, and <c>uint &gt;&gt;</c> uses a logical shift. Returns false for operators /
+    /// types that already behave (%, comparisons, int32 bitwise, 64-bit, …) so the caller emits them
+    /// plainly. Multiplication and division are wrapped by their own branches above.
+    /// </summary>
+    private bool TryEmitInteger32Binary(BinaryExpressionSyntax binary, ITypeSymbol? resultType)
+    {
+        var t = resultType?.SpecialType;
+        if (t is not (SpecialType.System_Int32 or SpecialType.System_UInt32)) return false;
+        var unsigned = t == SpecialType.System_UInt32;
+
+        string? clip = null;
+        var jsOp = binary.OperatorToken.Text;
+        switch (binary.Kind())
+        {
+            case SyntaxKind.AddExpression:
+            case SyntaxKind.SubtractExpression:
+                clip = unsigned ? "Transpose.Int.clipu32" : "Transpose.Int.clip32";
+                break;
+            case SyntaxKind.BitwiseAndExpression:
+            case SyntaxKind.BitwiseOrExpression:
+            case SyntaxKind.ExclusiveOrExpression:
+            case SyntaxKind.LeftShiftExpression:
+                // JS bitwise/shift produce a signed int32; a uint result needs unsigned reinterpretation.
+                if (unsigned) clip = "Transpose.Int.clipu32";
+                break;
+            case SyntaxKind.RightShiftExpression:
+                // uint uses a logical shift (>>>) which is already an in-range uint; int uses >>.
+                if (unsigned) jsOp = ">>>"; else return false;
+                break;
+            default:
+                return false; // %, comparisons, etc. — no wrapping needed.
+        }
+
+        if (clip is not null) { _w.Write(clip); _w.Write("("); }
+        EmitExpression(binary.Left);
+        _w.Write($" {jsOp} ");
+        EmitExpression(binary.Right);
+        if (clip is not null) _w.Write(")");
+        return true;
     }
 
     private static bool IsNullableValueType(ITypeSymbol? t)
@@ -1316,37 +1379,49 @@ public sealed partial class Emitter
             return;
         }
 
-        // Compound integer division: x /= y
-        if (op == "/=" && IsIntegerType(leftType) && IsIntegerType(rightType))
+        // Compound arithmetic/bitwise assignment to a ≤32-bit integer: `lhs op= rhs` is
+        // `lhs = (T)(lhs op rhs)`, wrapping the result to T's width with .NET unchecked semantics.
+        // JS compound ops skip that (T) cast (and are signed / can overflow), so rebuild the
+        // assignment explicitly with the same wrapping the binary path uses — keeping `i += j`
+        // consistent with `i = i + j`. Multiplication uses imul (plain `*` loses precision above
+        // 2^53); division uses idiv. 64-bit and non-integer targets fall through.
+        if (IsNarrowIntegerTarget(leftType)
+            && op is "+=" or "-=" or "*=" or "/=" or "%=" or "&=" or "|=" or "^=" or "<<=" or ">>=")
         {
-            EmitExpression(assignment.Left);
-            _w.Write(" = ");
-            if (IsSubWordIntegerTarget(leftType)) _w.Write(NarrowIntegerClip(leftType!.SpecialType) + "(");
-            _w.Write("TransposeR.idiv(");
-            EmitExpression(assignment.Left);
-            _w.Write(", ");
-            EmitExpression(assignment.Right);
-            _w.Write(")");
-            if (IsSubWordIntegerTarget(leftType)) _w.Write(")");
-            return;
-        }
+            var t = leftType!.SpecialType;
+            var sub = IsSubWordIntegerTarget(leftType);
+            var binOp = op[..^1];
 
-        // Compound arithmetic/bitwise assignment to a sub-32-bit integer (`b += x`, `sh <<= 2`, …):
-        // C# evaluates it as `b = (T)(b op x)`, re-narrowing the int-promoted result to T's width.
-        // A bare JS `b += x` skips that (T) cast, so e.g. `(byte)250 += 10` stayed 260 instead of 4.
-        // Both operands are < 2^16, so the promoted result is exact in JS and a clip wraps it exactly.
-        if (op.Length == 2 && op[1] == '=' && "+-*%&|^".IndexOf(op[0]) >= 0 && IsSubWordIntegerTarget(leftType)
-            || op is "<<=" or ">>=" && IsSubWordIntegerTarget(leftType))
-        {
-            var binOp = op.Substring(0, op.Length - 1);
             EmitExpression(assignment.Left);
             _w.Write(" = ");
-            _w.Write(NarrowIntegerClip(leftType!.SpecialType));
-            _w.Write("((");
-            EmitExpression(assignment.Left);
-            _w.Write($") {binOp} (");
-            EmitExpression(assignment.Right);
-            _w.Write("))");
+
+            // 32-bit multiplication needs imul; sub-word uses plain `*` (operands < 2^16) then clip.
+            if (binOp == "*" && !sub)
+            {
+                _w.Write(t == SpecialType.System_UInt32 ? "Transpose.Int.umul(" : "Transpose.Int.mul(");
+                EmitExpression(assignment.Left); _w.Write(", "); EmitExpression(assignment.Right); _w.Write(")");
+                return;
+            }
+
+            // Wrapper needed to narrow / reinterpret the JS result to T (null where JS is already
+            // correct): sub-word narrows every op but `%`; int32 only +,-,/ can leave int32 range
+            // (bitwise/shift already yield int32, `%` is in range); uint32 needs unsigned reinterpret
+            // for everything but `%` and `>>` (which uses the logical shift `>>>`).
+            var innerOp = binOp == ">>" && t == SpecialType.System_UInt32 ? ">>>" : binOp;
+            string? clip = sub ? (binOp == "%" ? null : NarrowIntegerClip(t))
+                : t == SpecialType.System_UInt32 ? (binOp is "%" or ">>" ? null : "Transpose.Int.clipu32")
+                : (binOp is "+" or "-" or "/" ? "Transpose.Int.clip32" : null);
+
+            if (clip is not null) { _w.Write(clip); _w.Write("("); }
+            if (binOp == "/")
+            {
+                _w.Write("TransposeR.idiv("); EmitExpression(assignment.Left); _w.Write(", "); EmitExpression(assignment.Right); _w.Write(")");
+            }
+            else
+            {
+                _w.Write("("); EmitExpression(assignment.Left); _w.Write($") {innerOp} ("); EmitExpression(assignment.Right); _w.Write(")");
+            }
+            if (clip is not null) _w.Write(")");
             return;
         }
 
@@ -1391,6 +1466,19 @@ public sealed partial class Emitter
         {
             if (prefix.IsKind(SyntaxKind.UnaryMinusExpression)) { EmitExpression(prefix.Operand); _w.Write(".neg()"); return; }
             if (prefix.IsKind(SyntaxKind.UnaryPlusExpression)) { EmitExpression(prefix.Operand); return; }
+        }
+
+        // Managed 32-bit integer unary: `-int.MinValue` overflows back to int.MinValue, and `~uint`
+        // must be reinterpreted unsigned (JS `~` yields a signed int32). Clip to match .NET.
+        if (Integer32Clip(_model.GetTypeInfo(prefix).Type) is { } uClip
+            && (prefix.IsKind(SyntaxKind.UnaryMinusExpression) || prefix.IsKind(SyntaxKind.BitwiseNotExpression))
+            && !(prefix.IsKind(SyntaxKind.BitwiseNotExpression) && _model.GetTypeInfo(prefix).Type?.SpecialType == SpecialType.System_Int32))
+        {
+            _w.Write(uClip); _w.Write("(");
+            _w.Write(prefix.OperatorToken.Text);
+            EmitExpression(prefix.Operand);
+            _w.Write(")");
+            return;
         }
 
         _w.Write(prefix.OperatorToken.Text);
