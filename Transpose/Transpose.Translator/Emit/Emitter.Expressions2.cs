@@ -54,9 +54,18 @@ public sealed partial class Emitter
             return;
         }
 
-        // Local function call → bare name.
+        // Local function call → bare name. by-ref/out arguments still need the holder-object
+        // mechanism (the local function's out param is emitted as a { v: … } holder), so route those
+        // through EmitByRefInvocation exactly like a regular method call — otherwise an `out var _`
+        // discard (or a named out arg) would be emitted as a raw argument and never write back.
         if (symbol.MethodKind == MethodKind.LocalFunction)
         {
+            if (TransposeNaming.GetTemplate(symbol.OriginalDefinition) is null
+                && HasByRefArguments(invocation.ArgumentList, symbol))
+            {
+                EmitByRefInvocation(invocation, symbol);
+                return;
+            }
             _w.Write(NameMangler.JsIdentifier(symbol.Name));
             _w.Write("(");
             EmitArguments(invocation.ArgumentList, symbol);
@@ -281,7 +290,11 @@ public sealed partial class Emitter
 
     private void EmitCallee(InvocationExpressionSyntax invocation, IMethodSymbol symbol)
     {
-        if (symbol.IsStatic)
+        if (symbol.MethodKind == MethodKind.LocalFunction)
+        {
+            _w.Write(NameMangler.JsIdentifier(symbol.Name)); // local functions are called by bare name
+        }
+        else if (symbol.IsStatic)
         {
             _w.Write(StaticMemberAccess(symbol));
         }
@@ -1604,8 +1617,15 @@ public sealed partial class Emitter
         // `(int)someObject` all verify the runtime type. Upcasts, identity, numeric/enum, boxing,
         // user-defined operators, dynamic, `null`, casts to a type parameter, and casts to an
         // external (native-JS) type stay erased — the same set H5's CastBlock skips.
+        //
+        // Array and delegate targets are also erased: a native JS array carries no element-type
+        // metadata to verify (`(Emoji[])Enum.GetValues(...)` cannot be checked, and its runtime type
+        // token is the un-parameterised System.Array), and a delegate is a plain JS function whose
+        // generic type token (`ComponentEventHandler$2(T, MouseEvent)`) is not a constructible/callable
+        // runtime type — emitting a checked cast for either throws where .NET/H5 would succeed.
         if (targetType is not null && sourceType is not null
-            && targetType.TypeKind is not (TypeKind.TypeParameter or TypeKind.Dynamic)
+            && targetType.TypeKind is not (TypeKind.TypeParameter or TypeKind.Dynamic
+                                            or TypeKind.Array or TypeKind.Delegate)
             && targetType.SpecialType != SpecialType.System_Object
             && !targetType.IsTupleType
             && !IsUncheckableExternalCast(targetType)

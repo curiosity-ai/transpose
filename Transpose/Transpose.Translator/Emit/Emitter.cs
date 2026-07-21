@@ -100,12 +100,24 @@ public sealed partial class Emitter
             var results = new ConcurrentDictionary<INamedTypeSymbol, JsWriter>();
 #pragma warning restore RS1024 // Symbols should be compared for equality
 
-            Parallel.ForEach(types, type =>
+            // Parallel.ForEach aggregates any thrown exception into an AggregateException. The
+            // callers (RoslynTranslator) catch TranslationException to turn an unsupported construct
+            // into a clean diagnostic, so unwrap a single TranslationException and rethrow it as
+            // itself — otherwise an unsupported feature would surface as an unhandled AggregateException
+            // (a crash) instead of a reported error.
+            try
             {
-                results[type] = EmitOnlyType(this, type);
-                var count = Interlocked.Increment(ref done);
-                CompileProgress.ReportStep("emitting JavaScript", count, types.Count);
-            });
+                Parallel.ForEach(types, type =>
+                {
+                    results[type] = EmitOnlyType(this, type);
+                    var count = Interlocked.Increment(ref done);
+                    CompileProgress.ReportStep("emitting JavaScript", count, types.Count);
+                });
+            }
+            catch (AggregateException ex) when (ex.Flatten().InnerExceptions.OfType<TranslationException>().FirstOrDefault() is { } te)
+            {
+                throw te;
+            }
 
             foreach(var type in types)
             {

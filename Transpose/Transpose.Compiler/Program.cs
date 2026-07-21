@@ -164,6 +164,11 @@ public static class Program
             return 1;
         }
 
+        // A site build still emits the .NET assembly: the Transpose.Build.Target SDK declares the
+        // project's <Assembly>.dll as its build output, and MSBuild copies it for any project that
+        // references this one. Emitting the DLL (with the compiled JS embedded, like a package) means
+        // every project — app or library — produces the DLL the SDK/consumers expect.
+        var isSiteBuild = !emitPackage && !buildRuntime && outPath is null && tpscfg is not null;
         var translator = new RoslynTranslator();
         AssemblyBuildResult result;
         try
@@ -176,7 +181,7 @@ public static class Program
                 project.LanguageVersion,
                 reflectionEnabled,
                 metadataTarget,
-                emitAssembly: emitPackage);
+                emitAssembly: emitPackage || isSiteBuild);
         }
         catch (Exception ex)
         {
@@ -214,11 +219,18 @@ public static class Program
         // exactly like the existing tps compiler.
         if (config is not null && outPath is null)
         {
+            // Also emit the package DLL (with JS embedded), so referencing projects can consume this
+            // one and the SDK finds the <Assembly>.dll it declares as the build output.
+            string? dllPath = null;
+            if (result.AssemblyBytes is not null)
+                (dllPath, _) = WritePackage(project, config, configuration, result);
+
             var outDir = siteDir ?? ResolveOutputDir(config, project.ProjectDir, configuration);
             PhaseTimings.Measure("write site (minify + resources + html)", () =>
                 OutputBuilder.Build(project, config, js, outDir, configuration, result.MetadataJavascript));
             Console.WriteLine($"\nOK — built site in {outDir} ({js.Length:N0} bytes of {config.FileName}) in {sw.ElapsedMilliseconds} ms.");
             Console.WriteLine($"  index.html: {(config.HtmlDisabled ? "disabled" : "generated")}");
+            if (dllPath is not null) Console.WriteLine($"  dll:        {dllPath}");
             PrintTimings(sw.ElapsedMilliseconds);
             return 0;
         }
@@ -430,7 +442,12 @@ public static class Program
         var items = config is not null
             ? OutputBuilder.CollectEmbeddableItems(project.ProjectDir, config, mainJsName, result.Javascript!, result.MetadataJavascript, project.MinifyLocalVariables)
             : new List<EmbeddedItem> { new(mainJsName, System.Text.Encoding.UTF8.GetBytes(result.Javascript!), null) };
-        ResourceEmbedder.Embed(dllPath, items);
+        // Cecil re-serializes the assembly's metadata when embedding the resources; encoding a
+        // parameter's default value whose type lives in a referenced assembly (e.g. a Tesserae enum)
+        // makes it resolve that assembly. Seed the resolver with the reference directories so those
+        // types are found (the referenced DLLs live in the NuGet cache / sibling bin folders, not
+        // next to this DLL).
+        ResourceEmbedder.Embed(dllPath, items, project.ReferencePaths);
         return (dllPath, items);
     }
 

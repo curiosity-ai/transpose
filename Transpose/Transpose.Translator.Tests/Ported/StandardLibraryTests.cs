@@ -535,8 +535,8 @@ public class Program
     }
 }
 """;
-        // File I/O (System.IO streams) is not supported in the browser environment.
-        await RunTestExpectingError(code, "File I/O");
+        // In-memory streams (MemoryStream) are modeled by the runtime and supported — no OS file access.
+        await RunTest(code);
     }
 
     [TestMethod]
@@ -563,7 +563,8 @@ public class Program
     }
 }
 """;
-        // File I/O (System.IO streams) is not supported in the browser environment.
+        // BinaryWriter/BinaryReader are not fully modeled by the runtime (binary serialization),
+        // so they stay unsupported with a clear compile-time error.
         await RunTestExpectingError(code, "File I/O");
     }
 
