@@ -30,6 +30,9 @@
   <ItemGroup>
     <ProjectReference Include="..\Transpose.Translator\Transpose.Translator.csproj" />
     <PackageReference Include="Mono.Cecil" Version="0.11.6" />
+    <!-- JS minifier for the "outputFormatting": "Minified"/"Both" bundle variants. Pinned to the
+         same version the legacy compiler uses so the emitted .min.js is byte-for-byte comparable. -->
+    <PackageReference Include="NUglify" Version="1.20.7" />
   </ItemGroup>
 
 </Project>

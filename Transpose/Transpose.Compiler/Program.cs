@@ -118,8 +118,9 @@ public static class Program
         Console.WriteLine($"  defines:    {string.Join(";", project.DefineConstants)}");
         Console.WriteLine($"  lang:       {project.LanguageVersion}");
 
-        // The project's tps.json drives runtime-package detection and reflection settings.
-        var tpscfg = TransposeJson.TryLoad(project.ProjectDir);
+        // The project's tps.json drives runtime-package detection and reflection settings. A
+        // tps.<Configuration>.json overlay (e.g. tps.Release.json) is merged on top when present.
+        var tpscfg = TransposeJson.TryLoad(project.ProjectDir, configuration);
 
         // Base runtime package build: compile Transpose.BCL self-contained, transpile it with
         // outputBy: ClassPath, stitch the per-class files with the hand-written Resources primitives
@@ -181,7 +182,6 @@ public static class Program
         var js = result.Javascript!;
         if (!quiet) ReportDiagnostics(result.Diagnostics, maxErrors); // surface warnings
         var config = tpscfg;
-        var minified = configuration.Equals("Release", StringComparison.OrdinalIgnoreCase);
 
         // Package mode: compile this project as a distributable assembly — emit the .NET DLL and
         // embed its JS (+ tps.json resources) so another project can reference it and extract them.
@@ -200,7 +200,7 @@ public static class Program
         if (config is not null && outPath is null)
         {
             var outDir = siteDir ?? ResolveOutputDir(config, project.ProjectDir, configuration);
-            OutputBuilder.Build(project, config, js, outDir, minified, result.MetadataJavascript);
+            OutputBuilder.Build(project, config, js, outDir, configuration, result.MetadataJavascript);
             Console.WriteLine($"\nOK — built site in {outDir} ({js.Length:N0} bytes of {config.FileName}) in {sw.ElapsedMilliseconds} ms.");
             Console.WriteLine($"  index.html: {(config.HtmlDisabled ? "disabled" : "generated")}");
             return 0;
@@ -222,7 +222,7 @@ public static class Program
     /// </summary>
     private static int BuildRuntime(ResolvedProject project, string configuration, Stopwatch sw, string? outPath)
     {
-        var cfg = TransposeJson.TryLoad(project.ProjectDir);
+        var cfg = TransposeJson.TryLoad(project.ProjectDir, configuration);
         var reflectionEnabled = !(cfg?.ReflectionDisabled ?? false);
 
         RuntimePackageResult result;
@@ -263,8 +263,22 @@ public static class Program
             foreach (var (t, why) in result.ClassPath.Skipped.Take(20)) Console.WriteLine($"                - {t}: {why}");
         }
 
-        // Assemble the resource bundles (tps.js, tps.meta.js, …) declared in tps.json.
+        // Assemble the resource bundles (tps.js, tps.meta.js, …) declared in tps.json, then add a
+        // pre-minified variant of each next to it. Embedding the .min.js in the runtime package
+        // means a referencing build never re-minifies the (large) runtime — it just picks the
+        // variant its configuration wants, exactly as it does for the formatted/minified pair.
         var bundles = RuntimeAssembler.Assemble(project.ProjectDir);
+        var minBundles = new List<(string name, byte[] bytes)>();
+        foreach (var (name, bytes) in bundles)
+        {
+            var minName = name.EndsWith(".js", StringComparison.OrdinalIgnoreCase) && !name.EndsWith(".min.js", StringComparison.OrdinalIgnoreCase)
+                ? name.Substring(0, name.Length - ".js".Length) + ".min.js"
+                : null;
+            if (minName is null) continue;
+            var minText = JsMinifier.Minify(System.Text.Encoding.UTF8.GetString(bytes), name, project.MinifyLocalVariables);
+            minBundles.Add((minName, System.Text.Encoding.UTF8.GetBytes(minText)));
+        }
+        bundles = bundles.Concat(minBundles).ToList();
         // Write the assembly to bin/<config>/<tfm>/, matching the SDK's output path so `dotnet pack`
         // finds it (the Transpose.Build.Target SDK forces netstandard2.0, so that is the effective tfm).
         var dllPath = outPath ?? Path.Combine(project.ProjectDir, "bin", configuration, project.TargetFramework, project.AssemblyName + ".dll");
@@ -339,7 +353,7 @@ public static class Program
         try { project = ProjectResolver.Resolve(csproj, configuration, separateAssemblies: true); }
         catch (Exception ex) { Console.Error.WriteLine($"    resolve failed: {ex.Message}"); return false; }
 
-        var tpscfg = TransposeJson.TryLoad(project.ProjectDir);
+        var tpscfg = TransposeJson.TryLoad(project.ProjectDir, configuration);
         var (reflectionEnabled, metadataTarget) = ReflectionSettings(tpscfg);
 
         AssemblyBuildResult result;
@@ -374,7 +388,7 @@ public static class Program
         File.WriteAllBytes(dllPath, result.AssemblyBytes!);
 
         var items = config is not null
-            ? OutputBuilder.CollectEmbeddableItems(project.ProjectDir, config, mainJsName, result.Javascript!, result.MetadataJavascript)
+            ? OutputBuilder.CollectEmbeddableItems(project.ProjectDir, config, mainJsName, result.Javascript!, result.MetadataJavascript, project.MinifyLocalVariables)
             : new List<EmbeddedItem> { new(mainJsName, System.Text.Encoding.UTF8.GetBytes(result.Javascript!), null) };
         ResourceEmbedder.Embed(dllPath, items);
         return (dllPath, items);
