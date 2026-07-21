@@ -136,11 +136,12 @@ internal static class OutputBuilder
         // extracted, not recompiled) — exclude them from the runtime-package JS loop below.
         var projectDlls = new HashSet<string>(project.ReferencedProjectDlls, StringComparer.OrdinalIgnoreCase);
 
-        // 1. Runtime JS embedded in referenced packages, in dependency order (Transpose core first).
+        // 1. Runtime resources embedded in referenced packages, in dependency order (Transpose core
+        //    first). ExtractEmbeddedJs writes CSS/fonts/images straight to disk (CSS is also linked)
+        //    and returns only the JavaScript, so nothing but JS ever reaches the JS minifier below.
         var runtimeJs = new List<EmbeddedJs>();
         foreach (var dll in OrderRuntimeAssemblies(project.ReferencePaths.Where(p => !projectDlls.Contains(p))))
-            foreach (var (fileName, text) in ExtractEmbeddedJs(dll))
-                runtimeJs.Add(new EmbeddedJs(fileName, fileName, text));
+            runtimeJs.AddRange(ExtractEmbeddedJs(dll, outputDir, cssLinks));
         RoutePackageJs(runtimeJs);
 
         // The TransposeR shim (the translator's language-level helpers over tps.js) loads right after
@@ -316,6 +317,9 @@ internal static class OutputBuilder
         => name.EndsWith(".min.js", StringComparison.OrdinalIgnoreCase)
            || name.EndsWith(".min.css", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>Whether a file name is a stylesheet (<c>.css</c>/<c>.min.css</c>).</summary>
+    private static bool IsCss(string name) => name.EndsWith(".css", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>The paired variant of a bundle name: <c>x.js</c> ↔ <c>x.min.js</c> (and .css).</summary>
     private static string CounterpartName(string name)
     {
@@ -388,12 +392,21 @@ internal static class OutputBuilder
         => dlls.OrderBy(d => Path.GetFileName(d).Equals("Transpose.dll", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
                .ThenBy(d => Path.GetFileName(d), StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>The JS files a package embeds, in the order its Transpose.Resources.json lists them.</summary>
-    private static IEnumerable<(string fileName, string text)> ExtractEmbeddedJs(string dllPath)
+    /// <summary>
+    /// Extracts a referenced package's embedded web resources, in the order its
+    /// Transpose.Resources.json lists them. Only <b>JavaScript</b> is returned (as text) for
+    /// <c>RoutePackageJs</c> to place and minify; CSS and copy-through resources (fonts, images, …)
+    /// are written straight to <paramref name="outputDir"/> here — binary-safe, never decoded as text
+    /// and never handed to the JS minifier — with stylesheets also added to <paramref name="cssLinks"/>.
+    /// When a package has no manifest, only its <c>.js</c>/<c>.css</c> resources are surfaced (other
+    /// resource types cannot be identified reliably without the manifest).
+    /// </summary>
+    private static IReadOnlyList<EmbeddedJs> ExtractEmbeddedJs(string dllPath, string outputDir, List<string> cssLinks)
     {
+        var jsFiles = new List<EmbeddedJs>();
         Assembly asm;
         try { asm = Assembly.LoadFrom(dllPath); }
-        catch { yield break; }
+        catch { return jsFiles; }
 
         var resourceNames = asm.GetManifestResourceNames();
         var manifest = resourceNames.FirstOrDefault(n => n.EndsWith("Transpose.Resources.json", StringComparison.OrdinalIgnoreCase));
@@ -409,7 +422,8 @@ internal static class OutputBuilder
         }
         else
         {
-            order = resourceNames.Where(n => n.EndsWith(".js", StringComparison.OrdinalIgnoreCase)).ToList();
+            order = resourceNames.Where(n => n.EndsWith(".js", StringComparison.OrdinalIgnoreCase)
+                                             || n.EndsWith(".css", StringComparison.OrdinalIgnoreCase)).ToList();
         }
 
         foreach (var fileName in order)
@@ -417,10 +431,30 @@ internal static class OutputBuilder
             var resName = resourceNames.FirstOrDefault(n => n.Equals(fileName, StringComparison.OrdinalIgnoreCase))
                           ?? resourceNames.FirstOrDefault(n => n.EndsWith(fileName, StringComparison.OrdinalIgnoreCase));
             if (resName is null) continue;
-            using var s = asm.GetManifestResourceStream(resName)!;
-            using var reader = new StreamReader(s);
-            yield return (Path.GetFileName(fileName), reader.ReadToEnd());
+
+            // Runtime packages place their bundles at the site root (the manifest FileName may carry
+            // an assembly-qualified prefix, so take just the file name).
+            var rel = Path.GetFileName(fileName);
+
+            if (rel.EndsWith(".js", StringComparison.OrdinalIgnoreCase))
+            {
+                using var s = asm.GetManifestResourceStream(resName)!;
+                using var reader = new StreamReader(s);
+                jsFiles.Add(new EmbeddedJs(rel, rel, reader.ReadToEnd()));   // JS: placed/minified by RoutePackageJs
+            }
+            else
+            {
+                // CSS and copy-through resources (fonts, images): copy the raw bytes to disk so binary
+                // assets stay intact, and link stylesheets. These must never reach the JS minifier.
+                var dest = Path.Combine(outputDir, rel.Replace('/', Path.DirectorySeparatorChar));
+                Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                using (var s = asm.GetManifestResourceStream(resName)!)
+                using (var fs = File.Create(dest))
+                    s.CopyTo(fs);
+                if (IsCss(rel)) cssLinks.Add(rel);
+            }
         }
+        return jsFiles;
     }
 
     private static IEnumerable<string> ExpandGlob(string baseDir, string pattern)
