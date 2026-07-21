@@ -217,12 +217,16 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
     // Native-sized integers (nint/nuint) have no JS representation distinct from double.
     public override void VisitIdentifierName(IdentifierNameSyntax node)
     {
+        // VisitIdentifierName fires on nearly every identifier in the source, so it is the scanner's
+        // hottest path. Resolve the symbol once and reuse it for both checks below rather than
+        // querying the semantic model twice.
+        var symbol = _model.GetSymbolInfo(node).Symbol;
+
         if (node.Identifier.Text is "nint" or "nuint"
-            && _model.GetSymbolInfo(node).Symbol is INamedTypeSymbol { IsNativeIntegerType: true })
+            && symbol is INamedTypeSymbol { IsNativeIntegerType: true })
         {
             Report(node, "Native-sized integers (nint/nuint) are not supported in the browser environment.");
         }
-        var symbol = _model.GetSymbolInfo(node).Symbol;
         var type = symbol as INamedTypeSymbol ?? symbol?.ContainingType;
         if (type is not null) CheckDeniedType(type, node);
         base.VisitIdentifierName(node);
@@ -269,11 +273,14 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
 
     // ---- Runtime APIs that cannot exist in the browser ---------------------
 
-    private static readonly (string ns, string message)[] DeniedNamespaces =
+    // Denied namespaces, stored as their segments (root → leaf) so a type's namespace can be matched
+    // by walking namespace symbols — no per-identifier string allocation. `segments` is in outer→inner
+    // order (e.g. ["System","IO"]); a type matches if its namespace equals or is nested under these.
+    private static readonly (string[] segments, string message)[] DeniedNamespaces =
     {
-        ("System.IO", "File I/O ({0}) is not supported in the browser environment."),
-        ("System.Net.Sockets", "Sockets ({0}) are not supported in the browser environment."),
-        ("System.Threading", "Threading primitives ({0}) are not supported in the browser environment."),
+        (new[] { "System", "IO" },              "File I/O ({0}) is not supported in the browser environment."),
+        (new[] { "System", "Net", "Sockets" },  "Sockets ({0}) are not supported in the browser environment."),
+        (new[] { "System", "Threading" },       "Threading primitives ({0}) are not supported in the browser environment."),
     };
 
     // Threading types that are allowed because they are modeled (Task-based async, etc.)
@@ -295,24 +302,55 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
 
     private void CheckDeniedType(INamedTypeSymbol type, SyntaxNode node)
     {
-        var full = type.ConstructedFrom.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
-            .Replace("global::", string.Empty);
+        // Fast path: the vast majority of identifiers resolve to types outside the denied
+        // namespaces. Match against the namespace *symbol* (a cheap segment walk) before doing any
+        // string formatting, so the common case allocates nothing. Only when a type is actually in a
+        // denied namespace do we pay for the allowed-list check and the diagnostic message.
+        var containing = type.ContainingNamespace;
+        if (containing is null || containing.IsGlobalNamespace) return;
+
+        string? message = null;
+        foreach (var (segments, msg) in DeniedNamespaces)
+        {
+            if (NamespaceMatches(containing, segments)) { message = msg; break; }
+        }
+        if (message is null) return;
 
         var metadataName = type.ConstructUnboundGenericTypeSafeName();
         if (AllowedThreadingTypes.Contains(metadataName)) return;
 
-        var ns = type.ContainingNamespace?.ToDisplayString() ?? string.Empty;
-        foreach (var (deniedNs, message) in DeniedNamespaces)
+        if (_reportedApiLocations.Add(node.GetLocation()))
         {
-            if (ns == deniedNs || ns.StartsWith(deniedNs + ".", System.StringComparison.Ordinal))
-            {
-                if (_reportedApiLocations.Add(node.GetLocation()))
-                {
-                    Report(node, string.Format(message, full));
-                }
-                return;
-            }
+            var full = type.ConstructedFrom.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+                .Replace("global::", string.Empty);
+            Report(node, string.Format(message, full));
         }
+    }
+
+    /// <summary>True if <paramref name="ns"/> equals the root-anchored namespace <paramref name="segments"/>
+    /// (outer→inner, e.g. ["System","IO"]) or is nested beneath it — matches both System.IO and
+    /// System.IO.Compression. Walks the namespace symbol chain (which runs innermost→outermost)
+    /// without allocating.</summary>
+    private static bool NamespaceMatches(INamespaceSymbol ns, string[] segments)
+    {
+        // How many named parts deep is ns? A denied prefix can only match if ns is at least that deep.
+        var depth = 0;
+        for (var n = ns; n is not null && !n.IsGlobalNamespace; n = n.ContainingNamespace) depth++;
+        if (depth < segments.Length) return false;
+
+        // Drop the inner (depth - segments.Length) parts so `cur` sits at the innermost denied segment.
+        var cur = ns;
+        for (var skip = depth - segments.Length; skip > 0 && cur is not null; skip--) cur = cur.ContainingNamespace;
+
+        // Compare cur outward to the root against segments (inner→outer), then require anchoring at
+        // the global namespace so a nested "MyLib.System.IO" does not match "System.IO".
+        for (var i = segments.Length - 1; i >= 0; i--)
+        {
+            if (cur is null || cur.IsGlobalNamespace) return false;
+            if (!string.Equals(cur.Name, segments[i], System.StringComparison.Ordinal)) return false;
+            cur = cur.ContainingNamespace;
+        }
+        return cur is null || cur.IsGlobalNamespace;
     }
 }
 

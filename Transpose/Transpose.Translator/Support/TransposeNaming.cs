@@ -18,6 +18,45 @@ internal static class TransposeNaming
     public const string ScopeAttr = "Transpose.ScopeAttribute";
     public const string GlobalMethodsAttr = "Transpose.GlobalMethodsAttribute";
 
+    /// <summary>Allocation-free equivalent of <c>a.AttributeClass?.ToDisplayString() == fullName</c>.
+    /// Attribute matching runs for every symbol reference during emit; <c>ToDisplayString</c> builds a
+    /// fresh fully-qualified string on each call, so the naming layer used to allocate one string per
+    /// attribute per lookup. <see cref="IsFullyQualified"/> compares the symbol's name and containing
+    /// namespaces against the constant by offset instead, allocating nothing on the (dominant)
+    /// non-matching path.</summary>
+    public static bool AttrIs(AttributeData a, string fullName) => IsFullyQualified(a.AttributeClass, fullName);
+
+    /// <summary>True if <paramref name="cls"/>'s fully-qualified name equals <paramref name="dotted"/>
+    /// (namespaces + type name, e.g. "Transpose.NameAttribute"). Walks name then containing namespaces
+    /// right-to-left, comparing each dot-delimited segment against the constant by offset — no
+    /// allocation. Handles only namespace-qualified top-level types (all Transpose codegen attributes
+    /// are such), not nested types.</summary>
+    internal static bool IsFullyQualified(INamedTypeSymbol? cls, string dotted)
+    {
+        if (cls is null) return false;
+        var end = dotted.Length;                       // exclusive end of the current segment
+        if (!SegmentEquals(dotted, ref end, cls.Name)) return false;
+        for (var ns = cls.ContainingNamespace; ns is not null && !ns.IsGlobalNamespace; ns = ns.ContainingNamespace)
+        {
+            if (end == 0) return false;                // constant exhausted but the namespace continues
+            if (!SegmentEquals(dotted, ref end, ns.Name)) return false;
+        }
+        return end == 0;                               // whole constant consumed, nothing left over
+    }
+
+    /// <summary>Matches the rightmost dot-delimited segment of <paramref name="dotted"/> ending at
+    /// <paramref name="end"/> against <paramref name="seg"/>; on success advances <paramref name="end"/>
+    /// past the preceding '.' (or to 0 at the start).</summary>
+    private static bool SegmentEquals(string dotted, ref int end, string seg)
+    {
+        var start = end - seg.Length;
+        if (start < 0) return false;
+        if (start > 0 && dotted[start - 1] != '.') return false;   // must be dot-delimited
+        if (string.CompareOrdinal(dotted, start, seg, 0, seg.Length) != 0) return false;
+        end = start > 0 ? start - 1 : 0;               // skip the '.' for the next (outer) segment
+        return true;
+    }
+
     /// <summary>
     /// The JS scope prefix for a type marked <c>[Scope]</c>/<c>[GlobalMethods]</c> — the Transpose
     /// bindings (e.g. <c>Transpose.Core.dom</c>) that project onto ambient JS globals. Returns the
@@ -28,8 +67,8 @@ internal static class TransposeNaming
     public static string? ScopePrefix(ITypeSymbol? type)
     {
         if (type is null) return null;
-        var scope = type.GetAttributes().FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == ScopeAttr);
-        var global = type.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == GlobalMethodsAttr);
+        var scope = type.GetAttributes().FirstOrDefault(a => AttrIs(a, ScopeAttr));
+        var global = type.GetAttributes().Any(a => AttrIs(a, GlobalMethodsAttr));
         if (scope is null && !global) return null;
         return (scope?.ConstructorArguments.FirstOrDefault().Value as string) ?? "";
     }
@@ -42,7 +81,7 @@ internal static class TransposeNaming
     /// </summary>
     public static int EnumEmitMode(ITypeSymbol enumType)
     {
-        var a = enumType.GetAttributes().FirstOrDefault(x => x.AttributeClass?.ToDisplayString() == EnumAttr);
+        var a = enumType.GetAttributes().FirstOrDefault(x => AttrIs(x, EnumAttr));
         if (a is null || a.ConstructorArguments.Length == 0) return 7;
         return a.ConstructorArguments[0].Value is int m ? m : 7;
     }
@@ -91,7 +130,7 @@ internal static class TransposeNaming
         // types are native JS objects, so their indexer is bracket access. Real Transpose runtime
         // collection classes (List<T>, Dictionary<,>, …) are not external and keep getItem/setItem.
         if (indexer.ContainingType is not { TypeKind: TypeKind.Class } ct || !IsExternalType(ct)) return false;
-        if (indexer.ContainingType.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == AccessorsIndexerAttr)) return false;
+        if (indexer.ContainingType.GetAttributes().Any(a => AttrIs(a, AccessorsIndexerAttr))) return false;
         if (GetName(indexer) is not null) return false;
         if (GetTemplate(indexer.GetMethod?.OriginalDefinition) is not null) return false;
         if (GetTemplate(indexer.SetMethod?.OriginalDefinition) is not null) return false;
@@ -199,7 +238,7 @@ internal static class TransposeNaming
     {
         for (var t = type; t is not null; t = t.ContainingType)
         {
-            if (t.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == ExternalAttr))
+            if (t.GetAttributes().Any(a => AttrIs(a, ExternalAttr)))
                 return true;
         }
         // Assembly-level [assembly: External] (how binding libraries such as Transpose.Core mark
@@ -209,13 +248,13 @@ internal static class TransposeNaming
 
     /// <summary>True if the assembly carries <c>[assembly: Transpose.External]</c>.</summary>
     public static bool AssemblyHasExternalAttribute(IAssemblySymbol? asm)
-        => asm is not null && asm.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == ExternalAttr);
+        => asm is not null && asm.GetAttributes().Any(a => AttrIs(a, ExternalAttr));
 
     public static bool IsExternal(ISymbol symbol)
     {
         for (var s = symbol; s is not null; s = s.ContainingType)
         {
-            if (s.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == ExternalAttr))
+            if (s.GetAttributes().Any(a => AttrIs(a, ExternalAttr)))
                 return true;
         }
         // Types defined in the Transpose assembly (not in user source) are external BCL.
@@ -226,7 +265,7 @@ internal static class TransposeNaming
     {
         if (symbol is null) return null;
         var attr = symbol.GetAttributes()
-            .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == attrName);
+            .FirstOrDefault(a => AttrIs(a, attrName));
         if (attr is null || attr.ConstructorArguments.Length == 0) return null;
         return attr.ConstructorArguments[0].Value as string;
     }
@@ -727,7 +766,7 @@ internal static class TransposeNaming
     /// <summary>A [Convention] applied directly to a member (e.g. KeyValuePair.Key).</summary>
     private static Notation? MemberConventionNotation(ISymbol symbol)
     {
-        var a = symbol.GetAttributes().FirstOrDefault(x => x.AttributeClass?.ToDisplayString() == ConventionAttr);
+        var a = symbol.GetAttributes().FirstOrDefault(x => AttrIs(x, ConventionAttr));
         if (a is null) return null;
         var notation = a.ConstructorArguments.Length > 0 && a.ConstructorArguments[0].Value is int cn
             ? cn
@@ -741,7 +780,7 @@ internal static class TransposeNaming
         AttributeData? best = null;
         var bestPriority = int.MinValue;
         var bestSpecific = -1;
-        foreach (var a in type.GetAttributes().Where(a => a.AttributeClass?.ToDisplayString() == ConventionAttr))
+        foreach (var a in type.GetAttributes().Where(a => AttrIs(a, ConventionAttr)))
         {
             var member = NamedInt(a, "Member", ConvAll);
             if (member != ConvAll && (member & memberKindFlag) == 0) continue;
@@ -795,7 +834,7 @@ internal static class TransposeNaming
     {
         if (method is null) return null;
         var a = method.OriginalDefinition.GetAttributes()
-            .FirstOrDefault(x => x.AttributeClass?.ToDisplayString() == "Transpose.GlobalTargetAttribute");
+            .FirstOrDefault(x => AttrIs(x, "Transpose.GlobalTargetAttribute"));
         return a?.ConstructorArguments.Length > 0 ? a.ConstructorArguments[0].Value as string : null;
     }
 

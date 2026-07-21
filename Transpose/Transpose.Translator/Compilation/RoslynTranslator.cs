@@ -82,15 +82,18 @@ public sealed class RoslynTranslator
         MetadataTarget metadataTarget = MetadataTarget.Inline,
         bool emitAssembly = true)
     {
-        var compilation = CompilationBuilder.Build(
-            sources, assemblyName, languageVersion,
-            extraReferencePaths: extraReferencePaths,
-            preprocessorSymbols: preprocessorSymbols);
+        CompileProgress.Report("parsing sources + resolving references");
+        var compilation = PhaseTimings.Measure("build compilation (parse + references)", () =>
+            CompilationBuilder.Build(
+                sources, assemblyName, languageVersion,
+                extraReferencePaths: extraReferencePaths,
+                preprocessorSymbols: preprocessorSymbols));
 
         var diagnostics = new List<Diagnostic>();
-        var roslynErrors = compilation.GetDiagnostics()
+        CompileProgress.Report("binding + analyzing");
+        var roslynErrors = PhaseTimings.Measure("bind + diagnostics", () => compilation.GetDiagnostics()
             .Where(d => d.Severity == DiagnosticSeverity.Error && !BenignForJs.Contains(d.Id))
-            .ToList();
+            .ToList());
 
         // Run the unsupported-feature scanner even when Roslyn reported errors: an unsupported
         // construct (e.g. an [InlineArray] whose attribute the BCL keeps internal) can surface a
@@ -98,7 +101,8 @@ public sealed class RoslynTranslator
         // alongside it. Scanning a compilation with errors is safe — the scanner tolerates missing
         // symbols — but guard against an unexpected throw so the Roslyn errors are never lost.
         IReadOnlyList<Diagnostic> unsupported;
-        try { unsupported = UnsupportedFeatureScanner.Scan(compilation); }
+        CompileProgress.Report("scanning for unsupported features");
+        try { unsupported = PhaseTimings.Measure("scan unsupported features", () => UnsupportedFeatureScanner.Scan(compilation)); }
         catch { unsupported = new List<Diagnostic>(); }
         diagnostics.AddRange(unsupported);
         diagnostics.AddRange(roslynErrors);
@@ -113,13 +117,14 @@ public sealed class RoslynTranslator
             var asmCompilation = compilation.WithOptions(
                 compilation.Options.WithOutputKind(OutputKind.DynamicallyLinkedLibrary));
             using var ms = new MemoryStream();
+            CompileProgress.Report("emitting .NET assembly");
             // Include private members so a referencing project sees the full member set — the
             // overload numbering (e.g. $ctorN) must match what this assembly emits for itself,
             // and that numbering counts private overloads too.
-            var emit = asmCompilation.Emit(ms, options: new Microsoft.CodeAnalysis.Emit.EmitOptions(
+            var emit = PhaseTimings.Measure("emit .NET assembly", () => asmCompilation.Emit(ms, options: new Microsoft.CodeAnalysis.Emit.EmitOptions(
                 metadataOnly: false,
                 includePrivateMembers: true,
-                debugInformationFormat: Microsoft.CodeAnalysis.Emit.DebugInformationFormat.Embedded));
+                debugInformationFormat: Microsoft.CodeAnalysis.Emit.DebugInformationFormat.Embedded)));
             if (!emit.Success)
             {
                 diagnostics.AddRange(emit.Diagnostics
@@ -136,7 +141,8 @@ public sealed class RoslynTranslator
                 ReflectionEnabled = reflectionEnabled,
                 MetadataTarget = metadataTarget,
             };
-            var js = emitter.Emit();
+            CompileProgress.Report("emitting JavaScript");
+            var js = PhaseTimings.Measure("emit JavaScript", () => emitter.Emit());
             return new AssemblyBuildResult(js, emitter.MetadataScript, assemblyBytes, diagnostics);
         }
         catch (TranslationException ex)

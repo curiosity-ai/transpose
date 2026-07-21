@@ -49,6 +49,7 @@ public static class Program
                 case "--max-errors": maxErrors = int.Parse(args[++i]); break;
                 case "--reference" or "-r": extraReferences.Add(args[++i]); break;
                 case "--define" or "-D": extraDefines.Add(args[++i]); break;
+                case "--timing": PhaseTimings.Enabled = true; break;
                 case "--assembly-version": assemblyVersion = args[++i]; break;
                 case "--project" or "-p": projectArg = args[++i]; break;
                 default:
@@ -77,15 +78,27 @@ public static class Program
         // layout / embedded resources): tps.json presence alone does not make it a site app. Only a
         // *non-packable* project with a tps.json builds a runnable site; a packable one is a library.
         // Projects that pass `--out` (bootstrap, tooling) keep writing a single .js bundle unchanged.
+        var hasTpsJson = TransposeJson.TryLoad(Path.GetDirectoryName(csproj)!) is not null;
         if (!emitPackage && !buildRuntime && outPath is null
-            && (ProjectResolver.IsPackable(csproj)
-                || TransposeJson.TryLoad(Path.GetDirectoryName(csproj)!) is null))
+            && (ProjectResolver.IsPackable(csproj) || !hasTpsJson))
         {
             emitPackage = true;
             separateAssemblies = true;
         }
+        // A site build (a non-packable project with a tps.json) consumes each referenced project's
+        // already-built package DLL — extracting its compiled JS — instead of recompiling that
+        // project's sources into this bundle. A dependency is therefore compiled once and reused:
+        // editing the app re-transpiles only the app's own files, not the whole referenced library.
+        // (With no project references this is equivalent to the old bundle build.)
+        else if (!emitPackage && !buildRuntime && outPath is null && hasTpsJson)
+        {
+            separateAssemblies = true;
+        }
 
         Console.WriteLine($"tps: compiling {Path.GetFileName(csproj)}");
+        // Surface the translator's phase/step progress (binding, scanning, JS emit) so the long
+        // silent phases show visible movement. Quiet mode suppresses it.
+        if (!quiet) CompileProgress.Sink = msg => Console.WriteLine($"  {msg}");
         var sw = Stopwatch.StartNew();
 
         ResolvedProject project;
@@ -191,6 +204,7 @@ public static class Program
             Console.WriteLine($"\nOK — built package {project.AssemblyName}.dll ({result.AssemblyBytes!.Length:N0} bytes) with {items.Count} embedded resource(s) in {sw.ElapsedMilliseconds} ms.");
             Console.WriteLine($"  dll:      {dllPath}");
             Console.WriteLine($"  embedded: {string.Join(", ", items.Take(6).Select(i => i.Name))}{(items.Count > 6 ? ", …" : "")}");
+            PrintTimings(sw.ElapsedMilliseconds);
             return 0;
         }
 
@@ -200,9 +214,11 @@ public static class Program
         if (config is not null && outPath is null)
         {
             var outDir = siteDir ?? ResolveOutputDir(config, project.ProjectDir, configuration);
-            OutputBuilder.Build(project, config, js, outDir, configuration, result.MetadataJavascript);
+            PhaseTimings.Measure("write site (minify + resources + html)", () =>
+                OutputBuilder.Build(project, config, js, outDir, configuration, result.MetadataJavascript));
             Console.WriteLine($"\nOK — built site in {outDir} ({js.Length:N0} bytes of {config.FileName}) in {sw.ElapsedMilliseconds} ms.");
             Console.WriteLine($"  index.html: {(config.HtmlDisabled ? "disabled" : "generated")}");
+            PrintTimings(sw.ElapsedMilliseconds);
             return 0;
         }
 
@@ -211,6 +227,7 @@ public static class Program
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outPath))!);
         File.WriteAllText(outPath, js);
         Console.WriteLine($"\nOK — wrote {js.Length:N0} bytes to {outPath} in {sw.ElapsedMilliseconds} ms.");
+        PrintTimings(sw.ElapsedMilliseconds);
         return 0;
     }
 
@@ -302,7 +319,29 @@ public static class Program
         Console.WriteLine($"\nOK — built runtime {Path.GetFileName(dllPath)} with {bundles.Count} embedded bundle(s) in {sw.ElapsedMilliseconds} ms.");
         Console.WriteLine($"  dll:      {dllPath}");
         Console.WriteLine($"  bundles:  written to {outDir}");
+        PrintTimings(sw.ElapsedMilliseconds);
         return 0;
+    }
+
+    /// <summary>Prints the per-phase timing breakdown gathered when <c>--timing</c> (or
+    /// <c>TRANSPOSE_TIMING=1</c>) is set. Shows each phase's total time and its share of the sum,
+    /// so a build's hotspots (binding, JS emit, minification) are visible at a glance.</summary>
+    private static void PrintTimings(long wallClockMs)
+    {
+        if (!PhaseTimings.Enabled) return;
+        var phases = PhaseTimings.Snapshot();
+        if (phases.Count == 0) return;
+        long sum = 0;
+        foreach (var p in phases) sum += p.ms;
+        var denom = sum == 0 ? 1 : sum;
+        Console.WriteLine("\n  timing breakdown:");
+        foreach (var (phase, ms, count) in phases)
+        {
+            var share = ms * 100.0 / denom;
+            var times = count > 1 ? $" ×{count}" : "";
+            Console.WriteLine($"    {ms,7:N0} ms  {share,5:F1}%  {phase}{times}");
+        }
+        Console.WriteLine($"    {sum,7:N0} ms          measured phases (wall clock {wallClockMs:N0} ms)");
     }
 
     private static (bool reflectionEnabled, MetadataTarget target) ReflectionSettings(TransposeJson? tpscfg)
@@ -472,6 +511,7 @@ public static class Program
               --site-dir <dir>      Output directory for the assembled site
               --with-runtime        Prepend the tps.js runtime + shim to the output
               --max-errors <n>      Max individual errors to print (default 40)
+              --timing              Print a per-phase timing breakdown of the build
               -q, --quiet           Suppress warning output
               -h, --help            Show this help
             """);

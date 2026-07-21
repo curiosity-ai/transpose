@@ -555,7 +555,7 @@ public sealed partial class Emitter
         => CollectTypes()
             .SelectMany(t => t.GetMembers().OfType<IMethodSymbol>())
             .Where(m => m.IsStatic && m.GetAttributes().Any(a =>
-                a.AttributeClass?.ToDisplayString() == "System.Runtime.CompilerServices.ModuleInitializerAttribute"))
+                TransposeNaming.AttrIs(a, "System.Runtime.CompilerServices.ModuleInitializerAttribute")))
             .ToList();
 
     private void EmitParameterList(IMethodSymbol method)
@@ -592,7 +592,7 @@ public sealed partial class Emitter
         // definition takes them — so the call site passes exactly what the definition expects.
         if (!method.IsGenericMethod) return false;
         var def = method.OriginalDefinition;
-        if (def.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == "Transpose.IgnoreGenericAttribute")) return false;
+        if (def.GetAttributes().Any(a => TransposeNaming.AttrIs(a, "Transpose.IgnoreGenericAttribute"))) return false;
         // A templated method's call shape is the template itself — no separate leading type args.
         if (TransposeNaming.GetTemplate(def) is not null) return false;
         // Source / referenced-library generic methods always thread. So do Transpose.dll BCL generic
