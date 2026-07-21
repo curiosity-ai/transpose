@@ -334,10 +334,15 @@ public sealed partial class Emitter
         if (initializer is { RawKind: (int)SyntaxKind.ThisConstructorInitializer }
             && _model.GetSymbolInfo(initializer).Symbol is IMethodSymbol thisCtor)
         {
+            // A constructor that chains to `: this(...)` must NOT run the instance field
+            // initializers — the constructor it delegates to (the one that ultimately chains to
+            // base) runs them. Emitting them here re-ran them AFTER the delegated ctor had already
+            // initialized the object, overwriting its work with the field defaults (e.g.
+            // `Random() : this(seed)` reset SeedArray back to all-zeros, so Random/Guid.NewGuid
+            // produced a constant value).
             _w.Write($"this.{CtorName(thisCtor)}(");
             EmitArguments(initializer.ArgumentList, thisCtor);
             _w.WriteLine(");");
-            EmitInstanceFieldInitializers(type);
             return;
         }
 

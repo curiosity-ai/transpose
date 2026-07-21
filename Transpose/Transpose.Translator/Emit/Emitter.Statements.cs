@@ -442,7 +442,10 @@ public sealed partial class Emitter
     /// </summary>
     private string EmitEnumeratorInit(CommonForEachStatementSyntax forEach, ExpressionSyntax source)
     {
-        var enumVar = "$e" + forEach.GetHashCode().ToString("x").Substring(0, 4);
+        // Zero-pad to 8 hex digits before slicing: a small hashcode (< 0x1000) formats to fewer
+        // than 4 hex chars, so an unpadded Substring(0, 4) threw ArgumentOutOfRangeException on
+        // certain foreach nodes.
+        var enumVar = "$e" + ((uint)forEach.GetHashCode()).ToString("x8").Substring(0, 4);
         var getEnum = _model.GetForEachStatementInfo(forEach).GetEnumeratorMethod;
         var ext = getEnum is { IsExtensionMethod: true } ? (getEnum.ReducedFrom ?? getEnum) : null;
         _w.Write($"var {enumVar} = TransposeR.getEnumerator(");
@@ -462,13 +465,21 @@ public sealed partial class Emitter
 
     private void EmitForEachBody(StatementSyntax body)
     {
+        // The body statements are emitted inline into the foreach's own JS block (opened by the
+        // caller's _w.Block, which already wrote `let <iter> = ...`). Route through EmitStatements
+        // so the block gets its OWN inline-var predeclare scope — otherwise inline out-vars/
+        // is-pattern names (`let x;`) declared here would be tracked against the enclosing block and
+        // suppressed as "already declared" in a sibling foreach body, leaving the second use of the
+        // name undeclared (ReferenceError). Mirrors how EmitBlock delegates to EmitStatements.
         if (body is BlockSyntax block)
         {
-            foreach (var s in block.Statements) EmitStatement(s);
+            EmitStatements(block.Statements);
         }
         else
         {
-            EmitStatement(body);
+            _predeclaredInScope.Push(new HashSet<string>());
+            try { EmitStatement(body); }
+            finally { _predeclaredInScope.Pop(); }
         }
     }
 
