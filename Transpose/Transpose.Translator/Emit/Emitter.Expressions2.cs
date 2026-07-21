@@ -86,6 +86,18 @@ public sealed partial class Emitter
             return;
         }
 
+        // char.ToString() → the single-character string. A char is a bare code-point number at
+        // runtime, so its default `.toString()` would give the number ("65") not the character.
+        if (symbol is { Name: "ToString", Parameters.Length: 0 }
+            && invocation.Expression is MemberAccessExpressionSyntax { Expression: { } charRecv }
+            && IsCharType(_model.GetTypeInfo(charRecv).Type))
+        {
+            _w.Write("String.fromCharCode(");
+            EmitExpression(charRecv);
+            _w.Write(")");
+            return;
+        }
+
         // Transpose.Script.Write(code, args) — inject raw JavaScript, substituting {0},{1}… with args.
         if (symbol is { Name: "Write" } && symbol.ContainingType?.ToDisplayString() == "Transpose.Script"
             && invocation.ArgumentList.Arguments.Count >= 1
@@ -1266,11 +1278,33 @@ public sealed partial class Emitter
         if (op == "/=" && IsIntegerType(leftType) && IsIntegerType(rightType))
         {
             EmitExpression(assignment.Left);
-            _w.Write(" = TransposeR.idiv(");
+            _w.Write(" = ");
+            if (IsSubWordIntegerTarget(leftType)) _w.Write(NarrowIntegerClip(leftType!.SpecialType) + "(");
+            _w.Write("TransposeR.idiv(");
             EmitExpression(assignment.Left);
             _w.Write(", ");
             EmitExpression(assignment.Right);
             _w.Write(")");
+            if (IsSubWordIntegerTarget(leftType)) _w.Write(")");
+            return;
+        }
+
+        // Compound arithmetic/bitwise assignment to a sub-32-bit integer (`b += x`, `sh <<= 2`, …):
+        // C# evaluates it as `b = (T)(b op x)`, re-narrowing the int-promoted result to T's width.
+        // A bare JS `b += x` skips that (T) cast, so e.g. `(byte)250 += 10` stayed 260 instead of 4.
+        // Both operands are < 2^16, so the promoted result is exact in JS and a clip wraps it exactly.
+        if (op.Length == 2 && op[1] == '=' && "+-*%&|^".IndexOf(op[0]) >= 0 && IsSubWordIntegerTarget(leftType)
+            || op is "<<=" or ">>=" && IsSubWordIntegerTarget(leftType))
+        {
+            var binOp = op.Substring(0, op.Length - 1);
+            EmitExpression(assignment.Left);
+            _w.Write(" = ");
+            _w.Write(NarrowIntegerClip(leftType!.SpecialType));
+            _w.Write("((");
+            EmitExpression(assignment.Left);
+            _w.Write($") {binOp} (");
+            EmitExpression(assignment.Right);
+            _w.Write("))");
             return;
         }
 
@@ -1330,80 +1364,148 @@ public sealed partial class Emitter
     // ---- cast --------------------------------------------------------------
 
     private void EmitCast(CastExpressionSyntax cast)
-    {
-        var targetType = _model.GetTypeInfo(cast.Type).Type;
-        var sourceType = _model.GetTypeInfo(cast.Expression).Type;
+        => EmitNumericConversion(_model.GetTypeInfo(cast.Type).Type,
+                                 _model.GetTypeInfo(cast.Expression).Type,
+                                 cast.Expression);
 
-        // 64-bit conversions: to long/ulong → wrap; from long/ulong to a 32-bit/float → number.
-        if (Is64BitInteger(targetType) && !Is64BitInteger(sourceType) && !IsDecimalType(sourceType))
+    /// <summary>
+    /// Emits an explicit numeric conversion honouring C#'s truncation / wrapping rules. Handles
+    /// every primitive-to-primitive cast: to/from 64-bit (long/ulong) and decimal, narrowing to a
+    /// ≤32-bit integer / char (with correct sign extension and bit-width wrapping), and reference
+    /// casts (erased). The <paramref name="expr"/> is emitted at most once.
+    /// </summary>
+    private void EmitNumericConversion(ITypeSymbol? targetType, ITypeSymbol? sourceType, ExpressionSyntax expr)
+    {
+        // --- to a ≤32-bit integer / char target. ---
+        // From an integer source (int/long/char/enum): truncate to the target's bit width, wrapping
+        // (`(short)70000` → 4464, `(uint)-1` → 4294967295, `(sbyte)200` → -56, `(int)(a+b)` re-wraps
+        // an overflow). From a float/double source: saturate to int32 first (CLR maps out-of-range
+        // to Min/Max and NaN → 0, NOT wrap — `(byte)5e9` → 255, `(int)1e20` → int.MaxValue), then
+        // mask to width. Runtime Transpose.Int.clip* do the final mask + sign-extend.
+        if (IsNarrowIntegerTarget(targetType) && IsNumericSource(sourceType))
         {
-            _w.Write(Is64BitUnsigned(targetType) ? "System.UInt64(" : "System.Int64(");
-            EmitExpression(cast.Expression);
-            _w.Write(")");
-            return;
-        }
-        if (Is64BitInteger(sourceType) && !Is64BitInteger(targetType) && (IsIntegerType(targetType) || IsFloatingType(targetType)))
-        {
-            if (IsFloatingType(targetType))
+            var t = targetType!.SpecialType;
+            if (IsFloatingType(sourceType) && t == SpecialType.System_Int32)
             {
-                _w.Write("("); EmitExpression(cast.Expression); _w.Write(").toNumber()");
+                _w.Write("TransposeR.fclip32("); EmitExpression(expr); _w.Write(")");
+                return;
+            }
+            if (IsFloatingType(sourceType) && t == SpecialType.System_UInt32)
+            {
+                _w.Write("TransposeR.fclipu32("); EmitExpression(expr); _w.Write(")");
+                return;
+            }
+            _w.Write(NarrowIntegerClip(t));
+            _w.Write("(");
+            if (Is64BitInteger(sourceType))
+            {
+                // Bring the 64-bit value down to its low 32-bit word (a plain JS number) first;
+                // clip* then mask/sign-extend to the final width.
+                _w.Write("System.Int64.clip32("); EmitExpression(expr); _w.Write(")");
+            }
+            else if (IsDecimalType(sourceType))
+            {
+                _w.Write("("); EmitExpression(expr); _w.Write(").toFloat()");
+            }
+            else if (IsFloatingType(sourceType))
+            {
+                // Sub-word float target: saturate to int32, then the outer clip masks to width.
+                _w.Write("TransposeR.fclip32("); EmitExpression(expr); _w.Write(")");
             }
             else
             {
-                // long → int/uint/short/… wraps to the low 32 bits (C# truncation). Use the runtime's
-                // Int64.clip32/clipu32, which read the exact low word off the Int64. Plain .toNumber()
-                // keeps the full magnitude (and loses precision above 2^53), so e.g.
-                // `(int)DateTime.Now.Ticks` stayed a huge value — giving `new Random()` a garbage seed
-                // and making Guid.NewGuid()/Random produce a constant value.
-                _w.Write(IsUnsignedIntegerTarget(targetType) ? "System.Int64.clipu32(" : "System.Int64.clip32(");
-                EmitExpression(cast.Expression);
-                _w.Write(")");
+                EmitExpression(expr);
             }
-            return;
-        }
-
-        // decimal conversions: to decimal → wrap; decimal → float/int → toFloat (truncated for int).
-        if (IsDecimalType(targetType) && !IsDecimalType(sourceType))
-        {
-            _w.Write("System.Decimal("); EmitExpression(cast.Expression); _w.Write(")");
-            return;
-        }
-        if (IsDecimalType(sourceType) && !IsDecimalType(targetType) && (IsIntegerType(targetType) || IsFloatingType(targetType)))
-        {
-            if (IsIntegerType(targetType) && !Is64BitInteger(targetType)) { _w.Write("TransposeR.trunc("); EmitExpression(cast.Expression); _w.Write(".toFloat())"); }
-            else { _w.Write("("); EmitExpression(cast.Expression); _w.Write(").toFloat()"); }
-            return;
-        }
-
-        // Numeric narrowing to an integer type truncates toward zero.
-        if (IsIntegerType(targetType) && IsFloatingType(sourceType))
-        {
-            _w.Write("TransposeR.trunc(");
-            EmitExpression(cast.Expression);
             _w.Write(")");
             return;
         }
 
-        // Integer → unsigned-integer reinterpretation (≤32-bit source). C# reinterprets the bit
-        // pattern, so a negative value becomes its unsigned equivalent; without this the cast was
-        // erased and a negative int stayed negative — e.g. `(uint)_a` in Guid.ToString() formatted
-        // as "-7b…" and broke the format regex. `>>> 0` / mask matches the reinterpretation.
-        if (IsIntegerType(sourceType) && !Is64BitInteger(sourceType) && IsUnsignedIntegerTarget(targetType))
+        // --- to 64-bit integer (long/ulong) ---
+        // From a float/double: saturate to the 64-bit range (Min/Max, NaN → 0). From another
+        // non-64-bit numeric: wrap. Between long/ulong of differing sign: reinterpret the 64 bits
+        // (`(long)ulong`, `(ulong)long`) — the Int64/UInt64 ctor does value.toSigned()/toUnsigned().
+        // Same 64-bit type is a no-op (erased below).
+        if (Is64BitInteger(targetType) && IsFloatingType(sourceType))
         {
-            var mask = targetType!.SpecialType switch
-            {
-                SpecialType.System_Byte => " & 0xff)",
-                SpecialType.System_UInt16 or SpecialType.System_Char => " & 0xffff)",
-                _ => " >>> 0)", // uint
-            };
-            _w.Write("(("); EmitExpression(cast.Expression); _w.Write(")"); _w.Write(mask);
+            _w.Write(Is64BitUnsigned(targetType) ? "TransposeR.fclipu64(" : "TransposeR.fclip64(");
+            EmitExpression(expr);
+            _w.Write(")");
+            return;
+        }
+        // decimal → long/ulong: truncate toward zero (via the numeric magnitude) then wrap to 64-bit.
+        if (Is64BitInteger(targetType) && IsDecimalType(sourceType))
+        {
+            _w.Write(Is64BitUnsigned(targetType) ? "TransposeR.fclipu64((" : "TransposeR.fclip64((");
+            EmitExpression(expr);
+            _w.Write(").toFloat())");
+            return;
+        }
+        if (Is64BitInteger(targetType) && !IsDecimalType(sourceType)
+            && !(Is64BitInteger(sourceType) && sourceType!.SpecialType == targetType!.SpecialType))
+        {
+            _w.Write(Is64BitUnsigned(targetType) ? "System.UInt64(" : "System.Int64(");
+            EmitExpression(expr);
+            _w.Write(")");
             return;
         }
 
-        // char <-> int: chars are represented as their code point (number).
-        // Other reference casts are erased.
-        EmitExpression(cast.Expression);
+        // --- from 64-bit to floating: read the numeric magnitude. ---
+        if (Is64BitInteger(sourceType) && IsFloatingType(targetType))
+        {
+            _w.Write("("); EmitExpression(expr); _w.Write(").toNumber()");
+            return;
+        }
+
+        // --- to decimal: wrap. ---
+        if (IsDecimalType(targetType) && !IsDecimalType(sourceType))
+        {
+            _w.Write("System.Decimal("); EmitExpression(expr); _w.Write(")");
+            return;
+        }
+        // --- from decimal to floating (integer targets handled above). ---
+        if (IsDecimalType(sourceType) && IsFloatingType(targetType))
+        {
+            _w.Write("("); EmitExpression(expr); _w.Write(").toFloat()");
+            return;
+        }
+
+        // char <-> int (chars are their code point), int → 64-bit float, widening, and reference
+        // casts are all representation-preserving and so erased.
+        EmitExpression(expr);
     }
+
+    /// <summary>A ≤32-bit integer or char target — a narrowing/reinterpretation to a fixed
+    /// bit width. Enums (SpecialType.None) are excluded: they carry their underlying value as-is.</summary>
+    private static bool IsNarrowIntegerTarget(ITypeSymbol? type) => type?.SpecialType is
+        SpecialType.System_SByte or SpecialType.System_Byte
+        or SpecialType.System_Int16 or SpecialType.System_UInt16
+        or SpecialType.System_Int32 or SpecialType.System_UInt32
+        or SpecialType.System_Char;
+
+    /// <summary>A numeric source that can feed an integer narrowing (int/long/float/decimal/char/enum).</summary>
+    private static bool IsNumericSource(ITypeSymbol? type)
+        => IsIntegerType(type) || IsFloatingType(type) || IsDecimalType(type) || IsCharType(type);
+
+    /// <summary>A sub-32-bit integer / char type (byte/sbyte/short/ushort/char). Arithmetic on these
+    /// is promoted to int, so a compound assignment (`b += x`) must re-narrow the result to width —
+    /// and because both operands are &lt; 2^16 the promoted result is exact in JS, so a plain JS
+    /// operation followed by a clip reproduces the CLR result exactly.</summary>
+    private static bool IsSubWordIntegerTarget(ITypeSymbol? type) => type?.SpecialType is
+        SpecialType.System_SByte or SpecialType.System_Byte
+        or SpecialType.System_Int16 or SpecialType.System_UInt16
+        or SpecialType.System_Char;
+
+    /// <summary>The runtime clip helper that truncates + wraps a JS number to the given integer
+    /// width (mask + sign-extend), matching the CLR's unchecked conversion.</summary>
+    private static string NarrowIntegerClip(SpecialType target) => target switch
+    {
+        SpecialType.System_SByte => "Transpose.Int.clip8",
+        SpecialType.System_Byte => "Transpose.Int.clipu8",
+        SpecialType.System_Int16 => "Transpose.Int.clip16",
+        SpecialType.System_UInt16 or SpecialType.System_Char => "Transpose.Int.clipu16",
+        SpecialType.System_UInt32 => "Transpose.Int.clipu32",
+        _ => "Transpose.Int.clip32", // int
+    };
 
     // ---- interpolated string -----------------------------------------------
 
@@ -1639,7 +1741,9 @@ public sealed partial class Emitter
             if (initializer.Expressions[i] is InitializerExpressionSyntax nested)
                 EmitInitializerArray(nested);
             else
-                EmitExpression(initializer.Expressions[i]);
+                // Apply the element's converted type so an element widened to the array's element
+                // type is boxed/cloned correctly (e.g. `object[] { 'A' }` boxes the char).
+                EmitExpressionConverted(initializer.Expressions[i], _model.GetTypeInfo(initializer.Expressions[i]).ConvertedType);
         }
         _w.Write("]");
     }
@@ -1828,10 +1932,4 @@ public sealed partial class Emitter
 
     private static bool Is64BitUnsigned(ITypeSymbol? type)
         => type?.SpecialType == SpecialType.System_UInt64;
-
-    /// <summary>An unsigned 32-bit-or-narrower integer target (uint/ushort/byte/char) — a
-    /// long→unsigned narrowing takes the low bits as unsigned.</summary>
-    private static bool IsUnsignedIntegerTarget(ITypeSymbol? type)
-        => type?.SpecialType is SpecialType.System_Byte or SpecialType.System_UInt16
-            or SpecialType.System_UInt32 or SpecialType.System_Char;
 }

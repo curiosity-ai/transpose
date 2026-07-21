@@ -11,11 +11,41 @@
         try { return Transpose.toString(v); } catch (e) { return v.toString ? v.toString() : String(v); }
     };
     TransposeR.chr = function (code) { return String.fromCharCode(code); };
+    // Box a char (a bare code-point number at runtime) so it stringifies / compares as its
+    // character once widened to object — `object o = 'A'; o.ToString()` must be "A", not "65".
+    TransposeR.boxChar = function (c) { return Transpose.box(c, System.Char, TransposeR.chr); };
     TransposeR.is = function (v, t) { return Transpose.is(v, t); };
     TransposeR.as = function (v, t) { return Transpose.as ? Transpose.as(v, t) : (Transpose.is(v, t) ? v : null); };
     TransposeR.equals = function (a, b) { return Transpose.equals ? Transpose.equals(a, b) : a === b; };
     TransposeR.idiv = (Transpose.Int && Transpose.Int.div) ? function (a, b) { return Transpose.Int.div(a, b); } : function (a, b) { var r = a / b; return r < 0 ? Math.ceil(r) : Math.floor(r); };
     TransposeR.trunc = function (x) { return x < 0 ? Math.ceil(x) : Math.floor(x); };
+
+    // Saturating float → integer conversions (C#'s `(int)`/`(uint)`/`(long)`/`(ulong)` of a
+    // float/double). The CLR saturates out-of-range values to the target's Min/Max and maps NaN
+    // to 0 (unlike an integer→integer cast, which wraps). A narrower target (byte/short/…) first
+    // saturates to int32 here, then the emitter masks the result to width with Transpose.Int.clip*.
+    TransposeR.fclip32 = function (x) {
+        if (isNaN(x)) { return 0; }
+        if (x <= -2147483648) { return -2147483648; }
+        if (x >= 2147483647) { return 2147483647; }
+        return x < 0 ? Math.ceil(x) : Math.floor(x);
+    };
+    TransposeR.fclipu32 = function (x) {
+        if (isNaN(x) || x <= 0) { return 0; }
+        if (x >= 4294967295) { return 4294967295; }
+        return Math.floor(x);
+    };
+    TransposeR.fclip64 = function (x) {
+        if (isNaN(x)) { return System.Int64.Zero; }
+        if (x >= 9223372036854775807) { return System.Int64.MaxValue; }
+        if (x <= -9223372036854775808) { return System.Int64.MinValue; }
+        return System.Int64(TransposeR.trunc(x));
+    };
+    TransposeR.fclipu64 = function (x) {
+        if (isNaN(x) || x <= 0) { return System.UInt64.Zero; }
+        if (x >= 18446744073709551615) { return System.UInt64.MaxValue; }
+        return System.UInt64(TransposeR.trunc(x));
+    };
     TransposeR.clone = function (o) {
         if (!o) { return o; }
         if (o.$clone) { return o.$clone(); }

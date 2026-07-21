@@ -340,8 +340,13 @@ public sealed partial class Emitter
             // initialized the object, overwriting its work with the field defaults (e.g.
             // `Random() : this(seed)` reset SeedArray back to all-zeros, so Random/Guid.NewGuid
             // produced a constant value).
-            _w.Write($"this.{CtorName(thisCtor)}(");
-            EmitArguments(initializer.ArgumentList, thisCtor);
+            //
+            // Delegate type-qualified (`ThisType.ctor.call(this, …)`), NOT via `this.ctor(…)`: a
+            // dynamic member dispatch resolves to the MOST-DERIVED override, so in a subclass
+            // instance `: this()` would re-enter the subclass constructor forever. `this(...)`
+            // always targets a sibling ctor of the SAME declaring type, so bind it there.
+            _w.Write($"{TypeRef(thisCtor.ContainingType)}.{CtorName(thisCtor)}.call(this");
+            if (initializer.ArgumentList.Arguments.Count > 0) { _w.Write(", "); EmitArguments(initializer.ArgumentList, thisCtor); }
             _w.WriteLine(");");
             return;
         }

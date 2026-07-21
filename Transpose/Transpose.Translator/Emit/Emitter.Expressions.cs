@@ -12,8 +12,45 @@ public sealed partial class Emitter
     /// <summary>Emits an expression used in statement position, terminated with ";".</summary>
     private void EmitExpressionStatement(ExpressionSyntax expr)
     {
+        // `x++;` / `--x;` on a sub-32-bit integer must re-narrow like `x = (T)(x ± 1)` — a bare JS
+        // `x++` skips that (T) cast, so a byte at 255 became 256 instead of wrapping to 0. Handled
+        // here (statement context: the result value is discarded, so prefix/postfix are equivalent).
+        if (TryEmitNarrowingIncDecStatement(expr)) return;
         EmitExpression(expr);
         _w.WriteLine(";");
+    }
+
+    /// <summary>Emits a stand-alone ++/-- on a sub-word integer as a width-wrapping assignment.
+    /// Restricted to side-effect-free lvalues (identifier / simple field access) because the operand
+    /// is emitted twice; anything else falls through to the plain (un-narrowed) form.</summary>
+    private bool TryEmitNarrowingIncDecStatement(ExpressionSyntax expr)
+    {
+        ExpressionSyntax operand;
+        string binOp;
+        switch (expr)
+        {
+            case PostfixUnaryExpressionSyntax { RawKind: (int)SyntaxKind.PostIncrementExpression } post: operand = post.Operand; binOp = "+"; break;
+            case PostfixUnaryExpressionSyntax { RawKind: (int)SyntaxKind.PostDecrementExpression } post: operand = post.Operand; binOp = "-"; break;
+            case PrefixUnaryExpressionSyntax { RawKind: (int)SyntaxKind.PreIncrementExpression } pre: operand = pre.Operand; binOp = "+"; break;
+            case PrefixUnaryExpressionSyntax { RawKind: (int)SyntaxKind.PreDecrementExpression } pre: operand = pre.Operand; binOp = "-"; break;
+            default: return false;
+        }
+
+        var t = _model.GetTypeInfo(operand).Type;
+        if (!IsSubWordIntegerTarget(t)) return false;
+        // Re-emitting a receiver with side effects (indexer, method call) would run it twice.
+        if (operand is not IdentifierNameSyntax
+            && operand is not MemberAccessExpressionSyntax { Expression: ThisExpressionSyntax or IdentifierNameSyntax })
+            return false;
+
+        EmitExpression(operand);
+        _w.Write(" = ");
+        _w.Write(NarrowIntegerClip(t!.SpecialType));
+        _w.Write("((");
+        EmitExpression(operand);
+        _w.Write($") {binOp} 1);");
+        _w.WriteLine();
+        return true;
     }
 
     /// <summary>True if the expression is a call whose [Template] is a comment-only no-op
@@ -249,6 +286,17 @@ public sealed partial class Emitter
             && TransposeNaming.EnumEmitMode(sourceType) is not (2 or 3 or 4 or 5 or 6))
         {
             _w.Write($"System.Enum.toString({TypeRef(sourceType)}, ");
+            EmitExpression(expr);
+            _w.Write(")");
+            return;
+        }
+
+        // char → object / interface / ValueType / dynamic (a boxing conversion). A char is a bare
+        // code-point number at runtime; box it so the boxed value stringifies and compares as its
+        // character (e.g. `object o = 'A'; o.ToString()` → "A", not "65").
+        if (IsCharType(sourceType) && targetType is { IsReferenceType: true })
+        {
+            _w.Write("TransposeR.boxChar(");
             EmitExpression(expr);
             _w.Write(")");
             return;

@@ -54,14 +54,19 @@ namespace System
             //Initialize our Seed array.
             //This algorithm comes from Numerical Recipes in C (2nd Ed.)
             int subtraction = (seed == int.MinValue) ? int.MaxValue : Math.Abs(seed);
-            mj = MSEED - subtraction;
+            // The `(int)` casts on the subtractions are no-ops on .NET (the operands are already
+            // int) but are required when transpiled: this algorithm relies on 32-bit integer
+            // subtraction WRAPPING on overflow, which JavaScript's Number arithmetic does not do.
+            // Forcing the cast makes the emitter clip the result to int32 so, e.g., a time-based
+            // seed near int.MaxValue no longer corrupts SeedArray into a degenerate sequence.
+            mj = (int)(MSEED - subtraction);
             SeedArray[55] = mj;
             mk = 1;
             for (int i = 1; i < 55; i++)
             {  //Apparently the range [1..55] is special (Knuth) and so we're wasting the 0'th position.
                 ii = (21 * i) % 55;
                 SeedArray[ii] = mk;
-                mk = mj - mk;
+                mk = (int)(mj - mk);
                 if (mk < 0)
                 {
                     mk += MBIG;
@@ -72,7 +77,7 @@ namespace System
             {
                 for (int i = 1; i < 56; i++)
                 {
-                    SeedArray[i] -= SeedArray[1 + (i + 30) % 55];
+                    SeedArray[i] = (int)(SeedArray[i] - SeedArray[1 + (i + 30) % 55]);
                     if (SeedArray[i] < 0)
                     {
                         SeedArray[i] += MBIG;
@@ -110,7 +115,8 @@ namespace System
                 locINextp = 1;
             }
 
-            retVal = SeedArray[locINext] - SeedArray[locINextp];
+            // (int) cast forces 32-bit wrap when transpiled (see the ctor for why); a no-op on .NET.
+            retVal = (int)(SeedArray[locINext] - SeedArray[locINextp]);
 
             if (retVal == MBIG)
             {
