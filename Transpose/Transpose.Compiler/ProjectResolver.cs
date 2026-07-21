@@ -25,6 +25,11 @@ internal sealed class ResolvedProject
     public required List<string> DefineConstants { get; init; }
     public required LanguageVersion LanguageVersion { get; init; }
 
+    /// <summary>The csproj <c>&lt;MinifyLocalVariables&gt;</c> property — when true, the minified
+    /// bundle crunches local variable names (smaller output). Defaults to false, mirroring the
+    /// legacy compiler's safe minifier profile that keeps local names.</summary>
+    public bool MinifyLocalVariables { get; init; }
+
     /// <summary>Directories of every project in the closure — the root first, then the
     /// referenced projects it pulls in (each may contribute tps.json resources).</summary>
     public required List<string> ProjectDirs { get; init; }
@@ -77,6 +82,7 @@ internal static class ProjectResolver
             ReferencePaths = references.Values.ToList(),
             DefineConstants = defines,
             LanguageVersion = lang,
+            MinifyLocalVariables = string.Equals(Property(doc, "MinifyLocalVariables")?.Trim(), "true", StringComparison.OrdinalIgnoreCase),
             ProjectDirs = projectDirs,
             ReferencedProjectDlls = projectDlls,
         };

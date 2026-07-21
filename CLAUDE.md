@@ -167,8 +167,16 @@ plain CLI, by design.
   (`lib/netstandard2.0/Transpose.dll`), and the translator tests run end-to-end against it.
 - **`outputBy` file-layout modes** (Class/ClassPath/Namespace/…): `ClassPath` (used by the runtime
   build above) is implemented; the other layouts still emit a single bundle.
-- **Bundle minification and source maps** for the emitted bundle (Release only selects pre-minified
-  resource variants today).
+- **Bundle minification (done).** `outputFormatting` (`Formatted`/`Minified`/`Both`, read from
+  `tps.json` and a merged `tps.<Configuration>.json` overlay) drives NUglify-based minification
+  (pinned to `NUglify 1.20.7`, the version the legacy compiler uses) via `JsMinifier`. Packages ship
+  their compiled JS in both a formatted and a pre-minified variant — the runtime (`tps.min.js` /
+  `tps.meta.min.js`, embedded by `tps --build-runtime`) and library packages (`CollectEmbeddableItems`)
+  — so a site build reuses those and only minifies the per-project bundle/metadata/shim itself (with a
+  compile-time fallback for older packages that predate the `.min.js`). `OutputBuilder` emits
+  `index.html` (formatted) and `index.min.html` (minified) and collapses them per build configuration
+  (Release keeps the minified one as `index.html`, Debug the formatted one) — a port of the legacy
+  `HtmlGenerator`. **Source maps** for the emitted bundle are still remaining.
 - **Reference resolution beyond the NuGet cache** — `<Reference HintPath>` and `tps.json`
   `references`/`referencesPath` (partially covered by `--reference`).
 - **Wider `tps.json` surface** (outputBy, module formats, locales, before/after build, etc.).
