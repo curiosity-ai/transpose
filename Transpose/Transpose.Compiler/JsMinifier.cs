@@ -71,7 +71,22 @@ internal static class JsMinifier
             if (noStrictMode) settings.StrictMode = false;
         }
 
-        var result = Uglify.Js(source, settings);
+        UglifyResult result;
+        try
+        {
+            result = Uglify.Js(source, settings);
+        }
+        catch (Exception ex)
+        {
+            // NUglify's JavaScript parser can throw (e.g. a NullReferenceException) rather than
+            // returning a diagnostic when handed input it cannot parse — most notably non-JavaScript
+            // content routed here by mistake. Surface an actionable error naming the file instead of
+            // letting an opaque NRE bubble out of the compiler.
+            throw new InvalidOperationException(
+                $"Minification of {fileName} failed: the NUglify JavaScript parser threw " +
+                $"{ex.GetType().Name} ({source.Length} bytes). This usually means the input is not " +
+                $"JavaScript (e.g. CSS routed to the JS minifier).", ex);
+        }
 
         // NUglify raises non-fatal analysis diagnostics (e.g. JS1300 "assignment to undefined
         // variable" for the runtime's intentional implicit globals) but still emits valid code — the
