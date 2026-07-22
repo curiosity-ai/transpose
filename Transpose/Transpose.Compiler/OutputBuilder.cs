@@ -542,8 +542,13 @@ internal static class OutputBuilder
     /// <c>RoutePackageJs</c> to place and minify; CSS and copy-through resources (fonts, images, …)
     /// are written straight to <paramref name="outputDir"/> here — binary-safe, never decoded as text
     /// and never handed to the JS minifier — with stylesheets also added to <paramref name="cssLinks"/>.
-    /// When a package has no manifest, only its <c>.js</c>/<c>.css</c> resources are surfaced (other
-    /// resource types cannot be identified reliably without the manifest).
+    /// Each resource is placed under the output subdirectory (<c>Path</c>) its manifest entry declares
+    /// — the <c>output</c> from the library's tps.json resource group, e.g. <c>assets/fonts</c> — so a
+    /// package's folder layout is preserved on the consumer side (and CSS <c>url(...)</c> references
+    /// into sibling folders keep resolving). A <c>Path</c>-less entry sits at the site root (runtime
+    /// bundles like <c>tps.js</c>). When a package has no manifest, only its <c>.js</c>/<c>.css</c>
+    /// resources are surfaced, at the site root (other resource types cannot be identified reliably,
+    /// and no per-resource output subdirectory is recorded, without the manifest).
     /// </summary>
     private static IReadOnlyList<EmbeddedJs> ExtractEmbeddedJs(string dllPath, string outputDir, List<string> cssLinks)
     {
@@ -554,37 +559,52 @@ internal static class OutputBuilder
 
         var resourceNames = asm.GetManifestResourceNames();
         var manifest = resourceNames.FirstOrDefault(n => n.EndsWith("Transpose.Resources.json", StringComparison.OrdinalIgnoreCase));
-        List<string> order;
+
+        // Each entry: the resource's FileName (manifest key), the output subdirectory it extracts to
+        // (Path — null/empty means the site root), and whether it is injected into index.html (Load).
+        // A package without a manifest (the base runtime) surfaces only its .js/.css resources at the
+        // site root — other resource types can't be identified, nor their output path recovered, without it.
+        List<(string fileName, string? path, bool load)> entries;
         if (manifest is not null)
         {
             using var ms = asm.GetManifestResourceStream(manifest)!;
             using var sr = new StreamReader(ms);
             using var doc = JsonDocument.Parse(sr.ReadToEnd(), new JsonDocumentOptions { AllowTrailingCommas = true });
-            order = doc.RootElement.EnumerateArray()
-                .Select(e => e.TryGetProperty("FileName", out var f) ? f.GetString() : null)
-                .Where(n => !string.IsNullOrEmpty(n)).Select(n => n!).ToList();
+            entries = doc.RootElement.EnumerateArray()
+                .Select(e => (
+                    fileName: e.TryGetProperty("FileName", out var f) ? f.GetString() : null,
+                    path: e.TryGetProperty("Path", out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() : null,
+                    load: !e.TryGetProperty("Load", out var l) || l.ValueKind != JsonValueKind.False))   // absent → true
+                .Where(x => !string.IsNullOrEmpty(x.fileName))
+                .Select(x => (x.fileName!, x.path, x.load))
+                .ToList();
         }
         else
         {
-            order = resourceNames.Where(n => n.EndsWith(".js", StringComparison.OrdinalIgnoreCase)
-                                             || n.EndsWith(".css", StringComparison.OrdinalIgnoreCase)).ToList();
+            entries = resourceNames
+                .Where(n => n.EndsWith(".js", StringComparison.OrdinalIgnoreCase)
+                            || n.EndsWith(".css", StringComparison.OrdinalIgnoreCase))
+                .Select(n => (n, (string?)null, true))
+                .ToList();
         }
 
-        foreach (var fileName in order)
+        foreach (var (fileName, path, load) in entries)
         {
             var resName = resourceNames.FirstOrDefault(n => n.Equals(fileName, StringComparison.OrdinalIgnoreCase))
                           ?? resourceNames.FirstOrDefault(n => n.EndsWith(fileName, StringComparison.OrdinalIgnoreCase));
             if (resName is null) continue;
 
-            // Runtime packages place their bundles at the site root (the manifest FileName may carry
-            // an assembly-qualified prefix, so take just the file name).
-            var rel = Path.GetFileName(fileName);
+            // Place the resource under its declared output subdirectory (Path). The manifest FileName
+            // may carry an assembly-qualified prefix, so use just its leaf; an empty Path (runtime
+            // bundles, or a resource group without an `output`) leaves the resource at the site root.
+            var leaf = Path.GetFileName(fileName);
+            var rel = string.IsNullOrEmpty(path) ? leaf : path!.Replace('\\', '/').TrimEnd('/') + "/" + leaf;
 
             if (rel.EndsWith(".js", StringComparison.OrdinalIgnoreCase))
             {
                 using var s = asm.GetManifestResourceStream(resName)!;
                 using var reader = new StreamReader(s);
-                jsFiles.Add(new EmbeddedJs(rel, rel, reader.ReadToEnd()));   // JS: placed/minified by RoutePackageJs
+                jsFiles.Add(new EmbeddedJs(leaf, rel, reader.ReadToEnd(), load));   // JS: placed/minified by RoutePackageJs
             }
             else
             {
@@ -595,7 +615,7 @@ internal static class OutputBuilder
                 using (var s = asm.GetManifestResourceStream(resName)!)
                 using (var fs = File.Create(dest))
                     s.CopyTo(fs);
-                if (IsCss(rel)) cssLinks.Add(rel);
+                if (load && IsCss(rel)) cssLinks.Add(rel);
             }
         }
         return jsFiles;
