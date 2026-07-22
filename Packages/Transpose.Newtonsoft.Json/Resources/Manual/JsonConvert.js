@@ -1400,6 +1400,33 @@
                                 list.add(Newtonsoft.Json.JsonConvert.DeserializeObject(raw[i], typeElement, settings, true));
                             }
                             return list;
+                        } else if (Transpose.isArray(raw) && Newtonsoft.Json.JsonConvert.getEnumerableElementType(type) != null) {
+                            // A JSON array whose target is an IEnumerable<T>-only type that is backed by a
+                            // plain JS array at runtime (e.g. tss.ROA / ReadOnlyArray<T>, or an
+                            // IEnumerable<T> / IReadOnlyList<T> / IReadOnlyCollection<T> property). The
+                            // System.Array / IList / ICollection / IDictionary / HashSet branches above do
+                            // not match it, so materialize the elements into a JS array (which satisfies
+                            // the contract) instead of falling through to object deserialization (which
+                            // left such properties null — e.g. SchemasResponse.Nodes on an empty graph).
+                            var typeName = raw["$type"];
+
+                            if (typeName != null) {
+                                type = Newtonsoft.Json.JsonConvert.BindToType(settings, typeName, type);
+                                raw = raw["$values"];
+                            }
+
+                            if (raw == null || raw.length === undefined) {
+                                return [];
+                            }
+
+                            var typeElement = Newtonsoft.Json.JsonConvert.getEnumerableElementType(type) || System.Object;
+                            var arr = new Array();
+
+                            for (var i = 0; i < raw.length; i++) {
+                                arr[i] = Newtonsoft.Json.JsonConvert.DeserializeObject(raw[i], typeElement, settings, true);
+                            }
+
+                            return arr;
                         } else {
                             var typeName = raw["$type"];
 
