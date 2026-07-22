@@ -131,6 +131,11 @@ public sealed partial class Emitter
                 _w.WriteLine();
             }
 
+            // [Transpose.Ready] static methods: schedule each via Transpose.ready so it runs on
+            // page load (or immediately when the assembly is loaded on demand, e.g. a lazily
+            // fetched package). Emitted after all defines so the referenced types are registered.
+            EmitReadyRegistrations(types);
+
             //foreach (var type in types)
             //{
             //    EmitType(type);
