@@ -1195,5 +1195,88 @@ public class Program
             Assert.IsFalse(result.Javascript!.Contains(".Length > 3"),
                 "property pattern must not emit the raw C# member name `.Length`\n" + result.Javascript);
         }
+
+        // ---- bare type patterns (parsed as constant patterns) ------------------
+
+        [TestMethod]
+        public async Task BareTypePatternPerformsTypeTest()
+        {
+            // A bare type in a switch arm (`Dog => ...`) is parsed as a ConstantPattern; it must run a
+            // type test, not `subject === Dog` (which compares the value to the class constructor and
+            // is always false). Enum type patterns must use the runtime type check too (a boxed enum
+            // is a Transpose.box object, not a plain number).
+            await RunTest(@"
+using System;
+public class Animal { }
+public class Dog : Animal { }
+public class Cat : Animal { }
+public enum Color { Red, Green, Blue }
+public class Program
+{
+    static string Kind(object o) => o switch {
+        Dog => ""dog"",
+        Cat => ""cat"",
+        Color => ""color"",
+        _ => ""other""
+    };
+    public static void Main()
+    {
+        Console.WriteLine(Kind(new Dog()));
+        Console.WriteLine(Kind(new Cat()));
+        Console.WriteLine(Kind(Color.Green));
+        Console.WriteLine(Kind(""x""));
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [TestMethod]
+        public async Task EnumTypePatternMatchesBoxedEnum()
+        {
+            // A boxed enum tested/captured via a type pattern (o is Color c) and a switch type pattern.
+            await RunTest(@"
+using System;
+public enum Color { Red, Green, Blue }
+public enum Size { S, M, L }
+public class Program
+{
+    public static void Main()
+    {
+        object o = Color.Green;
+        Console.WriteLine(o is Color ? ""is-color"" : ""no"");
+        Console.WriteLine(o is Size ? ""is-size"" : ""not-size"");
+        Console.WriteLine(o is Color c ? c.ToString() : ""nocap"");
+        object o2 = Size.L;
+        Console.WriteLine(o2 switch { Color => ""color"", Size => ""size"", _ => ""other"" });
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [TestMethod]
+        public async Task ExtendedPropertyPatternResolvesChainedMembers()
+        {
+            // An extended property pattern names a member chain (`{ Text.Length: > 3 }`); each segment
+            // must resolve to its JS name (the whole chain `Text.Length`, not just the leaf `Length`,
+            // and Length -> the `length` override).
+            await RunTest(@"
+using System;
+public class Node { public string Text { get; set; } }
+public class Program
+{
+    static string F(Node n) => n switch {
+        { Text.Length: > 3 } => ""long"",
+        { Text.Length: 0 } => ""empty"",
+        _ => ""short""
+    };
+    public static void Main()
+    {
+        Console.WriteLine(F(new Node { Text = ""hello"" }));
+        Console.WriteLine(F(new Node { Text = ""hi"" }));
+        Console.WriteLine(F(new Node { Text = """" }));
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
     }
 }

@@ -71,6 +71,12 @@ public sealed partial class Emitter
             case ConstantPatternSyntax constant:
                 if (constant.Expression.IsKind(SyntaxKind.NullLiteralExpression))
                     _w.Write($"{subject} == null");
+                else if (_model.GetSymbolInfo(constant.Expression).Symbol is ITypeSymbol typeSym)
+                    // A bare identifier/qualified name that binds to a TYPE is a type pattern the
+                    // parser represented as a constant pattern (`o switch { SomeType => ... }` or a
+                    // nested `{ Prop: SomeType }`). Emit a type test, not `subject === <typeref>`
+                    // (which compares the value to the type's constructor and is always false).
+                    EmitTypeTest(subject, typeSym);
                 else
                 {
                     _w.Write($"{subject} === ");
@@ -236,17 +242,41 @@ public sealed partial class Emitter
     private string PropertyPatternMemberJsName(SubpatternSyntax sub)
     {
         var nameExpr = sub.NameColon?.Name ?? sub.ExpressionColon?.Expression;
-        if (nameExpr is not null)
-        {
-            var symbol = _model.GetSymbolInfo(nameExpr).Symbol;
-            if (symbol is IPropertySymbol or IFieldSymbol)
-                return TransposeNaming.MemberJsName(symbol);
-        }
+        if (nameExpr is not null && PropertyPatternMemberPath(nameExpr) is { } path)
+            return path;
 
         var fallback = sub.NameColon?.Name.Identifier.Text
             ?? sub.ExpressionColon?.Expression.ToString()
             ?? "";
         return NameMangler.JsIdentifier(fallback);
+    }
+
+    /// <summary>
+    /// Builds the dotted JS member path for a property-pattern subpattern name. A simple pattern
+    /// names one member (<c>{ Length: … }</c>); an extended pattern (C# 10) names a chain
+    /// (<c>{ Address.City: … }</c>) that must expand to <c>Address.City</c> — each segment resolved
+    /// through <see cref="TransposeNaming.MemberJsName"/>. Returns null if any segment can't be
+    /// resolved (caller falls back to a mangled identifier).
+    /// </summary>
+    private string? PropertyPatternMemberPath(ExpressionSyntax expr)
+    {
+        switch (expr)
+        {
+            case IdentifierNameSyntax:
+                var s = _model.GetSymbolInfo(expr).Symbol;
+                return s is IPropertySymbol or IFieldSymbol
+                    ? TransposeNaming.MemberJsName(s)
+                    : null;
+            case MemberAccessExpressionSyntax ma:
+                var left = PropertyPatternMemberPath(ma.Expression);
+                if (left is null) return null;
+                var m = _model.GetSymbolInfo(ma.Name).Symbol;
+                return m is IPropertySymbol or IFieldSymbol
+                    ? left + "." + TransposeNaming.MemberJsName(m)
+                    : null;
+            default:
+                return null;
+        }
     }
 
     private void EmitTypeTest(string subject, ITypeSymbol? type)
@@ -273,12 +303,11 @@ public sealed partial class Emitter
                 return;
         }
 
-        if (type.TypeKind == TypeKind.Enum)
-        {
-            _w.Write($"typeof {subject} === \"number\"");
-            return;
-        }
-
+        // Note: enums fall through to the runtime type check below. They box to `object` as a
+        // Transpose.box carrying their enum type (so o.GetType()/o.ToString() stay correct), NOT a
+        // plain number — a `typeof === "number"` test would both miss the boxed form and fail to
+        // tell one enum type from another (or from int). TransposeR.is understands the boxed
+        // representation, matching the plain `x is EnumType` expression path.
         _w.Write($"TransposeR.is({subject}, {TypeRef(type)})");
     }
 
