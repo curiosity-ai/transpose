@@ -183,6 +183,23 @@ plain CLI, by design.
 
 Caching and the compilation server are intentionally **out of scope**.
 
+## Debugging, testing & auditing skills
+
+Reusable workflows for working on the compiler live under `.claude/skills/` (auto-discovered by
+Claude Code; read the `SKILL.md` directly in other contexts):
+
+- **`transpose-debugging`** — set up the emit→Node→native-.NET loop (`scripts/setup-toolkit.sh` builds
+  the Release translator + the `/tmp` emit/JSON/dump runners) and inspect/reproduce how a C# snippet
+  compiles. Start here for any "what/why does Transpose emit X?" question. Captures the stale-build
+  and runner-rebuild pitfalls.
+- **`transpose-h5-audit`** — systematically hunt behavioural divergences against the proven-correct
+  **h5** baseline, using the Curiosity front-end (in the *mosaik* repo) as the corpus. Includes the
+  h5-JS corpus extraction, the "diverges from BOTH native AND h5" rule, the checklist areas, and the
+  Newtonsoft JSON runner.
+- **`transpose-runtime-and-bcl`** — rebuild the runtime (`--build-runtime`), add/modify BCL APIs
+  (extern+`[Template]`+`Resources/*.js` vs. real C# in a non-external class + a `tps.json` bundle
+  entry), and add/run regression tests in `EmitRegressionTests.cs`.
+
 ## Conventions when editing
 
 - Emitted JS identifiers use the `Transpose` global and `TransposeR` helpers; keep new emit code and
