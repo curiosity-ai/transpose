@@ -20,6 +20,14 @@ internal static class JsMinifier
         "tps.js", "tps.min.js", "tps.collections.js", "tps.collections.min.js",
     };
 
+    // NUglify's `if (cond) stmt;` → `cond && stmt;` collapse is unsafe for our output: when `cond`
+    // is a null-coalescing expression (e.g. `x ?? false`, emitted for C#'s `a ?? b`), it strips the
+    // parentheses and yields `x ?? false && stmt`, which is a SYNTAX ERROR — ES2020 forbids mixing
+    // `??` with `&&`/`||` unparenthesized. Disabling this one tree modification keeps `if (cond) stmt;`
+    // intact (a negligible size cost) and never produces the invalid mix. The legacy compiler never hit
+    // this because it lowered `?.`/`??` through runtime helpers instead of emitting native `??`.
+    private const long KillIfConditionCollapse = (long)TreeModifications.IfConditionCallToConditionAndCall;
+
     // Safe profile: never rename locals, terminate statements with semicolons, escape non-ASCII.
     private static CodeSettings Safe() => new()
     {
@@ -29,6 +37,7 @@ internal static class JsMinifier
         StrictMode           = false,
         RemoveUnneededCode   = false,
         AlwaysEscapeNonAscii = true,
+        KillSwitch           = KillIfConditionCollapse,
     };
 
     // Safe profile but crunch local variable names (smaller output; opted into per project).
@@ -40,6 +49,7 @@ internal static class JsMinifier
         StrictMode           = false,
         RemoveUnneededCode   = false,
         AlwaysEscapeNonAscii = true,
+        KillSwitch           = KillIfConditionCollapse,
     };
 
     // Runtime-core profile (tps.js, …): as safe but without the eval/local-renaming overrides.
@@ -49,6 +59,7 @@ internal static class JsMinifier
         StrictMode           = false,
         RemoveUnneededCode   = false,
         AlwaysEscapeNonAscii = true,
+        KillSwitch           = KillIfConditionCollapse,
     };
 
     /// <summary>

@@ -1406,6 +1406,44 @@ public sealed partial class Emitter
             return;
         }
 
+        // Compound assignment to a collection indexer that stores via setItem: `coll[i] op= v` becomes
+        // `coll.setItem(i, <coll[i] op v>)`. The generic compound branches below emit the write target
+        // as `coll.getItem(i)` — correct to READ but invalid as an assignment target (`getItem(i) = …`
+        // assigns to an rvalue). Route the write through setItem here, computing the new element value
+        // with the same rules the plain-lvalue paths use. A native-bracket or [Template]-setter indexer
+        // is a real JS lvalue (`d[i] op= v`) and falls through unchanged.
+        if (op != "=" && assignment.Left is ElementAccessExpressionSyntax cea
+            && _model.GetSymbolInfo(cea).Symbol is IPropertySymbol { IsIndexer: true } cidx
+            && cidx.ContainingType.SpecialType != SpecialType.System_String
+            && !TransposeNaming.IsNativeIndexer(cidx)
+            && !(cidx.SetMethod is { } cset && TransposeNaming.GetTemplate(cset.OriginalDefinition) is not null))
+        {
+            EmitExpression(cea.Expression);
+            _w.Write("." + TransposeNaming.IndexerAccessorName(cidx, isGet: false) + "(");
+            EmitArgumentList(cea.ArgumentList);
+            _w.Write(", ");
+            EmitCompoundElementValue(assignment, op, leftType, rightType);
+            _w.Write(")");
+            return;
+        }
+
+        // Compound assignment to a property with a [Template] setter: `obj.P op= v` becomes
+        // `<setter template>(<obj.P op v>)` — e.g. StringBuilder.Length (getLength/setLength). As with
+        // indexers, the plain-lvalue branches would emit the getter template (`obj.getLength()`) as the
+        // write target, which is invalid ("assignment to rvalue").
+        if (op != "=" && _model.GetSymbolInfo(assignment.Left).Symbol is IPropertySymbol { SetMethod: { } cpSetter } cpProp
+            && !cpProp.IsIndexer
+            && TransposeNaming.GetTemplate(cpSetter.OriginalDefinition) is { } cpSetTemplate)
+        {
+            var recv = cpProp.IsStatic ? TypeRef(cpProp.ContainingType)
+                : assignment.Left is MemberAccessExpressionSyntax csma ? Capture(() => EmitExpression(csma.Expression))
+                : "this";
+            var val = Capture(() => EmitCompoundElementValue(assignment, op, leftType, rightType));
+            WriteTemplate(cpSetTemplate, cpProp.IsStatic, isExtension: false, recv,
+                new() { ["value"] = val }, new() { val });
+            return;
+        }
+
         // Delegate / event subscription: d += h, d -= h, ev += h, ev -= h → combine/remove.
         if ((op == "+=" || op == "-=")
             && (leftType is { TypeKind: TypeKind.Delegate }
@@ -1480,6 +1518,76 @@ public sealed partial class Emitter
         EmitExpression(assignment.Left);
         _w.Write($" {op} ");
         EmitExpressionConverted(assignment.Right, leftType);
+    }
+
+    /// <summary>
+    /// Emits the NEW element value for a compound assignment to a collection indexer — the second
+    /// argument of <c>coll.setItem(i, …)</c>. Mirrors the value computation of the plain-lvalue
+    /// compound-assignment branches (delegate combine, string concat, narrow-integer clip, or a plain
+    /// binary op), reading the current element via <c>coll.getItem(i)</c> (what <c>EmitExpression</c>
+    /// of the indexer produces).
+    /// </summary>
+    private void EmitCompoundElementValue(AssignmentExpressionSyntax assignment, string op,
+        ITypeSymbol? leftType, ITypeSymbol? rightType)
+    {
+        // Delegate / event combine-remove.
+        if ((op == "+=" || op == "-=")
+            && (leftType is { TypeKind: TypeKind.Delegate }
+                || _model.GetSymbolInfo(assignment.Left).Symbol is IEventSymbol))
+        {
+            _w.Write($"TransposeR.{(op == "+=" ? "combine" : "remove")}(");
+            EmitExpression(assignment.Left); _w.Write(", "); EmitExpression(assignment.Right); _w.Write(")");
+            return;
+        }
+
+        // String concat.
+        if (op == "+=" && IsStringType(leftType))
+        {
+            EmitConcatOperand(assignment.Left, leftType);
+            _w.Write(" + ");
+            EmitConcatOperand(assignment.Right, rightType);
+            return;
+        }
+
+        // Narrow-integer arithmetic/bitwise: reuse the exact wrapping the plain-lvalue path applies.
+        if (IsNarrowIntegerTarget(leftType)
+            && op is "+=" or "-=" or "*=" or "/=" or "%=" or "&=" or "|=" or "^=" or "<<=" or ">>=")
+        {
+            var t = leftType!.SpecialType;
+            var sub = IsSubWordIntegerTarget(leftType);
+            var binOp = op[..^1];
+
+            if (binOp == "*" && !sub)
+            {
+                _w.Write(t == SpecialType.System_UInt32 ? "Transpose.Int.umul(" : "Transpose.Int.mul(");
+                EmitExpression(assignment.Left); _w.Write(", "); EmitExpression(assignment.Right); _w.Write(")");
+                return;
+            }
+
+            var innerOp = binOp == ">>" && t == SpecialType.System_UInt32 ? ">>>" : binOp;
+            string? clip = sub ? (binOp == "%" ? null : NarrowIntegerClip(t))
+                : t == SpecialType.System_UInt32 ? (binOp is "%" or ">>" ? null : "Transpose.Int.clipu32")
+                : (binOp is "+" or "-" or "/" ? "Transpose.Int.clip32" : null);
+
+            if (clip is not null) { _w.Write(clip); _w.Write("("); }
+            if (binOp == "/")
+            {
+                _w.Write("TransposeR.idiv("); EmitExpression(assignment.Left); _w.Write(", "); EmitExpression(assignment.Right); _w.Write(")");
+            }
+            else
+            {
+                _w.Write("("); EmitExpression(assignment.Left); _w.Write($") {innerOp} ("); EmitExpression(assignment.Right); _w.Write(")");
+            }
+            if (clip is not null) _w.Write(")");
+            return;
+        }
+
+        // Plain compound (double / long / decimal / etc.): current-value binOp right.
+        _w.Write("(");
+        EmitExpression(assignment.Left);
+        _w.Write($") {op[..^1]} (");
+        EmitExpressionConverted(assignment.Right, leftType);
+        _w.Write(")");
     }
 
     private void EmitPrefixUnary(PrefixUnaryExpressionSyntax prefix)
