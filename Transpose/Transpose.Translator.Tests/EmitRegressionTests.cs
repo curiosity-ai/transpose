@@ -331,9 +331,9 @@ public class Program
         Console.WriteLine(a + b + ""Y"");
         Console.WriteLine(a + a);
         Console.WriteLine(S(null) + ""Z"" + S(null));
-        Console.WriteLine((a + b).Length);          // 1 (null->"" then + "X")
+        Console.WriteLine((a + b).Length);          // 1: null becomes empty, then concat X
         int n = 5;
-        Console.WriteLine(a + n);                    // int operand: null -> "", then "5"
+        Console.WriteLine(a + n);                    // int operand via toStr, null becomes empty
     }
 }");
         }
@@ -355,6 +355,100 @@ public class Program
             Assert.IsTrue(result.Success, "translation should succeed");
             Assert.IsTrue(result.Javascript!.Contains("(a ?? \"\") + \"Hello World\""),
                 "a nullable string operand should be coerced with `?? \"\"`, the literal left as-is\n" + result.Javascript);
+        }
+
+        // ---- guarded async switch referencing an enclosing parameter ----------
+
+        [TestMethod]
+        public async Task GuardedAsyncSwitchAccessesEnclosingParameterAsync()
+        {
+            // A `when`-guarded switch inside an async method (Request.DoRequestAsync's shape) compiles to
+            // a labeled block inside the async arrow; a parameter (responseRetriever) and cases that
+            // declare locals and await must all resolve against the enclosing scope.
+            await RunTest(@"
+using System;
+using System.Threading.Tasks;
+public class Program
+{
+    static bool auth = true, ready = true;
+    static async Task<string> Handle(int status, Func<Task<string>> retriever)
+    {
+        switch (status)
+        {
+            case 200:
+            case 201:
+                var r = await retriever();
+                return ""ok:"" + r;
+            case 403 when auth:
+                return ""auth:"" + await retriever();
+            case 503 when ready && status == 503:
+                return ""ready:"" + await retriever();
+            case 503:
+                return ""busy:"" + await retriever();
+            default:
+                var d = await retriever();
+                return ""def:"" + d;
+        }
+    }
+    static async Task RunAll()
+    {
+        Console.WriteLine(await Handle(200, () => Task.FromResult(""A"")));
+        Console.WriteLine(await Handle(403, () => Task.FromResult(""B"")));
+        Console.WriteLine(await Handle(503, () => Task.FromResult(""C"")));
+        Console.WriteLine(await Handle(999, () => Task.FromResult(""D"")));
+        Console.WriteLine(""<<DONE>>"");
+    }
+    public static void Main() { RunAll(); }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        // ---- named argument followed by a trailing positional argument --------
+
+        [TestMethod]
+        public async Task NamedArgumentFollowedByPositionalRunsAsync()
+        {
+            // Do(type, accept, retriever: fn, flag): the trailing positional `flag` must land in its own
+            // slot, not overwrite the `retriever` slot a named argument already claimed. This is
+            // Request.TryDoRequestAsync -> DoRequestAsync (generic, so a type arg is threaded first),
+            // where the bug slid `treatHttpResponseAsData` (false) into the responseRetriever slot.
+            await RunTest(@"
+using System;
+public class C
+{
+    public string Do<T>(string type, string accept, Func<int, T> retriever, bool flag = false)
+        => type + ""|"" + accept + ""|"" + retriever(flag ? 1 : 0) + ""|"" + flag;
+    public string Try<T>(string type, string accept, Func<int, T> retriever, bool flag)
+        => Do<T>(type, accept, retriever: x => retriever(x), flag);
+}
+public class Program
+{
+    public static void Main()
+    {
+        var c = new C();
+        Console.WriteLine(c.Try<string>(""GET"", ""json"", n => ""R"" + n, true));
+        Console.WriteLine(c.Try<string>(""POST"", ""bin"", n => ""R"" + n, false));
+    }
+}");
+        }
+
+        [TestMethod]
+        public void NamedArgThenPositionalKeepsBothArguments()
+        {
+            var code = @"
+using System;
+public class C
+{
+    public T Do<T>(string type, string accept, Func<int,T> retriever, bool flag = false) => retriever(0);
+    public T Try<T>(string type, string accept, Func<int,T> retriever, bool flag)
+        => Do<T>(type, accept, retriever: x => retriever(x), flag);
+}
+public class Program { public static void Main() { } }
+";
+            var result = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            // Both the named retriever lambda and the trailing positional flag must be present, in order.
+            Assert.IsTrue(result.Javascript!.Contains("}, flag)"),
+                "the trailing positional argument must follow the named-argument lambda, not replace it\n" + result.Javascript);
         }
 
         [TestMethod]

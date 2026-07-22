@@ -452,15 +452,18 @@ public sealed partial class Emitter
             // across the reorder. (Any extension-method receiver was already emitted above.)
             var slotArg = new int[symbol.Parameters.Length];
             for (var k = 0; k < slotArg.Length; k++) slotArg[k] = -1;
-            var pos = 0;
             for (var i = 0; i < args.Count; i++)
             {
                 if (args[i].NameColon is { } nc)
                 {
-                    var pi = symbol.Parameters.ToList().FindIndex(p => p.Name == nc.Name.Identifier.Text);
+                    var pi = ParameterIndex(symbol, nc.Name.Identifier.Text);
                     if (pi >= 0) slotArg[pi] = i;
                 }
-                else if (pos < slotArg.Length) slotArg[pos++] = i;
+                // A positional argument maps to the parameter at its ORDINAL position (a positional arg
+                // that follows a named one must be in its correct slot per C# 7.2), not to a running
+                // count of positional args — otherwise a trailing positional overwrites the slot a
+                // named argument already claimed.
+                else if (i < slotArg.Length) slotArg[i] = i;
             }
             var lastSlot = -1;
             for (var k = 0; k < slotArg.Length; k++) if (slotArg[k] >= 0) lastSlot = k;
@@ -549,6 +552,16 @@ public sealed partial class Emitter
         return true;
     }
 
+    /// <summary>Index of the parameter named <paramref name="name"/>, or -1. Scans the
+    /// <c>ImmutableArray</c> in place (no <c>ToList</c> allocation) for a named-argument lookup.</summary>
+    private static int ParameterIndex(IMethodSymbol method, string name)
+    {
+        var ps = method.Parameters;
+        for (var i = 0; i < ps.Length; i++)
+            if (ps[i].Name == name) return i;
+        return -1;
+    }
+
     private void EmitArguments(ArgumentListSyntax argList, IMethodSymbol? method, bool threadTypeArgs = true)
     {
         var args = argList.Arguments;
@@ -558,17 +571,23 @@ public sealed partial class Emitter
         if (method is not null && args.Any(a => a.NameColon is not null))
         {
             var ordered = new ExpressionSyntax?[method.Parameters.Length];
-            var positional = 0;
-            foreach (var arg in args)
+            for (var i = 0; i < args.Count; i++)
             {
+                var arg = args[i];
                 if (arg.NameColon is not null)
                 {
-                    var idx = method.Parameters.ToList().FindIndex(p => p.Name == arg.NameColon.Name.Identifier.Text);
+                    var idx = ParameterIndex(method, arg.NameColon.Name.Identifier.Text);
                     if (idx >= 0) ordered[idx] = arg.Expression;
                 }
-                else
+                else if (i < ordered.Length)
                 {
-                    ordered[positional++] = arg.Expression;
+                    // A positional argument maps to the parameter at its ORDINAL position: C# requires a
+                    // positional argument that follows a named one (C# 7.2+) to sit in its correct slot,
+                    // so its index in the argument list IS its parameter index. A running "count of
+                    // positional args so far" counter is wrong — a named argument earlier in the list
+                    // (e.g. Do(type, accept, retriever: fn, flag)) already claimed slot 2, and the
+                    // trailing positional `flag` must land in slot 3, not overwrite slot 2.
+                    ordered[i] = arg.Expression;
                 }
             }
 
