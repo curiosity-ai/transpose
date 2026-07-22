@@ -6,7 +6,7 @@ namespace Transpose.Compiler;
 
 /// <summary>One embedded Transpose resource: the file bytes plus its manifest entry. <see cref="Output"/>
 /// is the output subdirectory a consumer extracts it to (null for a top-level script).</summary>
-internal sealed record EmbeddedItem(string Name, byte[] Content, string? Output);
+internal sealed record EmbeddedItem(string Name, byte[] Content, string? Output, bool Load = true);
 
 /// <summary>
 /// Embeds the compiled JavaScript (and tps.json resource files) into a .NET assembly as private
@@ -66,6 +66,7 @@ internal static class ResourceEmbedder
             Name = i.Name,
             Path = i.Output,
             Parts = (object?)null,
+            Load = i.Load,   // false → copied to the site but not injected into index.html (.dontload)
         }).ToArray();
         var json = JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true });
         Replace(ManifestName, Utf8NoBom.GetBytes(json));

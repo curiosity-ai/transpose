@@ -33,6 +33,22 @@ public sealed partial class Emitter
             return;
         }
 
+        // [GlobalTarget(name)]: an extern method that maps to a global JS function `name`
+        // (e.g. `[GlobalTarget("alert")]` → `alert(...)`). An EMPTY name means the call compiles away
+        // to a no-op — the pattern used for a `LazyLoad()` marker whose only purpose is to force the
+        // assembly to be referenced ("compiles to an empty call"). Emit `void 0` so it is a valid
+        // no-op in statement or expression position. (The ToDynamic global-root form is handled below.)
+        if (!TransposeNaming.IsDynamicCast(symbol)
+            && TransposeNaming.GlobalTargetName(symbol) is { } globalTarget)
+        {
+            if (string.IsNullOrWhiteSpace(globalTarget)) { _w.Write("void 0"); return; }
+            _w.Write(globalTarget);
+            _w.Write("(");
+            EmitArguments(invocation.ArgumentList, symbol);
+            _w.Write(")");
+            return;
+        }
+
         // Inside a null-conditional continuation, an invocation whose target is a member
         // binding (a?.M(...)) resolves M against the captured receiver.
         var condRecv = invocation.Expression is MemberBindingExpressionSyntax && _condReceiver is not null
@@ -446,10 +462,10 @@ public sealed partial class Emitter
                     if (holders[ai] is not null) _w.Write(holders[ai]!);
                     else EmitExpressionConverted(args[ai].Expression, symbol.Parameters[k].Type);
                 }
-                else if (symbol.Parameters[k].HasExplicitDefaultValue)
-                    _w.Write(ConstantLiteral(symbol.Parameters[k].ExplicitDefaultValue, symbol.Parameters[k].Type));
                 else
-                    _w.Write("null");
+                    // Omitted optional (a gap a JS call can't skip) → `void 0`, so the callee's
+                    // `arg === undefined` default check applies its default (see EmitArguments).
+                    _w.Write("void 0");
             }
         }
         else
@@ -545,10 +561,12 @@ public sealed partial class Emitter
                 first = false;
                 if (ordered[i] is not null)
                     EmitExpressionConverted(ordered[i]!, method.Parameters[i].Type);
-                else if (method.Parameters[i].HasExplicitDefaultValue)
-                    _w.Write(ConstantLiteral(method.Parameters[i].ExplicitDefaultValue, method.Parameters[i].Type));
                 else
-                    _w.Write("null");
+                    // An omitted optional argument that a JS call cannot skip (it precedes a provided
+                    // one) is passed as `void 0` (undefined), not its default value: the callee applies
+                    // its own default via `if (arg === undefined) arg = <default>`, matching the legacy
+                    // compiler. Passing `null` would defeat that check when the default is non-null.
+                    _w.Write("void 0");
             }
             return;
         }
@@ -796,17 +814,14 @@ public sealed partial class Emitter
             if (argList is not null) EmitArguments(argList, ctor);
             _w.Write(")");
         }
-        else if (type.Locations.Any(l => l.IsInSource))
-        {
-            // User type: new Type(args) for the primary ctor, new Type.$ctorN(args) otherwise.
-            _w.Write(ctorName == "ctor" ? $"new {newTarget}(" : $"new {newTarget}.{ctorName}(");
-            if (argList is not null) EmitArguments(argList, ctor);
-            _w.Write(")");
-        }
         else
         {
-            // Transpose-generated BCL type: new (TypeRef).ctorName(args) — named-constructor form.
-            _w.Write($"new ({typeRef}).{ctorName}(");
+            // Any Transpose-defined type — whether in this compilation or a referenced assembly (its
+            // BCL/library types go through the same Transpose.define runtime): the primary/default
+            // constructor is directly `new`-able as `new Type(args)`; other overloads are named
+            // methods (`new Type.$ctorN(args)`). This matches the legacy compiler, which never emitted
+            // a `.ctor` call for the default constructor.
+            _w.Write(ctorName == "ctor" ? $"new {newTarget}(" : $"new {newTarget}.{ctorName}(");
             if (argList is not null) EmitArguments(argList, ctor);
             _w.Write(")");
         }

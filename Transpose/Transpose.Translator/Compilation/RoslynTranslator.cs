@@ -80,7 +80,8 @@ public sealed class RoslynTranslator
         LanguageVersion languageVersion = LanguageVersion.Latest,
         bool reflectionEnabled = true,
         MetadataTarget metadataTarget = MetadataTarget.Inline,
-        bool emitAssembly = true)
+        bool emitAssembly = true,
+        string? assemblyVersion = null)
     {
         CompileProgress.Report("parsing sources + resolving references");
         var compilation = PhaseTimings.Measure("build compilation (parse + references)", () =>
@@ -140,6 +141,7 @@ public sealed class RoslynTranslator
             {
                 ReflectionEnabled = reflectionEnabled,
                 MetadataTarget = metadataTarget,
+                AssemblyVersion = string.IsNullOrWhiteSpace(assemblyVersion) ? "1.0.0.0" : assemblyVersion!,
             };
             CompileProgress.Report("emitting JavaScript");
             var js = PhaseTimings.Measure("emit JavaScript", () => emitter.Emit());

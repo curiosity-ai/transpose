@@ -88,6 +88,12 @@ public sealed partial class Emitter
         var inlineMeta = ReflectionEnabled && MetadataTarget is MetadataTarget.Inline or MetadataTarget.Type;
         var fileMeta = ReflectionEnabled && MetadataTarget is MetadataTarget.File or MetadataTarget.Assembly;
 
+        // Record the assembly's version with the runtime (matching the legacy compiler's
+        // `H5.assemblyVersion(...)`), so reflection/diagnostics can report it. Emitted just before the
+        // assembly body.
+        if (!string.IsNullOrEmpty(AssemblyVersion))
+            _w.WriteLine($"Transpose.assemblyVersion(\"{_assemblyName}\", \"{AssemblyVersion}\");");
+
         _w.Write($"Transpose.assembly(\"{_assemblyName}\", function ($asm, globals) ");
         _w.Block(() =>
         {

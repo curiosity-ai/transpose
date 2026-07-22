@@ -481,6 +481,14 @@ internal static class ProjectResolver
     private static string? Property(XDocument doc, string name)
         => doc.Descendants().FirstOrDefault(e => e.Name.LocalName == name)?.Value;
 
+    /// <summary>The project's <c>&lt;AssemblyVersion&gt;</c> (falling back to <c>&lt;Version&gt;</c>),
+    /// emitted into the bundle as <c>Transpose.assemblyVersion(...)</c>. Null when neither is set.</summary>
+    public static string? ReadAssemblyVersion(string csprojPath)
+    {
+        try { var doc = XDocument.Load(csprojPath); return Property(doc, "AssemblyVersion") ?? Property(doc, "Version"); }
+        catch { return null; }
+    }
+
     private static bool IsFalse(string? v) => string.Equals(v?.Trim(), "false", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
