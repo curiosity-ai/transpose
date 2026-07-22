@@ -41,6 +41,12 @@ public sealed partial class Emitter
         // `dynamic` has no runtime type of its own — it is System.Object at runtime.
         if (type.TypeKind == TypeKind.Dynamic) return "System.Object";
 
+        // An anonymous type has no runtime type of its own — instances are plain JS objects, so any
+        // runtime type reference (e.g. a generic method's threaded type argument, as in
+        // req.WithBody(new { ... })) resolves to System.Object. Without this the type ref emits empty
+        // and produces a syntactically invalid call like `WithBody$1(, {...})`.
+        if (type is INamedTypeSymbol { IsAnonymousType: true }) return "System.Object";
+
         if (type is INamedTypeSymbol named)
         {
             // External (BCL / DOM) types are named by their runtime binding: [Name], a

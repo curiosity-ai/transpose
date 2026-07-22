@@ -333,9 +333,15 @@ public sealed partial class Emitter
         var byName = new Dictionary<string, string>();
         var byPos = new List<string>();
 
+        // An out/ref template call whose arguments contain an `await` (e.g.
+        // bool.TryParse(await t.Text(), out var s)) must run the holder IIFE as an `async` arrow and be
+        // awaited — a bare `await` inside a plain arrow is a syntax error. The enclosing method is
+        // guaranteed async (C# only allows await there), so the surrounding `await` is valid.
+        var hasAwait = args.Any(a => ContainsAwait(a.Expression));
+
         // Arrow (not `function`) so a `this`-qualified receiver inside the call resolves to the
         // enclosing instance rather than being rebound to undefined in strict mode.
-        _w.Write("(() => { ");
+        _w.Write(hasAwait ? "(await (async () => { " : "(() => { ");
         for (var i = 0; i < args.Count; i++)
         {
             var isRef = args[i].RefKindKeyword.IsKind(SyntaxKind.OutKeyword) || args[i].RefKindKeyword.IsKind(SyntaxKind.RefKeyword);
@@ -376,7 +382,7 @@ public sealed partial class Emitter
             EmitByRefWriteBackTarget(args[i].Expression);
             _w.Write($" = {holders[i]}.v; ");
         }
-        _w.Write("return $ret; })()");
+        _w.Write(hasAwait ? "return $ret; })())" : "return $ret; })()");
     }
 
     private void EmitByRefInvocation(InvocationExpressionSyntax invocation, IMethodSymbol symbol)
@@ -384,9 +390,15 @@ public sealed partial class Emitter
         var args = invocation.ArgumentList.Arguments;
         var holders = new string?[args.Count];
 
+        // An out/ref call whose arguments contain an `await` (e.g. bool.TryParse(await t.Text(), out var s))
+        // must run the holder IIFE as an `async` arrow and be awaited — a bare `await` inside a plain
+        // arrow is a syntax error. The enclosing method is guaranteed async (C# only allows await there),
+        // so the surrounding `await` is valid.
+        var hasAwait = args.Any(a => ContainsAwait(a.Expression));
+
         // Arrow (not `function`) so a `this`-qualified receiver inside the call resolves to the
         // enclosing instance rather than being rebound to undefined in strict mode.
-        _w.Write("(() => { ");
+        _w.Write(hasAwait ? "(await (async () => { " : "(() => { ");
 
         for (var i = 0; i < args.Count; i++)
         {
@@ -489,7 +501,19 @@ public sealed partial class Emitter
             _w.Write($" = {holders[i]}.v; ");
         }
 
-        _w.Write("return $ret; })()");
+        _w.Write(hasAwait ? "return $ret; })())" : "return $ret; })()");
+    }
+
+    /// <summary>True if the expression contains an <c>await</c> in its own async context — i.e. not
+    /// inside a nested lambda or local function, which have their own (possibly non-async) context.</summary>
+    private static bool ContainsAwait(SyntaxNode node)
+    {
+        foreach (var n in node.DescendantNodesAndSelf(descendIntoChildren: c =>
+                     c is not AnonymousFunctionExpressionSyntax and not LocalFunctionStatementSyntax))
+        {
+            if (n is AwaitExpressionSyntax) return true;
+        }
+        return false;
     }
 
     /// <summary>True for a discard target (out _ or a discard designation).</summary>
