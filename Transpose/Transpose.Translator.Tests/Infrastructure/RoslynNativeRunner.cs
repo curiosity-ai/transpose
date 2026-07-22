@@ -24,7 +24,10 @@ public static class RoslynNativeRunner
         CultureInfo.DefaultThreadCurrentCulture = CultureInfo.InvariantCulture;
         CultureInfo.DefaultThreadCurrentUICulture = CultureInfo.InvariantCulture;
 
-        var tree = CSharpSyntaxTree.ParseText(source, new CSharpParseOptions(LanguageVersion.Latest));
+        // Define DEBUG/TRACE so native execution matches the translator's Debug-build parse options
+        // (keeps #if DEBUG and [Conditional("DEBUG")] behaviour identical on both sides).
+        var tree = CSharpSyntaxTree.ParseText(source,
+            new CSharpParseOptions(LanguageVersion.Latest).WithPreprocessorSymbols("DEBUG", "TRACE"));
 
         var refs = ((AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string) ?? "")
             .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)

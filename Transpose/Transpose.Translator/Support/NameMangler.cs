@@ -77,11 +77,22 @@ public sealed class NameMangler
                 : t.Name + "$" + t.Arity);
         }
 
-        var ns = type.ContainingNamespace;
-        while (ns is { IsGlobalNamespace: false })
+        // A type-level [Transpose.Namespace] overrides the C# namespace: false/"" suppresses it,
+        // "x.y" replaces it. Otherwise fall back to the containing C# namespace.
+        if (TransposeNaming.NamespaceOverride(type) is { } nsOverride)
         {
-            parts.Insert(0, ns.Name);
-            ns = ns.ContainingNamespace;
+            if (nsOverride.Length > 0)
+                foreach (var seg in nsOverride.Split('.').Reverse())
+                    parts.Insert(0, seg);
+        }
+        else
+        {
+            var ns = type.ContainingNamespace;
+            while (ns is { IsGlobalNamespace: false })
+            {
+                parts.Insert(0, ns.Name);
+                ns = ns.ContainingNamespace;
+            }
         }
 
         return string.Join(".", parts.Select(JsIdentifier));

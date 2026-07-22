@@ -470,7 +470,9 @@ public sealed partial class Emitter
                or MethodKind.ExplicitInterfaceImplementation
            && !m.IsAbstract
            && m.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() is BaseMethodDeclarationSyntax d
-           && (d.Body is not null || d.ExpressionBody is not null);
+           // A body, an expression body, or a [Script] that supplies a hand-written JS body — the
+           // last lets an `extern` (body-less) method be emitted with raw JavaScript.
+           && (d.Body is not null || d.ExpressionBody is not null || TransposeNaming.GetScriptBody(m) is not null);
 
     private bool IsEntryPoint(IMethodSymbol m)
         => SymbolEqualityComparer.Default.Equals(m, _compilation.GetEntryPoint(System.Threading.CancellationToken.None));
@@ -680,6 +682,13 @@ public sealed partial class Emitter
 
     private void EmitMethodBody(BlockSyntax? block, ArrowExpressionClauseSyntax? arrow, bool returnsVoid, IMethodSymbol method)
     {
+        // [Script(...)] supplies a hand-written JS body that replaces the C# body entirely.
+        if (TransposeNaming.GetScriptBody(method) is { } scriptLines)
+        {
+            _w.Block(() => { foreach (var line in scriptLines) _w.WriteLine(line); });
+            return;
+        }
+
         _w.Block(() =>
         {
             EmitOptionalDefaults(method);
@@ -778,6 +787,15 @@ public sealed partial class Emitter
 
     private void EmitAccessorBody(IMethodSymbol accessor, bool isGetter)
     {
+        // [Script(...)] on the accessor (or its property) supplies a raw JS body.
+        var accessorScript = TransposeNaming.GetScriptBody(accessor)
+            ?? (accessor.AssociatedSymbol is { } assoc ? TransposeNaming.GetScriptBody(assoc) : null);
+        if (accessorScript is { } scriptLines)
+        {
+            _w.Block(() => { foreach (var line in scriptLines) _w.WriteLine(line); });
+            return;
+        }
+
         // Field-backed property with an auto accessor → read/write the backing field.
         if (accessor.AssociatedSymbol is IPropertySymbol prop && IsFieldBackedProperty(prop))
         {

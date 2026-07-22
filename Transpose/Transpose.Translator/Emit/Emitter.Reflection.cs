@@ -384,6 +384,8 @@ public sealed partial class Emitter
         if (type.IsImplicitlyDeclared) return false;
         if (TransposeNaming.IsExternalType(type)) return false;
         if (type.GetAttributes().Any(a => TransposeNaming.AttrIs(a, "Transpose.NonScriptableAttribute"))) return false;
+        // Explicit [Reflectable(true/false)] overrides the default (all-in) policy.
+        if (TransposeNaming.ReflectableOverride(type) is { } r) return r;
         return true;
     }
 
@@ -392,6 +394,8 @@ public sealed partial class Emitter
     private bool IsReflectableMember(ISymbol m)
     {
         if (SkipMember(m)) return false;
+        // Explicit [Reflectable(true/false)] on the member overrides the default (all-in) policy.
+        if (TransposeNaming.ReflectableOverride(m) is { } r) return r;
         if (m is IMethodSymbol { MethodKind: MethodKind.Constructor }) return true;
         return m.Kind is SymbolKind.Method or SymbolKind.Field or SymbolKind.Property or SymbolKind.Event;
     }
