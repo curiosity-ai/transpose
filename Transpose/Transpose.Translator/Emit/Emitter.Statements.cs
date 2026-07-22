@@ -139,12 +139,18 @@ public sealed partial class Emitter
         var names = new List<string>();
         CollectInlineDesignations(scope, isRoot: true, names);
 
+        // Match EmitLocalDeclaration's keyword rule: `let` inside a loop (fresh per-iteration binding
+        // for closures), `var` otherwise. Using `var` outside loops is what lets a predeclared
+        // out-var coexist with a same-named regular local elsewhere in the function (both flattened
+        // to function scope) — a `let` predeclaration would collide with such a `var` local
+        // ("Identifier 'x' has already been declared").
+        var kw = _loopDepth > 0 && _gotoContexts.Count == 0 ? "let" : "var";
         var blockScope = _predeclaredInScope.Count > 0 ? _predeclaredInScope.Peek() : null;
         foreach (var name in names.Distinct())
         {
             var jsName = NameMangler.JsIdentifier(name);
             if (blockScope is not null && !blockScope.Add(jsName)) continue; // already declared in this block
-            _w.WriteLine($"let {jsName};");
+            _w.WriteLine($"{kw} {jsName};");
         }
     }
 

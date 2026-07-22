@@ -606,7 +606,9 @@ public class Program
 }";
             var result = new RoslynTranslator().Translate(code);
             Assert.IsTrue(result.Success, "translation should succeed");
-            Assert.IsTrue(result.Javascript!.Contains("let s;"),
+            // Predeclared outside a loop → `var` (matching regular locals, so it coexists with any
+            // same-named function-scoped local).
+            Assert.IsTrue(result.Javascript!.Contains("var s;"),
                 "an is-pattern variable in an expression-bodied property must be predeclared\n" + result.Javascript);
         }
 
