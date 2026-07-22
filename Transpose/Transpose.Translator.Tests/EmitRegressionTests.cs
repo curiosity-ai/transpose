@@ -204,6 +204,55 @@ public class Program
 }");
         }
 
+        // ---- typeof(open generic) ---------------------------------------------
+
+        [TestMethod]
+        public async Task TypeOfOpenGenericComparesAgainstGenericTypeDefinitionAsync()
+        {
+            // typeof(IObs<>) is an UNBOUND generic — it must emit the type definition (IObs$1), not
+            // IObs$1(T) which references an undefined `T` (ReferenceError at runtime). This is exactly
+            // Tesserae's PossibleObservableHelpers.IsObservable pattern (ObservableDictionary<,> ctor).
+            await RunTest(@"
+using System;
+public interface IObs<T> { T Value { get; } }
+public class Box<T> : IObs<T> { public T Value { get; set; } }
+public class Program
+{
+    static bool IsObs(Type type)
+    {
+        if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IObs<>)) return true;
+        foreach (var i in type.GetInterfaces())
+            if (i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IObs<>)) return true;
+        return false;
+    }
+    public static void Main()
+    {
+        Console.WriteLine(IsObs(typeof(IObs<string>)));   // True
+        Console.WriteLine(IsObs(typeof(Box<int>)));        // True (implements IObs<int>)
+        Console.WriteLine(IsObs(typeof(string)));          // False
+    }
+}");
+        }
+
+        [TestMethod]
+        public void TypeOfOpenGenericEmitsDefinitionWithoutArgs()
+        {
+            var code = @"
+using System;
+public interface IObs<T> { T Value { get; } }
+public class Program
+{
+    static bool Check(Type t) => t.GetGenericTypeDefinition() == typeof(IObs<>);
+    public static void Main() { Console.WriteLine(Check(typeof(IObs<int>))); }
+}";
+            var result = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            Assert.IsTrue(result.Javascript!.Contains("=== IObs$1;"),
+                "typeof(IObs<>) should emit the definition IObs$1, not IObs$1(T)\n" + result.Javascript);
+            Assert.IsFalse(result.Javascript!.Contains("IObs$1(T)"),
+                "typeof(IObs<>) must not apply the unbound type parameter as an argument\n" + result.Javascript);
+        }
+
         [TestMethod]
         public void IteratorLocalFunctionEmitsGenerator()
         {

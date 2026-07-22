@@ -49,6 +49,13 @@ public sealed partial class Emitter
 
         if (type is INamedTypeSymbol named)
         {
+            // An UNBOUND generic — `typeof(Foo<>)` — has no concrete type arguments; its
+            // TypeArguments are the type PARAMETERS (T, TKey, …), which have no runtime value. Its
+            // JS value is the generic type DEFINITION itself (what Type.GetGenericTypeDefinition()
+            // returns), so emit the arity-suffixed name WITHOUT applying arguments — `Foo$1`, never
+            // `Foo$1(T)` (which references an undefined `T`).
+            var unbound = named.IsUnboundGenericType;
+
             // External (BCL / DOM) types are named by their runtime binding: [Name], a
             // [Scope]/[GlobalMethods] global (e.g. Transpose.Core.dom's HTMLElement), or the dotted
             // metadata name. [Name] applies ONLY here — an Transpose-compiled type ignores it.
@@ -67,7 +74,7 @@ public sealed partial class Emitter
                 {
                     var nestedArgs = EffectiveTypeArguments(named);
                     var nestedName = named.Arity > 0 ? _names.TypeFullName(named) + "$" + named.Arity : _names.TypeFullName(named);
-                    return nestedArgs.Count > 0
+                    return nestedArgs.Count > 0 && !unbound
                         ? $"{nestedName}({string.Join(", ", nestedArgs.Select(TypeRef))})"
                         : nestedName;
                 }
@@ -76,6 +83,7 @@ public sealed partial class Emitter
                 if (named.IsGenericType && named.TypeArguments.Length > 0)
                 {
                     var baseName = (string.IsNullOrEmpty(ns) ? "" : ns + ".") + StripArity(named.Name) + "$" + named.Arity;
+                    if (unbound) return baseName;
                     var args = string.Join(", ", named.TypeArguments.Select(TypeRef));
                     return $"{baseName}({args})";
                 }
@@ -90,7 +98,7 @@ public sealed partial class Emitter
             // IconToggle<int>.Item) resolves to tss.IconToggle.Item(System.Int32).
             var effArgs = EffectiveTypeArguments(named);
             var defName = named.Arity > 0 ? _names.TypeFullName(named) + "$" + named.Arity : _names.TypeFullName(named);
-            if (effArgs.Count > 0)
+            if (effArgs.Count > 0 && !unbound)
                 return $"{defName}({string.Join(", ", effArgs.Select(TypeRef))})";
             return defName;
         }
