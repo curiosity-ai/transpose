@@ -796,6 +796,7 @@ public sealed partial class Emitter
     {
         var symbol = _model.GetDeclaredSymbol(localFn) as IMethodSymbol;
         var isAsync = localFn.Modifiers.Any(SyntaxKind.AsyncKeyword);
+        var isIterator = localFn.Body is not null && IsIteratorBody(localFn.Body);
         // Arrow function so `this` is captured lexically (C# local functions close over `this`);
         // the `var` binding keeps the name in scope for recursion.
         _w.Write($"var {NameMangler.JsIdentifier(localFn.Identifier.Text)} = (");
@@ -804,18 +805,32 @@ public sealed partial class Emitter
         _w.Block(() =>
         {
             if (symbol is not null) EmitOptionalDefaults(symbol);
-            EmitMaybeAsyncBody(isAsync, () =>
+            if (isIterator)
             {
-                if (localFn.Body is not null)
+                // An iterator local function compiles to a generator, exactly like an iterator method:
+                // a `function*` (can't be an arrow, so it rebinds `this` — bind it to the captured
+                // enclosing instance) wrapped by TransposeR.iter. Emitting the yields straight into the
+                // arrow would be invalid — a bare `yield` outside a generator is a strict-mode syntax
+                // error.
+                _w.Write("return TransposeR.iter((function* () ");
+                _w.Block(() => { foreach (var s in localFn.Body!.Statements) EmitStatement(s); });
+                _w.WriteLine(").bind(this));");
+            }
+            else
+            {
+                EmitMaybeAsyncBody(isAsync, () =>
                 {
-                    EmitStatements(localFn.Body.Statements);
-                }
-                else if (localFn.ExpressionBody is not null)
-                {
-                    if (symbol?.ReturnsVoid == true) EmitExpressionStatement(localFn.ExpressionBody.Expression);
-                    else { _w.Write("return "); EmitExpression(localFn.ExpressionBody.Expression); _w.WriteLine(";"); }
-                }
-            });
+                    if (localFn.Body is not null)
+                    {
+                        EmitStatements(localFn.Body.Statements);
+                    }
+                    else if (localFn.ExpressionBody is not null)
+                    {
+                        if (symbol?.ReturnsVoid == true) EmitExpressionStatement(localFn.ExpressionBody.Expression);
+                        else { _w.Write("return "); EmitExpression(localFn.ExpressionBody.Expression); _w.WriteLine(";"); }
+                    }
+                });
+            }
         });
         _w.WriteLine(";");
     }
