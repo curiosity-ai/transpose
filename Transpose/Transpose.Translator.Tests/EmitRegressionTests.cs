@@ -1053,6 +1053,79 @@ public class Program
 }", waitForOutput: "<<DONE>>");
         }
 
+        // ---- ValueTuple literals are real ValueTuple instances --------------------------------
+
+        [TestMethod]
+        public async Task ValueTupleInstanceBehaviourRunsAsync()
+        {
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+public class Program
+{
+    public static void Main()
+    {
+        var t = (1, ""x"");
+        Console.WriteLine(t.ToString());                 // (1, x)
+        Console.WriteLine(t.Item1 + ""/"" + t.Item2);       // 1/x
+        var (a, b) = t; Console.WriteLine(a + "","" + b);   // 1,x
+        var n = (id: 5, name: ""n""); Console.WriteLine(n.id + "":"" + n.name); // 5:n
+        Console.WriteLine((1, ""x"").Equals((1, ""x"")));     // True
+        Console.WriteLine((1, ""x"") == (1, ""y""));          // False
+        Console.WriteLine((1, 2, 3).ToString());          // (1, 2, 3)
+        var set = new HashSet<(int, int)> { (1, 2), (1, 2), (3, 4) };
+        Console.WriteLine(set.Count);                      // 2
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        // ---- Activator.CreateInstance with an explicit object[] of arguments ------------------
+
+        [TestMethod]
+        public async Task ActivatorCreateInstanceWithObjectArrayRunsAsync()
+        {
+            await RunTest(@"
+using System;
+public class Multi
+{
+    public string V;
+    public Multi(int a) { V = ""one:"" + a; }
+    public Multi(int a, int b, int c) { V = ""three:"" + (a + b + c); }
+}
+public class Program
+{
+    public static void Main()
+    {
+        Console.WriteLine(((Multi)Activator.CreateInstance(typeof(Multi), new object[] { 1, 2, 3 })).V); // three:6
+        Console.WriteLine(((Multi)Activator.CreateInstance(typeof(Multi), 1, 2, 3)).V);                   // three:6
+        Console.WriteLine(((Multi)Activator.CreateInstance(typeof(Multi), 9)).V);                         // one:9
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        // ---- reordered named arguments evaluate in source order -------------------------------
+
+        [TestMethod]
+        public async Task ReorderedNamedArgsEvaluateInSourceOrderRunsAsync()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    static int Log(string tag) { Console.WriteLine(""eval "" + tag); return tag.Length; }
+    static string M(int a, int b, int c = 99) => ""a="" + a + "" b="" + b + "" c="" + c;
+    public static void Main()
+    {
+        Console.WriteLine(M(b: Log(""BB""), a: Log(""AAA"")));            // eval BB; eval AAA; a=3 b=2 c=99
+        Console.WriteLine(M(a: Log(""A""), b: Log(""BB"")));              // eval A; eval BB; a=1 b=2 c=99
+        Console.WriteLine(M(c: Log(""CCCC""), b: Log(""BB""), a: Log(""A""))); // eval CCCC; BB; A; a=1 b=2 c=4
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
         [TestMethod]
         public void AttributeNonPrimaryCtorEmitsCtorOverloadName()
         {

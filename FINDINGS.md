@@ -38,17 +38,23 @@ native-only divergences are also fixed where practical.
   the enumerator (the shim's enumerator wrapper forwards `dispose`, and iterator generators run
   their `finally` via `it.return()`).
 - **`foreach` over null** threw a raw JS `TypeError`; now throws `System.NullReferenceException`.
+- **`ValueTuple` literals** emitted plain `{Item1,Item2}` objects (no `ValueTuple$N` prototype), so
+  `tuple.ToString()` → "[object Object]" and `tuple.Equals()`/`.GetHashCode()` threw. Now emit a
+  real `new (System.ValueTuple$N(types)).$ctor1(vals)` instance (matching h5); element access,
+  deconstruction, named elements, `==`, and dict/hashset keys are unaffected. Arity > 7 (nested
+  ValueTuple) still uses the plain-object fallback.
+- **`Activator.CreateInstance(type, new object[]{…})`** double-wrapped the args array (the template
+  `:array` modifier re-wrapped the already-collected params array into `[[…]]`), so the wrong ctor
+  ran. A single argument that IS the params array is now emitted JS-spread so `:array` yields the
+  array itself. (Newtonsoft `[JsonConstructor]` was already unaffected.)
+- **Reordered named arguments** were emitted inline in parameter order, so side-effecting argument
+  expressions evaluated in parameter order, not C# source order. When the arguments are effectively
+  reordered (their parameter indices aren't ascending in source order) they are now evaluated into
+  temps in source order and passed back in parameter order (an IIFE spread); in-order calls stay
+  inline. (The `params`-slot combination keeps the inline path.)
 
 ### Known open (not fixed)
 
-- **`ValueTuple` literals emit plain `{Item1,Item2}` objects** (no `ValueTuple$N` prototype), so
-  `tuple.ToString()` → "[object Object]" (native "(1, x)") and `tuple.Equals()`/`.GetHashCode()`
-  throw. `==`, deconstruction, and dict/hashset keys work via structural helpers. h5 builds
-  `new (System.ValueTuple$N(types)).$ctor1(vals)`. Deferred: changing the representation touches
-  deconstruction/patterns/LINQ/JSON broadly — needs its own focused change + test pass.
-- **Reordered named arguments** are emitted inline in parameter order, so side-effecting argument
-  expressions evaluate in parameter order, not C# source order (values are always correct). Fixing
-  it needs source-order temp evaluation (an IIFE) around the call. Niche; deferred.
 - **`enum.ToString(format)`** (e.g. `.ToString("D")`) throws — the `{this:type}` template emits
   `Transpose.getType(value)`, which returns Int32 for a numeric enum value. Not exercised by the
   corpus. `[Enum(Emit.Value)]` enums (e.g. `DateTimeKind`) intentionally stringify to their number

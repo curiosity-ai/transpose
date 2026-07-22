@@ -268,11 +268,21 @@ public sealed partial class Emitter
             var p = method.Parameters[pi];
             if (p.IsParams)
             {
-                // A params argument resolves as the SPREAD (comma-joined) form by default —
-                // {args} in "System.String.format({format}, {args})" → format(fmt, a, b). A
-                // template that needs the array wraps it explicitly with the :array modifier
-                // ({values:array} → [a, b]); the array wrapping is applied in SubstituteTemplate.
-                byName[p.Name] = string.Join(", ", byPos.Skip(pi));
+                // A single trailing argument that IS the params array (e.g. an object[] passed to
+                // `params object[]`) is the array itself, not one element: emit it JS-spread so
+                // {args:array} yields the array ([...arr]) instead of double-wrapping it into [[...]]
+                // (which made Activator.CreateInstance(type, new object[]{…}) pick the wrong ctor),
+                // and a bare {args} still spreads to individual call arguments.
+                var trailingCount = byPos.Count - pi;
+                var soleArgType = trailingCount == 1 && pi < args.Count
+                    ? _model.GetTypeInfo(args[pi].Expression).Type : null;
+                byName[p.Name] = trailingCount == 1 && soleArgType is not null
+                    && _compilation.ClassifyConversion(soleArgType, p.Type).Exists
+                        ? "..." + byPos[pi]
+                        // Otherwise resolve as the SPREAD (comma-joined) form — {args} in
+                        // "System.String.format({format}, {args})" → format(fmt, a, b); a template that
+                        // needs an array uses the :array modifier ({values:array} → [a, b]).
+                        : string.Join(", ", byPos.Skip(pi));
             }
             else if (pi < byPos.Count)
             {
@@ -583,12 +593,14 @@ public sealed partial class Emitter
         if (method is not null && args.Any(a => a.NameColon is not null))
         {
             var ordered = new ExpressionSyntax?[method.Parameters.Length];
+            var paramIndexOf = new int[args.Count]; // source-arg k → the parameter index it binds to
             for (var i = 0; i < args.Count; i++)
             {
                 var arg = args[i];
                 if (arg.NameColon is not null)
                 {
                     var idx = ParameterIndex(method, arg.NameColon.Name.Identifier.Text);
+                    paramIndexOf[i] = idx;
                     if (idx >= 0) ordered[idx] = arg.Expression;
                 }
                 else if (i < ordered.Length)
@@ -600,7 +612,9 @@ public sealed partial class Emitter
                     // (e.g. Do(type, accept, retriever: fn, flag)) already claimed slot 2, and the
                     // trailing positional `flag` must land in slot 3, not overwrite slot 2.
                     ordered[i] = arg.Expression;
+                    paramIndexOf[i] = i;
                 }
+                else paramIndexOf[i] = -1;
             }
 
             // Positional JS calls can't skip a hole, so fill any omitted argument that
@@ -608,6 +622,41 @@ public sealed partial class Emitter
             // omitted optionals are left off (the callee supplies its own defaults).
             var lastProvided = -1;
             for (var i = 0; i < ordered.Length; i++) if (ordered[i] is not null) lastProvided = i;
+
+            // "Effectively reordered": the provided arguments' parameter indices are not ascending in
+            // SOURCE order, so emitting them in parameter order would change the order side-effecting
+            // argument expressions run in. C# evaluates arguments in source order; preserve that by
+            // evaluating into temps (source order) and passing them back in parameter order. (When
+            // already ascending, inline parameter-order emission is already source order — no wrap.)
+            var reordered = false;
+            for (int k = 0, prev = -1; k < paramIndexOf.Length; k++)
+            {
+                if (paramIndexOf[k] < 0) continue;
+                if (paramIndexOf[k] < prev) { reordered = true; break; }
+                prev = paramIndexOf[k];
+            }
+            var hasParams = method.Parameters.Length > 0 && method.Parameters[^1].IsParams;
+            if (reordered && !hasParams)
+            {
+                if (lead) _w.Write(", ");
+                _w.Write("...(function () { var $ = [");
+                for (var k = 0; k < args.Count; k++)
+                {
+                    if (k > 0) _w.Write(", ");
+                    var pIdx = paramIndexOf[k];
+                    var pType = pIdx >= 0 && pIdx < method.Parameters.Length ? method.Parameters[pIdx].Type : null;
+                    EmitExpressionConverted(args[k].Expression, pType);
+                }
+                _w.Write("]; return [");
+                for (var i = 0; i <= lastProvided; i++)
+                {
+                    if (i > 0) _w.Write(", ");
+                    var src = Array.IndexOf(paramIndexOf, i);
+                    _w.Write(src >= 0 ? $"$[{src}]" : "void 0");
+                }
+                _w.Write("]; })()");
+                return;
+            }
 
             var first = !lead;
             for (var i = 0; i <= lastProvided; i++)
@@ -997,10 +1046,29 @@ public sealed partial class Emitter
 
     private void EmitTuple(TupleExpressionSyntax tuple)
     {
-        // Tuples are represented as { Item1, Item2, ... }; named-element access is
-        // mapped to the corresponding ItemN at the access site.
+        var n = tuple.Arguments.Count;
+        var tupleType = (_model.GetTypeInfo(tuple).ConvertedType ?? _model.GetTypeInfo(tuple).Type) as INamedTypeSymbol;
+
+        // Emit a real System.ValueTuple$N instance so Equals / GetHashCode / ToString ("(a, b)")
+        // behave like .NET; element access still reads .ItemN so deconstruction/named-element access
+        // are unaffected. h5 emits `new (System.ValueTuple$N(types)).$ctor1(values)`. Arity > 7 uses a
+        // nested ValueTuple (TRest) — fall back to the plain {Item1,…} object there (rare).
+        if (tupleType is { IsTupleType: true } && n is >= 1 and <= 7)
+        {
+            var elements = tupleType.TupleElements;
+            _w.Write($"new ({TypeRef(tupleType.TupleUnderlyingType ?? tupleType)}).$ctor1(");
+            for (var i = 0; i < n; i++)
+            {
+                if (i > 0) _w.Write(", ");
+                EmitExpressionConverted(tuple.Arguments[i].Expression, elements[i].Type);
+            }
+            _w.Write(")");
+            return;
+        }
+
+        // Fallback (arity > 7 or a non-tuple type): a plain object; named-element access maps to ItemN.
         _w.Write("{ ");
-        for (var i = 0; i < tuple.Arguments.Count; i++)
+        for (var i = 0; i < n; i++)
         {
             if (i > 0) _w.Write(", ");
             _w.Write($"Item{i + 1}: ");
