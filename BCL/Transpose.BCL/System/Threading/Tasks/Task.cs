@@ -102,8 +102,17 @@ namespace System.Threading.Tasks
 
         public static extern Task Delay(TimeSpan delay, CancellationToken cancellationToken);
 
-        
-        public static extern Task CompletedTask 
+        /// <summary>
+        /// Yields control back to the runtime, resuming asynchronously on the next scheduler tick.
+        /// The awaited task completes after a <c>setImmediate</c> callback, so continuations run
+        /// after the current job drains (the observable behaviour of <c>Task.Yield()</c>). Returns a
+        /// <see cref="Task"/> rather than the BCL's <c>YieldAwaitable</c>, which is not modelled here;
+        /// <c>await Task.Yield()</c> behaves identically.
+        /// </summary>
+        public static extern Task Yield();
+
+
+        public static extern Task CompletedTask
         {
             [Transpose.Template("System.Threading.Tasks.Task.fromResult({}, null)")]
             get; 

@@ -1361,5 +1361,53 @@ public class Program
     }
 }", waitForOutput: "<<DONE>>");
         }
+
+        // ---- Task.Yield + invariant string casing (BCL) ------------------------
+
+        [TestMethod]
+        public async Task TaskYieldResumesAsynchronously()
+        {
+            // await Task.Yield() must resume on a later tick (after the current job), preserving
+            // ordering with subsequent yields. Asserted on the JS output only (skipRoslyn): a
+            // fire-and-forget async Run() from Main is non-deterministic under native .NET (the
+            // process can exit before the Yield continuations run), whereas Node drains its queue.
+            var js = await RunTest(@"
+using System;
+using System.Threading.Tasks;
+public class Program
+{
+    static async Task Run()
+    {
+        Console.WriteLine(""before"");
+        await Task.Yield();
+        Console.WriteLine(""after"");
+        for (int i = 0; i < 3; i++) { await Task.Yield(); Console.WriteLine(""tick "" + i); }
+        Console.WriteLine(""<<DONE>>"");
+    }
+    public static void Main() { Run(); }
+}", waitForOutput: "<<DONE>>", skipRoslyn: true);
+
+            var seq = string.Join(",", js.Replace("\r\n", "\n").Split(new[] { '\n' }, System.StringSplitOptions.RemoveEmptyEntries));
+            Assert.AreEqual("before,after,tick 0,tick 1,tick 2,<<DONE>>", seq,
+                "Task.Yield must resume asynchronously, preserving order across successive yields\n" + js);
+        }
+
+        [TestMethod]
+        public async Task StringInvariantCasingMatchesToLowerToUpper()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        Console.WriteLine(""MiXeD"".ToLowerInvariant());
+        Console.WriteLine(""MiXeD"".ToUpperInvariant());
+        Console.WriteLine(""ABC"".ToLowerInvariant() == ""ABC"".ToLower());
+        Console.WriteLine(""abc"".ToUpperInvariant() == ""abc"".ToUpper());
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
     }
 }
