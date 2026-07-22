@@ -152,6 +152,19 @@ public sealed partial class Emitter
     {
         foreach (var child in node.ChildNodes())
         {
+            // An `else if` chain: the nested `if` is emitted inline (`else if (...)`) and its
+            // condition's out-var / pattern designations are scoped to the SAME enclosing block in
+            // C#, so they must be predeclared here too. Descend into the nested if's condition and
+            // its own else-clause, but not its then-body (a separate block scope). Without this, a
+            // designation in an `else if` condition captured later (e.g. by a lambda in the branch)
+            // was never declared — "<name> is not defined".
+            if (child is IfStatementSyntax nestedIf && child.Parent is ElseClauseSyntax)
+            {
+                CollectInlineDesignations(nestedIf.Condition, isRoot: false, names);
+                if (nestedIf.Else is not null) CollectInlineDesignations(nestedIf.Else, isRoot: false, names);
+                continue;
+            }
+
             // Do not cross scope boundaries.
             if (!isRoot && child is StatementSyntax) continue;
             if (child is AnonymousFunctionExpressionSyntax or LocalFunctionStatementSyntax) continue;

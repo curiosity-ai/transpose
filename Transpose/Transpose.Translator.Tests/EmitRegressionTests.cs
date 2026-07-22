@@ -699,5 +699,46 @@ public class Program { public static void Main() { } }
             Assert.IsFalse(result.Javascript!.Contains("\"sn\":\"ctor$1\""),
                 "constructor metadata sn must not use the MemberJsName scheme (ctor$N)\n" + result.Javascript);
         }
+
+        // ---- out-var in an `else if` condition captured by a lambda ------------
+        // An out-var / pattern var declared in an `else if` condition is scoped to the enclosing
+        // block, but the emitter skipped the nested (inline `else if`) statement when predeclaring,
+        // so a later capture (e.g. a lambda in that branch) referenced an undeclared variable
+        // ("<name> is not defined"). Mirrors NodeRenderer.GetFor.
+
+        [TestMethod]
+        public async Task OutVarInElseIfCapturedByLambdaRunsAsync()
+        {
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+public class Program
+{
+    static readonly Dictionary<string,int> A = new Dictionary<string,int>();
+    static readonly Dictionary<string,string> B = new Dictionary<string,string> { [""Person""] = ""KEY"" };
+    static string GetFor(string nodeType)
+    {
+        if (A.TryGetValue(nodeType, out var a)) { return ""a:"" + a; }
+        else if (B.TryGetValue(nodeType, out var schema))
+        {
+            Func<string> missing = () => ""renderer:"" + schema;
+            return missing();
+        }
+        else if (nodeType is string s && s.Length > 3)
+        {
+            Func<string> f = () => ""len:"" + s.Length;
+            return f();
+        }
+        else { return ""none""; }
+    }
+    public static void Main()
+    {
+        Console.WriteLine(GetFor(""Person""));  // renderer:KEY
+        Console.WriteLine(GetFor(""XYZ""));     // none (len 3, not >3, and not in B)
+        Console.WriteLine(GetFor(""LongName"")); // renderer? no -> len:8
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
     }
 }
