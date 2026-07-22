@@ -184,9 +184,12 @@ public sealed partial class Emitter
             o.RawArray("p", ctor.Parameters.Select(p => MetaTypeName(p.Type)));
         var pi = ctor.Parameters.Select(ConstructParameterInfo).ToList();
         if (pi.Count > 0) o.RawArray("pi", pi);
-        // The JS constructor slot is "ctor"/"ctor$N" (the metadata name "n" keeps ".ctor").
-        var sn = TransposeNaming.MemberJsName(ctor);
-        o.Str("sn", sn.StartsWith(".", StringComparison.Ordinal) ? sn.Substring(1) : sn);
+        // The JS constructor slot must be the SAME name the class definition emits for this ctor
+        // (CtorName: "ctor" / "$ctorN"), because reflection construction does `type[ci.sn](...)`
+        // (Reflection.invokeCI). MemberJsName produces a different scheme ("ctor$N") that would not
+        // resolve to the real member — e.g. Newtonsoft picking a [JsonConstructor] overload then
+        // failing with "$$initCtor of undefined". The metadata name "n" keeps ".ctor".
+        o.Str("sn", CtorName(ctor));
         return o.ToString();
     }
 
@@ -424,7 +427,15 @@ public sealed partial class Emitter
 
     private static List<AttributeData> ReflectableAttributes(IEnumerable<AttributeData> attrs)
         => attrs.Where(a => a.AttributeClass is { } ac
-                            && ac.Locations.Any(l => l.IsInSource)
+                            // The attribute's class must be a real (Transpose.define'd) class at
+                            // runtime so the emitted `new SomeAttribute(...)` resolves: either defined
+                            // in this compilation's source, or a non-[External] class from a referenced
+                            // assembly (e.g. Newtonsoft.Json's [JsonConstructor], a Packages/* attribute
+                            // — its assembly is "Transpose.Newtonsoft.Json" but the type is genuinely
+                            // emitted). [External] attributes bind to ambient JS and are not
+                            // constructible; BCL codegen/marker attributes that emit no class (e.g.
+                            // [Obsolete]) are [NonScriptable] and excluded by the check below.
+                            && (ac.Locations.Any(l => l.IsInSource) || !TransposeNaming.IsExternalType(ac))
                             && !ac.GetAttributes().Any(x => TransposeNaming.AttrIs(x, "Transpose.NonScriptableAttribute")))
                 .ToList();
 
