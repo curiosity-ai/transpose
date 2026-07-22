@@ -128,7 +128,15 @@ public sealed partial class Emitter
                 return $"{defName}({string.Join(", ", effArgs.Select(TypeRef))})";
             return defName;
         }
-        if (type is IArrayTypeSymbol) return "System.Array";
+        // An array type reifies to its concrete runtime type — System.Array.type(element, rank) —
+        // NOT the bare System.Array base (which has no $elementType and fails Transpose.isArray, so a
+        // reified `T[]` type argument, e.g. DeserializeObject<AdminSettingsItem[]>, would deserialize
+        // into an object with numeric keys instead of an array). rank defaults to 1, so it is only
+        // emitted for multidimensional arrays, matching System.Array.type's signature.
+        if (type is IArrayTypeSymbol array)
+            return array.Rank > 1
+                ? $"System.Array.type({TypeRef(array.ElementType)}, {array.Rank})"
+                : $"System.Array.type({TypeRef(array.ElementType)})";
         return type.Name;
     }
 

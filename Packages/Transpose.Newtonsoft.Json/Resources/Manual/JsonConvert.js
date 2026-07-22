@@ -330,12 +330,28 @@
                     }
                 },
 
+                // The ISerializationBinder method slot on the implementer. Transpose dispatches an
+                // implicit interface implementation through the plain member name (BindToName /
+                // BindToType) and an explicit one through the interface-qualified slot
+                // (Newtonsoft$Json$Serialization$ISerializationBinder$…, which is also the name the
+                // legacy h5 compiler used for every implementation) — so accept either.
+                binderMethod: function (binder, name) {
+                    if (!binder) {
+                        return null;
+                    }
+
+                    return binder[name] || binder["Newtonsoft$Json$Serialization$ISerializationBinder$" + name] || null;
+                },
+
                 BindToName: function (settings, type) {
-                    if (settings && settings.SerializationBinder && settings.SerializationBinder.Newtonsoft$Json$Serialization$ISerializationBinder$BindToName) {
+                    var binder = settings && settings.SerializationBinder,
+                        bindToName = Newtonsoft.Json.JsonConvert.binderMethod(binder, "BindToName");
+
+                    if (bindToName) {
                         var asm = {},
                             name = {};
 
-                        settings.SerializationBinder.Newtonsoft$Json$Serialization$ISerializationBinder$BindToName(type, asm, name);
+                        bindToName.call(binder, type, asm, name);
                         return name.v + (asm.v ? ", " + asm.v : "");
                     }
 
@@ -343,13 +359,16 @@
                 },
 
                 BindToType: function (settings, fullName, objectType) {
-                    var type;
-                    if (settings && settings.SerializationBinder && settings.SerializationBinder.Newtonsoft$Json$Serialization$ISerializationBinder$BindToType) {
-                        var type = Newtonsoft.Json.JsonConvert.SplitFullyQualifiedTypeName(fullName);
+                    var type,
+                        binder = settings && settings.SerializationBinder,
+                        bindToType = Newtonsoft.Json.JsonConvert.binderMethod(binder, "BindToType");
 
-                        type = settings.SerializationBinder.Newtonsoft$Json$Serialization$ISerializationBinder$BindToType(type.assemblyName, type.typeName);
+                    if (bindToType) {
+                        var split = Newtonsoft.Json.JsonConvert.SplitFullyQualifiedTypeName(fullName);
+
+                        type = bindToType.call(binder, split.assemblyName, split.typeName);
                     } else {
-                        type = Transpose.Reflection.getType(fullName); 
+                        type = Transpose.Reflection.getType(fullName);
                     }
 
                     if (!type) {
