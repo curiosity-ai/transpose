@@ -62,8 +62,17 @@
     };
     TransposeR.hash = function (v) { return Transpose.getHashCode ? Transpose.getHashCode(v) : 0; };
     TransposeR.getEnumerator = function (src) {
+        // foreach over a null sequence throws NullReferenceException in .NET (the implicit
+        // GetEnumerator call dereferences null), not a raw JS TypeError from a later .moveNext().
+        if (src == null) { throw new System.NullReferenceException(); }
         var wrap = function (e) {
-            return { moveNext: function () { return e.moveNext ? e.moveNext() : e.MoveNext(); }, get current() { return e.Current !== undefined ? e.Current : e.current; } };
+            return {
+                moveNext: function () { return e.moveNext ? e.moveNext() : e.MoveNext(); },
+                get current() { return e.Current !== undefined ? e.Current : e.current; },
+                // Forward disposal to the underlying enumerator so a foreach ending early still runs
+                // an iterator's finally / IDisposable cleanup (no-op when the source isn't disposable).
+                dispose: function () { if (e.dispose) { e.dispose(); } else if (e.Dispose) { e.Dispose(); } }
+            };
         };
         if (src != null) {
             // Already an enumerator (pattern-based / extension GetEnumerator result).
@@ -135,6 +144,10 @@
                 if (r.done) { return false; }
                 en.current = r.value;
                 return true;
+            }, function () {
+                // Dispose (called when a foreach ends early via break/return/throw) must run the
+                // iterator's pending `finally` blocks — return() resumes the JS generator through them.
+                if (it.return) { it.return(); }
             });
             return en;
         });
