@@ -206,27 +206,32 @@ internal static class OutputBuilder
     {
         var items = new List<EmbeddedItem>();
         var utf8 = new UTF8Encoding(false);
+        var metaName = metadataJavascript is not null
+            ? Path.GetFileNameWithoutExtension(mainJsName) + ".meta.js"
+            : null;
 
-        // The compiled bundle + its reflection metadata, each in a formatted and a pre-minified
-        // variant. Shipping the .min.js in the package is deliberate: minifying library code is
-        // work the consumer would otherwise repeat on every build (see BuildRuntime for the same
-        // for the runtime bundles).
-        items.Add(new EmbeddedItem(mainJsName, utf8.GetBytes(javascript), null));
+        // A tps.json `resources` group may re-declare the project's OWN compiled output — e.g.
+        //   { "name": "<Assembly>.js.dontload", "files": [ "$(OutDir)tps/<Assembly>.js" ] } —
+        // which isn't on disk during compilation. Such a self-reference maps to the in-memory bundle
+        // (or its .meta.js), and its parsed name/load flag win: the `.dontload` variant is embedded so
+        // consumers copy it but don't auto-load it (the module is lazy-loaded at runtime). When the
+        // resources section re-declares a bundle this way, the default auto-embed of that same bundle
+        // is suppressed — matching the legacy compiler, where a `resources` section opts out of the
+        // default embed and must re-list exactly what it wants (min and/or formatted).
+        bool mainDeclared = false, metaDeclared = false;
 
-        if (config.OutputFormatting != JsOutputFormatting.Formatted)
+        // Maps a self-referenced compiled-output leaf name to its in-memory text, or null if the leaf
+        // isn't one of this project's own outputs. Also records which bundle was referenced.
+        string? SelfText(string leaf)
         {
-            items.Add(new EmbeddedItem(ToMinName(mainJsName), utf8.GetBytes(JsMinifier.Minify(javascript, mainJsName, minifyLocalVariables)), null));
-        }
-
-        if (metadataJavascript is not null)
-        {
-            var metaName = Path.GetFileNameWithoutExtension(mainJsName) + ".meta.js";
-            items.Add(new EmbeddedItem(metaName, utf8.GetBytes(metadataJavascript), null));
-
-            if (config.OutputFormatting != JsOutputFormatting.Formatted)
+            if (SameFile(leaf, mainJsName)) { mainDeclared = true; return javascript; }
+            if (SameFile(leaf, ToMinName(mainJsName))) { mainDeclared = true; return JsMinifier.Minify(javascript, mainJsName, minifyLocalVariables); }
+            if (metaName is not null)
             {
-                items.Add(new EmbeddedItem(ToMinName(metaName), utf8.GetBytes(JsMinifier.Minify(metadataJavascript, metaName, minifyLocalVariables)), null));
+                if (SameFile(leaf, metaName)) { metaDeclared = true; return metadataJavascript!; }
+                if (SameFile(leaf, ToMinName(metaName))) { metaDeclared = true; return JsMinifier.Minify(metadataJavascript!, metaName, minifyLocalVariables); }
             }
+            return null;
         }
 
         foreach (var group in config.Resources)
@@ -235,24 +240,52 @@ internal static class OutputBuilder
             // the resource under its real name and knows whether to inject it into index.html.
             var (name, load) = ParseResourceName(group.Name ?? "");
             var destSub = string.IsNullOrEmpty(group.Output) ? null : group.Output!.Replace('\\', '/');
-            var files = group.Files.SelectMany(p => ExpandGlob(projectDir, p)).ToList();
-            if (files.Count == 0) continue;
 
             var isBundle = name.EndsWith(".js", StringComparison.OrdinalIgnoreCase)
                            || name.EndsWith(".css", StringComparison.OrdinalIgnoreCase);
             if (isBundle)
             {
-                var bytes = utf8.GetBytes(string.Join("\n", files.Select(File.ReadAllText)));
-                items.Add(new EmbeddedItem(name, bytes, destSub, load));
+                // Resolve each declared file to text, mapping a self-reference to the in-memory bundle.
+                var texts = new List<string>();
+                foreach (var raw in group.Files)
+                {
+                    var self = SelfText(Path.GetFileName(raw.Replace('\\', '/')));
+                    if (self is not null) texts.Add(self);
+                    else texts.AddRange(ExpandGlob(projectDir, raw).Select(File.ReadAllText));
+                }
+                if (texts.Count == 0) continue;
+                items.Add(new EmbeddedItem(name, utf8.GetBytes(string.Join("\n", texts)), destSub, load));
             }
             else
             {
                 // Copy-through group (images, fonts): embed each file under its own name.
+                var files = group.Files.SelectMany(p => ExpandGlob(projectDir, p)).ToList();
+                if (files.Count == 0) continue;
                 foreach (var src in files)
                     items.Add(new EmbeddedItem(Path.GetFileName(src), File.ReadAllBytes(src), destSub, load));
             }
         }
-        return items;
+
+        // Default embed of the compiled bundle + reflection metadata (each in a formatted and a
+        // pre-minified variant), prepended so the main bundle stays first — UNLESS the resources
+        // section already re-declared it above. Shipping the .min.js is deliberate: minifying library
+        // code is work the consumer would otherwise repeat on every build.
+        var defaults = new List<EmbeddedItem>();
+        if (!mainDeclared)
+        {
+            defaults.Add(new EmbeddedItem(mainJsName, utf8.GetBytes(javascript), null));
+            if (config.OutputFormatting != JsOutputFormatting.Formatted)
+                defaults.Add(new EmbeddedItem(ToMinName(mainJsName), utf8.GetBytes(JsMinifier.Minify(javascript, mainJsName, minifyLocalVariables)), null));
+        }
+        if (metaName is not null && !metaDeclared)
+        {
+            defaults.Add(new EmbeddedItem(metaName, utf8.GetBytes(metadataJavascript!), null));
+            if (config.OutputFormatting != JsOutputFormatting.Formatted)
+                defaults.Add(new EmbeddedItem(ToMinName(metaName), utf8.GetBytes(JsMinifier.Minify(metadataJavascript!, metaName, minifyLocalVariables)), null));
+        }
+
+        defaults.AddRange(items);
+        return defaults;
     }
 
     /// <summary>A JavaScript resource loaded from a package (a runtime bundle or embedded library
@@ -370,6 +403,11 @@ internal static class OutputBuilder
         }
         return name;
     }
+
+    /// <summary>Case-insensitive file-name equality (used to spot a tps.json resource that
+    /// self-references the project's own compiled output by leaf name).</summary>
+    private static bool SameFile(string a, string b)
+        => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>The minified sibling of a JS path: <c>x.js</c> → <c>x.min.js</c> (idempotent).</summary>
     private static string ToMinName(string rel)
