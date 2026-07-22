@@ -253,6 +253,64 @@ public class Program
                 "typeof(IObs<>) must not apply the unbound type parameter as an argument\n" + result.Javascript);
         }
 
+        // ---- interpolated string -> FormattableString -------------------------
+
+        [TestMethod]
+        public async Task InterpolatedStringConvertedToFormattableStringRunsAsync()
+        {
+            // `$"…"` converted to FormattableString must become FormattableStringFactory.Create(...),
+            // carrying Format / GetArguments() — not a plain concatenated string (whose .GetArguments
+            // "is not a function"). Compare only culture-invariant surface (Format, count, raw args).
+            await RunTest(@"
+using System;
+public class Program
+{
+    static string Describe(FormattableString fs)
+        => fs.Format + "" :: "" + fs.ArgumentCount + "" :: "" + string.Join("","", Array.ConvertAll(fs.GetArguments(), x => x == null ? ""null"" : x.ToString()));
+    public static void Main()
+    {
+        int a = 7, b = 9;
+        FormattableString fs = $""X {a} Y {b} Z"";
+        Console.WriteLine(Describe(fs));
+        Console.WriteLine(Describe($""just {a}""));
+        Console.WriteLine(Describe($""none""));
+        Console.WriteLine(Describe($""fmt {a:D3} and brace {{lit}}""));
+    }
+}");
+        }
+
+        [TestMethod]
+        public void InterpolatedStringToFormattableStringEmitsFactory()
+        {
+            var code = @"
+using System;
+public class Program
+{
+    static void Use(FormattableString fs) { }
+    public static void Main() { int a = 1, b = 2; Use($""Hello {a} and {b}""); }
+}";
+            var result = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            Assert.IsTrue(result.Javascript!.Contains("FormattableStringFactory.Create(\"Hello {0} and {1}\", ["),
+                "an interpolated string converted to FormattableString should build a factory call\n" + result.Javascript);
+        }
+
+        [TestMethod]
+        public void InterpolatedStringToStringStaysConcatenation()
+        {
+            // The common case — target type string — must remain plain concatenation, not a factory call.
+            var code = @"
+using System;
+public class Program
+{
+    public static void Main() { int a = 1; string s = $""v={a}""; Console.WriteLine(s); }
+}";
+            var result = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            Assert.IsFalse(result.Javascript!.Contains("FormattableStringFactory"),
+                "a string-typed interpolation must not use the FormattableString factory\n" + result.Javascript);
+        }
+
         [TestMethod]
         public void IteratorLocalFunctionEmitsGenerator()
         {
