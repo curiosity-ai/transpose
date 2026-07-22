@@ -809,6 +809,111 @@ public class Program
 }", waitForOutput: "<<DONE>>");
         }
 
+        // ---- operators on long / ulong / decimal, bool.ToString, interpolation alignment ------
+
+        [TestMethod]
+        public async Task BoolToStringUsesDotNetCasingRunsAsync()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        bool t = true;
+        Console.WriteLine(t.ToString());     // True
+        Console.WriteLine(false.ToString()); // False
+        object o = t;
+        Console.WriteLine(o.ToString());     // True
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [TestMethod]
+        public async Task IntegerOnLeftOfDecimalOperatorRunsAsync()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        int i = 5; decimal m = 2m; short sh = 3; long L = 5L;
+        Console.WriteLine(i + m);   // 7
+        Console.WriteLine(i / m);   // 2.5
+        Console.WriteLine(i - m);   // 3
+        Console.WriteLine(i % m);   // 1
+        Console.WriteLine(i < m);   // False
+        Console.WriteLine(sh + m);  // 5
+        Console.WriteLine(L / m);   // 2.5
+        Console.WriteLine(m + i);   // 7
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [TestMethod]
+        public async Task CompoundAssignLongUlongDecimalRunsAsync()
+        {
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+public class Program
+{
+    public static void Main()
+    {
+        long p = 10L; p += 3L;  Console.WriteLine(p);   // 13
+        long o = 10L; o /= 4L;  Console.WriteLine(o);   // 2
+        long q = 1L;  q <<= 40; Console.WriteLine(q);   // 1099511627776
+        ulong u = 10UL; u += 3UL; Console.WriteLine(u); // 13
+        decimal d = 10m; d += 3m; Console.WriteLine(d); // 13
+        decimal e = 10m; e %= 3m; Console.WriteLine(e); // 1
+        var dict = new Dictionary<string,long>{{""k"",10L}}; dict[""k""] += 5L; Console.WriteLine(dict[""k""]); // 15
+        var lst = new List<decimal>{10m}; lst[0] += 3m; Console.WriteLine(lst[0]); // 13
+        long[] arr = { 100L }; arr[0] *= 3L; Console.WriteLine(arr[0]); // 300
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [TestMethod]
+        public async Task IncrementDecrementLongDecimalRunsAsync()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        long b = 9007199254740993L; b++; Console.WriteLine(b);   // 9007199254740994
+        decimal d = 0.1m; d++; Console.WriteLine(d);             // 1.1
+        long x = 10L; x++; long y = x * 3L; Console.WriteLine(y);// 33
+        long a = 5L; long bb = a++; Console.WriteLine(a + "" "" + bb); // 6 5
+        decimal dc = 1m; decimal ec = dc--; Console.WriteLine(dc + "" "" + ec); // 0 1
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [TestMethod]
+        public async Task InterpolationAlignmentRunsAsync()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        int x = 42;
+        Console.WriteLine($""[{x,10}]"");   // [        42]
+        Console.WriteLine($""[{x,-10}]"");  // [42        ]
+        Console.WriteLine($""[{x,5:N1}]"");// [ 42.0]
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
         [TestMethod]
         public void AttributeNonPrimaryCtorEmitsCtorOverloadName()
         {

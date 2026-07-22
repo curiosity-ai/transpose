@@ -123,6 +123,18 @@ public sealed partial class Emitter
             return;
         }
 
+        // bool.ToString() → "True"/"False" (.NET casing). A bool is a JS primitive whose native
+        // .toString() gives "true"/"false"; route through System.Boolean.toString for parity.
+        if (symbol is { Name: "ToString", Parameters.Length: 0 }
+            && invocation.Expression is MemberAccessExpressionSyntax { Expression: { } boolRecv }
+            && _model.GetTypeInfo(boolRecv).Type?.SpecialType == SpecialType.System_Boolean)
+        {
+            _w.Write("System.Boolean.toString(");
+            EmitExpression(boolRecv);
+            _w.Write(")");
+            return;
+        }
+
         // Transpose.Script.Write(code, args) — inject raw JavaScript, substituting {0},{1}… with args.
         if (symbol is { Name: "Write" } && symbol.ContainingType?.ToDisplayString() == "Transpose.Script"
             && invocation.ArgumentList.Arguments.Count >= 1
@@ -1116,19 +1128,29 @@ public sealed partial class Emitter
         // instances with .gte/.add/… methods), so such a comparison must stay a plain operator.
         var leftDeclared = _model.GetTypeInfo(binary.Left).Type ?? leftType;
         var rightDeclared = _model.GetTypeInfo(binary.Right).Type ?? rightType;
-        if ((Is64BitInteger(leftDeclared) || Is64BitInteger(rightDeclared)) && Long64Op(binary) is not null)
+        // `long op decimal` (and vice-versa) is promoted to decimal by C#, so it must go through the
+        // decimal path below — not Int64 (which would do integer division etc.). Guard against a
+        // decimal operand here.
+        if ((Is64BitInteger(leftDeclared) || Is64BitInteger(rightDeclared)) && Long64Op(binary) is not null
+            && !IsDecimalType(leftDeclared) && !IsDecimalType(rightDeclared))
         {
             EmitLong64Binary(binary, leftDeclared, rightDeclared);
             return;
         }
 
-        // decimal arithmetic/comparison → System.Decimal method calls.
+        // decimal arithmetic/comparison → System.Decimal method calls. Decide the receiver wrap on
+        // the operand's DECLARED type (like the Int64 path above): only an actual `decimal` operand is
+        // a System.Decimal instance with .add/.div/…; an int/long promoted to decimal by C# is still a
+        // raw JS number / Int64 at runtime, so it must be lifted with System.Decimal(...). Testing the
+        // converted type instead made `i + m` emit `i.add(m)` (TypeError) and `5L / 2m` do integer
+        // division via Int64.div.
         if ((IsDecimalType(leftType) || IsDecimalType(rightType)) && DecimalOp(binary) is { } decOp)
         {
-            if (IsDecimalType(leftType)) EmitExpression(binary.Left);
+            if (IsDecimalType(leftDeclared)) EmitExpression(binary.Left);
             else { _w.Write("System.Decimal("); EmitExpression(binary.Left); _w.Write(")"); }
             _w.Write($".{decOp}(");
-            EmitExpression(binary.Right);
+            if (IsDecimalType(rightDeclared)) EmitExpression(binary.Right);
+            else { _w.Write("System.Decimal("); EmitExpression(binary.Right); _w.Write(")"); }
             _w.Write(")");
             return;
         }
@@ -1597,9 +1619,60 @@ public sealed partial class Emitter
             return;
         }
 
+        // 64-bit integer / decimal compound assignment: `lhs op= rhs` → `lhs = lhs.<method>(rhs)`.
+        // The target is a boxed Int64/UInt64/Decimal instance, so a native JS `+=`/`/=`/… would run
+        // string-concat / float ops on the object rather than the type's method (10L += 3L → "103").
+        if (op != "=" && (Is64BitInteger(leftType) || IsDecimalType(leftType))
+            && Long64OrDecimalCompoundMethod(op, leftType) is not null)
+        {
+            EmitExpression(assignment.Left);
+            _w.Write(" = ");
+            EmitLong64OrDecimalCompoundValue(assignment.Left, assignment.Right, op, leftType);
+            return;
+        }
+
         EmitExpression(assignment.Left);
         _w.Write($" {op} ");
         EmitExpressionConverted(assignment.Right, leftType);
+    }
+
+    /// <summary>The Int64/UInt64 or Decimal instance-method name for a compound-assignment operator
+    /// (<c>+=</c> → add, …), or null if the operator/type has no such method.</summary>
+    private static string? Long64OrDecimalCompoundMethod(string op, ITypeSymbol? leftType)
+    {
+        var binOp = op[..^1];
+        if (Is64BitInteger(leftType))
+            return binOp switch
+            {
+                "+" => "add", "-" => "sub", "*" => "mul", "/" => "div", "%" => "mod",
+                "&" => "and", "|" => "or", "^" => "xor", "<<" => "shl",
+                ">>" => Is64BitUnsigned(leftType) ? "shru" : "shr",
+                _ => null,
+            };
+        if (IsDecimalType(leftType))
+            return binOp switch { "+" => "add", "-" => "sub", "*" => "mul", "/" => "div", "%" => "mod", _ => null };
+        return null;
+    }
+
+    /// <summary>Emits the rebuilt value <c>left.&lt;method&gt;(right)</c> for a 64-bit / decimal compound
+    /// assignment (used by both the plain-lvalue and the indexer-element paths). Shift counts stay raw
+    /// ints; a decimal right operand that is a plain number is lifted with System.Decimal(...).</summary>
+    private void EmitLong64OrDecimalCompoundValue(ExpressionSyntax left, ExpressionSyntax right, string op, ITypeSymbol? leftType)
+    {
+        var method = Long64OrDecimalCompoundMethod(op, leftType)!;
+        EmitExpression(left);
+        _w.Write($".{method}(");
+        if (IsDecimalType(leftType) && !IsDecimalType(_model.GetTypeInfo(right).Type))
+        {
+            _w.Write("System.Decimal("); EmitExpression(right); _w.Write(")");
+        }
+        else
+        {
+            // Int64 add/sub/… and shifts both accept a plain-number right operand (the runtime
+            // coerces it), matching EmitLong64Binary which emits the right operand raw.
+            EmitExpression(right);
+        }
+        _w.Write(")");
     }
 
     /// <summary>
@@ -1664,7 +1737,16 @@ public sealed partial class Emitter
             return;
         }
 
-        // Plain compound (double / long / decimal / etc.): current-value binOp right.
+        // 64-bit integer / decimal element: `elem op= rhs` → `elem.<method>(rhs)` (see the
+        // plain-lvalue path); a native JS operator would corrupt the boxed Int64/Decimal.
+        if (op != "=" && (Is64BitInteger(leftType) || IsDecimalType(leftType))
+            && Long64OrDecimalCompoundMethod(op, leftType) is not null)
+        {
+            EmitLong64OrDecimalCompoundValue(assignment.Left, assignment.Right, op, leftType);
+            return;
+        }
+
+        // Plain compound (double / etc.): current-value binOp right.
         _w.Write("(");
         EmitExpression(assignment.Left);
         _w.Write($") {op[..^1]} (");
@@ -1723,15 +1805,77 @@ public sealed partial class Emitter
             return;
         }
 
+        // ++ / -- on a 64-bit integer or decimal: the operand is a boxed Int64/UInt64/Decimal, so a
+        // native JS ++/-- would coerce it to a plain number (precision loss above 2^53, decimal
+        // corruption). Rebuild through the type's method. Prefix yields the NEW value.
+        if ((prefix.IsKind(SyntaxKind.PreIncrementExpression) || prefix.IsKind(SyntaxKind.PreDecrementExpression))
+            && IncDecStep(_model.GetTypeInfo(prefix.Operand).Type, prefix.IsKind(SyntaxKind.PreIncrementExpression)) is { } step)
+        {
+            _w.Write("(");
+            EmitExpression(prefix.Operand);
+            _w.Write(" = ");
+            EmitExpression(prefix.Operand);
+            _w.Write(step);
+            _w.Write(")");
+            return;
+        }
+
         _w.Write(prefix.OperatorToken.Text);
         EmitExpression(prefix.Operand);
     }
 
     private void EmitPostfixUnary(PostfixUnaryExpressionSyntax postfix)
     {
+        // ++ / -- on a 64-bit integer or decimal (see EmitPrefixUnary). Postfix must yield the OLD
+        // value; in a void (statement / for-incrementor) context the result is discarded, so the
+        // cheaper new-value form suffices.
+        if ((postfix.IsKind(SyntaxKind.PostIncrementExpression) || postfix.IsKind(SyntaxKind.PostDecrementExpression))
+            && IncDecStep(_model.GetTypeInfo(postfix.Operand).Type, postfix.IsKind(SyntaxKind.PostIncrementExpression)) is { } step)
+        {
+            if (IsVoidContext(postfix))
+            {
+                _w.Write("(");
+                EmitExpression(postfix.Operand);
+                _w.Write(" = ");
+                EmitExpression(postfix.Operand);
+                _w.Write(step);
+                _w.Write(")");
+            }
+            else
+            {
+                _w.Write("(function ($v) { ");
+                EmitExpression(postfix.Operand);
+                _w.Write(" = $v");
+                _w.Write(step);
+                _w.Write("; return $v; })(");
+                EmitExpression(postfix.Operand);
+                _w.Write(")");
+            }
+            return;
+        }
+
         EmitExpression(postfix.Operand);
         _w.Write(postfix.OperatorToken.Text);
     }
+
+    /// <summary>The instance-method call suffix that increments/decrements a boxed 64-bit integer or
+    /// decimal (e.g. <c>.add(System.Int64(1))</c>, <c>.inc()</c>), or null for other types.</summary>
+    private static string? IncDecStep(ITypeSymbol? type, bool increment)
+    {
+        if (Is64BitInteger(type))
+        {
+            var one = Is64BitUnsigned(type) ? "System.UInt64(1)" : "System.Int64(1)";
+            return increment ? $".add({one})" : $".sub({one})";
+        }
+        if (IsDecimalType(type)) return increment ? ".inc()" : ".dec()";
+        return null;
+    }
+
+    /// <summary>True if an expression's value is discarded — it is the whole expression of an
+    /// expression-statement, or an incrementor of a <c>for</c> loop.</summary>
+    private static bool IsVoidContext(ExpressionSyntax e)
+        => e.Parent is ExpressionStatementSyntax
+           || (e.Parent is ForStatementSyntax f && f.Incrementors.Contains(e));
 
     // ---- cast --------------------------------------------------------------
 
@@ -1945,6 +2089,13 @@ public sealed partial class Emitter
                     break;
                 case InterpolationSyntax interpolation:
                     if (!first) _w.Write(" + ");
+                    // Alignment component `{x,N}` pads the formatted value to width |N| (N>0 right-,
+                    // N<0 left-aligned). Apply it to the already-stringified value so char/enum/bool
+                    // still render correctly (routing the raw value through String.format would print
+                    // a char's code point). The width is a compile-time constant.
+                    var align = interpolation.AlignmentClause is { } ac
+                        ? _model.GetConstantValue(ac.Value).Value : null;
+                    if (align is not null) _w.Write("System.String.alignString(");
                     if (interpolation.FormatClause is not null)
                     {
                         _w.Write("TransposeR.formatValue(");
@@ -1969,6 +2120,7 @@ public sealed partial class Emitter
                         EmitExpression(interpolation.Expression);
                         _w.Write(")");
                     }
+                    if (align is not null) _w.Write($", {Convert.ToInt32(align).ToString(CultureInfo.InvariantCulture)})");
                     first = false; hadContent = true;
                     break;
             }
