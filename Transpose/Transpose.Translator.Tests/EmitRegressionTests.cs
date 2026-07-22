@@ -1331,5 +1331,35 @@ public class Program
             Assert.IsTrue(result.Javascript!.Contains("TransposeR.combine("),
                 "binary + on delegates must emit TransposeR.combine\n" + result.Javascript);
         }
+
+        // ---- LINQ Chunk / MinBy / MaxBy (BCL EnumerableExtras) ------------------
+
+        [TestMethod]
+        public async Task LinqChunkMinByMaxByMatchNative()
+        {
+            // Chunk / MinBy / MaxBy are implemented in C# in the BCL (EnumerableExtras); verify they
+            // match System.Linq including chunk sizing, key selection, empty-source default/throw and
+            // the null-key skip rule.
+            await RunTest(@"
+using System;
+using System.Linq;
+public class Program
+{
+    public static void Main()
+    {
+        Console.WriteLine(string.Join(""|"", new[]{1,2,3,4,5}.Chunk(2).Select(c => string.Join("","", c))));
+        Console.WriteLine(new int[0].Chunk(3).Count());
+        var people = new[]{ (""Al"",30), (""Bo"",25), (""Cy"",35) };
+        Console.WriteLine(people.MinBy(p => p.Item2).Item1);
+        Console.WriteLine(people.MaxBy(p => p.Item2).Item1);
+        Console.WriteLine(new string[0].MinBy(s => s.Length) ?? ""null"");
+        var withNulls = new[]{ (""a"",(string)null), (""b"",""x""), (""c"",(string)null), (""d"",""a"") };
+        Console.WriteLine(withNulls.MinBy(t => t.Item2).Item1);
+        try { var _ = new int[0].MinBy(v => v); Console.WriteLine(""noio""); }
+        catch (InvalidOperationException) { Console.WriteLine(""io-throws""); }
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
     }
 }
