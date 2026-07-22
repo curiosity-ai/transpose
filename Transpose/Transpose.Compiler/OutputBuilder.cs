@@ -107,7 +107,11 @@ internal static class OutputBuilder
                     // A .min.js whose formatted sibling is also in the package is written by that
                     // sibling below; a standalone .min.js links only from the minified HTML.
                     if (present.Contains(CounterpartName(f.FileName))) continue;
-                    if (wantMinified) { WriteText(f.Rel, f.Text); jsOuts.Add(new JsOut { Path = f.Rel, IsMinified = true }); }
+                    if (wantMinified)
+                    {
+                        WriteText(f.Rel, f.Text);
+                        if (f.Load) jsOuts.Add(new JsOut { Path = f.Rel, IsMinified = true });
+                    }
                     continue;
                 }
 
@@ -123,35 +127,40 @@ internal static class OutputBuilder
                     }
                     else
                     {
-                        var minRel = ToMinName(f.Rel);      // fallback: minify at compile time
-                        WriteText(minRel, JsMinifier.Minify(f.Text, f.FileName, minifyLocals));
+                        // No pre-built .min.js sibling: this JS was not emitted by *this* compilation
+                        // — it is an authored/third-party resource (e.g. Monaco's editor.main.js, which
+                        // NUglify cannot even parse) or an old package that shipped no .min.js. Only
+                        // Transpose-emitted output is a minification candidate, so ship it as authored
+                        // under the .min name rather than running it through the JS minifier.
+                        var minRel = ToMinName(f.Rel);
+                        WriteText(minRel, f.Text);
                         o.MinifiedPath = minRel;
                     }
                 }
-                jsOuts.Add(o);
+                // A .dontload resource is written to disk (above) but never injected into index.html.
+                if (f.Load) jsOuts.Add(o);
             }
         }
 
         // In separate-assembly mode, referenced *projects* are consumed as DLLs (their JS is
-        // extracted, not recompiled) — exclude them from the runtime-package JS loop below.
+        // extracted, not recompiled). Both package DLLs and project DLLs contribute embedded JS.
         var projectDlls = new HashSet<string>(project.ReferencedProjectDlls, StringComparer.OrdinalIgnoreCase);
 
-        // 1. Runtime resources embedded in referenced packages, in dependency order (Transpose core
-        //    first). ExtractEmbeddedJs writes CSS/fonts/images straight to disk (CSS is also linked)
-        //    and returns only the JavaScript, so nothing but JS ever reaches the JS minifier below.
-        var runtimeJs = new List<EmbeddedJs>();
-        foreach (var dll in OrderRuntimeAssemblies(project.ReferencePaths.Where(p => !projectDlls.Contains(p))))
-            runtimeJs.AddRange(ExtractEmbeddedJs(dll, outputDir, cssLinks));
-        RoutePackageJs(runtimeJs);
+        // 1. Every referenced assembly's embedded JS, in dependency order — a library must load
+        //    before anything that depends on it (Transpose runtime → Transpose.Core → Tesserae →
+        //    Tesserae.GraphKit → Curiosity.FrontEnd.Core → …API → …FrontEnd). TopologicalOrder does a
+        //    post-order walk of the assembly reference graph (dependencies first), matching how the
+        //    legacy compiler loaded assemblies. The TransposeR shim loads immediately after the
+        //    Transpose runtime (tps.js) and before any generated code that calls into it.
+        foreach (var dll in TopologicalOrder(project.ReferencePaths))
+        {
+            RoutePackageJs(projectDlls.Contains(dll)
+                ? ExtractProjectDllResources(dll, outputDir, cssLinks, utf8)
+                : ExtractEmbeddedJs(dll, outputDir, cssLinks));
 
-        // The TransposeR shim (the translator's language-level helpers over tps.js) loads right after
-        // the Transpose runtime and before any generated code that calls into it.
-        EmitCompilerJs("tps.shim.js", RoslynTranslator.RuntimeShim);
-
-        // 1b. Referenced project assemblies: extract their embedded JS/CSS/resources (deepest
-        //     dependency first) so a library loads before the app that uses it.
-        foreach (var dll in Enumerable.Reverse(project.ReferencedProjectDlls))
-            RoutePackageJs(ExtractProjectDllResources(dll, outputDir, cssLinks, utf8));
+            if (string.Equals(Path.GetFileNameWithoutExtension(dll), "Transpose", StringComparison.OrdinalIgnoreCase))
+                EmitCompilerJs("tps.shim.js", RoslynTranslator.RuntimeShim);
+        }
 
         // 2. tps.json resource files from every project in the closure — referenced projects
         //    first (a library's JS deps load before the app that uses them). A resource group
@@ -222,7 +231,9 @@ internal static class OutputBuilder
 
         foreach (var group in config.Resources)
         {
-            var name = group.Name ?? "";
+            // Parse the "module#file" grouping and ".dontload" flag so a referencing project extracts
+            // the resource under its real name and knows whether to inject it into index.html.
+            var (name, load) = ParseResourceName(group.Name ?? "");
             var destSub = string.IsNullOrEmpty(group.Output) ? null : group.Output!.Replace('\\', '/');
             var files = group.Files.SelectMany(p => ExpandGlob(projectDir, p)).ToList();
             if (files.Count == 0) continue;
@@ -232,13 +243,13 @@ internal static class OutputBuilder
             if (isBundle)
             {
                 var bytes = utf8.GetBytes(string.Join("\n", files.Select(File.ReadAllText)));
-                items.Add(new EmbeddedItem(name, bytes, destSub));
+                items.Add(new EmbeddedItem(name, bytes, destSub, load));
             }
             else
             {
                 // Copy-through group (images, fonts): embed each file under its own name.
                 foreach (var src in files)
-                    items.Add(new EmbeddedItem(Path.GetFileName(src), File.ReadAllBytes(src), destSub));
+                    items.Add(new EmbeddedItem(Path.GetFileName(src), File.ReadAllBytes(src), destSub, load));
             }
         }
         return items;
@@ -247,7 +258,7 @@ internal static class OutputBuilder
     /// <summary>A JavaScript resource loaded from a package (a runtime bundle or embedded library
     /// code), with its file name (for pairing a formatted variant with its <c>.min.js</c>), the
     /// output-relative path it extracts to, and its text.</summary>
-    private readonly record struct EmbeddedJs(string FileName, string Rel, string Text);
+    private readonly record struct EmbeddedJs(string FileName, string Rel, string Text, bool Load = true);
 
     /// <summary>
     /// Extracts a referenced project assembly's embedded resources (listed in its
@@ -268,7 +279,7 @@ internal static class OutputBuilder
         var manifestName = names.FirstOrDefault(n => n.EndsWith("Transpose.Resources.json", StringComparison.OrdinalIgnoreCase));
         if (manifestName is null) return jsFiles;
 
-        List<(string fileName, string? path)> entries;
+        List<(string fileName, string? path, bool load)> entries;
         using (var ms = asm.GetManifestResourceStream(manifestName)!)
         using (var sr = new StreamReader(ms))
         using (var doc = JsonDocument.Parse(sr.ReadToEnd(), new JsonDocumentOptions { AllowTrailingCommas = true }))
@@ -276,15 +287,17 @@ internal static class OutputBuilder
             entries = doc.RootElement.EnumerateArray()
                 .Select(e => (
                     fileName: e.TryGetProperty("FileName", out var f) ? f.GetString() : null,
-                    path: e.TryGetProperty("Path", out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() : null))
+                    path: e.TryGetProperty("Path", out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() : null,
+                    load: !e.TryGetProperty("Load", out var l) || l.ValueKind != JsonValueKind.False))   // absent → true
                 .Where(x => !string.IsNullOrEmpty(x.fileName))
-                .Select(x => (x.fileName!, x.path))
+                .Select(x => (x.fileName!, x.path, x.load))
                 .ToList();
         }
 
-        string Rel(string fileName, string? path) => string.IsNullOrEmpty(path) ? fileName : path!.Replace('\\', '/') + "/" + fileName;
+        string Rel(string fileName, string? path)
+            => string.IsNullOrEmpty(path) ? fileName : path!.Replace('\\', '/').TrimEnd('/') + "/" + fileName;
 
-        foreach (var (fileName, path) in entries)
+        foreach (var (fileName, path, load) in entries)
         {
             var resName = names.FirstOrDefault(n => n.Equals(fileName, StringComparison.OrdinalIgnoreCase))
                           ?? names.FirstOrDefault(n => n.EndsWith(fileName, StringComparison.OrdinalIgnoreCase));
@@ -296,7 +309,7 @@ internal static class OutputBuilder
             {
                 using var s = asm.GetManifestResourceStream(resName)!;
                 using var reader = new StreamReader(s);
-                jsFiles.Add(new EmbeddedJs(fileName, rel, reader.ReadToEnd()));
+                jsFiles.Add(new EmbeddedJs(fileName, rel, reader.ReadToEnd(), load));
             }
             else
             {
@@ -306,10 +319,35 @@ internal static class OutputBuilder
                 using (var s = asm.GetManifestResourceStream(resName)!)
                 using (var fs = File.Create(dest))
                     s.CopyTo(fs);
-                if (rel.EndsWith(".css", StringComparison.OrdinalIgnoreCase)) cssLinks.Add(rel);
+                if (load && rel.EndsWith(".css", StringComparison.OrdinalIgnoreCase)) cssLinks.Add(rel);
             }
         }
         return jsFiles;
+    }
+
+    /// <summary>
+    /// Parses a tps.json resource group's <c>name</c> into the output file name and whether it should
+    /// be injected into index.html, mirroring the legacy compiler's conventions:
+    /// <list type="bullet">
+    /// <item><c>module#file.js</c> — the part before <c>#</c> is a grouping label; the output name is
+    /// the part after it (<c>file.js</c>).</item>
+    /// <item><c>file.js.dontload</c> — the <c>.dontload</c> suffix marks a resource that is copied to
+    /// the output but NOT referenced from index.html (loaded on demand); the output name drops the
+    /// suffix (<c>file.js</c>).</item>
+    /// </list>
+    /// </summary>
+    internal static (string fileName, bool load) ParseResourceName(string rawName)
+    {
+        var name = rawName ?? "";
+        var hash = name.IndexOf('#');
+        if (hash >= 0) name = name.Substring(hash + 1);   // drop the "module#" grouping prefix
+        var load = true;
+        if (name.EndsWith(".dontload", StringComparison.OrdinalIgnoreCase))
+        {
+            load = false;
+            name = name.Substring(0, name.Length - ".dontload".Length);
+        }
+        return (name, load);
     }
 
     /// <summary>A file name for a minified bundle (ends in <c>.min.js</c>/<c>.min.css</c>).</summary>
@@ -346,21 +384,26 @@ internal static class OutputBuilder
         string projectDir, string outputDir, TransposeJson.ResourceGroup group,
         List<JsOut> jsOuts, List<string> cssLinks)
     {
-        var destSub = (group.Output ?? "").Replace('\\', '/');
+        var destSub = (group.Output ?? "").Replace('\\', '/').TrimEnd('/');
         var files = group.Files.SelectMany(p => ExpandGlob(projectDir, p)).ToList();
         if (files.Count == 0) return;
 
-        var name = group.Name ?? "";
+        // The group name carries the "module#file" grouping and the ".dontload" flag; parse both. A
+        // .dontload resource is written to the output but never referenced from index.html.
+        var (name, load) = ParseResourceName(group.Name ?? "");
         var isBundle = name.EndsWith(".js", StringComparison.OrdinalIgnoreCase)
                        || name.EndsWith(".css", StringComparison.OrdinalIgnoreCase);
 
         void RouteJs(string rel)
         {
+            if (!load) return;   // copied to disk already; not injected into index.html
             // Resource JS is taken as authored (never re-minified): a .min.js links only from
             // index.min.html; a plain .js links only from index.html — matching the legacy compiler.
             if (IsMinifiedName(rel)) jsOuts.Add(new JsOut { Path = rel, IsMinified = true });
             else jsOuts.Add(new JsOut { Path = rel });
         }
+
+        void LinkCss(string rel) { if (load) cssLinks.Add(rel); }
 
         if (isBundle)
         {
@@ -369,7 +412,7 @@ internal static class OutputBuilder
             var dest = Path.Combine(outputDir, rel.Replace('/', Path.DirectorySeparatorChar));
             Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
             File.WriteAllText(dest, string.Join("\n", files.Select(File.ReadAllText)));
-            if (name.EndsWith(".css", StringComparison.OrdinalIgnoreCase)) cssLinks.Add(rel);
+            if (name.EndsWith(".css", StringComparison.OrdinalIgnoreCase)) LinkCss(rel);
             else RouteJs(rel);
         }
         else
@@ -381,16 +424,63 @@ internal static class OutputBuilder
                 var dest = Path.Combine(outputDir, rel.Replace('/', Path.DirectorySeparatorChar));
                 Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
                 File.Copy(src, dest, overwrite: true);
-                if (rel.EndsWith(".css", StringComparison.OrdinalIgnoreCase)) cssLinks.Add(rel);
+                if (rel.EndsWith(".css", StringComparison.OrdinalIgnoreCase)) LinkCss(rel);
                 else if (rel.EndsWith(".js", StringComparison.OrdinalIgnoreCase)) RouteJs(rel);
             }
         }
     }
 
-    /// <summary>Orders reference assemblies so the Transpose runtime core loads first.</summary>
-    private static IEnumerable<string> OrderRuntimeAssemblies(IEnumerable<string> dlls)
-        => dlls.OrderBy(d => Path.GetFileName(d).Equals("Transpose.dll", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
-               .ThenBy(d => Path.GetFileName(d), StringComparer.OrdinalIgnoreCase);
+    /// <summary>
+    /// Orders reference assemblies so a dependency always loads before anything that depends on it —
+    /// the load order the emitted JavaScript needs (e.g. Tesserae before Tesserae.GraphKit). Does a
+    /// post-order depth-first walk of the assembly reference graph (each assembly's Cecil
+    /// AssemblyReferences, restricted to the set given), so dependencies are yielded first. This
+    /// mirrors the legacy compiler, which loaded referenced assemblies depth-first (deepest first).
+    /// Ties (independent assemblies) keep the input order; unreadable assemblies fall back to name.
+    /// </summary>
+    private static List<string> TopologicalOrder(IReadOnlyList<string> dllPaths)
+    {
+        var byName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);      // asm name → path
+        var deps   = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase); // asm name → referenced asm names
+        var orderIndex = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);      // stable tie-break
+
+        var i = 0;
+        foreach (var path in dllPaths)
+        {
+            string name;
+            List<string> references;
+            try
+            {
+                using var ad = Mono.Cecil.AssemblyDefinition.ReadAssembly(path);
+                name = ad.Name.Name;
+                references = ad.MainModule.AssemblyReferences.Select(r => r.Name).ToList();
+            }
+            catch { name = Path.GetFileNameWithoutExtension(path); references = new List<string>(); }
+
+            if (!byName.ContainsKey(name)) orderIndex[name] = i++;
+            byName[name] = path;
+            deps[name] = references;
+        }
+
+        var ordered = new List<string>();
+        var visiting = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var done = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void Visit(string name)
+        {
+            if (!done.Add(name)) return;
+            if (!visiting.Add(name)) return;          // guard against reference cycles
+            if (deps.TryGetValue(name, out var refs))
+                foreach (var r in refs.Where(byName.ContainsKey).OrderBy(r => orderIndex[r]))
+                    Visit(r);
+            visiting.Remove(name);
+            if (byName.TryGetValue(name, out var path)) ordered.Add(path);
+        }
+
+        foreach (var name in byName.Keys.OrderBy(n => orderIndex[n]))
+            Visit(name);
+        return ordered;
+    }
 
     /// <summary>
     /// Extracts a referenced package's embedded web resources, in the order its

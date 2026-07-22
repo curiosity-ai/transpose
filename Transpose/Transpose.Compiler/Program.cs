@@ -58,7 +58,7 @@ public static class Program
                     break;
             }
         }
-        _ = assemblyVersion; // accepted for MSBuild-target compatibility; reflection metadata carries its own versioning
+        // assemblyVersion (from --assembly-version) is emitted into the bundle via Transpose.assemblyVersion(...).
 
         var csproj = LocateProject(projectArg);
         if (csproj is null)
@@ -181,7 +181,8 @@ public static class Program
                 project.LanguageVersion,
                 reflectionEnabled,
                 metadataTarget,
-                emitAssembly: emitPackage || isSiteBuild);
+                emitAssembly: emitPackage || isSiteBuild,
+                assemblyVersion: assemblyVersion);
         }
         catch (Exception ex)
         {
@@ -414,7 +415,8 @@ public static class Program
             result = new RoslynTranslator().BuildAssembly(
                 project.Sources, project.AssemblyName, project.ReferencePaths,
                 project.DefineConstants, project.LanguageVersion,
-                reflectionEnabled, metadataTarget, emitAssembly: true);
+                reflectionEnabled, metadataTarget, emitAssembly: true,
+                assemblyVersion: ProjectResolver.ReadAssemblyVersion(csproj));
         }
         catch (Exception ex) { Console.Error.WriteLine($"    translator threw: {ex.Message}"); return false; }
 
