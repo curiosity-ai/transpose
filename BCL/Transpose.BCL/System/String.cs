@@ -577,6 +577,24 @@ namespace System
         public extern string ToUpper();
 
         /// <summary>
+        /// Returns a copy of this string converted to lowercase using the casing rules of the
+        /// invariant culture. Under Transpose this is the same case fold as <see cref="ToLower"/>
+        /// (JavaScript's locale-independent <c>toLowerCase</c>).
+        /// </summary>
+        /// <returns>The lowercase equivalent of the current string.</returns>
+        [Transpose.Template("{this}.toLowerCase()")]
+        public extern string ToLowerInvariant();
+
+        /// <summary>
+        /// Returns a copy of this string converted to uppercase using the casing rules of the
+        /// invariant culture. Under Transpose this is the same case fold as <see cref="ToUpper"/>
+        /// (JavaScript's locale-independent <c>toUpperCase</c>).
+        /// </summary>
+        /// <returns>The uppercase equivalent of the current string.</returns>
+        [Transpose.Template("{this}.toUpperCase()")]
+        public extern string ToUpperInvariant();
+
+        /// <summary>
         /// Removes all leading and trailing white-space characters from the current String object.
         /// </summary>
         /// <returns>The string that remains after all white-space characters are removed from the start and end of the current string. If no characters can be trimmed from the current instance, the method returns the current instance unchanged.</returns>

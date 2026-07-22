@@ -1147,5 +1147,267 @@ public class Program { public static void Main() { } }
             Assert.IsTrue(result.Javascript!.Contains("new TagAttribute.$ctor1(\"x\")"),
                 "attribute must be constructed via the applied ctor overload\n" + result.Javascript);
         }
+
+        // ---- property pattern resolves the JS member name ----------------------
+
+        [TestMethod]
+        public async Task PropertyPatternUsesResolvedJsMemberName()
+        {
+            // string.Length has a JS-name override ([Convention(CamelCase)] -> `length`). A property
+            // pattern must emit `.length`, not the raw `.Length` (which is undefined on a JS string and
+            // would make `undefined > 3` always false, silently skipping the arm).
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+public class Program
+{
+    static string F(object o) => o switch {
+        string { Length: > 3 } s => ""long:"" + s,
+        string s => ""short:"" + s,
+        Dictionary<string,int> { Count: > 0 } d => ""dict:"" + d.Count,
+        _ => ""other""
+    };
+    public static void Main()
+    {
+        Console.WriteLine(F(""hello""));
+        Console.WriteLine(F(""hi""));
+        Console.WriteLine(F(new Dictionary<string,int> { [""a""] = 1 }));
+        Console.WriteLine(F(42));
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [TestMethod]
+        public void PropertyPatternEmitsCamelCasedMember()
+        {
+            var code = @"
+using System;
+public class Program
+{
+    static bool F(object o) => o is string { Length: > 3 };
+    public static void Main() { }
+}";
+            var result = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            Assert.IsTrue(result.Javascript!.Contains(".length > 3"),
+                "property pattern on string.Length must emit the resolved JS name `.length`\n" + result.Javascript);
+            Assert.IsFalse(result.Javascript!.Contains(".Length > 3"),
+                "property pattern must not emit the raw C# member name `.Length`\n" + result.Javascript);
+        }
+
+        // ---- bare type patterns (parsed as constant patterns) ------------------
+
+        [TestMethod]
+        public async Task BareTypePatternPerformsTypeTest()
+        {
+            // A bare type in a switch arm (`Dog => ...`) is parsed as a ConstantPattern; it must run a
+            // type test, not `subject === Dog` (which compares the value to the class constructor and
+            // is always false). Enum type patterns must use the runtime type check too (a boxed enum
+            // is a Transpose.box object, not a plain number).
+            await RunTest(@"
+using System;
+public class Animal { }
+public class Dog : Animal { }
+public class Cat : Animal { }
+public enum Color { Red, Green, Blue }
+public class Program
+{
+    static string Kind(object o) => o switch {
+        Dog => ""dog"",
+        Cat => ""cat"",
+        Color => ""color"",
+        _ => ""other""
+    };
+    public static void Main()
+    {
+        Console.WriteLine(Kind(new Dog()));
+        Console.WriteLine(Kind(new Cat()));
+        Console.WriteLine(Kind(Color.Green));
+        Console.WriteLine(Kind(""x""));
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [TestMethod]
+        public async Task EnumTypePatternMatchesBoxedEnum()
+        {
+            // A boxed enum tested/captured via a type pattern (o is Color c) and a switch type pattern.
+            await RunTest(@"
+using System;
+public enum Color { Red, Green, Blue }
+public enum Size { S, M, L }
+public class Program
+{
+    public static void Main()
+    {
+        object o = Color.Green;
+        Console.WriteLine(o is Color ? ""is-color"" : ""no"");
+        Console.WriteLine(o is Size ? ""is-size"" : ""not-size"");
+        Console.WriteLine(o is Color c ? c.ToString() : ""nocap"");
+        object o2 = Size.L;
+        Console.WriteLine(o2 switch { Color => ""color"", Size => ""size"", _ => ""other"" });
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [TestMethod]
+        public async Task ExtendedPropertyPatternResolvesChainedMembers()
+        {
+            // An extended property pattern names a member chain (`{ Text.Length: > 3 }`); each segment
+            // must resolve to its JS name (the whole chain `Text.Length`, not just the leaf `Length`,
+            // and Length -> the `length` override).
+            await RunTest(@"
+using System;
+public class Node { public string Text { get; set; } }
+public class Program
+{
+    static string F(Node n) => n switch {
+        { Text.Length: > 3 } => ""long"",
+        { Text.Length: 0 } => ""empty"",
+        _ => ""short""
+    };
+    public static void Main()
+    {
+        Console.WriteLine(F(new Node { Text = ""hello"" }));
+        Console.WriteLine(F(new Node { Text = ""hi"" }));
+        Console.WriteLine(F(new Node { Text = """" }));
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        // ---- binary + / - on delegates → combine / remove ----------------------
+
+        [TestMethod]
+        public async Task BinaryDelegateOperatorsCombineAndRemove()
+        {
+            // `d1 + d2` / `d1 - d2` must build/unbuild a multicast delegate (TransposeR.combine/remove),
+            // not JS numeric/string `+`/`-` on the underlying functions (which yields a non-callable).
+            await RunTest(@"
+using System;
+using System.Text;
+public class Program
+{
+    static StringBuilder sb = new StringBuilder();
+    static void A() => sb.Append(""A"");
+    static void B() => sb.Append(""B"");
+    static void C() => sb.Append(""C"");
+    public static void Main()
+    {
+        Action a = A;
+        Action ab = a + (Action)B;
+        ab(); sb.AppendLine("""");
+        Action abc = ab + (Action)C;
+        abc(); sb.AppendLine("""");
+        Action ac = abc - (Action)B;
+        ac(); sb.AppendLine("""");
+        sb.Append(""<<DONE>>"");
+        Console.WriteLine(sb.ToString());
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [TestMethod]
+        public void BinaryDelegateAddEmitsCombine()
+        {
+            var code = @"
+using System;
+public class Program
+{
+    static void A() { }
+    static void B() { }
+    public static void Main()
+    {
+        Action a = A;
+        Action ab = a + (Action)B;
+        ab();
+    }
+}";
+            var result = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            Assert.IsTrue(result.Javascript!.Contains("TransposeR.combine("),
+                "binary + on delegates must emit TransposeR.combine\n" + result.Javascript);
+        }
+
+        // ---- LINQ Chunk / MinBy / MaxBy (BCL EnumerableExtras) ------------------
+
+        [TestMethod]
+        public async Task LinqChunkMinByMaxByMatchNative()
+        {
+            // Chunk / MinBy / MaxBy are implemented in C# in the BCL (EnumerableExtras); verify they
+            // match System.Linq including chunk sizing, key selection, empty-source default/throw and
+            // the null-key skip rule.
+            await RunTest(@"
+using System;
+using System.Linq;
+public class Program
+{
+    public static void Main()
+    {
+        Console.WriteLine(string.Join(""|"", new[]{1,2,3,4,5}.Chunk(2).Select(c => string.Join("","", c))));
+        Console.WriteLine(new int[0].Chunk(3).Count());
+        var people = new[]{ (""Al"",30), (""Bo"",25), (""Cy"",35) };
+        Console.WriteLine(people.MinBy(p => p.Item2).Item1);
+        Console.WriteLine(people.MaxBy(p => p.Item2).Item1);
+        Console.WriteLine(new string[0].MinBy(s => s.Length) ?? ""null"");
+        var withNulls = new[]{ (""a"",(string)null), (""b"",""x""), (""c"",(string)null), (""d"",""a"") };
+        Console.WriteLine(withNulls.MinBy(t => t.Item2).Item1);
+        try { var _ = new int[0].MinBy(v => v); Console.WriteLine(""noio""); }
+        catch (InvalidOperationException) { Console.WriteLine(""io-throws""); }
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        // ---- Task.Yield + invariant string casing (BCL) ------------------------
+
+        [TestMethod]
+        public async Task TaskYieldResumesAsynchronously()
+        {
+            // await Task.Yield() must resume on a later tick (after the current job), preserving
+            // ordering with subsequent yields. Asserted on the JS output only (skipRoslyn): a
+            // fire-and-forget async Run() from Main is non-deterministic under native .NET (the
+            // process can exit before the Yield continuations run), whereas Node drains its queue.
+            var js = await RunTest(@"
+using System;
+using System.Threading.Tasks;
+public class Program
+{
+    static async Task Run()
+    {
+        Console.WriteLine(""before"");
+        await Task.Yield();
+        Console.WriteLine(""after"");
+        for (int i = 0; i < 3; i++) { await Task.Yield(); Console.WriteLine(""tick "" + i); }
+        Console.WriteLine(""<<DONE>>"");
+    }
+    public static void Main() { Run(); }
+}", waitForOutput: "<<DONE>>", skipRoslyn: true);
+
+            var seq = string.Join(",", js.Replace("\r\n", "\n").Split(new[] { '\n' }, System.StringSplitOptions.RemoveEmptyEntries));
+            Assert.AreEqual("before,after,tick 0,tick 1,tick 2,<<DONE>>", seq,
+                "Task.Yield must resume asynchronously, preserving order across successive yields\n" + js);
+        }
+
+        [TestMethod]
+        public async Task StringInvariantCasingMatchesToLowerToUpper()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        Console.WriteLine(""MiXeD"".ToLowerInvariant());
+        Console.WriteLine(""MiXeD"".ToUpperInvariant());
+        Console.WriteLine(""ABC"".ToLowerInvariant() == ""ABC"".ToLower());
+        Console.WriteLine(""abc"".ToUpperInvariant() == ""abc"".ToUpper());
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
     }
 }

@@ -156,6 +156,7 @@
             "Resources/Uri.js",
             "Resources/Generator.js",
             "Resources/linq.js",
+            "Resources/.generated/System/Linq/EnumerableExtras.js",
 
             "Resources/.generated/System/Runtime/Serialization/CollectionDataContractAttribute.js",
             "Resources/.generated/System/Runtime/Serialization/ContractNamespaceAttribute.js",

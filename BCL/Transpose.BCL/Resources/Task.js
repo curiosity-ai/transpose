@@ -87,6 +87,16 @@
                 return tcs.task;
             },
 
+            yield: function () {
+                var tcs = new System.Threading.Tasks.TaskCompletionSource();
+
+                Transpose.setImmediate(function () {
+                    tcs.setResult(null);
+                });
+
+                return tcs.task;
+            },
+
             fromResult: function (result, T) {
                 var t = new (System.Threading.Tasks.Task$1(T || System.Object))();
 
