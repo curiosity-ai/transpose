@@ -750,12 +750,16 @@ public sealed partial class Emitter
                                 ?? ((ArrowExpressionClauseSyntax)syntax).Expression;
                 _w.Block(() =>
                 {
+                    // Hoist out-var / is-pattern variables the expression introduces (e.g.
+                    // `=> _w is WebSocket ws && ws.readyState == ...`) so their write-backs and
+                    // later reads resolve — an expression body has no statement to predeclare them.
+                    PredeclareInlineVars(arrowExpr);
                     if (isGetter) { _w.Write("return "); EmitExpression(arrowExpr); _w.WriteLine(";"); }
                     else EmitExpressionStatement(arrowExpr);
                 });
                 break;
             case PropertyDeclarationSyntax { ExpressionBody: { } arrow3 }:
-                _w.Block(() => { _w.Write("return "); EmitExpression(arrow3.Expression); _w.WriteLine(";"); });
+                _w.Block(() => { PredeclareInlineVars(arrow3.Expression); _w.Write("return "); EmitExpression(arrow3.Expression); _w.WriteLine(";"); });
                 break;
             default:
                 _w.Block(() => { });

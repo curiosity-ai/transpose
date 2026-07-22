@@ -518,5 +518,96 @@ public class Program
                           && result.Javascript!.Contains("TransposeR.iter((function* ()"),
                 "an iterator local function should compile to a TransposeR.iter(function*(){...}) generator\n" + result.Javascript);
         }
+
+        // ---- interface Keys/Values dispatch on Dictionary ----------------------
+        // Accessing a BCL interface property (IReadOnlyDictionary/IDictionary .Keys/.Values) through
+        // the interface emits the member's plain camelCase name (`d.values`). On Dictionary that name
+        // collided with the private backing field `values` (lazily null), so `.Values` returned null
+        // and `.Values.ToArray()` threw "Cannot read properties of null". The colliding field now
+        // yields its slot (renamed `values$1`) and the interface getter is aliased onto `values`.
+
+        [TestMethod]
+        public async Task ReadOnlyDictionaryValuesAndKeysDispatchToGetterRunsAsync()
+        {
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+using System.Linq;
+public class Program
+{
+    static void Dump(IReadOnlyDictionary<string,int> ro, IDictionary<string,int> id)
+    {
+        Console.WriteLine(""ro.Values: "" + string.Join("","", ro.Values.OrderBy(x => x)));
+        Console.WriteLine(""ro.Keys: ""   + string.Join("","", ro.Keys.OrderBy(x => x)));
+        Console.WriteLine(""id.Values: "" + string.Join("","", id.Values.OrderBy(x => x)));
+        Console.WriteLine(""id.Keys: ""   + string.Join("","", id.Keys.OrderBy(x => x)));
+    }
+    public static void Main()
+    {
+        var d = new Dictionary<string,int> { [""a""] = 10, [""b""] = 20 };
+        Dump(d, d);
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [TestMethod]
+        public void DictionaryBackingFieldYieldsInterfaceSlot()
+        {
+            var code = @"
+using System.Collections.Generic;
+using System.Linq;
+public class Program
+{
+    public static int[] Run(IReadOnlyDictionary<string,int> d) => d.Values.ToArray();
+    public static void Main() { }
+}";
+            var result = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            // The interface access must reach the getter via the plain camelCase slot, not a field.
+            Assert.IsTrue(result.Javascript!.Contains("d.values"),
+                "IReadOnlyDictionary<,>.Values must be accessed through the plain 'values' slot\n" + result.Javascript);
+        }
+
+        // ---- is-pattern variable in an expression-bodied property --------------
+        // An expression-bodied property getter/setter (`=> _w is WebSocket ws && ws.readyState...`)
+        // must predeclare the is-pattern / out-var it introduces, exactly like an expression-bodied
+        // method. Without it the pattern variable was assigned but never declared, so reading it threw
+        // "ws is not defined".
+
+        [TestMethod]
+        public async Task IsPatternVariableInExpressionBodiedPropertyRunsAsync()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    static object _w = ""hello"";
+    static bool Ok => _w is null || (_w is string s && (s.Length == 0 || s.Length == 5));
+    public static void Main()
+    {
+        Console.WriteLine(Ok);             // True  (len 5)
+        _w = ""hi""; Console.WriteLine(Ok); // False (len 2)
+        _w = null;  Console.WriteLine(Ok); // True  (null)
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [TestMethod]
+        public void ExpressionBodiedPropertyPredeclaresPatternVariable()
+        {
+            var code = @"
+public class Program
+{
+    static object _w = null;
+    static bool Ok => _w is string s && s.Length > 0;
+    public static void Main() { }
+}";
+            var result = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            Assert.IsTrue(result.Javascript!.Contains("let s;"),
+                "an is-pattern variable in an expression-bodied property must be predeclared\n" + result.Javascript);
+        }
     }
 }
