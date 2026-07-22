@@ -568,5 +568,46 @@ public class Program
             Assert.IsTrue(result.Javascript!.Contains("d.values"),
                 "IReadOnlyDictionary<,>.Values must be accessed through the plain 'values' slot\n" + result.Javascript);
         }
+
+        // ---- is-pattern variable in an expression-bodied property --------------
+        // An expression-bodied property getter/setter (`=> _w is WebSocket ws && ws.readyState...`)
+        // must predeclare the is-pattern / out-var it introduces, exactly like an expression-bodied
+        // method. Without it the pattern variable was assigned but never declared, so reading it threw
+        // "ws is not defined".
+
+        [TestMethod]
+        public async Task IsPatternVariableInExpressionBodiedPropertyRunsAsync()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    static object _w = ""hello"";
+    static bool Ok => _w is null || (_w is string s && (s.Length == 0 || s.Length == 5));
+    public static void Main()
+    {
+        Console.WriteLine(Ok);             // True  (len 5)
+        _w = ""hi""; Console.WriteLine(Ok); // False (len 2)
+        _w = null;  Console.WriteLine(Ok); // True  (null)
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [TestMethod]
+        public void ExpressionBodiedPropertyPredeclaresPatternVariable()
+        {
+            var code = @"
+public class Program
+{
+    static object _w = null;
+    static bool Ok => _w is string s && s.Length > 0;
+    public static void Main() { }
+}";
+            var result = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            Assert.IsTrue(result.Javascript!.Contains("let s;"),
+                "an is-pattern variable in an expression-bodied property must be predeclared\n" + result.Javascript);
+        }
     }
 }
