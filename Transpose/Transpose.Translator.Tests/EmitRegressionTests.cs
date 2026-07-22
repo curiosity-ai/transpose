@@ -914,6 +914,145 @@ public class Program
 }", waitForOutput: "<<DONE>>");
         }
 
+        // ---- default value of static struct fields / generic-method type params ----
+
+        [TestMethod]
+        public async Task StaticStructFieldDefaultsToZeroedStructRunsAsync()
+        {
+            await RunTest(@"
+using System;
+public struct Pt { public int X; public int Y; }
+public class St
+{
+    public static DateTime When;
+    public static Guid Id;
+    public static Pt P;
+    public static (int, string) Tup { get; set; }
+}
+public class Program
+{
+    public static void Main()
+    {
+        Console.WriteLine(St.When == DateTime.MinValue); // True
+        Console.WriteLine(St.When.Ticks);                // 0 (no crash)
+        Console.WriteLine(St.Id == Guid.Empty);          // True
+        Console.WriteLine(St.P.X + "","" + St.P.Y);        // 0,0
+        Console.WriteLine(St.Tup.Item1 + "","" + (St.Tup.Item2 ?? ""null"")); // 0,null
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [TestMethod]
+        public async Task GenericMethodDefaultOfTypeParamRunsAsync()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    static T Def<T>() { return default(T); }
+    public static void Main()
+    {
+        Console.WriteLine(""int="" + Def<int>());           // 0
+        Console.WriteLine(""bool="" + Def<bool>());          // False
+        Console.WriteLine(""double="" + Def<double>());      // 0
+        Console.WriteLine(""dtTicks="" + Def<DateTime>().Ticks); // 0
+        Console.WriteLine(""str="" + (Def<string>() ?? ""null"")); // null
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        // ---- for-loop variable is a single shared binding (closure captures final value) ------
+
+        [TestMethod]
+        public async Task ForLoopVariableCapturedByClosureRunsAsync()
+        {
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+public class Program
+{
+    public static void Main()
+    {
+        var acts = new List<Func<int>>();
+        for (int i = 0; i < 3; i++) acts.Add(() => i);
+        var sb = new System.Text.StringBuilder();
+        foreach (var a in acts) sb.Append(a());   // 333 (shared for-loop var), NOT 012
+        Console.WriteLine(sb.ToString());
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        // ---- foreach disposes the enumerator on early exit (iterator finally runs) ------------
+
+        [TestMethod]
+        public async Task ForeachRunsIteratorFinallyOnEarlyExitRunsAsync()
+        {
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+public class Program
+{
+    static IEnumerable<int> Gen()
+    {
+        try { yield return 1; yield return 2; yield return 3; }
+        finally { Console.WriteLine(""FINALLY""); }
+    }
+    public static void Main()
+    {
+        foreach (var x in Gen()) { if (x == 2) break; Console.WriteLine(""got "" + x); }
+        Console.WriteLine(""after"");
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        // ---- params array passing: object[] pass-through and optional-before-params -----------
+
+        [TestMethod]
+        public async Task ParamsArrayPassThroughAndOptionalRunsAsync()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    static string JO(string sep, params object[] items) => items.Length + "":"" + string.Join(sep, items);
+    static string M(string a, int b = 7, params object[] rest) => a + ""/"" + b + ""/["" + string.Join("","", rest) + ""]"";
+    public static void Main()
+    {
+        var oarr = new object[] { ""x"", ""y"" };
+        Console.WriteLine(JO("","", oarr));         // 2:x,y  (array passed through, not double-wrapped)
+        Console.WriteLine(JO("","", ""a"", ""b"", ""c""));  // 3:a,b,c
+        Console.WriteLine(JO("",""));                // 0:
+        Console.WriteLine(M(""x""));                 // x/7/[]  (optional b defaults, params empty)
+        Console.WriteLine(M(""x"", 2));              // x/2/[]
+        Console.WriteLine(M(""x"", 2, ""p"", ""q""));  // x/2/[p,q]
+        Console.WriteLine(M(""x"", rest: oarr));      // x/7/[x,y]
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [TestMethod]
+        public async Task ForeachOverNullThrowsNullReferenceRunsAsync()
+        {
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+public class Program
+{
+    public static void Main()
+    {
+        IEnumerable<int> seq = null;
+        try { foreach (var x in seq) Console.WriteLine(x); }
+        catch (NullReferenceException) { Console.WriteLine(""caught NRE""); }
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
         [TestMethod]
         public void AttributeNonPrimaryCtorEmitsCtorOverloadName()
         {
