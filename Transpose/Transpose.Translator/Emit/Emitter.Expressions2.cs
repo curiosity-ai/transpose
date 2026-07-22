@@ -1837,6 +1837,18 @@ public sealed partial class Emitter
 
     private void EmitInterpolatedString(InterpolatedStringExpressionSyntax interp)
     {
+        // An interpolated string CONVERTED to FormattableString / IFormattable is not a plain string:
+        // the C# compiler lowers it to FormattableStringFactory.Create("{0}…{1}", args). Emit that so
+        // the result carries Format / GetArguments() (consumers like a `t(FormattableString)` translation
+        // helper call GetArguments()). Only the string target uses concatenation.
+        var converted = _model.GetTypeInfo(interp).ConvertedType;
+        if (converted is { ContainingNamespace: { } cns } && cns.ToDisplayString() == "System"
+            && converted.Name is "FormattableString" or "IFormattable")
+        {
+            EmitFormattableString(interp);
+            return;
+        }
+
         _w.Write("(");
         var first = true;
         var hadContent = false;
@@ -1881,6 +1893,49 @@ public sealed partial class Emitter
         }
         if (!hadContent) _w.Write("\"\"");
         _w.Write(")");
+    }
+
+    /// <summary>
+    /// Emits an interpolated string that was converted to FormattableString / IFormattable as
+    /// <c>FormattableStringFactory.Create("composite {0}…", [args])</c> — the composite format string
+    /// with <c>{N[,align][:fmt]}</c> placeholders (literal braces doubled) plus the argument array,
+    /// matching the C# compiler's lowering.
+    /// </summary>
+    private void EmitFormattableString(InterpolatedStringExpressionSyntax interp)
+    {
+        var format = new System.Text.StringBuilder();
+        var args = new List<ExpressionSyntax>();
+        foreach (var content in interp.Contents)
+        {
+            switch (content)
+            {
+                case InterpolatedStringTextSyntax text:
+                    // ValueText decodes standard escape sequences (\n, \") but KEEPS composite-format
+                    // brace escaping ({{ / }}) for interpolated-string text tokens, which is exactly the
+                    // composite format string FormattableStringFactory.Create expects — use it verbatim.
+                    format.Append(text.TextToken.ValueText);
+                    break;
+                case InterpolationSyntax interpolation:
+                    format.Append('{').Append(args.Count);
+                    if (interpolation.AlignmentClause is { } align)
+                        format.Append(',').Append(align.Value.ToString());
+                    if (interpolation.FormatClause is { } fmt)
+                        format.Append(':').Append(fmt.FormatStringToken.ValueText);
+                    format.Append('}');
+                    args.Add(interpolation.Expression);
+                    break;
+            }
+        }
+        _w.Write("System.Runtime.CompilerServices.FormattableStringFactory.Create(");
+        _w.Write(JsString(format.ToString()));
+        _w.Write(", [");
+        for (var i = 0; i < args.Count; i++)
+        {
+            if (i > 0) _w.Write(", ");
+            // Arguments are object[]: box value types so the array holds boxed values, matching .NET.
+            EmitExpressionConverted(args[i], _compilation.GetSpecialType(SpecialType.System_Object));
+        }
+        _w.Write("])");
     }
 
     // ---- element access ----------------------------------------------------
