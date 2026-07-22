@@ -1296,11 +1296,37 @@ public sealed partial class Emitter
         _w.Write(")");
     }
 
+    /// <summary>True if a string-typed concat operand can never be null, so it needs no <c>?? ""</c>
+    /// coercion: a string literal, an interpolated string, the result of a string concatenation, or a
+    /// constant with a non-null value.</summary>
+    private bool IsNonNullStringOperand(ExpressionSyntax operand)
+    {
+        var e = operand is ParenthesizedExpressionSyntax paren ? paren.Expression : operand;
+        if (e is LiteralExpressionSyntax or InterpolatedStringExpressionSyntax) return true;
+        if (e is BinaryExpressionSyntax be && be.IsKind(SyntaxKind.AddExpression)
+            && IsStringType(_model.GetTypeInfo(e).Type)) return true;
+        var cv = _model.GetConstantValue(e);
+        return cv.HasValue && cv.Value is not null;
+    }
+
     private void EmitConcatOperand(ExpressionSyntax operand, ITypeSymbol? type)
     {
         if (IsStringType(type))
         {
-            EmitExpression(operand);
+            // C# string concatenation treats a null operand as "" (`null + "x"` is "x"), but JS `+`
+            // renders null as "null". Coerce a possibly-null string operand with `?? ""`. Operands that
+            // are provably non-null (a string literal, an interpolated string, the result of another
+            // string concatenation, or a non-null constant) are emitted as-is.
+            if (IsNonNullStringOperand(operand))
+            {
+                EmitExpression(operand);
+            }
+            else
+            {
+                _w.Write("(");
+                EmitExpression(operand);
+                _w.Write(" ?? \"\")");
+            }
         }
         else if (IsCharType(type))
         {

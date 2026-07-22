@@ -311,6 +311,52 @@ public class Program
                 "a string-typed interpolation must not use the FormattableString factory\n" + result.Javascript);
         }
 
+        // ---- null string concatenation ----------------------------------------
+
+        [TestMethod]
+        public async Task NullStringConcatenationTreatsNullAsEmptyAsync()
+        {
+            // C# string `+` treats a null operand as "" (`null + "x"` is "x"); JS `+` renders null as
+            // "null". Every string-typed operand that can be null must be coerced.
+            await RunTest(@"
+using System;
+public class Program
+{
+    static string S(string x) => x; // opaque, may be null
+    public static void Main()
+    {
+        string a = null, b = ""X"";
+        Console.WriteLine(a + ""Hello World"");
+        Console.WriteLine(""P"" + a);
+        Console.WriteLine(a + b + ""Y"");
+        Console.WriteLine(a + a);
+        Console.WriteLine(S(null) + ""Z"" + S(null));
+        Console.WriteLine((a + b).Length);          // 1 (null->"" then + "X")
+        int n = 5;
+        Console.WriteLine(a + n);                    // int operand: null -> "", then "5"
+    }
+}");
+        }
+
+        [TestMethod]
+        public void NullStringOperandGetsCoalesceButLiteralsDoNot()
+        {
+            var code = @"
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        string a = null;
+        Console.WriteLine(a + ""Hello World"");
+    }
+}";
+            var result = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            Assert.IsTrue(result.Javascript!.Contains("(a ?? \"\") + \"Hello World\""),
+                "a nullable string operand should be coerced with `?? \"\"`, the literal left as-is\n" + result.Javascript);
+        }
+
         [TestMethod]
         public void IteratorLocalFunctionEmitsGenerator()
         {
