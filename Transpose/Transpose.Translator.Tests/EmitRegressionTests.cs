@@ -774,5 +774,61 @@ public class Program
     }
 }", waitForOutput: "<<DONE>>");
         }
+
+        // ---- attribute constructed through the correct ctor overload -----------
+        // Reflection metadata (`at:[...]`) constructed every attribute with a bare `new T(args)`,
+        // which invokes the PRIMARY ctor ("ctor") and silently drops the arguments when the attribute
+        // was applied through a non-primary overload ($ctorN). This broke, e.g., [JsonProperty("x")]
+        // (PropertyName lost -> wrong JSON wire names). h5 emits `new T.$ctorN(args)`.
+
+        [TestMethod]
+        public async Task AttributeNonPrimaryCtorArgsPreservedRunsAsync()
+        {
+            await RunTest(@"
+using System;
+using System.Reflection;
+[AttributeUsage(AttributeTargets.Class)]
+public class TagAttribute : Attribute
+{
+    public string Name { get; }
+    public int Order { get; }
+    public TagAttribute() { Name = ""default""; }
+    public TagAttribute(string name) { Name = name; }
+    public TagAttribute(string name, int order) { Name = name; Order = order; }
+}
+[Tag(""hello"", 7)]
+public class Widget { }
+public class Program
+{
+    public static void Main()
+    {
+        var a = (TagAttribute)typeof(Widget).GetCustomAttributes(typeof(TagAttribute), false)[0];
+        Console.WriteLine(a.Name + ""/"" + a.Order);   // hello/7 (not default/0)
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [TestMethod]
+        public void AttributeNonPrimaryCtorEmitsCtorOverloadName()
+        {
+            var code = @"
+using System;
+[AttributeUsage(AttributeTargets.Class)]
+public class TagAttribute : Attribute
+{
+    public TagAttribute() { }
+    public TagAttribute(string name) { }
+}
+[Tag(""x"")] public class Widget { }
+public class Program { public static void Main() { } }
+";
+            var result = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            // The (string) overload is the non-primary ctor ($ctor1); the attribute instance must be
+            // constructed through it, not the bare `new TagAttribute("x")` (which hits the primary ctor).
+            Assert.IsTrue(result.Javascript!.Contains("new TagAttribute.$ctor1(\"x\")"),
+                "attribute must be constructed via the applied ctor overload\n" + result.Javascript);
+        }
     }
 }
