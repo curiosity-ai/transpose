@@ -451,6 +451,51 @@ public class Program { public static void Main() { } }
                 "the trailing positional argument must follow the named-argument lambda, not replace it\n" + result.Javascript);
         }
 
+        // ---- single element to a params parameter via a NAMED argument --------
+
+        [TestMethod]
+        public async Task NamedParamsArgumentWrapsSingleElementAsync()
+        {
+            // `new Nav(id, commands: singleCmd)` — a single element given to a `params` parameter BY
+            // NAME must be wrapped into the array (C# semantics), so a later `foreach` over it works.
+            // Without the fix the callee received a bare element and foreach threw "Cannot create
+            // Enumerator" (Tesserae's SidebarNav RSS_NAV: `commands: new SidebarCommand(...)`).
+            await RunTest(@"
+using System;
+public class Cmd { public int V; public Cmd(int v){V=v;} }
+public class Nav
+{
+    private Cmd[] _c;
+    public Nav(string id, params Cmd[] c) { _c = c; }
+    public int Sum() { int n=0; foreach (var x in _c) n+=x.V; return n; }
+}
+public class Program
+{
+    public static void Main()
+    {
+        Console.WriteLine(new Nav(""a"", c: new Cmd(5)).Sum());                  // 5  (named single -> [cmd])
+        Console.WriteLine(new Nav(""b"", new Cmd(7)).Sum());                     // 7  (positional single)
+        Console.WriteLine(new Nav(""c"", c: new Cmd[] { new Cmd(2), new Cmd(3) }).Sum()); // 5 (named array passthrough)
+        Console.WriteLine(new Nav(""d"").Sum());                                  // 0  (omitted -> [])
+    }
+}");
+        }
+
+        [TestMethod]
+        public void NamedParamsSingleElementEmitsWrappedArray()
+        {
+            var code = @"
+using System;
+public class Cmd { public Cmd(int v){} }
+public class Nav { public Nav(string id, params Cmd[] c) { } }
+public class Program { public static void Main() { var n = new Nav(""x"", c: new Cmd(5)); } }
+";
+            var result = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            Assert.IsTrue(result.Javascript!.Contains("[new Cmd(5)]"),
+                "a single element passed to a params parameter by name should be wrapped in an array\n" + result.Javascript);
+        }
+
         [TestMethod]
         public void IteratorLocalFunctionEmitsGenerator()
         {

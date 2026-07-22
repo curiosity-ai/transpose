@@ -602,14 +602,28 @@ public sealed partial class Emitter
             {
                 if (!first) _w.Write(", ");
                 first = false;
-                if (ordered[i] is not null)
-                    EmitExpressionConverted(ordered[i]!, method.Parameters[i].Type);
-                else
+                if (ordered[i] is null)
+                {
                     // An omitted optional argument that a JS call cannot skip (it precedes a provided
                     // one) is passed as `void 0` (undefined), not its default value: the callee applies
                     // its own default via `if (arg === undefined) arg = <default>`, matching the legacy
                     // compiler. Passing `null` would defeat that check when the default is non-null.
                     _w.Write("void 0");
+                }
+                else if (i == method.Parameters.Length - 1 && method.Parameters[i].IsParams && ShouldWrapParams(method))
+                {
+                    // A single element supplied to the params parameter (positionally after named args,
+                    // or BY NAME — e.g. `new SidebarNav(…, commands: cmd)`) must be wrapped into the
+                    // params array; the array/collection itself passes through. Without this the callee
+                    // receives a bare element and a later `foreach` over it throws "Cannot create
+                    // Enumerator". (The multi-element / no-named-args case is handled by the params
+                    // branch below, which this early-returning named path would otherwise skip.)
+                    EmitParamsSlot(method.Parameters[i].Type, ordered[i]!);
+                }
+                else
+                {
+                    EmitExpressionConverted(ordered[i]!, method.Parameters[i].Type);
+                }
             }
             return;
         }
@@ -711,6 +725,29 @@ public sealed partial class Emitter
     private static bool HasExpandParams(IMethodSymbol method)
         => method.OriginalDefinition.GetAttributes()
             .Any(a => TransposeNaming.AttrIs(a, "Transpose.ExpandParamsAttribute"));
+
+    /// <summary>Emits a SINGLE argument supplied to a <c>params</c> parameter: the array/collection
+    /// itself is passed through, but a lone element (convertible to the element type) is wrapped into
+    /// the params array. Shared by the named-argument path and mirrors the positional params branch.</summary>
+    private void EmitParamsSlot(ITypeSymbol paramsType, ExpressionSyntax arg)
+    {
+        var paramsElem = ParamsElementType(paramsType);
+        var argType = _model.GetTypeInfo(arg).Type;
+        if (paramsElem is not null
+            && (argType is null || !_compilation.ClassifyConversion(argType, paramsElem).Exists))
+        {
+            EmitExpressionConverted(arg, paramsType);   // already the collection
+        }
+        else
+        {
+            EmitCollectionOf(paramsType, () =>
+            {
+                _w.Write("[");
+                EmitExpressionConverted(arg, paramsElem);
+                _w.Write("]");
+            });
+        }
+    }
 
     private static bool ShouldWrapParams(IMethodSymbol method)
     {
