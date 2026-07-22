@@ -397,18 +397,47 @@ public sealed partial class Emitter
         foreach (var m in type.GetMembers())
         {
             if (m.IsStatic) continue;
-            ExpressionSyntax? init = m switch
+            ITypeSymbol? slotType = m switch
             {
-                IFieldSymbol f when !f.IsConst && f.AssociatedSymbol is null => FieldInitializerSyntax(f),
-                IPropertySymbol p when IsAutoProperty(p) => AutoPropertyInitializerSyntax(p),
+                IFieldSymbol f when !f.IsConst && f.AssociatedSymbol is null => f.Type,
+                IPropertySymbol p when IsAutoProperty(p) => p.Type,
                 _ => null,
             };
-            if (init is null) continue;
-            _w.Write($"this.{TransposeNaming.MemberJsName(m)} = ");
-            EmitExpression(init);
-            _w.WriteLine(";");
+            if (slotType is null) continue;
+
+            ExpressionSyntax? init = m switch
+            {
+                IFieldSymbol f => FieldInitializerSyntax(f),
+                IPropertySymbol p => AutoPropertyInitializerSyntax(p),
+                _ => null,
+            };
+
+            if (init is not null)
+            {
+                _w.Write($"this.{TransposeNaming.MemberJsName(m)} = ");
+                EmitExpression(init);
+                _w.WriteLine(";");
+            }
+            else if (NeedsStructDefaultInit(slotType))
+            {
+                // A non-nullable struct field/auto-property with no initializer defaults to the
+                // zeroed struct (C# default(T)), not null. The field slot is emitted as `null`
+                // (order-independence at define time), so assign the real default here in the ctor,
+                // when the struct type is defined — otherwise e.g. an uninitialized DateTime is null
+                // and `.Equals`/`.UtcDateTime` throws (reading getTime of null).
+                _w.WriteLine($"this.{TransposeNaming.MemberJsName(m)} = Transpose.getDefaultValue({TypeRef(slotType)});");
+            }
         }
     }
+
+    /// <summary>A slot whose C# <c>default(T)</c> is a zeroed struct value rather than null:
+    /// DateTime, Guid, a user struct, ValueTuple, etc. Excludes primitives (already a literal slot
+    /// default), enums (numeric slot default), Nullable&lt;T&gt; (null is correct), and type
+    /// parameters (their default defers to the runtime at construction).</summary>
+    private static bool NeedsStructDefaultInit(ITypeSymbol type)
+        => type.TypeKind == TypeKind.Struct
+           && !IsPrimitiveNumericOrBool(type)
+           && type is not INamedTypeSymbol { ConstructedFrom.SpecialType: SpecialType.System_Nullable_T };
 
     // ---- methods -----------------------------------------------------------
 
