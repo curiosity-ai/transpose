@@ -317,13 +317,61 @@ internal static class TransposeNaming
         // Only Transpose-compiled members (source or referenced library) get a slot suffix: an
         // external/native member (e.g. a DOM NodeListOf<T>.length hiding NodeList.length) maps to
         // a single fixed JS property, so suffixing it would reference a nonexistent property.
-        if (GetName(symbol) is null && IsTransposeCompiledSource(symbol.ContainingType)
+        if (GetName(symbol) is null
             && symbol is IPropertySymbol { IsIndexer: false } or IFieldSymbol or IEventSymbol)
         {
-            var idx = HidingIndex(symbol, raw);
+            // Hiding suffix is only meaningful for Transpose-compiled members (external/native
+            // members map to a single fixed JS property).
+            var idx = IsTransposeCompiledSource(symbol.ContainingType) ? HidingIndex(symbol, raw) : 0;
+
+            // A member (typically a private backing field like Dictionary's `keys`/`values`) whose
+            // plain slot collides with the plain-access name of a BCL interface member the type
+            // implements at a *different* slot must yield that slot: BCL interface dispatch reads the
+            // plain name (e.g. `d.values` for IReadOnlyDictionary<,>.Values), which must reach the
+            // interface getter (installed as an alias), not the shadowing field. This also applies to
+            // runtime/BCL members (Dictionary lives in the runtime assembly), so it is not gated on
+            // IsTransposeCompiledSource.
+            if (idx == 0 && YieldsToBclInterfaceSlot(symbol, raw)) idx = 1;
+
             if (idx > 0) return raw + "$" + idx;
         }
         return raw;
+    }
+
+    /// <summary>
+    /// True when <paramref name="raw"/> (this member's plain JS slot) is the plain-access name of a
+    /// non-templated BCL interface member the containing type implements via a *different* member —
+    /// so this member must move off the slot to leave it for interface dispatch (see the alias in
+    /// <see cref="InterfaceAliasPairs"/>). Skips source interfaces (they dispatch via mangled slots,
+    /// so no plain-name collision) and members that themselves implement the interface member.
+    /// </summary>
+    private static bool YieldsToBclInterfaceSlot(ISymbol symbol, string raw)
+    {
+        if (symbol.ContainingType is not { } type) return false;
+        if (type.TypeKind == TypeKind.Interface) return false; // interface members never yield
+
+        foreach (var iface in type.AllInterfaces)
+        {
+            if (IsSourceInterface(iface)) continue;         // mangled dispatch — no plain collision
+            if (!IsInheritableInterface(iface)) continue;   // only Transpose-registered BCL interfaces
+
+            foreach (var member in iface.GetMembers())
+            {
+                if (member.IsStatic) continue;
+                if (member is IMethodSymbol { MethodKind: not MethodKind.Ordinary }) continue; // accessors
+                if (member is not (IPropertySymbol { IsIndexer: false } or IMethodSymbol or IEventSymbol)) continue;
+                if (GetTemplate(member) is not null) continue;   // templated access — no object slot
+                if (RawMemberName(member) != raw) continue;      // plain-access name differs
+
+                // If this very member implements the interface member, it legitimately owns the slot.
+                var impl = type.FindImplementationForInterfaceMember(member);
+                if (impl is not null && SymbolEqualityComparer.Default.Equals(impl, symbol)) continue;
+                if (impl is null) continue;                      // unimplemented (shouldn't happen) — leave as-is
+
+                return true;
+            }
+        }
+        return false;
     }
 
     /// <summary>The base JS name of a property/field/event (before any hiding suffix).</summary>
@@ -398,20 +446,40 @@ internal static class TransposeNaming
     public static string LeafMemberName(ISymbol symbol) => LeafJsName(symbol);
 
     /// <summary>
-    /// The (plainName, mangledInterfaceSlot) aliases a type must publish so that a member
-    /// accessed through one of its interfaces resolves to the implementing member. Covers
-    /// members this type implements *implicitly* — explicit implementations are already
-    /// emitted under the mangled slot, and inherited implementations are aliased by the base
-    /// type. Transpose's `alias` config installs these on the prototype.
+    /// The (name, aliasSlot) aliases a type must publish so that a member accessed through one of
+    /// its interfaces resolves to the implementing member. Two shapes:
+    /// <list type="bullet">
+    /// <item><b>Source interfaces</b> — access uses the mangled interface slot (see MemberJsName),
+    /// so an *implicit* implementation (which lives under its plain slot) publishes
+    /// <c>(plain, mangled)</c> to expose the mangled slot. Explicit impls already emit under the
+    /// mangled slot; inherited impls are aliased by the base type.</item>
+    /// <item><b>BCL/runtime interfaces</b> — access uses the interface member's plain camelCase name
+    /// (see MemberJsName). A member whose implementing slot differs from that plain name publishes
+    /// <c>(implSlot, plainName)</c> to expose it. This covers an *explicit* impl (which lives only
+    /// under the mangled slot, e.g. <c>IReadOnlyDictionary&lt;K,V&gt;.Values</c> on Dictionary) and
+    /// an *implicit* property/event impl whose own slot keeps its PascalCase C# name (e.g.
+    /// <c>SortedList.Keys</c> at slot <c>Keys</c>, reached as <c>keys</c> through IDictionary — only
+    /// methods inherit the interface's camelCase name, so property/event access needs the alias).</item>
+    /// </list>
+    /// Transpose's <c>alias</c> config installs these on the prototype (it looks up the descriptor by
+    /// the first element and defines the second as an alias of it).
     /// </summary>
     public static System.Collections.Generic.List<(string plain, string mangled)> InterfaceAliasPairs(INamedTypeSymbol type)
     {
         var pairs = new System.Collections.Generic.List<(string, string)>();
         var seen = new System.Collections.Generic.HashSet<string>();
+        // Plain BCL-interface alias names already claimed, so multiple interfaces that share a
+        // camelCase name (e.g. IDictionary<K,V>.Values and IReadOnlyDictionary<K,V>.Values both →
+        // "values") publish it once — they resolve to equivalent members anyway.
+        var bclAliasNames = new System.Collections.Generic.HashSet<string>(System.StringComparer.Ordinal);
 
         foreach (var iface in type.AllInterfaces)
         {
-            if (!IsSourceInterface(iface)) continue; // BCL interfaces use plain names (see MemberJsName)
+            var sourceIface = IsSourceInterface(iface);
+            // A runtime BCL interface (IList, IReadOnlyDictionary, …) dispatches through plain names.
+            var bclIface = !sourceIface && IsInheritableInterface(iface);
+            if (!sourceIface && !bclIface) continue; // ambient/DOM interface — not Transpose-dispatched
+
             foreach (var member in iface.GetMembers())
             {
                 if (member.IsStatic) continue;
@@ -421,12 +489,32 @@ internal static class TransposeNaming
 
                 if (type.FindImplementationForInterfaceMember(member) is not { } impl) continue;
                 if (!SymbolEqualityComparer.Default.Equals(impl.ContainingType, type)) continue; // declared here
-                if (ExplicitlyImplementedMember(impl) is not null) continue;                    // already mangled
 
-                var plain = LeafJsName(impl);
-                var mangled = InterfaceMemberName(member);
-                if (plain == mangled) continue;
-                if (seen.Add(plain + "\0" + mangled)) pairs.Add((plain, mangled));
+                var isExplicit = ExplicitlyImplementedMember(impl) is not null;
+
+                if (sourceIface)
+                {
+                    if (isExplicit) continue;                    // already mangled
+
+                    var plain = LeafJsName(impl);
+                    var mangled = InterfaceMemberName(member);
+                    if (plain == mangled) continue;
+                    if (seen.Add(plain + "\0" + mangled)) pairs.Add((plain, mangled));
+                }
+                else
+                {
+                    // BCL interface: the call site uses the member's plain camelCase name. Alias that
+                    // plain name onto the implementing slot whenever they differ — for an explicit
+                    // impl (mangled slot) or an implicit property/event impl that kept its PascalCase
+                    // C# name. An implicit method impl already inherits the interface's camelCase name
+                    // (plainAccess == implSlot), so it needs no alias.
+                    var plainAccess = MemberJsName(member);                         // name emitted at call sites
+                    var implSlot = isExplicit ? InterfaceMemberName(member)         // mangled explicit slot
+                                              : LeafJsName(impl);                   // implicit impl's own slot
+                    if (plainAccess == implSlot) continue;
+                    if (!bclAliasNames.Add(plainAccess)) continue; // one alias per plain name
+                    if (seen.Add(implSlot + "\0" + plainAccess)) pairs.Add((implSlot, plainAccess));
+                }
             }
         }
         return pairs;
