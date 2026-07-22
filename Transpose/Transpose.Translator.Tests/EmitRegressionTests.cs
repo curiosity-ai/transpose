@@ -609,5 +609,46 @@ public class Program
             Assert.IsTrue(result.Javascript!.Contains("let s;"),
                 "an is-pattern variable in an expression-bodied property must be predeclared\n" + result.Javascript);
         }
+
+        // ---- [Transpose.Ready] static method --------------------------------------
+        // A [Ready] static method must be scheduled via Transpose.ready so it runs on load. It was
+        // dropped entirely, so e.g. the admin package's AdminBridgeInitializer.Initialize never ran
+        // and no admin routes were registered ("Admin package not loaded.").
+
+        [TestMethod]
+        public async Task ReadyAttributeMethodRunsOnLoadAsync()
+        {
+            // [Ready] is a Transpose-only concept (a no-op in native .NET), so run JS-only and assert
+            // the scheduled method actually executed.
+            var output = await RunTest(@"
+using System;
+static class Init
+{
+    [Transpose.Ready]
+    public static void Setup() { Console.WriteLine(""ready-ran""); }
+}
+public class Program { public static void Main() { Console.WriteLine(""main-ran""); } }
+", skipRoslyn: true);
+            Assert.IsTrue(output.Contains("ready-ran"),
+                "the [Ready] static method should run on load\n" + output);
+            Assert.IsTrue(output.Contains("main-ran"), "the entry point should still run\n" + output);
+        }
+
+        [TestMethod]
+        public void ReadyAttributeEmitsTransposeReadyCall()
+        {
+            var code = @"
+static class Init
+{
+    [Transpose.Ready]
+    public static void Setup() { }
+}
+public class Program { public static void Main() { } }
+";
+            var result = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            Assert.IsTrue(result.Javascript!.Contains("Transpose.ready(Init.Setup, Init);"),
+                "a [Ready] static method must be scheduled with Transpose.ready\n" + result.Javascript);
+        }
     }
 }

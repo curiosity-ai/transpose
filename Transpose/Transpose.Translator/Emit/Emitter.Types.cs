@@ -35,6 +35,28 @@ public sealed partial class Emitter
         }
     }
 
+    /// <summary>
+    /// Emits <c>Transpose.ready(Type.Method, Type);</c> for every <c>[Transpose.Ready]</c> static
+    /// method. Transpose.ready runs the callback on DOMContentLoaded, or immediately when the
+    /// document is already loaded — the latter is what lets a lazily fetched package (e.g. the admin
+    /// bundle) run its initializer the moment it is loaded. Static members are referenced fully
+    /// qualified, so the <c>this</c>-scope argument is just belt-and-braces for parity with the
+    /// [Ready] adapter's FormatScope.
+    /// </summary>
+    private void EmitReadyRegistrations(IReadOnlyList<INamedTypeSymbol> types)
+    {
+        foreach (var type in types)
+        {
+            foreach (var method in type.GetMembers().OfType<IMethodSymbol>())
+            {
+                if (!method.IsStatic) continue;
+                if (!method.GetAttributes().Any(a => TransposeNaming.AttrIs(a, TransposeNaming.ReadyAttr))) continue;
+                var typeRef = TypeRef(type);
+                _w.WriteLine($"Transpose.ready({typeRef}.{TransposeNaming.MemberJsName(method)}, {typeRef});");
+            }
+        }
+    }
+
     /// <summary>Full JS name a type is registered / referenced under.</summary>
     private string TypeRef(ITypeSymbol type)
     {

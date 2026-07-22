@@ -18,6 +18,7 @@ internal static class TransposeNaming
     public const string EnumAttr = "Transpose.EnumAttribute";
     public const string ScopeAttr = "Transpose.ScopeAttribute";
     public const string GlobalMethodsAttr = "Transpose.GlobalMethodsAttribute";
+    public const string ReadyAttr = "Transpose.ReadyAttribute";
 
     /// <summary>Allocation-free equivalent of <c>a.AttributeClass?.ToDisplayString() == fullName</c>.
     /// Attribute matching runs for every symbol reference during emit; <c>ToDisplayString</c> builds a
