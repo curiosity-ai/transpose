@@ -102,6 +102,10 @@ public sealed partial class Emitter
                 }
 
                 var ns = named.ContainingNamespace?.ToDisplayString();
+                // A type-level [Transpose.Namespace] overrides the emitted namespace: false/"" drops
+                // it (so Transpose.Core's String/Number/… bind to the JS globals), a string replaces it.
+                if (TransposeNaming.NamespaceOverride(named) is { } nsOverride)
+                    ns = nsOverride.Length == 0 ? null : nsOverride;
                 if (named.IsGenericType && named.TypeArguments.Length > 0)
                 {
                     var baseName = (string.IsNullOrEmpty(ns) ? "" : ns + ".") + StripArity(named.Name) + "$" + named.Arity;

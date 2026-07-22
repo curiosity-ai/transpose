@@ -38,6 +38,11 @@ public sealed partial class Emitter
                     // Contract.Result, [Template("0 /*{condition}*/")]) is elided entirely — matching
                     // the reference runtime, and avoiding illegally nested block comments.
                 }
+                else if (IsRemovedConditionalCall(expr.Expression))
+                {
+                    // A call to a [Conditional("SYM")] method whose symbol is not defined is removed
+                    // entirely (its arguments are not evaluated), matching C# semantics.
+                }
                 else if (expr.Expression is AssignmentExpressionSyntax da && IsDeconstruction(da))
                 {
                     EmitDeconstruction(da);

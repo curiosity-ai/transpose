@@ -114,6 +114,65 @@ internal static class TransposeNaming
     public static string? GetName(ISymbol symbol)
         => GetStringAttr(symbol, NameAttr);
 
+    /// <summary>
+    /// The raw-JavaScript body lines of a member's <c>[Transpose.Script(...)]</c>, or null when
+    /// absent. When present, these lines become the member's body verbatim and the C# body (if any)
+    /// is discarded — the mechanism for hand-writing a method/accessor/operator implementation.
+    /// </summary>
+    public static string[]? GetScriptBody(ISymbol symbol)
+    {
+        var a = symbol.GetAttributes().FirstOrDefault(x => AttrIs(x, ScriptAttr));
+        if (a is null || a.ConstructorArguments.Length == 0) return null;
+        var arg = a.ConstructorArguments[0];
+        if (arg.Kind == TypedConstantKind.Array)
+            return arg.Values.Select(v => v.Value as string ?? "").ToArray();
+        return arg.Value is string s ? new[] { s } : null;
+    }
+
+    public const string NamespaceAttr = "Transpose.NamespaceAttribute";
+
+    /// <summary>
+    /// The effect of a type-level <c>[Transpose.Namespace]</c> on the emitted namespace prefix:
+    /// <list type="bullet">
+    /// <item><c>null</c> — no attribute; use the C# namespace.</item>
+    /// <item><c>""</c> (empty) — suppress the namespace entirely, so the type emits under its bare
+    /// entity name (<c>[Namespace(false)]</c> or <c>[Namespace("")]</c>). This is how the
+    /// Transpose.Core primitive bindings (String, Number, Object, …) map onto the JS globals.</item>
+    /// <item><c>"x.y"</c> — replace the C# namespace with this custom one (<c>[Namespace("x.y")]</c>).</item>
+    /// </list>
+    /// The attribute is read from the outermost enclosing type (a namespace belongs to the top-level
+    /// type), so a nested type inherits its container's namespace treatment.
+    /// </summary>
+    public static string? NamespaceOverride(ITypeSymbol? type)
+    {
+        if (type is null) return null;
+        var outer = type;
+        while (outer.ContainingType is { } ct) outer = ct;
+        var a = outer.GetAttributes().FirstOrDefault(x => AttrIs(x, NamespaceAttr));
+        if (a is null || a.ConstructorArguments.Length == 0) return null;
+        var arg = a.ConstructorArguments[0].Value;
+        // [Namespace(false)] suppresses; [Namespace(true)] is the default (no override).
+        if (arg is bool b) return b ? null : "";
+        // [Namespace("x")] sets a custom namespace; [Namespace("")] also suppresses.
+        return arg as string;
+    }
+
+    public const string ReflectableAttr = "Transpose.ReflectableAttribute";
+
+    /// <summary>
+    /// An explicit <c>[Transpose.Reflectable]</c> override on a type or member: <c>true</c> forces
+    /// reflection metadata to be emitted, <c>false</c> suppresses it, <c>null</c> means no attribute
+    /// (fall back to the default policy). The boolean constructor argument decides; the argument-less
+    /// <c>[Reflectable]</c> — and the advanced filter/accessibility forms — mean <c>true</c>.
+    /// </summary>
+    public static bool? ReflectableOverride(ISymbol symbol)
+    {
+        var a = symbol.GetAttributes().FirstOrDefault(x => AttrIs(x, ReflectableAttr));
+        if (a is null) return null;
+        if (a.ConstructorArguments.Length > 0 && a.ConstructorArguments[0].Value is bool b) return b;
+        return true;
+    }
+
     public const string AccessorsIndexerAttr = "Transpose.AccessorsIndexerAttribute";
 
     /// <summary>
@@ -379,6 +438,21 @@ internal static class TransposeNaming
     private static string RawMemberName(ISymbol symbol)
     {
         if (GetName(symbol) is { } name) return name;
+
+        // Enum members honour the [Enum(Emit.Name*)] casing modes on their own JS name: NameLowerCase
+        // (8) lowercases, NameUpperCase (9) uppercases; Name (1) / NamePreserveCase (7) and every
+        // other mode preserve. (The StringName* modes 3–6 cast the emitted string VALUE — see
+        // EnumStringName — not the member's JS name, which stays verbatim.)
+        if (symbol is IFieldSymbol { ContainingType.TypeKind: TypeKind.Enum } enumMember)
+        {
+            return EnumEmitMode(enumMember.ContainingType) switch
+            {
+                8 => enumMember.Name.ToLowerInvariant(),
+                9 => enumMember.Name.ToUpperInvariant(),
+                _ => enumMember.Name,
+            };
+        }
+
         // A compiled type's member keeps its verbatim C# name. An [External] type's member does
         // NOT short-circuit here even when in source (self-building the BCL): its members bind to
         // native JS names via [Convention]/casing — e.g. String.Length ([External] +

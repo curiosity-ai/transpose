@@ -66,6 +66,13 @@ internal static class ProjectResolver
         if (string.Equals(configuration, "Debug", StringComparison.OrdinalIgnoreCase) && !defines.Contains("DEBUG"))
             defines.Add("DEBUG");
 
+        // Framework-derived symbols the .NET SDK defines implicitly from the target framework moniker
+        // (e.g. netstandard2.0 → NETSTANDARD, NETSTANDARD2_0 and the NETSTANDARD*_OR_GREATER chain).
+        // Without these, `#if NETSTANDARD2_0` never compiles under `tps`. Additive with the project's
+        // own <DefineConstants>.
+        foreach (var fx in FrameworkDefines(targetFramework))
+            if (!defines.Contains(fx)) defines.Add(fx);
+
         var lang = ParseLangVersion(Property(doc, "LangVersion"));
 
         // Default (bundle) mode: translate the whole closure of source projects into one JS
@@ -518,6 +525,87 @@ internal static class ProjectResolver
         return Property(doc, "TargetFramework")
                ?? Property(doc, "TargetFrameworks")?.Split(';', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim()
                ?? "netstandard2.0";
+    }
+
+    // Version ladders per framework family, in ascending order — used to generate the SDK's
+    // "<MONIKER>x_y_OR_GREATER" chains (every version up to and including the target's).
+    private static readonly string[] NetStandardVersions =
+        { "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "2.0", "2.1" };
+    private static readonly string[] NetCoreAppLegacyVersions =
+        { "1.0", "1.1", "2.0", "2.1", "2.2", "3.0", "3.1" };
+    private static readonly string[] NetVersions =
+        { "5.0", "6.0", "7.0", "8.0", "9.0", "10.0" };
+
+    /// <summary>
+    /// The preprocessor symbols the .NET SDK defines implicitly from a target framework moniker,
+    /// mirroring the SDK's implicit framework defines:
+    /// <list type="bullet">
+    /// <item><c>netstandardX.Y</c> → <c>NETSTANDARD</c>, <c>NETSTANDARDX_Y</c>, and
+    /// <c>NETSTANDARDa_b_OR_GREATER</c> for every version up to X.Y.</item>
+    /// <item><c>netcoreappX.Y</c> (≤ 3.1) → <c>NETCOREAPP</c>, <c>NETCOREAPPX_Y</c>, and the
+    /// <c>NETCOREAPPa_b_OR_GREATER</c> chain.</item>
+    /// <item><c>netX.Y</c> (5.0+) → <c>NET</c>, <c>NETCOREAPP</c>, <c>NETX_Y</c>, the full legacy
+    /// <c>NETCOREAPP*_OR_GREATER</c> chain, and <c>NETa_b_OR_GREATER</c> for every 5.0+ version up to X.Y.</item>
+    /// <item><c>net4x</c> (.NET Framework) → <c>NETFRAMEWORK</c>, <c>NET4x</c>.</item>
+    /// </list>
+    /// </summary>
+    internal static IEnumerable<string> FrameworkDefines(string tfm)
+    {
+        tfm = (tfm ?? "").Trim().ToLowerInvariant();
+        // Drop an OS platform suffix (net8.0-windows → net8.0).
+        var dash = tfm.IndexOf('-');
+        if (dash > 0) tfm = tfm.Substring(0, dash);
+
+        static string Sym(string prefix, string ver) => prefix + ver.Replace('.', '_');
+        var result = new List<string>();
+
+        if (tfm.StartsWith("netstandard", StringComparison.Ordinal))
+        {
+            var ver = tfm.Substring("netstandard".Length);
+            result.Add("NETSTANDARD");
+            result.Add(Sym("NETSTANDARD", ver));
+            foreach (var v in NetStandardVersions)
+            {
+                result.Add(Sym("NETSTANDARD", v) + "_OR_GREATER");
+                if (v == ver) break;
+            }
+        }
+        else if (tfm.StartsWith("netcoreapp", StringComparison.Ordinal))
+        {
+            var ver = tfm.Substring("netcoreapp".Length);
+            result.Add("NETCOREAPP");
+            result.Add(Sym("NETCOREAPP", ver));
+            foreach (var v in NetCoreAppLegacyVersions)
+            {
+                result.Add(Sym("NETCOREAPP", v) + "_OR_GREATER");
+                if (v == ver) break;
+            }
+        }
+        else if (tfm.StartsWith("net", StringComparison.Ordinal) && tfm.Length > 3 && tfm.Contains('.'))
+        {
+            // net5.0+ — the continuation of netcoreapp.
+            var ver = tfm.Substring("net".Length);
+            result.Add("NET");
+            result.Add("NETCOREAPP");
+            result.Add(Sym("NET", ver));
+            // The whole legacy netcoreapp chain is implied.
+            foreach (var v in NetCoreAppLegacyVersions)
+                result.Add(Sym("NETCOREAPP", v) + "_OR_GREATER");
+            foreach (var v in NetVersions)
+            {
+                result.Add(Sym("NET", v) + "_OR_GREATER");
+                if (v == ver) break;
+            }
+        }
+        else if (tfm.StartsWith("net", StringComparison.Ordinal) && tfm.Length > 3)
+        {
+            // .NET Framework (net46, net472, net48, …): the digits are the version (net472 → 4.7.2).
+            var digits = tfm.Substring("net".Length);
+            result.Add("NETFRAMEWORK");
+            result.Add("NET" + digits);
+        }
+
+        return result;
     }
 
     private static LanguageVersion ParseLangVersion(string? v)

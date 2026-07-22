@@ -65,6 +65,32 @@ public sealed partial class Emitter
         return t is not null && t.TrimStart().StartsWith("0 /*", System.StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// True if this expression is a call to a method whose
+    /// <c>[System.Diagnostics.Conditional("SYM")]</c> conditions are ALL undefined in the current
+    /// compilation — the call (and the evaluation of its arguments) is removed entirely, matching
+    /// C#'s conditional-method semantics. A method with no <c>[Conditional]</c> is never removed;
+    /// if any one of its conditions is defined, the call stays.
+    /// </summary>
+    private bool IsRemovedConditionalCall(ExpressionSyntax expr)
+    {
+        if (expr is not InvocationExpressionSyntax inv) return false;
+        if (_model.GetSymbolInfo(inv).Symbol is not IMethodSymbol m) return false;
+
+        var conditions = m.OriginalDefinition.GetAttributes()
+            .Where(a => TransposeNaming.AttrIs(a, "System.Diagnostics.ConditionalAttribute"))
+            .Select(a => a.ConstructorArguments.Length > 0 ? a.ConstructorArguments[0].Value as string : null)
+            .Where(s => !string.IsNullOrEmpty(s))
+            .ToList();
+        if (conditions.Count == 0) return false;
+
+        var defined = inv.SyntaxTree.Options is CSharpParseOptions o
+            ? o.PreprocessorSymbolNames
+            : Enumerable.Empty<string>();
+        var definedSet = new System.Collections.Generic.HashSet<string>(defined, StringComparer.Ordinal);
+        return !conditions.Any(c => definedSet.Contains(c!));
+    }
+
     private void EmitExpression(ExpressionSyntax expr)
     {
         switch (expr)

@@ -29,7 +29,13 @@ public abstract class TranslatorTestBase
         bool includeCorePackages = false)
     {
         var translator = new RoslynTranslator();
-        var result = translator.Translate(csharpCode);
+        // Match a real `tps -c Debug` build: the CLI (ProjectResolver) implicitly defines DEBUG and
+        // TRACE, so #if DEBUG and [Conditional("DEBUG")] behave as they would for a dev build.
+        var result = translator.Translate(
+            new[] { ("App.cs", csharpCode) },
+            CompilationBuilder.DefaultAssemblyName,
+            extraReferencePaths: null,
+            preprocessorSymbols: new[] { "DEBUG", "TRACE" });
 
         if (!result.Success)
         {
@@ -66,7 +72,13 @@ public abstract class TranslatorTestBase
     protected Task RunTestExpectingError(string csharpCode, string expectedErrorSubstring, bool includeCorePackages = false)
     {
         var translator = new RoslynTranslator();
-        var result = translator.Translate(csharpCode);
+        // Match a real `tps -c Debug` build: the CLI (ProjectResolver) implicitly defines DEBUG and
+        // TRACE, so #if DEBUG and [Conditional("DEBUG")] behave as they would for a dev build.
+        var result = translator.Translate(
+            new[] { ("App.cs", csharpCode) },
+            CompilationBuilder.DefaultAssemblyName,
+            extraReferencePaths: null,
+            preprocessorSymbols: new[] { "DEBUG", "TRACE" });
 
         if (result.Success)
         {
