@@ -2389,7 +2389,12 @@ public sealed partial class Emitter
     private void EmitArrayCreation(ArrayCreationExpressionSyntax array)
     {
         var rankSpec = array.Type.RankSpecifiers.FirstOrDefault();
-        var elementType = _model.GetTypeInfo(array.Type.ElementType).Type;
+        // The array's OWN element type — from the semantic type, NOT array.Type.ElementType: for a
+        // jagged `int[][]` the syntax element type is the innermost `int` (with two rank specifiers),
+        // but the array being created is `int[]`-element, so tagging must use `int[]`. The semantic
+        // IArrayTypeSymbol.ElementType gives the correct one for jagged and multidim alike.
+        var elementType = ((_model.GetTypeInfo(array).Type ?? _model.GetTypeInfo(array).ConvertedType) as IArrayTypeSymbol)?.ElementType
+            ?? _model.GetTypeInfo(array.Type.ElementType).Type;
         var rank = rankSpec?.Sizes.Count ?? 1;
 
         // Multi-dimensional array (int[,] …) → System.Array.create(default, initValues, T, dims…),
@@ -2403,20 +2408,40 @@ public sealed partial class Emitter
 
         if (array.Initializer is not null)
         {
-            EmitInitializerArray(array.Initializer);
+            EmitTypedInitializerArray(array.Initializer, elementType);
             return;
         }
 
-        // new T[n] → TransposeR.array(n, default)
+        // new T[n] → a JS array tagged with its element type (System.Array.init), so the value's
+        // runtime type carries $elementType — matching h5 (System.Array.init(...)) and native
+        // reflection (arr.GetType().GetElementType()), and letting the JSON serializer recognise a
+        // byte[] for base64, an element-typed array for covariance, etc.
         if (rankSpec is { Sizes.Count: 1 } && rankSpec.Sizes[0] is not OmittedArraySizeExpressionSyntax)
         {
-            _w.Write("TransposeR.array(");
+            _w.Write("System.Array.init(TransposeR.array(");
             EmitExpression(rankSpec.Sizes[0]);
-            _w.Write($", {DefaultValueLiteral(elementType!)})");
+            _w.Write($", {DefaultValueLiteral(elementType!)}), {TypeRef(elementType!)})");
             return;
         }
 
-        _w.Write("[]");
+        _w.Write($"System.Array.init([], {TypeRef(elementType!)})");
+    }
+
+    /// <summary>Emits a single-dimensional array-creation initializer as a JS array tagged with its
+    /// element type — <c>System.Array.init([…], element)</c> — so the resulting value's runtime type
+    /// exposes <c>$elementType</c> (h5 tags every array literal the same way). The array returned is
+    /// the same JS array, so indexing/length/spread are unaffected.</summary>
+    private void EmitTypedInitializerArray(InitializerExpressionSyntax initializer, ITypeSymbol? elementType)
+    {
+        if (elementType is null)
+        {
+            EmitInitializerArray(initializer);
+            return;
+        }
+
+        _w.Write("System.Array.init(");
+        EmitInitializerArray(initializer);
+        _w.Write($", {TypeRef(elementType)})");
     }
 
     /// <summary>Emits a multi-dimensional array via System.Array.create(defaultValue, initValues,
@@ -2514,6 +2539,16 @@ public sealed partial class Emitter
     /// </summary>
     private void EmitCollectionOf(ITypeSymbol? target, Action emitArrayLiteral)
     {
+        // A concrete array target tags the literal with its element type (System.Array.init) so the
+        // value's runtime type carries $elementType — same as a `new T[]{…}` creation.
+        if (target is IArrayTypeSymbol { Rank: 1 } arr)
+        {
+            _w.Write("System.Array.init(");
+            emitArrayLiteral();
+            _w.Write($", {TypeRef(arr.ElementType)})");
+            return;
+        }
+
         if (target is IArrayTypeSymbol
             || target is { TypeKind: TypeKind.Interface }
             || target?.OriginalDefinition.ToDisplayString() is "System.Span<T>" or "System.ReadOnlySpan<T>"

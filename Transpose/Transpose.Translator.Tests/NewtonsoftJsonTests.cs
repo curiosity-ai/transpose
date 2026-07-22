@@ -193,6 +193,56 @@ public class App
         Assert.AreEqual("IsArray: True\nLength: 3\n[0].Name: Alpha\n[2].Value: 3", output);
     }
 
+    /// <summary>
+    /// A byte[] serializes to a base64 string (not a JSON number array) and round-trips — this needs
+    /// the array VALUE to carry its element type so the serializer recognises System.Byte. Regression
+    /// for array literals emitting as bare JS arrays with no element type.
+    /// </summary>
+    [TestMethod]
+    public async Task ByteArraySerializesAsBase64()
+    {
+        var code = @"
+using System;
+using Newtonsoft.Json;
+public class M { public byte[] Data { get; set; } }
+public class App
+{
+    public static void Main()
+    {
+        var j = JsonConvert.SerializeObject(new M { Data = new byte[]{ 1, 2, 3, 255 } });
+        Console.WriteLine(j);
+        var b = JsonConvert.DeserializeObject<M>(j);
+        Console.WriteLine(b.Data.Length + ""|"" + b.Data[3]);
+        // top-level byte[] too
+        Console.WriteLine(JsonConvert.SerializeObject(new byte[]{ 0, 16, 255 }));
+    }
+}";
+        var output = await NewtonsoftJsonRunner.RunAsync(code);
+        Assert.AreEqual("{\"Data\":\"AQID/w==\"}\n4|255\n\"ABD/\"", output);
+    }
+
+    /// <summary>An array of complex objects round-trips (element type preserved on the value).</summary>
+    [TestMethod]
+    public async Task ArrayOfObjectsRoundTrips()
+    {
+        var code = @"
+using System;
+using Newtonsoft.Json;
+public class Item { public int V { get; set; } }
+public class App
+{
+    public static void Main()
+    {
+        var a = new Item[]{ new Item{V=1}, new Item{V=2}, new Item{V=3} };
+        var j = JsonConvert.SerializeObject(a);
+        var b = JsonConvert.DeserializeObject<Item[]>(j);
+        Console.WriteLine((b is Item[]) + ""|"" + b.Length + ""|"" + b[0].V + ""|"" + b[2].V);
+    }
+}";
+        var output = await NewtonsoftJsonRunner.RunAsync(code);
+        Assert.AreEqual("True|3|1|3", output);
+    }
+
     /// <summary>Plain (no settings) serialize/deserialize of a POCO works.</summary>
     [TestMethod]
     public async Task SimpleObjectRoundTrips()
