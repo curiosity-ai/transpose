@@ -202,10 +202,7 @@ public sealed partial class Emitter
             foreach (var sub in recursive.PropertyPatternClause.Subpatterns)
             {
                 _w.Write(" && ");
-                var memberName = sub.NameColon?.Name.Identifier.Text
-                    ?? sub.ExpressionColon?.Expression.ToString()
-                    ?? "";
-                var memberSubject = $"{subject}.{NameMangler.JsIdentifier(memberName)}";
+                var memberSubject = $"{subject}.{PropertyPatternMemberJsName(sub)}";
                 EmitPatternTest(memberSubject, sub.Pattern);
             }
         }
@@ -228,6 +225,28 @@ public sealed partial class Emitter
 
         _ = wroteCondition;
         _w.Write(")");
+    }
+
+    /// <summary>
+    /// Resolves the emitted JS member name for a property-pattern subpattern (<c>{ Member: pat }</c>).
+    /// Must go through the semantic model + <see cref="TransposeNaming.MemberJsName"/> so members with a
+    /// JS-name override ([Name]/[Convention], e.g. <c>string.Length</c> → <c>length</c>) match the name
+    /// used everywhere else — a raw identifier mangle would emit <c>.Length</c> and never match.
+    /// </summary>
+    private string PropertyPatternMemberJsName(SubpatternSyntax sub)
+    {
+        var nameExpr = sub.NameColon?.Name ?? sub.ExpressionColon?.Expression;
+        if (nameExpr is not null)
+        {
+            var symbol = _model.GetSymbolInfo(nameExpr).Symbol;
+            if (symbol is IPropertySymbol or IFieldSymbol)
+                return TransposeNaming.MemberJsName(symbol);
+        }
+
+        var fallback = sub.NameColon?.Name.Identifier.Text
+            ?? sub.ExpressionColon?.Expression.ToString()
+            ?? "";
+        return NameMangler.JsIdentifier(fallback);
     }
 
     private void EmitTypeTest(string subject, ITypeSymbol? type)

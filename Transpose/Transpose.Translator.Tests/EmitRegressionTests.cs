@@ -1147,5 +1147,53 @@ public class Program { public static void Main() { } }
             Assert.IsTrue(result.Javascript!.Contains("new TagAttribute.$ctor1(\"x\")"),
                 "attribute must be constructed via the applied ctor overload\n" + result.Javascript);
         }
+
+        // ---- property pattern resolves the JS member name ----------------------
+
+        [TestMethod]
+        public async Task PropertyPatternUsesResolvedJsMemberName()
+        {
+            // string.Length has a JS-name override ([Convention(CamelCase)] -> `length`). A property
+            // pattern must emit `.length`, not the raw `.Length` (which is undefined on a JS string and
+            // would make `undefined > 3` always false, silently skipping the arm).
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+public class Program
+{
+    static string F(object o) => o switch {
+        string { Length: > 3 } s => ""long:"" + s,
+        string s => ""short:"" + s,
+        Dictionary<string,int> { Count: > 0 } d => ""dict:"" + d.Count,
+        _ => ""other""
+    };
+    public static void Main()
+    {
+        Console.WriteLine(F(""hello""));
+        Console.WriteLine(F(""hi""));
+        Console.WriteLine(F(new Dictionary<string,int> { [""a""] = 1 }));
+        Console.WriteLine(F(42));
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [TestMethod]
+        public void PropertyPatternEmitsCamelCasedMember()
+        {
+            var code = @"
+using System;
+public class Program
+{
+    static bool F(object o) => o is string { Length: > 3 };
+    public static void Main() { }
+}";
+            var result = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            Assert.IsTrue(result.Javascript!.Contains(".length > 3"),
+                "property pattern on string.Length must emit the resolved JS name `.length`\n" + result.Javascript);
+            Assert.IsFalse(result.Javascript!.Contains(".Length > 3"),
+                "property pattern must not emit the raw C# member name `.Length`\n" + result.Javascript);
+        }
     }
 }
