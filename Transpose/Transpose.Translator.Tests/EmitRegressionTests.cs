@@ -127,6 +127,83 @@ public class Program
 }");
         }
 
+        // ---- compound assignment to a collection indexer ----------------------
+
+        [TestMethod]
+        public async Task CompoundAssignmentToDictionaryIndexerRunsAsync()
+        {
+            // `d[k] += v` on an int dictionary must route through setItem — emitting the getItem read as
+            // the write target (`d.getItem(k) = …`) is an "assignment to rvalue" (invalid JS).
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+public class Program
+{
+    public static void Main()
+    {
+        var d = new Dictionary<string,int>();
+        d[""a""] = 1;
+        d[""a""] += 5;
+        d[""a""] *= 3;
+        d[""a""] -= 2;
+        Console.WriteLine(d[""a""]);            // (1+5)*3-2 = 16
+
+        var s = new Dictionary<string,string>();
+        s[""x""] = ""a"";
+        s[""x""] += ""b"";
+        Console.WriteLine(s[""x""]);            // ab
+
+        var list = new List<int> { 10, 20 };
+        list[0] += 5;
+        Console.WriteLine(list[0]);            // 15
+    }
+}");
+        }
+
+        [TestMethod]
+        public void CompoundAssignmentToDictionaryIndexerEmitsSetItem()
+        {
+            var code = @"
+using System;
+using System.Collections.Generic;
+public class Program
+{
+    public static void Main()
+    {
+        var d = new Dictionary<string,int>();
+        d[""a""] += 5;
+    }
+}";
+            var result = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            Assert.IsTrue(result.Javascript!.Contains(".setItem(\"a\", Transpose.Int.clip32("),
+                "d[k] += v should store through setItem with the clipped new value\n" + result.Javascript);
+            Assert.IsFalse(result.Javascript!.Contains(".getItem(\"a\") ="),
+                "the write target must never be an indexer getItem read (assignment to rvalue)\n" + result.Javascript);
+        }
+
+        [TestMethod]
+        public async Task CompoundAssignmentToTemplateSetterPropertyRunsAsync()
+        {
+            // `sb.Length -= 2` targets a [Template]-setter property (getLength/setLength); the write must
+            // go through setLength, not emit `sb.getLength() = …` (assignment to rvalue).
+            await RunTest(@"
+using System;
+using System.Text;
+public class Program
+{
+    public static void Main()
+    {
+        var sb = new StringBuilder();
+        sb.Append(""hello world"");
+        sb.Length -= 6;
+        Console.WriteLine(sb.ToString());   // hello
+        sb.Length = 3;
+        Console.WriteLine(sb.ToString());   // hel
+    }
+}");
+        }
+
         [TestMethod]
         public void IteratorLocalFunctionEmitsGenerator()
         {

@@ -98,7 +98,10 @@ internal static class OutputBuilder
         void RoutePackageJs(IReadOnlyList<EmbeddedJs> jsFiles)
         {
             var present = jsFiles.Select(f => f.FileName).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var byName = jsFiles.ToDictionary(f => f.FileName, f => f, StringComparer.OrdinalIgnoreCase);
+            // Tolerate a duplicate file name in an older/hand-authored manifest (last wins) instead of
+            // throwing — the embed side dedupes, but a package built before that fix could still carry one.
+            var byName = new Dictionary<string, EmbeddedJs>(StringComparer.OrdinalIgnoreCase);
+            foreach (var f in jsFiles) byName[f.FileName] = f;
 
             foreach (var f in jsFiles)
             {
@@ -285,7 +288,20 @@ internal static class OutputBuilder
         }
 
         defaults.AddRange(items);
-        return defaults;
+
+        // Dedupe by output name: a resource manifest is keyed by name, so two groups that resolve to
+        // the same file (e.g. the base tps.json embeds Curiosity.FrontEnd.meta.js from .meta.js while
+        // the tps.Release.json overlay re-declares it from .meta.min.js) must collapse to one. The
+        // overlay is concatenated after the base, so last-wins gives it override precedence; we keep
+        // each name at its first position to preserve load order.
+        var seen = new Dictionary<string, int>(System.StringComparer.OrdinalIgnoreCase);
+        var deduped = new List<EmbeddedItem>(defaults.Count);
+        foreach (var item in defaults)
+        {
+            if (seen.TryGetValue(item.Name, out var at)) deduped[at] = item;   // override in place
+            else { seen[item.Name] = deduped.Count; deduped.Add(item); }
+        }
+        return deduped;
     }
 
     /// <summary>A JavaScript resource loaded from a package (a runtime bundle or embedded library
