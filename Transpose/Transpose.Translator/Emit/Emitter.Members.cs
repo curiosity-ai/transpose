@@ -21,6 +21,10 @@ public sealed partial class Emitter
         }).Where(x => x is not null).Select(x => x!.Value).ToList();
 
         var staticInitAssignments = StaticInitializers(type).ToList();
+        // Static non-primitive-struct fields/auto-props with no initializer default to the zeroed
+        // struct (like the instance path), not the `null` their slot holds — otherwise a member
+        // access on an uninitialized static DateTime/Guid/… throws a JS TypeError.
+        var staticStructDefaults = StaticStructDefaults(type).ToList();
         var staticCtor = type.StaticConstructors.FirstOrDefault(c => c.DeclaringSyntaxReferences.Length > 0);
         var staticMethods = type.GetMembers().OfType<IMethodSymbol>()
             .Where(m => m.IsStatic && !m.IsImplicitlyDeclared && IsEmittableMethod(m) && !IsEntryPoint(m))
@@ -84,7 +88,7 @@ public sealed partial class Emitter
             });
         }
 
-        if (staticInitAssignments.Count > 0 || staticCtor is not null)
+        if (staticInitAssignments.Count > 0 || staticStructDefaults.Count > 0 || staticCtor is not null)
         {
             sections.Add(() =>
             {
@@ -101,6 +105,10 @@ public sealed partial class Emitter
                         // reads. A non-generic type's static init also runs with `this` = the type,
                         // so `this` is correct for both.
                         var staticRef = EffectiveTypeParameters(type).Count > 0 ? "this" : fullName;
+                        // Zero-init struct statics first (order-independent), before the explicit
+                        // initializers which run in declaration order and may reference them.
+                        foreach (var (target, slotType) in staticStructDefaults)
+                            _w.WriteLine($"{staticRef}.{target} = Transpose.getDefaultValue({TypeRef(slotType)});");
                         foreach (var (target, init) in staticInitAssignments)
                         {
                             _w.Write($"{staticRef}.{target} = ");
@@ -155,6 +163,22 @@ public sealed partial class Emitter
                 yield return (TransposeNaming.MemberJsName(f), fi);
             else if (m is IPropertySymbol p && IsAutoProperty(p) && AutoPropertyInitializerSyntax(p) is { } pi)
                 yield return (TransposeNaming.MemberJsName(p), pi);
+        }
+    }
+
+    /// <summary>Static non-primitive-struct fields/auto-props with no explicit initializer — their
+    /// slot holds <c>null</c>, so the zeroed struct default is assigned in the static <c>init</c>
+    /// (mirrors the instance-field path). Excludes primitives, enums and Nullable&lt;T&gt;.</summary>
+    private IEnumerable<(string target, ITypeSymbol type)> StaticStructDefaults(INamedTypeSymbol type)
+    {
+        foreach (var m in type.GetMembers().Where(m => m.IsStatic))
+        {
+            if (m is IFieldSymbol f && !f.IsConst && f.AssociatedSymbol is null
+                && FieldInitializerSyntax(f) is null && NeedsStructDefaultInit(f.Type))
+                yield return (TransposeNaming.MemberJsName(f), f.Type);
+            else if (m is IPropertySymbol p && IsAutoProperty(p)
+                && AutoPropertyInitializerSyntax(p) is null && NeedsStructDefaultInit(p.Type))
+                yield return (TransposeNaming.MemberJsName(p), p.Type);
         }
     }
 

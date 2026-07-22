@@ -774,5 +774,378 @@ public class Program
     }
 }", waitForOutput: "<<DONE>>");
         }
+
+        // ---- attribute constructed through the correct ctor overload -----------
+        // Reflection metadata (`at:[...]`) constructed every attribute with a bare `new T(args)`,
+        // which invokes the PRIMARY ctor ("ctor") and silently drops the arguments when the attribute
+        // was applied through a non-primary overload ($ctorN). This broke, e.g., [JsonProperty("x")]
+        // (PropertyName lost -> wrong JSON wire names). h5 emits `new T.$ctorN(args)`.
+
+        [TestMethod]
+        public async Task AttributeNonPrimaryCtorArgsPreservedRunsAsync()
+        {
+            await RunTest(@"
+using System;
+using System.Reflection;
+[AttributeUsage(AttributeTargets.Class)]
+public class TagAttribute : Attribute
+{
+    public string Name { get; }
+    public int Order { get; }
+    public TagAttribute() { Name = ""default""; }
+    public TagAttribute(string name) { Name = name; }
+    public TagAttribute(string name, int order) { Name = name; Order = order; }
+}
+[Tag(""hello"", 7)]
+public class Widget { }
+public class Program
+{
+    public static void Main()
+    {
+        var a = (TagAttribute)typeof(Widget).GetCustomAttributes(typeof(TagAttribute), false)[0];
+        Console.WriteLine(a.Name + ""/"" + a.Order);   // hello/7 (not default/0)
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        // ---- operators on long / ulong / decimal, bool.ToString, interpolation alignment ------
+
+        [TestMethod]
+        public async Task BoolToStringUsesDotNetCasingRunsAsync()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        bool t = true;
+        Console.WriteLine(t.ToString());     // True
+        Console.WriteLine(false.ToString()); // False
+        object o = t;
+        Console.WriteLine(o.ToString());     // True
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [TestMethod]
+        public async Task IntegerOnLeftOfDecimalOperatorRunsAsync()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        int i = 5; decimal m = 2m; short sh = 3; long L = 5L;
+        Console.WriteLine(i + m);   // 7
+        Console.WriteLine(i / m);   // 2.5
+        Console.WriteLine(i - m);   // 3
+        Console.WriteLine(i % m);   // 1
+        Console.WriteLine(i < m);   // False
+        Console.WriteLine(sh + m);  // 5
+        Console.WriteLine(L / m);   // 2.5
+        Console.WriteLine(m + i);   // 7
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [TestMethod]
+        public async Task CompoundAssignLongUlongDecimalRunsAsync()
+        {
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+public class Program
+{
+    public static void Main()
+    {
+        long p = 10L; p += 3L;  Console.WriteLine(p);   // 13
+        long o = 10L; o /= 4L;  Console.WriteLine(o);   // 2
+        long q = 1L;  q <<= 40; Console.WriteLine(q);   // 1099511627776
+        ulong u = 10UL; u += 3UL; Console.WriteLine(u); // 13
+        decimal d = 10m; d += 3m; Console.WriteLine(d); // 13
+        decimal e = 10m; e %= 3m; Console.WriteLine(e); // 1
+        var dict = new Dictionary<string,long>{{""k"",10L}}; dict[""k""] += 5L; Console.WriteLine(dict[""k""]); // 15
+        var lst = new List<decimal>{10m}; lst[0] += 3m; Console.WriteLine(lst[0]); // 13
+        long[] arr = { 100L }; arr[0] *= 3L; Console.WriteLine(arr[0]); // 300
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [TestMethod]
+        public async Task IncrementDecrementLongDecimalRunsAsync()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        long b = 9007199254740993L; b++; Console.WriteLine(b);   // 9007199254740994
+        decimal d = 0.1m; d++; Console.WriteLine(d);             // 1.1
+        long x = 10L; x++; long y = x * 3L; Console.WriteLine(y);// 33
+        long a = 5L; long bb = a++; Console.WriteLine(a + "" "" + bb); // 6 5
+        decimal dc = 1m; decimal ec = dc--; Console.WriteLine(dc + "" "" + ec); // 0 1
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [TestMethod]
+        public async Task InterpolationAlignmentRunsAsync()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        int x = 42;
+        Console.WriteLine($""[{x,10}]"");   // [        42]
+        Console.WriteLine($""[{x,-10}]"");  // [42        ]
+        Console.WriteLine($""[{x,5:N1}]"");// [ 42.0]
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        // ---- default value of static struct fields / generic-method type params ----
+
+        [TestMethod]
+        public async Task StaticStructFieldDefaultsToZeroedStructRunsAsync()
+        {
+            await RunTest(@"
+using System;
+public struct Pt { public int X; public int Y; }
+public class St
+{
+    public static DateTime When;
+    public static Guid Id;
+    public static Pt P;
+    public static (int, string) Tup { get; set; }
+}
+public class Program
+{
+    public static void Main()
+    {
+        Console.WriteLine(St.When == DateTime.MinValue); // True
+        Console.WriteLine(St.When.Ticks);                // 0 (no crash)
+        Console.WriteLine(St.Id == Guid.Empty);          // True
+        Console.WriteLine(St.P.X + "","" + St.P.Y);        // 0,0
+        Console.WriteLine(St.Tup.Item1 + "","" + (St.Tup.Item2 ?? ""null"")); // 0,null
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [TestMethod]
+        public async Task GenericMethodDefaultOfTypeParamRunsAsync()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    static T Def<T>() { return default(T); }
+    public static void Main()
+    {
+        Console.WriteLine(""int="" + Def<int>());           // 0
+        Console.WriteLine(""bool="" + Def<bool>());          // False
+        Console.WriteLine(""double="" + Def<double>());      // 0
+        Console.WriteLine(""dtTicks="" + Def<DateTime>().Ticks); // 0
+        Console.WriteLine(""str="" + (Def<string>() ?? ""null"")); // null
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        // ---- for-loop variable is a single shared binding (closure captures final value) ------
+
+        [TestMethod]
+        public async Task ForLoopVariableCapturedByClosureRunsAsync()
+        {
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+public class Program
+{
+    public static void Main()
+    {
+        var acts = new List<Func<int>>();
+        for (int i = 0; i < 3; i++) acts.Add(() => i);
+        var sb = new System.Text.StringBuilder();
+        foreach (var a in acts) sb.Append(a());   // 333 (shared for-loop var), NOT 012
+        Console.WriteLine(sb.ToString());
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        // ---- foreach disposes the enumerator on early exit (iterator finally runs) ------------
+
+        [TestMethod]
+        public async Task ForeachRunsIteratorFinallyOnEarlyExitRunsAsync()
+        {
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+public class Program
+{
+    static IEnumerable<int> Gen()
+    {
+        try { yield return 1; yield return 2; yield return 3; }
+        finally { Console.WriteLine(""FINALLY""); }
+    }
+    public static void Main()
+    {
+        foreach (var x in Gen()) { if (x == 2) break; Console.WriteLine(""got "" + x); }
+        Console.WriteLine(""after"");
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        // ---- params array passing: object[] pass-through and optional-before-params -----------
+
+        [TestMethod]
+        public async Task ParamsArrayPassThroughAndOptionalRunsAsync()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    static string JO(string sep, params object[] items) => items.Length + "":"" + string.Join(sep, items);
+    static string M(string a, int b = 7, params object[] rest) => a + ""/"" + b + ""/["" + string.Join("","", rest) + ""]"";
+    public static void Main()
+    {
+        var oarr = new object[] { ""x"", ""y"" };
+        Console.WriteLine(JO("","", oarr));         // 2:x,y  (array passed through, not double-wrapped)
+        Console.WriteLine(JO("","", ""a"", ""b"", ""c""));  // 3:a,b,c
+        Console.WriteLine(JO("",""));                // 0:
+        Console.WriteLine(M(""x""));                 // x/7/[]  (optional b defaults, params empty)
+        Console.WriteLine(M(""x"", 2));              // x/2/[]
+        Console.WriteLine(M(""x"", 2, ""p"", ""q""));  // x/2/[p,q]
+        Console.WriteLine(M(""x"", rest: oarr));      // x/7/[x,y]
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [TestMethod]
+        public async Task ForeachOverNullThrowsNullReferenceRunsAsync()
+        {
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+public class Program
+{
+    public static void Main()
+    {
+        IEnumerable<int> seq = null;
+        try { foreach (var x in seq) Console.WriteLine(x); }
+        catch (NullReferenceException) { Console.WriteLine(""caught NRE""); }
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        // ---- ValueTuple literals are real ValueTuple instances --------------------------------
+
+        [TestMethod]
+        public async Task ValueTupleInstanceBehaviourRunsAsync()
+        {
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+public class Program
+{
+    public static void Main()
+    {
+        var t = (1, ""x"");
+        Console.WriteLine(t.ToString());                 // (1, x)
+        Console.WriteLine(t.Item1 + ""/"" + t.Item2);       // 1/x
+        var (a, b) = t; Console.WriteLine(a + "","" + b);   // 1,x
+        var n = (id: 5, name: ""n""); Console.WriteLine(n.id + "":"" + n.name); // 5:n
+        Console.WriteLine((1, ""x"").Equals((1, ""x"")));     // True
+        Console.WriteLine((1, ""x"") == (1, ""y""));          // False
+        Console.WriteLine((1, 2, 3).ToString());          // (1, 2, 3)
+        var set = new HashSet<(int, int)> { (1, 2), (1, 2), (3, 4) };
+        Console.WriteLine(set.Count);                      // 2
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        // ---- Activator.CreateInstance with an explicit object[] of arguments ------------------
+
+        [TestMethod]
+        public async Task ActivatorCreateInstanceWithObjectArrayRunsAsync()
+        {
+            await RunTest(@"
+using System;
+public class Multi
+{
+    public string V;
+    public Multi(int a) { V = ""one:"" + a; }
+    public Multi(int a, int b, int c) { V = ""three:"" + (a + b + c); }
+}
+public class Program
+{
+    public static void Main()
+    {
+        Console.WriteLine(((Multi)Activator.CreateInstance(typeof(Multi), new object[] { 1, 2, 3 })).V); // three:6
+        Console.WriteLine(((Multi)Activator.CreateInstance(typeof(Multi), 1, 2, 3)).V);                   // three:6
+        Console.WriteLine(((Multi)Activator.CreateInstance(typeof(Multi), 9)).V);                         // one:9
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        // ---- reordered named arguments evaluate in source order -------------------------------
+
+        [TestMethod]
+        public async Task ReorderedNamedArgsEvaluateInSourceOrderRunsAsync()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    static int Log(string tag) { Console.WriteLine(""eval "" + tag); return tag.Length; }
+    static string M(int a, int b, int c = 99) => ""a="" + a + "" b="" + b + "" c="" + c;
+    public static void Main()
+    {
+        Console.WriteLine(M(b: Log(""BB""), a: Log(""AAA"")));            // eval BB; eval AAA; a=3 b=2 c=99
+        Console.WriteLine(M(a: Log(""A""), b: Log(""BB"")));              // eval A; eval BB; a=1 b=2 c=99
+        Console.WriteLine(M(c: Log(""CCCC""), b: Log(""BB""), a: Log(""A""))); // eval CCCC; BB; A; a=1 b=2 c=4
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [TestMethod]
+        public void AttributeNonPrimaryCtorEmitsCtorOverloadName()
+        {
+            var code = @"
+using System;
+[AttributeUsage(AttributeTargets.Class)]
+public class TagAttribute : Attribute
+{
+    public TagAttribute() { }
+    public TagAttribute(string name) { }
+}
+[Tag(""x"")] public class Widget { }
+public class Program { public static void Main() { } }
+";
+            var result = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            // The (string) overload is the non-primary ctor ($ctor1); the attribute instance must be
+            // constructed through it, not the bare `new TagAttribute("x")` (which hits the primary ctor).
+            Assert.IsTrue(result.Javascript!.Contains("new TagAttribute.$ctor1(\"x\")"),
+                "attribute must be constructed via the applied ctor overload\n" + result.Javascript);
+        }
     }
 }

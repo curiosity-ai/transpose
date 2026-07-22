@@ -540,11 +540,14 @@ public sealed partial class Emitter
         // here, so fall through to null (that nested type is emitted non-generically).
         if (type is ITypeParameterSymbol tp)
         {
-            // In scope when it is one of the effective type parameters of the type being emitted
-            // (own or from an enclosing generic type) — those are the define's JS function
-            // parameters. A method type parameter (not threaded here) falls back to null.
+            // A method type parameter is threaded as a leading JS parameter of the (generic) method
+            // (`Def: function (T) {…}`, called `Foo.Def(System.Int32)`), so getDefaultValue(T) is in
+            // scope wherever default(T) appears in the body — emit it so `default(int)` is 0, not null.
+            if (tp.TypeParameterKind == TypeParameterKind.Method)
+                return $"Transpose.getDefaultValue({TypeRef(type)})";
+            // A type's own (or enclosing generic type's) parameter is a define JS function parameter
+            // and thus in scope; a parameter from a different scope falls back to null.
             var inScope = _currentEmitType is not null
-                && tp.TypeParameterKind == TypeParameterKind.Type
                 && EffectiveTypeParameters(_currentEmitType).Any(p => SymbolEqualityComparer.Default.Equals(p, tp));
             return inScope ? $"Transpose.getDefaultValue({TypeRef(type)})" : "null";
         }

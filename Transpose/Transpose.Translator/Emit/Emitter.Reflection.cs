@@ -528,7 +528,15 @@ public sealed partial class Emitter
     private string EmitAttributeInstance(AttributeData attr)
     {
         var ctorArgs = string.Join(", ", attr.ConstructorArguments.Select(TypedConstantJs));
-        var ctor = $"new {TypeRef(attr.AttributeClass!)}({ctorArgs})";
+        // Construct through the SAME ctor overload the attribute was applied with. A non-primary
+        // overload is a distinct JS slot ($ctorN); a bare `new T(args)` would invoke the primary
+        // ("ctor") and silently drop the arguments (e.g. [JsonProperty("x")] → PropertyName lost).
+        // Matches h5, which emits `new T.$ctorN(args)`.
+        var typeRef = TypeRef(attr.AttributeClass!);
+        var ctorName = attr.AttributeConstructor is { } ac ? ExternalAwareCtorName(ac) : "ctor";
+        var ctor = ctorName == "ctor"
+            ? $"new {typeRef}({ctorArgs})"
+            : $"new {typeRef}.{ctorName}({ctorArgs})";
         if (attr.NamedArguments.Length == 0) return ctor;
 
         var named = string.Join(", ", attr.NamedArguments.Select(

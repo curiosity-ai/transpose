@@ -379,7 +379,10 @@ public sealed partial class Emitter
         _w.Write("for (");
         if (forStmt.Declaration is not null)
         {
-            _w.Write("let ");
+            // `var`, not `let`: a C# for-loop variable is a SINGLE binding shared across iterations,
+            // so a closure capturing it sees the final value. ES6 `let` in a for-header creates a
+            // fresh per-iteration binding (closures would capture distinct values) — wrong for C#.
+            _w.Write("var ");
             var first = true;
             foreach (var v in forStmt.Declaration.Variables)
             {
@@ -421,16 +424,26 @@ public sealed partial class Emitter
     {
         var iterVar = NameMangler.JsIdentifier(forEach.Identifier.Text);
         var enumVar = EmitEnumeratorInit(forEach, forEach.Expression);
-        _w.Write($"while ({enumVar}.moveNext()) ");
-        _breakTargets.Push(null);
-        _loopDepth++;
+        // foreach disposes the enumerator when the loop ends — including on break/return/throw. Wrap
+        // the iteration in try/finally so an iterator's own `finally` (and any IDisposable cleanup)
+        // runs on early exit, not only on full enumeration. TransposeR.dispose no-ops if not disposable.
+        _w.Write("try ");
         _w.Block(() =>
         {
-            _w.WriteLine($"let {iterVar} = {enumVar}.current;");
-            EmitForEachBody(forEach.Statement);
+            _w.Write($"while ({enumVar}.moveNext()) ");
+            _breakTargets.Push(null);
+            _loopDepth++;
+            _w.Block(() =>
+            {
+                _w.WriteLine($"let {iterVar} = {enumVar}.current;");
+                EmitForEachBody(forEach.Statement);
+            });
+            _loopDepth--;
+            _breakTargets.Pop();
+            _w.WriteLine();
         });
-        _loopDepth--;
-        _breakTargets.Pop();
+        _w.Write("finally ");
+        _w.Block(() => _w.WriteLine($"TransposeR.dispose({enumVar});"));
         _w.WriteLine();
     }
 
@@ -440,18 +453,25 @@ public sealed partial class Emitter
         var enumVar = EmitEnumeratorInit(forEach, forEach.Expression);
         var elementIsTuple = _model.GetForEachStatementInfo(forEach).ElementType is { IsTupleType: true };
         var targets = CollectDeconstructionTargets(forEach.Variable).ToList();
-        _w.Write($"while ({enumVar}.moveNext()) ");
-        _breakTargets.Push(null);
-        _loopDepth++;
+        _w.Write("try ");
         _w.Block(() =>
         {
-            var cur = enumVar + "c";
-            _w.WriteLine($"let {cur} = {enumVar}.current;");
-            EmitDeconstructionBindings(targets, cur, elementIsTuple);
-            EmitForEachBody(forEach.Statement);
+            _w.Write($"while ({enumVar}.moveNext()) ");
+            _breakTargets.Push(null);
+            _loopDepth++;
+            _w.Block(() =>
+            {
+                var cur = enumVar + "c";
+                _w.WriteLine($"let {cur} = {enumVar}.current;");
+                EmitDeconstructionBindings(targets, cur, elementIsTuple);
+                EmitForEachBody(forEach.Statement);
+            });
+            _loopDepth--;
+            _breakTargets.Pop();
+            _w.WriteLine();
         });
-        _loopDepth--;
-        _breakTargets.Pop();
+        _w.Write("finally ");
+        _w.Block(() => _w.WriteLine($"TransposeR.dispose({enumVar});"));
         _w.WriteLine();
     }
 

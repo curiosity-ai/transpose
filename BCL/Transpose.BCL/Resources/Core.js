@@ -22,6 +22,11 @@
                 throw new System.ArgumentNullException();
             }
 
+            // A JS boolean's native toString() is "true"/"false"; .NET's is "True"/"False".
+            if (typeof instance === "boolean") {
+                return System.Boolean.toString(instance);
+            }
+
             var guardItem = Transpose.$toStringGuard[Transpose.$toStringGuard.length - 1];
 
             if (instance.toString === Object.prototype.toString || guardItem && guardItem === instance) {

@@ -123,6 +123,18 @@ public sealed partial class Emitter
             return;
         }
 
+        // bool.ToString() → "True"/"False" (.NET casing). A bool is a JS primitive whose native
+        // .toString() gives "true"/"false"; route through System.Boolean.toString for parity.
+        if (symbol is { Name: "ToString", Parameters.Length: 0 }
+            && invocation.Expression is MemberAccessExpressionSyntax { Expression: { } boolRecv }
+            && _model.GetTypeInfo(boolRecv).Type?.SpecialType == SpecialType.System_Boolean)
+        {
+            _w.Write("System.Boolean.toString(");
+            EmitExpression(boolRecv);
+            _w.Write(")");
+            return;
+        }
+
         // Transpose.Script.Write(code, args) — inject raw JavaScript, substituting {0},{1}… with args.
         if (symbol is { Name: "Write" } && symbol.ContainingType?.ToDisplayString() == "Transpose.Script"
             && invocation.ArgumentList.Arguments.Count >= 1
@@ -256,11 +268,21 @@ public sealed partial class Emitter
             var p = method.Parameters[pi];
             if (p.IsParams)
             {
-                // A params argument resolves as the SPREAD (comma-joined) form by default —
-                // {args} in "System.String.format({format}, {args})" → format(fmt, a, b). A
-                // template that needs the array wraps it explicitly with the :array modifier
-                // ({values:array} → [a, b]); the array wrapping is applied in SubstituteTemplate.
-                byName[p.Name] = string.Join(", ", byPos.Skip(pi));
+                // A single trailing argument that IS the params array (e.g. an object[] passed to
+                // `params object[]`) is the array itself, not one element: emit it JS-spread so
+                // {args:array} yields the array ([...arr]) instead of double-wrapping it into [[...]]
+                // (which made Activator.CreateInstance(type, new object[]{…}) pick the wrong ctor),
+                // and a bare {args} still spreads to individual call arguments.
+                var trailingCount = byPos.Count - pi;
+                var soleArgType = trailingCount == 1 && pi < args.Count
+                    ? _model.GetTypeInfo(args[pi].Expression).Type : null;
+                byName[p.Name] = trailingCount == 1 && soleArgType is not null
+                    && _compilation.ClassifyConversion(soleArgType, p.Type).Exists
+                        ? "..." + byPos[pi]
+                        // Otherwise resolve as the SPREAD (comma-joined) form — {args} in
+                        // "System.String.format({format}, {args})" → format(fmt, a, b); a template that
+                        // needs an array uses the :array modifier ({values:array} → [a, b]).
+                        : string.Join(", ", byPos.Skip(pi));
             }
             else if (pi < byPos.Count)
             {
@@ -571,12 +593,14 @@ public sealed partial class Emitter
         if (method is not null && args.Any(a => a.NameColon is not null))
         {
             var ordered = new ExpressionSyntax?[method.Parameters.Length];
+            var paramIndexOf = new int[args.Count]; // source-arg k → the parameter index it binds to
             for (var i = 0; i < args.Count; i++)
             {
                 var arg = args[i];
                 if (arg.NameColon is not null)
                 {
                     var idx = ParameterIndex(method, arg.NameColon.Name.Identifier.Text);
+                    paramIndexOf[i] = idx;
                     if (idx >= 0) ordered[idx] = arg.Expression;
                 }
                 else if (i < ordered.Length)
@@ -588,7 +612,9 @@ public sealed partial class Emitter
                     // (e.g. Do(type, accept, retriever: fn, flag)) already claimed slot 2, and the
                     // trailing positional `flag` must land in slot 3, not overwrite slot 2.
                     ordered[i] = arg.Expression;
+                    paramIndexOf[i] = i;
                 }
+                else paramIndexOf[i] = -1;
             }
 
             // Positional JS calls can't skip a hole, so fill any omitted argument that
@@ -596,6 +622,41 @@ public sealed partial class Emitter
             // omitted optionals are left off (the callee supplies its own defaults).
             var lastProvided = -1;
             for (var i = 0; i < ordered.Length; i++) if (ordered[i] is not null) lastProvided = i;
+
+            // "Effectively reordered": the provided arguments' parameter indices are not ascending in
+            // SOURCE order, so emitting them in parameter order would change the order side-effecting
+            // argument expressions run in. C# evaluates arguments in source order; preserve that by
+            // evaluating into temps (source order) and passing them back in parameter order. (When
+            // already ascending, inline parameter-order emission is already source order — no wrap.)
+            var reordered = false;
+            for (int k = 0, prev = -1; k < paramIndexOf.Length; k++)
+            {
+                if (paramIndexOf[k] < 0) continue;
+                if (paramIndexOf[k] < prev) { reordered = true; break; }
+                prev = paramIndexOf[k];
+            }
+            var hasParams = method.Parameters.Length > 0 && method.Parameters[^1].IsParams;
+            if (reordered && !hasParams)
+            {
+                if (lead) _w.Write(", ");
+                _w.Write("...(function () { var $ = [");
+                for (var k = 0; k < args.Count; k++)
+                {
+                    if (k > 0) _w.Write(", ");
+                    var pIdx = paramIndexOf[k];
+                    var pType = pIdx >= 0 && pIdx < method.Parameters.Length ? method.Parameters[pIdx].Type : null;
+                    EmitExpressionConverted(args[k].Expression, pType);
+                }
+                _w.Write("]; return [");
+                for (var i = 0; i <= lastProvided; i++)
+                {
+                    if (i > 0) _w.Write(", ");
+                    var src = Array.IndexOf(paramIndexOf, i);
+                    _w.Write(src >= 0 ? $"$[{src}]" : "void 0");
+                }
+                _w.Write("]; })()");
+                return;
+            }
 
             var first = !lead;
             for (var i = 0; i <= lastProvided; i++)
@@ -669,11 +730,16 @@ public sealed partial class Emitter
         {
             var fixedCount = method.Parameters.Length - 1;
             var first = !lead;
-            for (var i = 0; i < fixedCount && i < args.Count; i++)
+            for (var i = 0; i < fixedCount; i++)
             {
                 if (!first) _w.Write(", ");
                 first = false;
-                EmitExpressionConverted(args[i].Expression, method.Parameters[i].Type);
+                // An optional fixed parameter omitted before the params array can't be skipped in a
+                // positional JS call: emit `void 0` so the callee applies its default. Without this
+                // the params array shifted into the optional's slot (e.g. M("x") on
+                // M(string,int=7,params object[]) emitted M("x", []) — [] landed in the int slot).
+                if (i < args.Count) EmitExpressionConverted(args[i].Expression, method.Parameters[i].Type);
+                else _w.Write("void 0");
             }
 
             var trailing = args.Skip(fixedCount).ToList();
@@ -681,13 +747,15 @@ public sealed partial class Emitter
 
             var paramsType = method.Parameters[^1].Type;
             var paramsElem = ParamsElementType(paramsType);
-            // A single argument that is itself the collection (an array, a List, a collection
-            // expression — anything not convertible to the element type) is passed through as the
-            // params value; otherwise the scattered args are collected into the params collection
-            // (a bare JS array for array/span/interface params; a built instance for List<T> etc.).
+            // A single argument that is itself the params ARRAY (convertible to the array type, e.g.
+            // an object[] passed to `params object[]`, a List, a collection expression) is passed
+            // through as the params value; otherwise the scattered args are collected into the params
+            // collection. The test must be against the ARRAY type, not the element type: an object[]
+            // IS convertible to the element `object`, so an element-type test double-wrapped it into
+            // [object[]] (Length 1 instead of the array's real length).
             var soleArgType = trailing.Count == 1 ? _model.GetTypeInfo(trailing[0].Expression).Type : null;
-            if (trailing.Count == 1 && paramsElem is not null
-                && (soleArgType is null || !_compilation.ClassifyConversion(soleArgType, paramsElem).Exists))
+            if (trailing.Count == 1
+                && (soleArgType is null || _compilation.ClassifyConversion(soleArgType, paramsType).Exists))
             {
                 EmitExpressionConverted(trailing[0].Expression, paramsType);
             }
@@ -733,8 +801,10 @@ public sealed partial class Emitter
     {
         var paramsElem = ParamsElementType(paramsType);
         var argType = _model.GetTypeInfo(arg).Type;
-        if (paramsElem is not null
-            && (argType is null || !_compilation.ClassifyConversion(argType, paramsElem).Exists))
+        // Pass through when the argument IS the params array (convertible to the array type); wrap a
+        // lone element otherwise. Testing the element type wrapped an object[] into [object[]], since
+        // object[] → object exists.
+        if (argType is null || _compilation.ClassifyConversion(argType, paramsType).Exists)
         {
             EmitExpressionConverted(arg, paramsType);   // already the collection
         }
@@ -976,10 +1046,29 @@ public sealed partial class Emitter
 
     private void EmitTuple(TupleExpressionSyntax tuple)
     {
-        // Tuples are represented as { Item1, Item2, ... }; named-element access is
-        // mapped to the corresponding ItemN at the access site.
+        var n = tuple.Arguments.Count;
+        var tupleType = (_model.GetTypeInfo(tuple).ConvertedType ?? _model.GetTypeInfo(tuple).Type) as INamedTypeSymbol;
+
+        // Emit a real System.ValueTuple$N instance so Equals / GetHashCode / ToString ("(a, b)")
+        // behave like .NET; element access still reads .ItemN so deconstruction/named-element access
+        // are unaffected. h5 emits `new (System.ValueTuple$N(types)).$ctor1(values)`. Arity > 7 uses a
+        // nested ValueTuple (TRest) — fall back to the plain {Item1,…} object there (rare).
+        if (tupleType is { IsTupleType: true } && n is >= 1 and <= 7)
+        {
+            var elements = tupleType.TupleElements;
+            _w.Write($"new ({TypeRef(tupleType.TupleUnderlyingType ?? tupleType)}).$ctor1(");
+            for (var i = 0; i < n; i++)
+            {
+                if (i > 0) _w.Write(", ");
+                EmitExpressionConverted(tuple.Arguments[i].Expression, elements[i].Type);
+            }
+            _w.Write(")");
+            return;
+        }
+
+        // Fallback (arity > 7 or a non-tuple type): a plain object; named-element access maps to ItemN.
         _w.Write("{ ");
-        for (var i = 0; i < tuple.Arguments.Count; i++)
+        for (var i = 0; i < n; i++)
         {
             if (i > 0) _w.Write(", ");
             _w.Write($"Item{i + 1}: ");
@@ -1116,19 +1205,29 @@ public sealed partial class Emitter
         // instances with .gte/.add/… methods), so such a comparison must stay a plain operator.
         var leftDeclared = _model.GetTypeInfo(binary.Left).Type ?? leftType;
         var rightDeclared = _model.GetTypeInfo(binary.Right).Type ?? rightType;
-        if ((Is64BitInteger(leftDeclared) || Is64BitInteger(rightDeclared)) && Long64Op(binary) is not null)
+        // `long op decimal` (and vice-versa) is promoted to decimal by C#, so it must go through the
+        // decimal path below — not Int64 (which would do integer division etc.). Guard against a
+        // decimal operand here.
+        if ((Is64BitInteger(leftDeclared) || Is64BitInteger(rightDeclared)) && Long64Op(binary) is not null
+            && !IsDecimalType(leftDeclared) && !IsDecimalType(rightDeclared))
         {
             EmitLong64Binary(binary, leftDeclared, rightDeclared);
             return;
         }
 
-        // decimal arithmetic/comparison → System.Decimal method calls.
+        // decimal arithmetic/comparison → System.Decimal method calls. Decide the receiver wrap on
+        // the operand's DECLARED type (like the Int64 path above): only an actual `decimal` operand is
+        // a System.Decimal instance with .add/.div/…; an int/long promoted to decimal by C# is still a
+        // raw JS number / Int64 at runtime, so it must be lifted with System.Decimal(...). Testing the
+        // converted type instead made `i + m` emit `i.add(m)` (TypeError) and `5L / 2m` do integer
+        // division via Int64.div.
         if ((IsDecimalType(leftType) || IsDecimalType(rightType)) && DecimalOp(binary) is { } decOp)
         {
-            if (IsDecimalType(leftType)) EmitExpression(binary.Left);
+            if (IsDecimalType(leftDeclared)) EmitExpression(binary.Left);
             else { _w.Write("System.Decimal("); EmitExpression(binary.Left); _w.Write(")"); }
             _w.Write($".{decOp}(");
-            EmitExpression(binary.Right);
+            if (IsDecimalType(rightDeclared)) EmitExpression(binary.Right);
+            else { _w.Write("System.Decimal("); EmitExpression(binary.Right); _w.Write(")"); }
             _w.Write(")");
             return;
         }
@@ -1597,9 +1696,60 @@ public sealed partial class Emitter
             return;
         }
 
+        // 64-bit integer / decimal compound assignment: `lhs op= rhs` → `lhs = lhs.<method>(rhs)`.
+        // The target is a boxed Int64/UInt64/Decimal instance, so a native JS `+=`/`/=`/… would run
+        // string-concat / float ops on the object rather than the type's method (10L += 3L → "103").
+        if (op != "=" && (Is64BitInteger(leftType) || IsDecimalType(leftType))
+            && Long64OrDecimalCompoundMethod(op, leftType) is not null)
+        {
+            EmitExpression(assignment.Left);
+            _w.Write(" = ");
+            EmitLong64OrDecimalCompoundValue(assignment.Left, assignment.Right, op, leftType);
+            return;
+        }
+
         EmitExpression(assignment.Left);
         _w.Write($" {op} ");
         EmitExpressionConverted(assignment.Right, leftType);
+    }
+
+    /// <summary>The Int64/UInt64 or Decimal instance-method name for a compound-assignment operator
+    /// (<c>+=</c> → add, …), or null if the operator/type has no such method.</summary>
+    private static string? Long64OrDecimalCompoundMethod(string op, ITypeSymbol? leftType)
+    {
+        var binOp = op[..^1];
+        if (Is64BitInteger(leftType))
+            return binOp switch
+            {
+                "+" => "add", "-" => "sub", "*" => "mul", "/" => "div", "%" => "mod",
+                "&" => "and", "|" => "or", "^" => "xor", "<<" => "shl",
+                ">>" => Is64BitUnsigned(leftType) ? "shru" : "shr",
+                _ => null,
+            };
+        if (IsDecimalType(leftType))
+            return binOp switch { "+" => "add", "-" => "sub", "*" => "mul", "/" => "div", "%" => "mod", _ => null };
+        return null;
+    }
+
+    /// <summary>Emits the rebuilt value <c>left.&lt;method&gt;(right)</c> for a 64-bit / decimal compound
+    /// assignment (used by both the plain-lvalue and the indexer-element paths). Shift counts stay raw
+    /// ints; a decimal right operand that is a plain number is lifted with System.Decimal(...).</summary>
+    private void EmitLong64OrDecimalCompoundValue(ExpressionSyntax left, ExpressionSyntax right, string op, ITypeSymbol? leftType)
+    {
+        var method = Long64OrDecimalCompoundMethod(op, leftType)!;
+        EmitExpression(left);
+        _w.Write($".{method}(");
+        if (IsDecimalType(leftType) && !IsDecimalType(_model.GetTypeInfo(right).Type))
+        {
+            _w.Write("System.Decimal("); EmitExpression(right); _w.Write(")");
+        }
+        else
+        {
+            // Int64 add/sub/… and shifts both accept a plain-number right operand (the runtime
+            // coerces it), matching EmitLong64Binary which emits the right operand raw.
+            EmitExpression(right);
+        }
+        _w.Write(")");
     }
 
     /// <summary>
@@ -1664,7 +1814,16 @@ public sealed partial class Emitter
             return;
         }
 
-        // Plain compound (double / long / decimal / etc.): current-value binOp right.
+        // 64-bit integer / decimal element: `elem op= rhs` → `elem.<method>(rhs)` (see the
+        // plain-lvalue path); a native JS operator would corrupt the boxed Int64/Decimal.
+        if (op != "=" && (Is64BitInteger(leftType) || IsDecimalType(leftType))
+            && Long64OrDecimalCompoundMethod(op, leftType) is not null)
+        {
+            EmitLong64OrDecimalCompoundValue(assignment.Left, assignment.Right, op, leftType);
+            return;
+        }
+
+        // Plain compound (double / etc.): current-value binOp right.
         _w.Write("(");
         EmitExpression(assignment.Left);
         _w.Write($") {op[..^1]} (");
@@ -1723,15 +1882,77 @@ public sealed partial class Emitter
             return;
         }
 
+        // ++ / -- on a 64-bit integer or decimal: the operand is a boxed Int64/UInt64/Decimal, so a
+        // native JS ++/-- would coerce it to a plain number (precision loss above 2^53, decimal
+        // corruption). Rebuild through the type's method. Prefix yields the NEW value.
+        if ((prefix.IsKind(SyntaxKind.PreIncrementExpression) || prefix.IsKind(SyntaxKind.PreDecrementExpression))
+            && IncDecStep(_model.GetTypeInfo(prefix.Operand).Type, prefix.IsKind(SyntaxKind.PreIncrementExpression)) is { } step)
+        {
+            _w.Write("(");
+            EmitExpression(prefix.Operand);
+            _w.Write(" = ");
+            EmitExpression(prefix.Operand);
+            _w.Write(step);
+            _w.Write(")");
+            return;
+        }
+
         _w.Write(prefix.OperatorToken.Text);
         EmitExpression(prefix.Operand);
     }
 
     private void EmitPostfixUnary(PostfixUnaryExpressionSyntax postfix)
     {
+        // ++ / -- on a 64-bit integer or decimal (see EmitPrefixUnary). Postfix must yield the OLD
+        // value; in a void (statement / for-incrementor) context the result is discarded, so the
+        // cheaper new-value form suffices.
+        if ((postfix.IsKind(SyntaxKind.PostIncrementExpression) || postfix.IsKind(SyntaxKind.PostDecrementExpression))
+            && IncDecStep(_model.GetTypeInfo(postfix.Operand).Type, postfix.IsKind(SyntaxKind.PostIncrementExpression)) is { } step)
+        {
+            if (IsVoidContext(postfix))
+            {
+                _w.Write("(");
+                EmitExpression(postfix.Operand);
+                _w.Write(" = ");
+                EmitExpression(postfix.Operand);
+                _w.Write(step);
+                _w.Write(")");
+            }
+            else
+            {
+                _w.Write("(function ($v) { ");
+                EmitExpression(postfix.Operand);
+                _w.Write(" = $v");
+                _w.Write(step);
+                _w.Write("; return $v; })(");
+                EmitExpression(postfix.Operand);
+                _w.Write(")");
+            }
+            return;
+        }
+
         EmitExpression(postfix.Operand);
         _w.Write(postfix.OperatorToken.Text);
     }
+
+    /// <summary>The instance-method call suffix that increments/decrements a boxed 64-bit integer or
+    /// decimal (e.g. <c>.add(System.Int64(1))</c>, <c>.inc()</c>), or null for other types.</summary>
+    private static string? IncDecStep(ITypeSymbol? type, bool increment)
+    {
+        if (Is64BitInteger(type))
+        {
+            var one = Is64BitUnsigned(type) ? "System.UInt64(1)" : "System.Int64(1)";
+            return increment ? $".add({one})" : $".sub({one})";
+        }
+        if (IsDecimalType(type)) return increment ? ".inc()" : ".dec()";
+        return null;
+    }
+
+    /// <summary>True if an expression's value is discarded — it is the whole expression of an
+    /// expression-statement, or an incrementor of a <c>for</c> loop.</summary>
+    private static bool IsVoidContext(ExpressionSyntax e)
+        => e.Parent is ExpressionStatementSyntax
+           || (e.Parent is ForStatementSyntax f && f.Incrementors.Contains(e));
 
     // ---- cast --------------------------------------------------------------
 
@@ -1945,6 +2166,13 @@ public sealed partial class Emitter
                     break;
                 case InterpolationSyntax interpolation:
                     if (!first) _w.Write(" + ");
+                    // Alignment component `{x,N}` pads the formatted value to width |N| (N>0 right-,
+                    // N<0 left-aligned). Apply it to the already-stringified value so char/enum/bool
+                    // still render correctly (routing the raw value through String.format would print
+                    // a char's code point). The width is a compile-time constant.
+                    var align = interpolation.AlignmentClause is { } ac
+                        ? _model.GetConstantValue(ac.Value).Value : null;
+                    if (align is not null) _w.Write("System.String.alignString(");
                     if (interpolation.FormatClause is not null)
                     {
                         _w.Write("TransposeR.formatValue(");
@@ -1969,6 +2197,7 @@ public sealed partial class Emitter
                         EmitExpression(interpolation.Expression);
                         _w.Write(")");
                     }
+                    if (align is not null) _w.Write($", {Convert.ToInt32(align).ToString(CultureInfo.InvariantCulture)})");
                     first = false; hadContent = true;
                     break;
             }
