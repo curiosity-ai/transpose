@@ -742,5 +742,37 @@ public class Program
     }
 }", waitForOutput: "<<DONE>>");
         }
+
+        // ---- default value of a non-primitive struct ---------------------------
+        // An uninitialized non-primitive struct field (DateTime, Guid, user struct) and a
+        // `default(T)` expression must yield the zeroed struct (C# default(T)), not null. They were
+        // emitted as null — so an uninitialized DateTime field compared/used threw
+        // "Cannot read properties of null (reading 'getTime')". Now assigned via
+        // Transpose.getDefaultValue in the ctor (fields) and default expressions.
+
+        [TestMethod]
+        public async Task DefaultStructFieldAndExpressionRunsAsync()
+        {
+            await RunTest(@"
+using System;
+public struct Point { public int X; public int Y; }
+public class Holder { public DateTime When; public Guid Id; public Point P; public string Name = ""x""; }
+public class Program
+{
+    public static void Main()
+    {
+        var h = new Holder();
+        var h2 = new Holder();
+        Console.WriteLine(h.When == DateTime.MinValue);   // True
+        Console.WriteLine(h.When.Equals(h2.When));         // True (both default)
+        Console.WriteLine((int)DateTime.SpecifyKind(h.When, DateTimeKind.Utc).Kind); // 1 (no crash on default)
+        Console.WriteLine(h.Id == Guid.Empty);             // True
+        Console.WriteLine(h.P.X + "","" + h.P.Y);            // 0,0
+        DateTime d = default(DateTime);
+        Console.WriteLine(d == DateTime.MinValue);         // True
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
     }
 }

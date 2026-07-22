@@ -569,9 +569,13 @@ public sealed partial class Emitter
             case SpecialType.System_Decimal:
                 return "0";
         }
-        // A non-primitive struct (DateTime, Guid, a user struct) gets its zeroed value.
-        if (type is INamedTypeSymbol { TypeKind: TypeKind.Struct } st && st.Locations.Any(l => l.IsInSource))
-            return $"{TypeRef(st)}.getDefaultValue()";
+        // A non-primitive struct (DateTime, Guid, a user struct) gets its zeroed value via the
+        // runtime's Transpose.getDefaultValue, which dispatches to the struct's getDefaultValue()
+        // (and special-cases BCL structs like System.DateTime). It works for a referenced BCL struct
+        // too — the old in-source-only check returned null for `default(DateTime)` in user projects
+        // (→ "reading getTime of null") — and returns null gracefully for a struct with no default.
+        if (type is INamedTypeSymbol { TypeKind: TypeKind.Struct } st)
+            return $"Transpose.getDefaultValue({TypeRef(st)})";
         return "null";
     }
 }
