@@ -166,7 +166,9 @@ public sealed partial class Emitter
                 EmitArrayCreation(arrayCreation);
                 break;
             case ImplicitArrayCreationExpressionSyntax implicitArray:
-                EmitInitializerArray(implicitArray.Initializer);
+                // new[] { … } → tag with the inferred element type so the value carries $elementType.
+                EmitTypedInitializerArray(implicitArray.Initializer,
+                    (_model.GetTypeInfo(implicitArray).Type ?? _model.GetTypeInfo(implicitArray).ConvertedType) is IArrayTypeSymbol ia ? ia.ElementType : null);
                 break;
             case InitializerExpressionSyntax initializer:
                 // A bare initializer targeting a multi-dimensional array (int[,] g = {{…},{…}})
@@ -174,7 +176,8 @@ public sealed partial class Emitter
                 if (_model.GetTypeInfo(initializer).ConvertedType is IArrayTypeSymbol { Rank: > 1 } mdInit)
                     EmitMultiDimArray(mdInit.ElementType, null, initializer);
                 else
-                    EmitInitializerArray(initializer);
+                    EmitTypedInitializerArray(initializer,
+                        _model.GetTypeInfo(initializer).ConvertedType is IArrayTypeSymbol { Rank: 1 } sdInit ? sdInit.ElementType : null);
                 break;
             case CollectionExpressionSyntax collection:
                 EmitCollectionExpression(collection);
