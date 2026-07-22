@@ -1278,5 +1278,58 @@ public class Program
     }
 }", waitForOutput: "<<DONE>>");
         }
+
+        // ---- binary + / - on delegates → combine / remove ----------------------
+
+        [TestMethod]
+        public async Task BinaryDelegateOperatorsCombineAndRemove()
+        {
+            // `d1 + d2` / `d1 - d2` must build/unbuild a multicast delegate (TransposeR.combine/remove),
+            // not JS numeric/string `+`/`-` on the underlying functions (which yields a non-callable).
+            await RunTest(@"
+using System;
+using System.Text;
+public class Program
+{
+    static StringBuilder sb = new StringBuilder();
+    static void A() => sb.Append(""A"");
+    static void B() => sb.Append(""B"");
+    static void C() => sb.Append(""C"");
+    public static void Main()
+    {
+        Action a = A;
+        Action ab = a + (Action)B;
+        ab(); sb.AppendLine("""");
+        Action abc = ab + (Action)C;
+        abc(); sb.AppendLine("""");
+        Action ac = abc - (Action)B;
+        ac(); sb.AppendLine("""");
+        sb.Append(""<<DONE>>"");
+        Console.WriteLine(sb.ToString());
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [TestMethod]
+        public void BinaryDelegateAddEmitsCombine()
+        {
+            var code = @"
+using System;
+public class Program
+{
+    static void A() { }
+    static void B() { }
+    public static void Main()
+    {
+        Action a = A;
+        Action ab = a + (Action)B;
+        ab();
+    }
+}";
+            var result = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            Assert.IsTrue(result.Javascript!.Contains("TransposeR.combine("),
+                "binary + on delegates must emit TransposeR.combine\n" + result.Javascript);
+        }
     }
 }

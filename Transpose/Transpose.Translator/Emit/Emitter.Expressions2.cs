@@ -1162,6 +1162,20 @@ public sealed partial class Emitter
             return;
         }
 
+        // Delegate combine/remove via the binary + / - operators (d1 + d2, d1 - d2). Method groups
+        // on either side are converted to the delegate type, so the result type is the delegate.
+        // Mirrors the compound-assignment path (d += h / d -= h → combine/remove).
+        if ((binary.IsKind(SyntaxKind.AddExpression) || binary.IsKind(SyntaxKind.SubtractExpression))
+            && (resultType is { TypeKind: TypeKind.Delegate } || leftType is { TypeKind: TypeKind.Delegate }))
+        {
+            _w.Write($"TransposeR.{(binary.IsKind(SyntaxKind.AddExpression) ? "combine" : "remove")}(");
+            EmitExpression(binary.Left);
+            _w.Write(", ");
+            EmitExpression(binary.Right);
+            _w.Write(")");
+            return;
+        }
+
         // DateTime / TimeSpan arithmetic.
         var lName = leftType?.ToDisplayString();
         var rName = rightType?.ToDisplayString();
