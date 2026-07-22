@@ -681,11 +681,16 @@ public sealed partial class Emitter
         {
             var fixedCount = method.Parameters.Length - 1;
             var first = !lead;
-            for (var i = 0; i < fixedCount && i < args.Count; i++)
+            for (var i = 0; i < fixedCount; i++)
             {
                 if (!first) _w.Write(", ");
                 first = false;
-                EmitExpressionConverted(args[i].Expression, method.Parameters[i].Type);
+                // An optional fixed parameter omitted before the params array can't be skipped in a
+                // positional JS call: emit `void 0` so the callee applies its default. Without this
+                // the params array shifted into the optional's slot (e.g. M("x") on
+                // M(string,int=7,params object[]) emitted M("x", []) — [] landed in the int slot).
+                if (i < args.Count) EmitExpressionConverted(args[i].Expression, method.Parameters[i].Type);
+                else _w.Write("void 0");
             }
 
             var trailing = args.Skip(fixedCount).ToList();
@@ -693,13 +698,15 @@ public sealed partial class Emitter
 
             var paramsType = method.Parameters[^1].Type;
             var paramsElem = ParamsElementType(paramsType);
-            // A single argument that is itself the collection (an array, a List, a collection
-            // expression — anything not convertible to the element type) is passed through as the
-            // params value; otherwise the scattered args are collected into the params collection
-            // (a bare JS array for array/span/interface params; a built instance for List<T> etc.).
+            // A single argument that is itself the params ARRAY (convertible to the array type, e.g.
+            // an object[] passed to `params object[]`, a List, a collection expression) is passed
+            // through as the params value; otherwise the scattered args are collected into the params
+            // collection. The test must be against the ARRAY type, not the element type: an object[]
+            // IS convertible to the element `object`, so an element-type test double-wrapped it into
+            // [object[]] (Length 1 instead of the array's real length).
             var soleArgType = trailing.Count == 1 ? _model.GetTypeInfo(trailing[0].Expression).Type : null;
-            if (trailing.Count == 1 && paramsElem is not null
-                && (soleArgType is null || !_compilation.ClassifyConversion(soleArgType, paramsElem).Exists))
+            if (trailing.Count == 1
+                && (soleArgType is null || _compilation.ClassifyConversion(soleArgType, paramsType).Exists))
             {
                 EmitExpressionConverted(trailing[0].Expression, paramsType);
             }
@@ -745,8 +752,10 @@ public sealed partial class Emitter
     {
         var paramsElem = ParamsElementType(paramsType);
         var argType = _model.GetTypeInfo(arg).Type;
-        if (paramsElem is not null
-            && (argType is null || !_compilation.ClassifyConversion(argType, paramsElem).Exists))
+        // Pass through when the argument IS the params array (convertible to the array type); wrap a
+        // lone element otherwise. Testing the element type wrapped an object[] into [object[]], since
+        // object[] → object exists.
+        if (argType is null || _compilation.ClassifyConversion(argType, paramsType).Exists)
         {
             EmitExpressionConverted(arg, paramsType);   // already the collection
         }
