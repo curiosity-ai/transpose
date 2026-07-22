@@ -58,6 +58,14 @@ internal static class ProjectResolver
             .ToList();
         if (!defines.Contains("Transpose")) defines.Add("Transpose"); // Transpose projects always compile the Transpose branch
 
+        // Configuration-driven symbols the .NET SDK defines implicitly: TRACE in every configuration,
+        // DEBUG in the Debug configuration. Without these, `#if DEBUG` never compiles in a `-c Debug`
+        // build (it silently took the #else branch — e.g. loading the minified bundle instead of the
+        // dev one). Additive with the project's own <DefineConstants>; add only if not already present.
+        if (!defines.Contains("TRACE")) defines.Add("TRACE");
+        if (string.Equals(configuration, "Debug", StringComparison.OrdinalIgnoreCase) && !defines.Contains("DEBUG"))
+            defines.Add("DEBUG");
+
         var lang = ParseLangVersion(Property(doc, "LangVersion"));
 
         // Default (bundle) mode: translate the whole closure of source projects into one JS
