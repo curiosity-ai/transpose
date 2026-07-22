@@ -76,11 +76,35 @@ emits an object literal seeded per `ObjectInitializationMode` (Ignore / Initiali
 DefaultValue-all).
 *Handled in:* `Emitter.Types` (`$literal`), `Emitter.Expressions2` (construction + init mode).
 
-### `[Enum(Emit.…)]` — ✅ Implemented
-Selects the enum emit mode: `Value` (numeric), `Name`/`StringName` variants (string-backed, with
-casing). String modes add `$utype: System.String`, quote member values, and change `default(enum)`
-to the zero member's string.
-*Handled in:* `TransposeNaming.EnumEmitMode/EnumStringName`, `Emitter.EmitEnum`.
+### `[Enum(Emit.…)]` — ✅ Implemented (all 9 modes)
+Selects how an enum and its members are emitted. The `Emit` enum values (identical to H5) and their
+effect on the emitted JS:
+
+| # | `Emit` value | Backing | Member's JS name / value | `default(E)` |
+| --- | --- | --- | --- | --- |
+| 1 | `Name` | numeric | named member, **case preserved** (`Dir.TopLeft`) | `0` |
+| 2 | `Value` | numeric | reference **inlines the ordinal** (`0`), no member access | `0` |
+| 3 | `StringName` | **string** | value = name, **camelCase first letter** (`"topLeft"`) | zero member's string |
+| 4 | `StringNamePreserveCase` | **string** | value = name, **case preserved** (`"TopLeft"`) | zero member's string |
+| 5 | `StringNameLowerCase` | **string** | value = name, **lowercased** (`"topleft"`) | zero member's string |
+| 6 | `StringNameUpperCase` | **string** | value = name, **uppercased** (`"TOPLEFT"`) | zero member's string |
+| 7 | `NamePreserveCase` *(default)* | numeric | named member, **case preserved** (`Dir.TopLeft`) | `0` |
+| 8 | `NameLowerCase` | numeric | named member, **lowercased** (`Dir.topleft`) | `0` |
+| 9 | `NameUpperCase` | numeric | named member, **uppercased** (`Dir.TOPLEFT`) | `0` |
+
+Notes:
+- **Default** (no `[Enum]`) is mode **7** (`NamePreserveCase`), matching H5.
+- **String modes (3–6)** back the enum with strings: each member's JS value is its (cased) name, the
+  type declares `$utype: System.String` (so `x === "top"` comparisons work), and `default(E)` is the
+  zero-valued member's string. The member's JS *key* stays verbatim; only the string *value* is cased.
+- **Name modes (1, 7, 8, 9)** keep numeric ordinals; the casing applies to the member's JS *name*
+  (the `Transpose.define` key and every `E.Member` reference), so it also governs
+  `ToString()`/`GetName`. `Name` (1) and `NamePreserveCase` (7) are equivalent (both preserve).
+- An explicit `[Name("…")]` on a member overrides the mode's casing for that member.
+
+*Handled in:* `TransposeNaming.EnumEmitMode` (mode, default 7), `EnumStringName` (string-value casing,
+modes 3–6), `RawMemberName` (member-name casing, modes 8/9); `Emitter.EmitEnum` (definition + `$utype`),
+`Emitter.EnumDefaultLiteral` (`default(E)`), `Emitter.EmitEnumMemberAccess` (references).
 
 ### `[GlobalMethods]` — ✅ Implemented
 A static class whose members are projected directly onto the JS global scope (`alert(...)` rather

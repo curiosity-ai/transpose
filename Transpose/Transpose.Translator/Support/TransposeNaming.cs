@@ -438,6 +438,21 @@ internal static class TransposeNaming
     private static string RawMemberName(ISymbol symbol)
     {
         if (GetName(symbol) is { } name) return name;
+
+        // Enum members honour the [Enum(Emit.Name*)] casing modes on their own JS name: NameLowerCase
+        // (8) lowercases, NameUpperCase (9) uppercases; Name (1) / NamePreserveCase (7) and every
+        // other mode preserve. (The StringName* modes 3–6 cast the emitted string VALUE — see
+        // EnumStringName — not the member's JS name, which stays verbatim.)
+        if (symbol is IFieldSymbol { ContainingType.TypeKind: TypeKind.Enum } enumMember)
+        {
+            return EnumEmitMode(enumMember.ContainingType) switch
+            {
+                8 => enumMember.Name.ToLowerInvariant(),
+                9 => enumMember.Name.ToUpperInvariant(),
+                _ => enumMember.Name,
+            };
+        }
+
         // A compiled type's member keeps its verbatim C# name. An [External] type's member does
         // NOT short-circuit here even when in source (self-building the BCL): its members bind to
         // native JS names via [Convention]/casing — e.g. String.Length ([External] +
