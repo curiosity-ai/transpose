@@ -1537,6 +1537,31 @@ public class Program
         }
 
         [TestMethod]
+        public async Task IntPlusUintPromotesToLongResult()
+        {
+            // C# binary numeric promotion: `int + uint` has no common 32-bit type, so both promote to
+            // `long` and the result is `long`. The sum must be a real Int64 at runtime — it flows into a
+            // `long`-typed variable whose later `< 0` / indexing use the Int64 helpers (.lt/.add/…). If
+            // the addition stays a plain JS number the downstream `visualIndex.lt(...)` throws
+            // `visualIndex.lt is not a function` (LogsView.ValidateVisibleRowHeights on #/manage/operate/logs).
+            await RunTest(@"
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        int startIndex = 5;
+        for (uint i = 0; i < 3; i++)
+        {
+            var visualIndex = startIndex + i;   // int + uint => long
+            Console.WriteLine(visualIndex.GetType().Name);
+            Console.WriteLine(visualIndex < 0 || visualIndex >= 100 ? ""oob"" : ""ok "" + visualIndex);
+        }
+    }
+}");
+        }
+
+        [TestMethod]
         public void GenericMethodInTransposeNamedLibraryThreadsTypeArgs()
         {
             // A Transpose.*-named binding library that carries real implementation (NOT [assembly:External])

@@ -1347,13 +1347,18 @@ public sealed partial class Emitter
         // 64-bit integer arithmetic/comparison → System.Int64/UInt64 method calls. Decide on the
         // operands' DECLARED types, not the converted ones: `int >= uint` is promoted to `long` by
         // C#, but int/uint are plain JS numbers (only actual long/ulong are boxed Int64/UInt64
-        // instances with .gte/.add/… methods), so such a comparison must stay a plain operator.
+        // instances with .gte/.add/… methods), so such a comparison (bool result) stays a plain
+        // operator. An ARITHMETIC op whose RESULT is 64-bit even though both operands are narrow —
+        // `int + uint` promotes to `long` — must still produce a real Int64, or the long value flows
+        // as a plain number into a `long` variable whose later `.lt`/`.add`/… throws
+        // (`visualIndex.lt is not a function` in LogsView.ValidateVisibleRowHeights).
         var leftDeclared = _model.GetTypeInfo(binary.Left).Type ?? leftType;
         var rightDeclared = _model.GetTypeInfo(binary.Right).Type ?? rightType;
         // `long op decimal` (and vice-versa) is promoted to decimal by C#, so it must go through the
         // decimal path below — not Int64 (which would do integer division etc.). Guard against a
         // decimal operand here.
-        if ((Is64BitInteger(leftDeclared) || Is64BitInteger(rightDeclared)) && Long64Op(binary) is not null
+        if ((Is64BitInteger(leftDeclared) || Is64BitInteger(rightDeclared) || Is64BitInteger(resultType))
+            && Long64Op(binary) is not null
             && !IsDecimalType(leftDeclared) && !IsDecimalType(rightDeclared))
         {
             EmitLong64Binary(binary, leftDeclared, rightDeclared);
