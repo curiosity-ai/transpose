@@ -690,7 +690,22 @@ internal static class TransposeNaming
         if (IsObjectEquals(method)) return "equals";
         if (GetName(method) is { } explicitName) return explicitName;
         if (InheritedName(method) is { } inherited) return inherited;
-        if (ImplementedInterfaceMember(method) is { } im) return JsBaseName(im);
+        if (ImplementedInterfaceMember(method) is { } im)
+        {
+            var imName = JsBaseName(im);
+            // If the interface member carries no naming rule of its own (its JS name is just the raw
+            // C# name, e.g. IDisposable.Dispose) and is not templated, but the IMPLEMENTING type (or
+            // the method) declares an explicit [Convention], the implementer's runtime slot follows
+            // that convention — CancellationTokenSource's CamelCase makes Dispose -> "dispose", the
+            // slot the hand-written runtime (and the legacy compiler) use, so `cts.Dispose()` resolves.
+            // When the interface member DOES have a rule — a [Convention] (IEnumerator.MoveNext ->
+            // "moveNext"), a [Name], or a [Template] (IEnumerable.GetEnumerator) — inherit it so
+            // interface dispatch and the runtime lookup stay aligned.
+            if (GetTemplate(im) is null && imName == im.Name
+                && (MemberConventionNotation(method) ?? ResolveNotation(method.ContainingType, ConvMethod)) is { } conv)
+                return Apply(conv, method.Name);
+            return imName;
+        }
         return Apply(MethodNotation(method), method.Name);
     }
 

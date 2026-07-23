@@ -1160,6 +1160,22 @@ public sealed partial class Emitter
 
     // ---- binary / unary / assignment --------------------------------------
 
+    /// <summary>A user-defined operator on a non-external Transpose BCL struct whose operators are
+    /// transpiled to real <c>op_</c> methods in the runtime (e.g. <c>System.DateTimeOffset</c>, whose
+    /// <c>-</c>/<c>+</c>/comparisons must call those methods, not raw JS <c>-</c> on two objects).
+    /// <c>DateTime</c> and <c>TimeSpan</c> are excluded: their arithmetic is handled by the
+    /// <c>dt*</c>/<c>ts*</c> runtime helpers below and they expose no <c>op_</c> methods. External
+    /// types (DateTime is not one, but Int64/Decimal/… are) and <c>extern</c> operators are excluded
+    /// too — their operators are hand-written runtime primitives, not emitted <c>op_</c> methods.</summary>
+    private static bool IsEmittableBclOperator(IMethodSymbol op)
+    {
+        var t = op.ContainingType;
+        if (t is null || op.IsExtern || TransposeNaming.IsExternalType(t)) return false;
+        if (t.ToDisplayString() is "System.DateTime" or "System.TimeSpan") return false;
+        var asm = t.ContainingAssembly?.Name;
+        return asm == "Transpose" || (asm is not null && asm.StartsWith("Transpose.", System.StringComparison.Ordinal));
+    }
+
     private void EmitBinary(BinaryExpressionSyntax binary)
     {
         var op = binary.OperatorToken.Text;
@@ -1172,7 +1188,7 @@ public sealed partial class Emitter
         // (Records synthesize op_Equality/op_Inequality; those are implicitly declared
         // and handled by the value-equality path below, so exclude them here.)
         if (_model.GetSymbolInfo(binary).Symbol is IMethodSymbol { MethodKind: MethodKind.UserDefinedOperator, IsImplicitlyDeclared: false } opMethod
-            && opMethod.Locations.Any(l => l.IsInSource))
+            && (opMethod.Locations.Any(l => l.IsInSource) || IsEmittableBclOperator(opMethod)))
         {
             // A [Template] operator (e.g. DateTime + TimeSpan → adddt({0}, {1})) expands via the
             // template. Bind the operands both by parameter name ({d}/{t}) AND positionally

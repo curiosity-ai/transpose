@@ -9,6 +9,6 @@
     /// <returns>The TOutput that represents the converted TInput.</returns>
     [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
     [Transpose.External]
-    [Transpose.Name("Converter")]
+    [Transpose.Name("Function")]
     public delegate TOutput Converter<in TInput, out TOutput>(TInput input);
 }

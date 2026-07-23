@@ -1569,5 +1569,112 @@ public class Program
     }
 }", waitForOutput: "<<DONE>>");
         }
+
+        // ---- type [Convention] applies to an interface-implementing method -----
+        //
+        // A method that implicitly implements an interface member whose own JS name carries no rule
+        // (IDisposable.Dispose -> raw "Dispose") must still follow the IMPLEMENTING type's explicit
+        // [Convention]. CancellationTokenSource is [Convention(CamelCase)], so `cts.Dispose()` must
+        // emit `cts.dispose()` — the slot the hand-written runtime and h5 use; PascalCase "Dispose"
+        // threw "is not a function". A ruled interface member (templated GetEnumerator, or
+        // IEnumerator.MoveNext's own [Convention]) is still inherited unchanged.
+
+        [TestMethod]
+        public void ConventionAppliesToInterfaceImplementingMethod()
+        {
+            var code = @"
+using Transpose;
+[External]
+[Convention(Member = ConventionMember.Method, Notation = Notation.CamelCase)]
+public class Res : System.IDisposable
+{
+    public extern void Dispose();
+    public extern void DoWork();
+}
+public class Program { public static void Main() { Res r = null; r.Dispose(); r.DoWork(); } }";
+            var js = new RoslynTranslator().Translate(code).Javascript!;
+            Assert.IsTrue(js.Contains(".dispose()"),
+                "IDisposable.Dispose on a CamelCase-convention type must emit .dispose()\n" + js);
+            Assert.IsTrue(js.Contains(".doWork()"), "regular convention method still camelCases\n" + js);
+            Assert.IsFalse(js.Contains(".Dispose()"), "must not emit PascalCase .Dispose()\n" + js);
+        }
+
+        // ---- DateTimeOffset operators call the runtime op_ methods --------------
+        //
+        // DateTimeOffset is a real (non-external) BCL struct whose operators are transpiled to op_
+        // methods in the runtime. `now - date` must call System.DateTimeOffset.op_Subtraction (-> a
+        // TimeSpan), not emit raw JS `now - date` on two objects (which yielded NaN and threw
+        // ".getTotalDays is not a function" on the Migrations admin view). DateTime keeps its dt*
+        // helper path. Comparisons must call the op_ methods too.
+
+        [TestMethod]
+        public async Task DateTimeOffsetOperatorsCallRuntimeMethods()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        DateTimeOffset a = new DateTime(2020, 1, 10);
+        DateTimeOffset b = new DateTime(2020, 1, 1);
+        TimeSpan diff = a - b;                     // op_Subtraction -> TimeSpan
+        Console.WriteLine(diff.TotalDays);         // 9
+        Console.WriteLine(a > b);                  // True
+        Console.WriteLine(b >= a);                 // False
+        DateTimeOffset c = a - TimeSpan.FromDays(2); // op_Subtraction(DTO, TimeSpan) -> DTO
+        Console.WriteLine(c.Day);                  // 8
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        // ---- method-level type parameters in reflection metadata --------------
+        //
+        // A method's generic type parameter has no runtime value in reflection metadata, so it must be
+        // emitted as System.Object — even when NESTED in another generic (List<T> in the return type of
+        // Convert<T>). Otherwise the metadata references a bare, undefined `T`/`TOutput` and evaluating
+        // it throws "ReferenceError: TOutput is not defined" (hit reflecting over List.ConvertAll<TOutput>).
+
+        [TestMethod]
+        public void MethodTypeParameterInMetadataBecomesObject()
+        {
+            var code = @"
+using System.Collections.Generic;
+public class Foo { public List<T> Convert<T>(T input) { return null; } }
+public class Program { public static void Main() { } }";
+            var js = new RoslynTranslator().Translate(code).Javascript!;
+            Assert.IsFalse(js.Contains("List$1(T)"),
+                "a method type parameter nested in a generic must not leak into metadata as bare T\n" + js);
+            Assert.IsTrue(js.Contains("List$1(System.Object)"),
+                "List<T> in a generic method's metadata should resolve T to System.Object\n" + js);
+        }
+
+        // ---- default(struct) zero-initializes nested non-primitive struct fields ----
+        //
+        // A struct's getDefaultValue factory must set a non-primitive struct field (DateTime, Guid, a
+        // nested struct) to the ZEROED struct, not null — otherwise default(DateTimeOffset).m_dateTime
+        // is null and .UtcDateTime/.Equals throw "reading getTime of null" (hit comparing a default
+        // DateTimeOffset during Newtonsoft serialization on several views).
+
+        [TestMethod]
+        public async Task DefaultStructZeroInitializesNestedStructFields()
+        {
+            await RunTest(@"
+using System;
+public struct Holder { public DateTime When; public int N; }
+public class Program
+{
+    public static void Main()
+    {
+        Holder h = default(Holder);
+        Console.WriteLine(h.When.Year + "" "" + h.N);      // 1 0
+        DateTimeOffset d = default(DateTimeOffset);
+        Console.WriteLine(d.UtcDateTime.Year);             // 1 (no null deref)
+        Console.WriteLine(d.Equals(default(DateTimeOffset))); // True
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
     }
 }
