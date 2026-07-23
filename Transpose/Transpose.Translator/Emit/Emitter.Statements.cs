@@ -149,7 +149,7 @@ public sealed partial class Emitter
         // out-var coexist with a same-named regular local elsewhere in the function (both flattened
         // to function scope) — a `let` predeclaration would collide with such a `var` local
         // ("Identifier 'x' has already been declared").
-        var kw = _loopDepth > 0 && _gotoContexts.Count == 0 ? "let" : "var";
+        var kw = _gotoContexts.Count > 0 ? "var" : "let";
         var blockScope = _predeclaredInScope.Count > 0 ? _predeclaredInScope.Peek() : null;
         foreach (var name in names.Distinct())
         {
@@ -331,7 +331,7 @@ public sealed partial class Emitter
         // Transpose's model and tolerates the same-name redeclarations across flattened scopes that some
         // code relies on (which `let` would reject). A goto state machine also needs `var` so a
         // local persists across `case` transitions as the loop re-enters the switch.
-        var kw = _loopDepth > 0 && _gotoContexts.Count == 0 ? "let" : "var";
+        var kw = _gotoContexts.Count > 0 ? "var" : "let";
         foreach (var variable in local.Declaration.Variables)
         {
             _w.Write($"{kw} {NameMangler.JsIdentifier(variable.Identifier.Text)}");

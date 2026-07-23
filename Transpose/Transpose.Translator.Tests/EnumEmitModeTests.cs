@@ -30,7 +30,7 @@ public class Program {{ public static void Main() {{ var x = Dir.TopLeft; }} }}
         {
             var js = Emit("Value");
             // Reference compiles to the raw ordinal, not Dir.TopLeft.
-            Assert.IsTrue(js.Contains("var x = 0"), "Emit.Value should inline the ordinal\n" + js);
+            Assert.IsTrue(js.Contains("let x = 0") || js.Contains("var x = 0"), "Emit.Value should inline the ordinal\n" + js);
         }
 
         [TestMethod]
