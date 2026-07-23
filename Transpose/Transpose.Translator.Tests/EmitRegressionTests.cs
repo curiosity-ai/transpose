@@ -606,9 +606,9 @@ public class Program
 }";
             var result = new RoslynTranslator().Translate(code);
             Assert.IsTrue(result.Success, "translation should succeed");
-            // Predeclared outside a loop → `var` (matching regular locals, so it coexists with any
-            // same-named function-scoped local).
-            Assert.IsTrue(result.Javascript!.Contains("var s;"),
+            // Predeclared block-scoped with `let` (matching regular locals), so sibling-scope
+            // same-named locals stay distinct and closures capture the right binding.
+            Assert.IsTrue(result.Javascript!.Contains("let s;"),
                 "an is-pattern variable in an expression-bodied property must be predeclared\n" + result.Javascript);
         }
 
@@ -1686,6 +1686,46 @@ public class Program
         long l = 7; int i = 3; bool c = false;
         long m = c ? l : i;                                                   // int branch -> long
         System.Console.WriteLine(m);                                          // 3
+    }
+}");
+        }
+
+        [TestMethod]
+        public async Task SiblingBlockSameNameLocalsCapturedIndependently()
+        {
+            // C# block-scopes a local to its block, so same-named locals in sibling blocks are distinct
+            // and each closure captures its own. JS `var` is function-scoped, so emitting all three as
+            // `var pending` made every closure see the last value (C,C,C). Block-scoped `let` restores
+            // per-block bindings. Mirrors API.Aggregated.ActuallyTriggerDelayedTasksIfRequired (three
+            // sibling `if` blocks, each `var pending = ...` captured by a fire-and-forget task).
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+public class Program
+{
+    public static void Main()
+    {
+        var actions = new List<Func<string>>();
+        if (true) { var pending = ""A""; actions.Add(() => pending); }
+        if (true) { var pending = ""B""; actions.Add(() => pending); }
+        if (true) { var pending = ""C""; actions.Add(() => pending); }
+        foreach (var a in actions) System.Console.WriteLine(a());   // A B C
+
+        // Nested blocks reusing a name at multiple depths, each captured.
+        var deep = new List<Func<string>>();
+        { var v = ""d1""; { var w = ""d2""; { var v2 = ""d3""; deep.Add(() => v + w + v2); } } }
+        { var v = ""e1""; deep.Add(() => v); }
+        foreach (var d in deep) System.Console.WriteLine(d());      // d1d2d3  e1
+
+        // Loop body local captured per-iteration (already block-scoped).
+        var loop = new List<Func<int>>();
+        for (int i = 0; i < 3; i++) { var x = i * 10; loop.Add(() => x); }
+        foreach (var f in loop) System.Console.WriteLine(f());      // 0 10 20
+
+        // A classic for-loop variable is a single shared binding (closures see the final value).
+        var shared = new List<Func<int>>();
+        for (int i = 0; i < 3; i++) shared.Add(() => i);
+        foreach (var f in shared) System.Console.WriteLine(f());    // 3 3 3
     }
 }");
         }
