@@ -261,4 +261,38 @@ public class App
         var output = await NewtonsoftJsonRunner.RunAsync(code);
         Assert.AreEqual("Hello 42", output);
     }
+
+    /// <summary>
+    /// Regression for the unsafe <c>eval</c> in <c>JsonConvert.parse</c>: on a JSON.parse SyntaxError
+    /// the old code fell back to <c>eval('(' + value + ')')</c>, which both executed arbitrary JS and
+    /// threw a raw <c>ReferenceError</c> for a bare identifier (e.g. a string-backed enum value that
+    /// reached parse un-quoted surfaced as "ReferenceError: type is not defined"). Malformed input must
+    /// now surface as a <c>JsonException</c>, and the eval must not run — a bare identifier that would
+    /// have thrown ReferenceError under eval must not do so here.
+    /// </summary>
+    [TestMethod]
+    public async Task InvalidJsonThrowsJsonExceptionInsteadOfEval()
+    {
+        var code = Binder + @"
+public class App
+{
+    static string Try(string raw)
+    {
+        try { JsonConvert.DeserializeObject<Repro.Models.Item>(raw); return ""parsed""; }
+        catch (JsonException) { return ""JsonException""; }
+        catch (Exception e) { return ""other:"" + e.GetType().Name; }
+    }
+    public static void Main()
+    {
+        // A bare identifier: eval('(nonExistentGlobal)') would throw ReferenceError; JSON.parse rejects it.
+        Console.WriteLine(Try(""nonExistentGlobal""));
+        // A JS object literal with unquoted keys: eval would have accepted it, JSON.parse must reject it.
+        Console.WriteLine(Try(""{ unquoted: 1 }""));
+        // Valid JSON still works.
+        Console.WriteLine(Try(""{\""Name\"":\""Ok\"",\""Value\"":1}""));
+    }
+}";
+        var output = await NewtonsoftJsonRunner.RunAsync(code);
+        Assert.AreEqual("JsonException\nJsonException\nparsed", output);
+    }
 }
