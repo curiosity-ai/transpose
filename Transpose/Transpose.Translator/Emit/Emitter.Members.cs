@@ -109,10 +109,10 @@ public sealed partial class Emitter
                         // initializers which run in declaration order and may reference them.
                         foreach (var (target, slotType) in staticStructDefaults)
                             _w.WriteLine($"{staticRef}.{target} = Transpose.getDefaultValue({TypeRef(slotType)});");
-                        foreach (var (target, init) in staticInitAssignments)
+                        foreach (var (target, init, slotType) in staticInitAssignments)
                         {
                             _w.Write($"{staticRef}.{target} = ");
-                            EmitExpression(init);
+                            EmitExpressionConverted(init, slotType);
                             _w.WriteLine(";");
                         }
                         if (staticCtor?.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() is ConstructorDeclarationSyntax { Body: { } body })
@@ -155,14 +155,14 @@ public sealed partial class Emitter
         });
     }
 
-    private IEnumerable<(string target, ExpressionSyntax init)> StaticInitializers(INamedTypeSymbol type)
+    private IEnumerable<(string target, ExpressionSyntax init, ITypeSymbol slotType)> StaticInitializers(INamedTypeSymbol type)
     {
         foreach (var m in type.GetMembers().Where(m => m.IsStatic))
         {
             if (m is IFieldSymbol f && !f.IsConst && f.AssociatedSymbol is null && FieldInitializerSyntax(f) is { } fi)
-                yield return (TransposeNaming.MemberJsName(f), fi);
+                yield return (TransposeNaming.MemberJsName(f), fi, f.Type);
             else if (m is IPropertySymbol p && IsAutoProperty(p) && AutoPropertyInitializerSyntax(p) is { } pi)
-                yield return (TransposeNaming.MemberJsName(p), pi);
+                yield return (TransposeNaming.MemberJsName(p), pi, p.Type);
         }
     }
 
@@ -439,7 +439,7 @@ public sealed partial class Emitter
             if (init is not null)
             {
                 _w.Write($"this.{TransposeNaming.MemberJsName(m)} = ");
-                EmitExpression(init);
+                EmitExpressionConverted(init, slotType);
                 _w.WriteLine(";");
             }
             else if (NeedsStructDefaultInit(slotType))

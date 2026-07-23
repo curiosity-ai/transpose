@@ -226,6 +226,23 @@ public sealed partial class Emitter
             return;
         }
 
+        // Instance method on an [ObjectLiteral] class → dispatch through the prototype:
+        // Type.prototype.Method.call(receiver, args). The receiver is a plain JS object (typically
+        // JSON-parsed) that carries no methods of its own, so a direct `receiver.Method(...)` would
+        // throw "is not a function". `.call` binds `this` to the receiver, then the generic type
+        // arguments and real arguments follow. Mirrors the legacy compiler's object-literal handling.
+        if (IsObjectLiteralInstanceCall(symbol))
+        {
+            _w.Write($"{TypeRef(symbol.ContainingType)}.prototype.{TransposeNaming.MemberJsName(symbol)}.call(");
+            if (receiverExpr is not null) EmitReceiverExpr(receiverExpr);
+            else if (condRecv is not null) _w.Write(condRecv);
+            else _w.Write("this");
+            var rest = Capture(() => EmitArguments(invocation.ArgumentList, symbol));
+            if (rest.Length > 0) { _w.Write(", "); _w.Write(rest); }
+            _w.Write(")");
+            return;
+        }
+
         // Ordinary call.
         if (symbol.IsStatic)
         {
@@ -450,18 +467,41 @@ public sealed partial class Emitter
         // receiver.Method(args…) — the receiver is the reduced method's first argument.
         var reduced = symbol.IsExtensionMethod ? symbol.ReducedFrom : null;
         var extReceiver = reduced is not null && invocation.Expression is MemberAccessExpressionSyntax ma ? ma.Expression : null;
+
+        // Instance method on an [ObjectLiteral] class (with out/ref args) → dispatch through the
+        // prototype, same as the ordinary path: Type.prototype.Method.call(receiver, typeArgs, args).
+        // The `.call` receiver must precede the generic type arguments.
+        var objLitCall = extReceiver is null && IsObjectLiteralInstanceCall(symbol);
+        var objLitReceiver = objLitCall && invocation.Expression is MemberAccessExpressionSyntax malit
+            && malit.Expression is not BaseExpressionSyntax ? malit.Expression : null;
+
         if (extReceiver is not null)
             _w.Write($"{TypeRef(symbol.ContainingType)}.{TransposeNaming.MemberJsName(reduced!)}");
+        else if (objLitCall)
+            _w.Write($"{TypeRef(symbol.ContainingType)}.prototype.{TransposeNaming.MemberJsName(symbol)}.call");
         else
             EmitCallee(invocation, symbol);
         _w.Write("(");
-        var lead = EmitLeadingTypeArgs(symbol);
-        var first = !lead;
-        if (extReceiver is not null)
+        bool first;
+        if (objLitCall)
         {
-            if (!first) _w.Write(", ");
-            EmitExpression(extReceiver);
+            // Receiver first (becomes `this`), then the leading generic type arguments.
+            if (objLitReceiver is not null) EmitExpression(objLitReceiver); else _w.Write("this");
+            if (ThreadsTypeArgs(symbol))
+                for (var ti = 0; ti < symbol.TypeArguments.Length; ti++)
+                    { _w.Write(", "); _w.Write(TypeRef(symbol.TypeArguments[ti])); }
             first = false;
+        }
+        else
+        {
+            var lead = EmitLeadingTypeArgs(symbol);
+            first = !lead;
+            if (extReceiver is not null)
+            {
+                if (!first) _w.Write(", ");
+                EmitExpression(extReceiver);
+                first = false;
+            }
         }
         if (args.Any(a => a.NameColon is not null))
         {
@@ -639,7 +679,10 @@ public sealed partial class Emitter
             if (reordered && !hasParams)
             {
                 if (lead) _w.Write(", ");
-                _w.Write("...(function () { var $ = [");
+                // Arrow (not `function`) so a `this`-qualified argument (e.g. a named arg
+                // `wrapResults: this._wrapResults`) resolves to the enclosing instance rather than
+                // being rebound to undefined in strict mode.
+                _w.Write("...(() => { var $ = [");
                 for (var k = 0; k < args.Count; k++)
                 {
                     if (k > 0) _w.Write(", ");
@@ -976,6 +1019,26 @@ public sealed partial class Emitter
             _w.Write(")");
         }
     }
+
+    /// <summary>True if <paramref name="type"/> or any of its base types is [ObjectLiteral]. The
+    /// attribute is Inherited, so a derived literal type counts even when only the base carries it.</summary>
+    private static bool IsObjectLiteralType(ITypeSymbol? type)
+    {
+        for (var t = type; t is not null; t = t.BaseType)
+            if (t.GetAttributes().Any(a => TransposeNaming.AttrIs(a, "Transpose.ObjectLiteralAttribute")))
+                return true;
+        return false;
+    }
+
+    /// <summary>A call to an ordinary instance method declared on an [ObjectLiteral] class. Such
+    /// instances are plain JS objects (typically JSON-parsed) with no prototype methods of their own,
+    /// so the call must dispatch through the type's prototype (Type.prototype.Method.call(receiver, …))
+    /// rather than as a direct member call. Interface members are excluded — that is a separate, rarer
+    /// form the legacy compiler routes through the runtime type instead.</summary>
+    private static bool IsObjectLiteralInstanceCall(IMethodSymbol symbol)
+        => symbol is { IsStatic: false, IsExtensionMethod: false, MethodKind: MethodKind.Ordinary }
+           && symbol.ContainingType is { TypeKind: not TypeKind.Interface }
+           && IsObjectLiteralType(symbol.ContainingType);
 
     /// <summary>The ObjectInitializationMode of an [ObjectLiteral] attribute (0=Ignore, 1=Initializer,
     /// 2=DefaultValue), or 0 when unspecified — only the ObjectInitializationMode constructor argument
@@ -1934,7 +1997,9 @@ public sealed partial class Emitter
             }
             else
             {
-                _w.Write("(function ($v) { ");
+                // Arrow so a `this`-qualified operand (e.g. `this.Count++` in expression position)
+                // resolves to the enclosing instance rather than rebinding `this` to undefined.
+                _w.Write("(($v) => { ");
                 EmitExpression(postfix.Operand);
                 _w.Write(" = $v");
                 _w.Write(step);
@@ -1971,9 +2036,25 @@ public sealed partial class Emitter
     // ---- cast --------------------------------------------------------------
 
     private void EmitCast(CastExpressionSyntax cast)
-        => EmitNumericConversion(_model.GetTypeInfo(cast.Type).Type,
-                                 _model.GetTypeInfo(cast.Expression).Type,
-                                 cast.Expression);
+    {
+        var targetType = _model.GetTypeInfo(cast.Type).Type;
+        var sourceType = _model.GetTypeInfo(cast.Expression).Type;
+
+        // A cast that resolves to a user-defined conversion operator (implicit or explicit) must
+        // invoke it — e.g. `(int)myInt` → MyInt.op_Explicit(myInt). Erasing it leaks the source
+        // value through, which then mismatches (and breaks a matching implicit conversion elsewhere).
+        if (targetType is not null && sourceType is not null
+            && !SymbolEqualityComparer.Default.Equals(sourceType, targetType)
+            && _compilation.ClassifyConversion(sourceType, targetType)
+                is { IsUserDefined: true, MethodSymbol: IMethodSymbol convMethod }
+            && ShouldEmitUserConversion(convMethod))
+        {
+            EmitUserDefinedConversion(convMethod, cast.Expression);
+            return;
+        }
+
+        EmitNumericConversion(targetType, sourceType, cast.Expression);
+    }
 
     /// <summary>
     /// Emits an explicit numeric conversion honouring C#'s truncation / wrapping rules. Handles
