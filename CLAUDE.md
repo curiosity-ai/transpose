@@ -38,7 +38,7 @@ Transpose/                     # The compiler toolchain
 ├── Transpose.Compiler/        # The CLI compiler.  AssemblyName + tool command: `tps`
 │   ├── Program.cs             #   arg parsing, orchestration, output modes
 │   ├── ProjectResolver.cs     #   reads the .csproj (raw XML), globs sources, resolves references
-│   ├── OutputBuilder.cs       #   site build (runtime + bundle + resources + index.html)
+│   ├── OutputBuilder.cs       #   site build (runtime + bundle + resources + index.html) + stale-output prune
 │   ├── ResourceEmbedder.cs    #   embeds JS + resources into the package DLL (Mono.Cecil)
 │   └── TransposeJson.cs       #   reads tps.json (output/fileName/html/resources/reflection)
 ├── Transpose.Build.Target/    # MSBuild SDK (package id Transpose.Build.Target) that invokes `tps`

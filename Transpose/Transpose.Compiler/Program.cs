@@ -227,11 +227,18 @@ public static class Program
                 (dllPath, _) = WritePackage(project, config, configuration, result);
 
             var outDir = siteDir ?? ResolveOutputDir(config, project.ProjectDir, configuration);
-            PhaseTimings.Measure("write site (minify + resources + html)", () =>
+            var siteResult = PhaseTimings.Measure("write site (minify + resources + html)", () =>
                 OutputBuilder.Build(project, config, js, outDir, configuration, result.MetadataJavascript));
             Console.WriteLine($"\nOK — built site in {outDir} ({js.Length:N0} bytes of {config.FileName}) in {sw.ElapsedMilliseconds} ms.");
             Console.WriteLine($"  index.html: {(config.HtmlDisabled ? "disabled" : "generated")}");
             if (dllPath is not null) Console.WriteLine($"  dll:        {dllPath}");
+            if (siteResult.RemovedStaleFiles.Count > 0)
+            {
+                var stale = siteResult.RemovedStaleFiles;
+                Console.WriteLine($"  cleaned:    {stale.Count} stale file(s) from a previous build");
+                foreach (var f in stale.Take(10)) Console.WriteLine($"                - {Path.GetRelativePath(outDir, f)}");
+                if (stale.Count > 10) Console.WriteLine($"                … and {stale.Count - 10} more");
+            }
             PrintTimings(sw.ElapsedMilliseconds);
             return 0;
         }

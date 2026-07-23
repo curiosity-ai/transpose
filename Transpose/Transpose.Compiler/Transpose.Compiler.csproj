@@ -32,6 +32,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The clean-output-folder prune logic (OutputBuilder.PruneStaleFiles) is exercised directly by
+         the translator test suite. -->
+    <InternalsVisibleTo Include="Transpose.Translator.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Transpose.Translator\Transpose.Translator.csproj" />
     <PackageReference Include="Mono.Cecil" Version="0.11.6" />
     <!-- JS minifier for the "outputFormatting": "Minified"/"Both" bundle variants. Pinned to the

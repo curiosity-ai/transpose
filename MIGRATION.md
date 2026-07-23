@@ -110,6 +110,28 @@ the same (`output`, `fileName`, `html`, `reflection`, `resources`,
 A per-configuration overlay is supported: `tps.Release.json` (or
 `tps.<Configuration>.json`) is merged on top of `tps.json` for that build.
 
+### Cleaning the output folder
+
+h5's `cleanOutputFolderBeforeBuild` / `cleanOutputFolderBeforeBuildPattern`
+deleted files matching a glob **before** compiling. Transpose replaces that with
+a safer, zero-config `cleanOutputFolder` (default **on**): after a successful
+build it diffs the output folder against exactly the files this build produced
+and removes only the leftovers — a bundle you renamed, a `.min` variant a
+`Formatted` build no longer emits, a resource you deleted, a stale
+`index.min.html`. Nothing the current build wrote is ever touched, and a build
+that fails leaves the previous output intact. Drop the old keys; they are no
+longer read. To keep hand-placed files that live in the output folder, list
+them under `cleanOutputFolderExclude` (glob patterns, the equivalent of h5's
+`!` skip patterns); to disable pruning entirely, set `"cleanOutputFolder": false`.
+
+```jsonc
+{
+    "output": "$(OutDir)/tps/",
+    "cleanOutputFolder": true,                    // the default; set false to keep stale files
+    "cleanOutputFolderExclude": [ "favicon.ico", "vendor/*" ]
+}
+```
+
 ## Step 3 — Update source code
 
 The change is almost entirely in `using` directives:
@@ -193,7 +215,8 @@ than recompiling **A**'s sources into **B**'s bundle. `dotnet build` compiles
 - **Source maps** for the emitted bundle are not emitted yet.
 - Some `tps.json` surface is still narrowing in (module formats, locales,
   before/after-build hooks); the common `output` / `fileName` / `html` /
-  `reflection` / `resources` / `outputFormatting` fields are supported.
+  `reflection` / `resources` / `outputFormatting` / `cleanOutputFolder` fields
+  are supported.
 - Reference resolution beyond the NuGet cache (`<Reference HintPath>` and
   `tps.json` `references`/`referencesPath`) is partial; the `tps --reference`
   flag covers the common cases.
