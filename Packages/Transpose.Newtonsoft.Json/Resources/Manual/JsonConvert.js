@@ -1090,7 +1090,15 @@
                         isObject = false;
                     }
 
-                    if (isObject && fromObject || type.$literal && !Transpose.getMetadata(type)) {
+                    // An [ObjectLiteral] type ($literal) is a plain JS object with no runtime identity —
+                    // its members compile to direct property access, so it must be returned as the raw
+                    // parsed object, never deep-deserialized field-by-field. (Deep-deserializing it walks
+                    // typed fields such as Mosaik.Schema.Time, which has no cast operator, and throws —
+                    // hanging every search-backed list view.) The legacy H5 runtime reached the same
+                    // outcome because a literal type's reflection metadata was not retrievable here; the
+                    // Roslyn compiler does attach it, so gate on $literal alone rather than on the
+                    // absence of metadata.
+                    if (isObject && fromObject || type.$literal) {
                         return Transpose.merge(isObject ? {} : (instance || Transpose.createInstance(type)), raw);
                     }
 
