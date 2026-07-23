@@ -394,19 +394,15 @@ public sealed partial class Emitter
         // External / DOM-union operators are transparent in JS and would call a non-existent method.
         if (TransposeNaming.IsExternalType(convMethod.ContainingType)) return false;
 
-        var ct = convMethod.ContainingType;
-        // In-source (this compilation's own types, e.g. LanguageDTO/UID128) — always consistent.
-        if (ct.Locations.Any(l => l.IsInSource)) return true;
-
-        // Transpose runtime / BCL types (System.*, assembly "Transpose"/"Transpose.*"): their operators
-        // are the hand-written runtime primitives this compiler emits against (e.g. the implicit
-        // DateTime→DateTimeOffset used by `DateTimeOffset x = someDate.Date`), so materialising them is
-        // consistent. A referenced USER library (Tesserae, …) compiled by an older compiler that erased
-        // conversions is NOT consistent — calling its operator can re-enter code built for the erased
-        // form (HSLColor → stack overflow) — so those stay erased unless/until the library is rebuilt.
-        var asm = ct.ContainingAssembly?.Name;
-        return asm == "Transpose"
-               || (asm is not null && asm.StartsWith("Transpose.", System.StringComparison.Ordinal));
+        // Every other user-defined operator is materialised as a real op_X call: in-source types
+        // (this compilation's own LanguageDTO/UID128), the Transpose runtime/BCL primitives (System.*,
+        // the implicit DateTime→DateTimeOffset), AND referenced user libraries. The current compiler
+        // always emits the operator method (op_Implicit/op_Explicit) into the library it defines, so a
+        // cross-assembly call resolves — e.g. Curiosity.FrontEnd calling the implicit
+        // Language→Mosaik.Schema.Optional<Language> defined in Curiosity.FrontEnd.Core (erasing it left
+        // `SaveUILanguage(l.Value, …)` passing a raw enum → `undefined.HasValue` on #/preferences).
+        // Only external/DOM operators (guarded above) stay erased.
+        return true;
     }
 
     /// <summary>Emits a call to a user-defined conversion operator (op_Implicit / op_Explicit),
