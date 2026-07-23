@@ -115,6 +115,26 @@ internal static class TransposeNaming
         => GetStringAttr(symbol, NameAttr);
 
     /// <summary>
+    /// The explicit [Name] that renames a property/event's JS slot: the member's own [Name] if
+    /// present, otherwise the [Name] on one of its accessors (property get/set, event add/remove).
+    /// h5 allows <c>[Name]</c> on an accessor to rename the whole member — e.g. Tesserae's
+    /// <c>ReadOnlyArray&lt;T&gt;.Length</c> whose getter is <c>[Name("length")]</c> so the access hits
+    /// the native JS array <c>.length</c>. Roslyn attaches an accessor-level attribute to the accessor
+    /// method, not the property/event, so a member-only lookup (which happened to work for source
+    /// [External] types via the camelCase convention) silently emitted <c>.Length</c> for a referenced
+    /// non-external type and broke <c>.Where(g => g.Values.Length > 0)</c>.
+    /// </summary>
+    public static string? PropertyEffectiveName(ISymbol symbol)
+    {
+        if (GetName(symbol) is { } own) return own;
+        if (symbol is IPropertySymbol { IsIndexer: false } p)
+            return (p.GetMethod is { } g ? GetName(g) : null) ?? (p.SetMethod is { } s ? GetName(s) : null);
+        if (symbol is IEventSymbol e)
+            return (e.AddMethod is { } a ? GetName(a) : null) ?? (e.RemoveMethod is { } r ? GetName(r) : null);
+        return null;
+    }
+
+    /// <summary>
     /// The raw-JavaScript body lines of a member's <c>[Transpose.Script(...)]</c>, or null when
     /// absent. When present, these lines become the member's body verbatim and the C# body (if any)
     /// is discarded — the mechanism for hand-writing a method/accessor/operator implementation.
@@ -377,7 +397,7 @@ internal static class TransposeNaming
         // Only Transpose-compiled members (source or referenced library) get a slot suffix: an
         // external/native member (e.g. a DOM NodeListOf<T>.length hiding NodeList.length) maps to
         // a single fixed JS property, so suffixing it would reference a nonexistent property.
-        if (GetName(symbol) is null
+        if (PropertyEffectiveName(symbol) is null
             && symbol is IPropertySymbol { IsIndexer: false } or IFieldSymbol or IEventSymbol)
         {
             // Hiding suffix is only meaningful for Transpose-compiled members (external/native
@@ -437,7 +457,7 @@ internal static class TransposeNaming
     /// <summary>The base JS name of a property/field/event (before any hiding suffix).</summary>
     private static string RawMemberName(ISymbol symbol)
     {
-        if (GetName(symbol) is { } name) return name;
+        if (PropertyEffectiveName(symbol) is { } name) return name;
 
         // Enum members honour the [Enum(Emit.Name*)] casing modes on their own JS name: NameLowerCase
         // (8) lowercases, NameUpperCase (9) uppercases; Name (1) / NamePreserveCase (7) and every
