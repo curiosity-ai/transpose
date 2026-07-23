@@ -1665,6 +1665,32 @@ public class Program
         }
 
         [TestMethod]
+        public async Task ConditionalExpressionLiftsNarrowBranchToLong()
+        {
+            // A ?: whose type is `long` because one branch is long must lift a narrow (int) branch to
+            // Int64 — each branch is implicitly converted to the conditional's type. Otherwise the
+            // ternary yields a plain number and a downstream Int64 op throws `.sub is not a function`
+            // (MigrationsView.RenderTasks: `(intField==0 ? someLong : intField) - (...)`).
+            await RunTest(@"
+using System;
+public class Row { public int Ticks; public bool Flag; }
+public class Program
+{
+    static long Key(Row r)
+        => (r.Ticks == 0 ? 5000000000L : r.Ticks) - (r.Flag ? 1000000000L : 0);
+    public static void Main()
+    {
+        System.Console.WriteLine(Key(new Row { Ticks = 0,  Flag = false }));  // 5000000000
+        System.Console.WriteLine(Key(new Row { Ticks = 42, Flag = false }));  // 42
+        System.Console.WriteLine(Key(new Row { Ticks = 42, Flag = true  }));  // 42 - 1000000000
+        long l = 7; int i = 3; bool c = false;
+        long m = c ? l : i;                                                   // int branch -> long
+        System.Console.WriteLine(m);                                          // 3
+    }
+}");
+        }
+
+        [TestMethod]
         public void GenericMethodInTransposeNamedLibraryThreadsTypeArgs()
         {
             // A Transpose.*-named binding library that carries real implementation (NOT [assembly:External])

@@ -139,12 +139,18 @@ public sealed partial class Emitter
                 _w.Write(")");
                 break;
             case ConditionalExpressionSyntax cond:
+                // Each branch is implicitly converted to the conditional's type (C# §12.15). Emit each
+                // through the conversion path so a narrower branch is lifted — e.g. in
+                // `int==0 ? long : intField` the ternary type is `long`, so the `int` branch must be
+                // wrapped System.Int64(...) or the ternary yields a plain number and a downstream Int64
+                // op (`.sub`) throws (MigrationsView.RenderTasks OrderByDescending key).
+                var condType = _model.GetTypeInfo(cond).Type;
                 _w.Write("(");
                 EmitExpression(cond.Condition);
                 _w.Write(" ? ");
-                EmitExpression(cond.WhenTrue);
+                EmitExpressionConverted(cond.WhenTrue, condType);
                 _w.Write(" : ");
-                EmitExpression(cond.WhenFalse);
+                EmitExpressionConverted(cond.WhenFalse, condType);
                 _w.Write(")");
                 break;
             case CastExpressionSyntax cast:
