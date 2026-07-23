@@ -115,6 +115,23 @@ public sealed partial class Emitter
             return;
         }
 
+        // enum.Equals(other) → System.Enum.equals(value, other, EnumType). The BCL template resolves
+        // its type argument as {this:type} → Transpose.getType(value); for a numeric-backed enum the
+        // value is a bare number whose getType is Int32 (not the enum), so System.Enum.equals's
+        // v2.type !== T guard wrongly returned false for equal values. Pass the statically-known enum
+        // type so the guard compares the real enum type.
+        if (symbol is { Name: "Equals", Parameters.Length: 1 }
+            && invocation.Expression is MemberAccessExpressionSyntax { Expression: { } eqRecv }
+            && _model.GetTypeInfo(eqRecv).Type is { TypeKind: TypeKind.Enum } eqEnumType)
+        {
+            _w.Write("System.Enum.equals(");
+            EmitExpression(eqRecv);
+            _w.Write(", ");
+            EmitExpressionConverted(invocation.ArgumentList.Arguments[0].Expression, symbol.Parameters[0].Type);
+            _w.Write($", {TypeRef(eqEnumType)})");
+            return;
+        }
+
         // char.ToString() → the single-character string. A char is a bare code-point number at
         // runtime, so its default `.toString()` would give the number ("65") not the character.
         if (symbol is { Name: "ToString", Parameters.Length: 0 }

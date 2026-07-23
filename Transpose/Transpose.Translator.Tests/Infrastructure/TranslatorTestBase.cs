@@ -68,6 +68,15 @@ public abstract class TranslatorTestBase
         return jsOutput;
     }
 
+    /// <summary>
+    /// Translates + runs the C# as JavaScript on Node and returns the normalized output, WITHOUT
+    /// comparing against native Roslyn. Use this for behaviour that has no native-.NET equivalent —
+    /// e.g. Transpose-specific attributes such as <c>[Enum(Emit.StringName*)]</c>, whose whole point
+    /// is a JS-side representation .NET does not model — so the expected output is asserted directly.
+    /// </summary>
+    protected Task<string> RunTestOnlyInTranspose(string csharpCode)
+        => RunTest(csharpCode, skipRoslyn: true);
+
     /// <summary>Asserts that translation reports the given unsupported-feature error.</summary>
     protected Task RunTestExpectingError(string csharpCode, string expectedErrorSubstring, bool includeCorePackages = false)
     {
