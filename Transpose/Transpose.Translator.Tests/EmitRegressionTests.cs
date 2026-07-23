@@ -1483,6 +1483,35 @@ public class Program
         }
 
         [TestMethod]
+        public void ScriptWriteWrapsInlineLambdaArgumentInParentheses()
+        {
+            // The template immediately invokes the substituted argument (`{1}()`). A lambda /
+            // delegate-creation argument emits as a bare arrow function, and `() => {…}()` is a
+            // syntax error — it must be parenthesized to `(() => {…})()`. A delegate held in a
+            // variable is already a primary expression and must NOT be wrapped.
+            var code = @"
+using System;
+using Transpose;
+public class Program
+{
+    public static void Main()
+    {
+        dynamic m = 1;
+        Action a = () => { Console.WriteLine(""v""); };
+        Script.Write(""{0}.onChange(function() {{ {1}(); }})"", m, new Action(() => { Console.WriteLine(""x""); }));
+        Script.Write(""{0}()"", a);
+    }
+}";
+            var result = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            var js = result.Javascript!;
+            Assert.IsTrue(js.Contains("(() =>"),
+                "an inline-lambda argument in call position must be parenthesized\n" + js);
+            Assert.IsFalse(js.Contains("(a)()"),
+                "a delegate held in a variable must not be needlessly parenthesized\n" + js);
+        }
+
+        [TestMethod]
         public async Task ObjectLiteralInstanceMethodRunsOnPlainObject()
         {
             // The receiver is a plain object literal (no prototype), exactly like a JSON.Parse result.

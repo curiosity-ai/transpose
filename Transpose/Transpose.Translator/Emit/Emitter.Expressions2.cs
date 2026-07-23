@@ -279,11 +279,43 @@ public sealed partial class Emitter
             return false;
 
         var argJs = invocation.ArgumentList.Arguments.Skip(1)
-            .Select(a => Capture(() => EmitExpression(a.Expression))).ToList();
+            .Select(a =>
+            {
+                var js = Capture(() => EmitExpression(a.Expression));
+                // A lambda/delegate argument emits as a bare arrow function `() => {…}`, which is not a
+                // primary expression: if the template drops it into call position (`{n}()`) or after a
+                // member access, `() => {…}()` is a syntax error. Wrap it so it is safe anywhere.
+                return EmitsAsInlineFunction(a.Expression) ? $"({js})" : js;
+            }).ToList();
         // With no substitution arguments the code is injected verbatim — {…} sequences are
         // literal JS (e.g. regex quantifiers in "/^(.{8})(.{4})…$/"), not {0}/{1} placeholders.
         _w.Write(argJs.Count == 0 ? rawJs : SubstituteTemplate(rawJs, null, new(), argJs));
         return true;
+    }
+
+    /// <summary>
+    /// True when <paramref name="expr"/> emits as an inline function expression (an arrow function),
+    /// i.e. a lambda / anonymous method, or a delegate-creation / cast wrapping one. Such an emission
+    /// is not a primary JS expression and must be parenthesized before it can sit in call or
+    /// member-access position.
+    /// </summary>
+    private bool EmitsAsInlineFunction(ExpressionSyntax expr)
+    {
+        switch (expr)
+        {
+            case ParenthesizedExpressionSyntax paren:
+                return EmitsAsInlineFunction(paren.Expression);
+            case AnonymousFunctionExpressionSyntax:
+                return true;
+            case CastExpressionSyntax cast:
+                return EmitsAsInlineFunction(cast.Expression);
+            case ObjectCreationExpressionSyntax oc
+                when _model.GetTypeInfo(oc).Type is INamedTypeSymbol { TypeKind: TypeKind.Delegate }
+                     && oc.ArgumentList is { Arguments.Count: 1 }:
+                return EmitsAsInlineFunction(oc.ArgumentList.Arguments[0].Expression);
+            default:
+                return false;
+        }
     }
 
     /// <summary>Captures each argument's JS, keyed by parameter name and by position.</summary>
