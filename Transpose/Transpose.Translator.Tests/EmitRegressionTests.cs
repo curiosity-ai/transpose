@@ -1546,5 +1546,28 @@ public class Program
     }
 }", waitForOutput: "<<DONE>>");
         }
+
+        // ---- BCL implicit conversion operator (DateTime -> DateTimeOffset) ------
+        //
+        // Runtime/BCL conversion operators (assembly "Transpose") are emitted against the hand-written
+        // runtime primitives, so they must be materialised too — `DateTimeOffset x = someDate` needs
+        // op_Implicit or the value stays a DateTime and `x.AddDays(...)` throws "is not a function"
+        // (Curiosity FrontEnd MigrationsView: `DateTimeOffset startOfWeek = now.AddDays(-d).Date`).
+
+        [TestMethod]
+        public async Task BclImplicitConversionOperatorIsApplied()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        DateTimeOffset x = new DateTime(2020, 1, 1); // implicit DateTime -> DateTimeOffset
+        Console.WriteLine(x.AddDays(1).Day);          // 2 (operator materialised -> real DateTimeOffset)
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
     }
 }

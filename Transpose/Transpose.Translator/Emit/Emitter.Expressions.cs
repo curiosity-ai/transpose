@@ -386,10 +386,28 @@ public sealed partial class Emitter
     /// materialising them can call a non-existent method (System.Object.op_Implicit) or re-enter a
     /// library conversion that was compiled to expect the erased form (HSLColor → stack overflow).</summary>
     private static bool ShouldEmitUserConversion(IMethodSymbol convMethod)
-        => TransposeNaming.GetTemplate(convMethod.OriginalDefinition) is not null
-           || TransposeNaming.GetTemplate(convMethod) is not null
-           || (convMethod.ContainingType.Locations.Any(l => l.IsInSource)
-               && !TransposeNaming.IsExternalType(convMethod.ContainingType));
+    {
+        if (TransposeNaming.GetTemplate(convMethod.OriginalDefinition) is not null
+            || TransposeNaming.GetTemplate(convMethod) is not null)
+            return true;
+
+        // External / DOM-union operators are transparent in JS and would call a non-existent method.
+        if (TransposeNaming.IsExternalType(convMethod.ContainingType)) return false;
+
+        var ct = convMethod.ContainingType;
+        // In-source (this compilation's own types, e.g. LanguageDTO/UID128) — always consistent.
+        if (ct.Locations.Any(l => l.IsInSource)) return true;
+
+        // Transpose runtime / BCL types (System.*, assembly "Transpose"/"Transpose.*"): their operators
+        // are the hand-written runtime primitives this compiler emits against (e.g. the implicit
+        // DateTime→DateTimeOffset used by `DateTimeOffset x = someDate.Date`), so materialising them is
+        // consistent. A referenced USER library (Tesserae, …) compiled by an older compiler that erased
+        // conversions is NOT consistent — calling its operator can re-enter code built for the erased
+        // form (HSLColor → stack overflow) — so those stay erased unless/until the library is rebuilt.
+        var asm = ct.ContainingAssembly?.Name;
+        return asm == "Transpose"
+               || (asm is not null && asm.StartsWith("Transpose.", System.StringComparison.Ordinal));
+    }
 
     /// <summary>Emits a call to a user-defined conversion operator (op_Implicit / op_Explicit),
     /// honouring a [Template] on the operator (some BCL/binding types define theirs that way) and
