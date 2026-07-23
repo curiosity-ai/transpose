@@ -1228,6 +1228,17 @@ public sealed partial class Emitter
         return asm == "Transpose" || (asm is not null && asm.StartsWith("Transpose.", System.StringComparison.Ordinal));
     }
 
+    /// <summary>True if the operand is the <c>null</c> literal (or a constant that evaluates to null,
+    /// e.g. <c>default</c> for a reference/nullable type or a const null) — the marker for a
+    /// null-test comparison rather than a value comparison.</summary>
+    private bool IsNullLiteralOperand(ExpressionSyntax operand)
+    {
+        var e = operand is ParenthesizedExpressionSyntax paren ? paren.Expression : operand;
+        if (e.IsKind(SyntaxKind.NullLiteralExpression)) return true;
+        var cv = _model.GetConstantValue(e);
+        return cv.HasValue && cv.Value is null;
+    }
+
     private void EmitBinary(BinaryExpressionSyntax binary)
     {
         var op = binary.OperatorToken.Text;
@@ -1235,6 +1246,22 @@ public sealed partial class Emitter
         var leftType = _model.GetTypeInfo(binary.Left).ConvertedType ?? _model.GetTypeInfo(binary.Left).Type;
         var rightType = _model.GetTypeInfo(binary.Right).ConvertedType ?? _model.GetTypeInfo(binary.Right).Type;
         var resultType = _model.GetTypeInfo(binary).Type;
+
+        // `x == null` / `x != null` (null literal on either side) is a null test in C#, NEVER a call
+        // to a user-defined ==/!= operator — comparing a struct / Nullable<T> / reference to the null
+        // literal tests the operand for null (a nullable value type checks HasValue). Emit a direct JS
+        // null test (loose == null, matching the `is null` pattern, so it also catches undefined). This
+        // must run before the user-defined-operator and value-equality paths below, otherwise e.g.
+        // `dateTimeOffsetNullable != null` emitted System.DateTimeOffset.op_Inequality(x, null) which
+        // then dereferenced the null argument (`null.UtcDateTime` → TypeError).
+        if ((binary.IsKind(SyntaxKind.EqualsExpression) || binary.IsKind(SyntaxKind.NotEqualsExpression))
+            && (IsNullLiteralOperand(binary.Left) || IsNullLiteralOperand(binary.Right)))
+        {
+            var nonNull = IsNullLiteralOperand(binary.Left) ? binary.Right : binary.Left;
+            EmitExpression(nonNull);
+            _w.Write(binary.IsKind(SyntaxKind.NotEqualsExpression) ? " != null" : " == null");
+            return;
+        }
 
         // User-defined operator overloads → static op_ method call.
         // (Records synthesize op_Equality/op_Inequality; those are implicitly declared
