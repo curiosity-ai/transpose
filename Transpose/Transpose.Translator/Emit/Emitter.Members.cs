@@ -668,13 +668,18 @@ public sealed partial class Emitter
         if (def.GetAttributes().Any(a => TransposeNaming.AttrIs(a, "Transpose.IgnoreGenericAttribute"))) return false;
         // A templated method's call shape is the template itself — no separate leading type args.
         if (TransposeNaming.GetTemplate(def) is not null) return false;
-        // Source / referenced-library generic methods always thread. So do Transpose.dll BCL generic
-        // methods that have a real body (a plain C# generic method, e.g.
-        // CollectionExtensions.GetValueOrDefault / TryAdd — compiled with leading type parameters).
-        // A body-less extern (hand-written JS, incl. the DOM externs in Transpose.Core like
-        // querySelector<T>) uses its native form and must NOT thread.
+        // Source / referenced-library generic methods always thread.
         if (TransposeNaming.IsTransposeCompiledSource(method.ContainingType)) return true;
-        return method.ContainingAssembly?.Name == "Transpose" && !TransposeNaming.HasNoBody(def);
+        // Otherwise the containing type is a Transpose runtime/binding assembly (classified so by name).
+        // Its EXTERNAL types — Transpose.Core's [assembly:External] DOM bindings, whose members like
+        // Node.appendChild<T> are native JS and use their native call form — must NOT thread. A
+        // non-external type that carries a real method body threads its type args as leading JS
+        // parameters: the base "Transpose" BCL's generic methods (e.g. CollectionExtensions.TryAdd) and
+        // a Transpose.*-named library with genuine implementation (e.g. Transpose.Plotly's
+        // Bindings.flatten2DArrayIf1D<T>, which IsTransposeCompiledSource treats as runtime purely by its
+        // Transpose.* assembly name). A body-less extern (hand-written JS) uses its native form.
+        if (TransposeNaming.IsExternalType(method.ContainingType)) return false;
+        return !TransposeNaming.HasNoBody(def);
     }
 
     private void EmitOptionalDefaults(IMethodSymbol method)

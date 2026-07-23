@@ -1537,6 +1537,31 @@ public class Program
         }
 
         [TestMethod]
+        public void GenericMethodInTransposeNamedLibraryThreadsTypeArgs()
+        {
+            // A Transpose.*-named binding library that carries real implementation (NOT [assembly:External])
+            // must thread its generic methods' type args as leading JS parameters, so runtime uses of the
+            // type parameter in the body (IEnumerable<T>, typeof(T), …) resolve. IsTransposeCompiledSource
+            // classifies any Transpose.*-named assembly as runtime purely by name, so ThreadsTypeArgs must
+            // still thread a non-external, body-having generic method there.
+            // Regression: Transpose.Plotly.Bindings.flatten2DArrayIf1D<T> emitted `function (values)` while
+            // the body referenced `T` → `ReferenceError: T is not defined` on #/manage/operate/usage.
+            var code = @"
+using System.Collections.Generic;
+using System.Linq;
+public static class Bindings
+{
+    public static object Flatten<T>(IEnumerable<IEnumerable<T>> values) => values.First().ToArray();
+}";
+            var result = new RoslynTranslator().Translate(
+                new[] { ("App.cs", code) }, "Transpose.Plotly", null, new[] { "DEBUG" });
+            Assert.IsTrue(result.Success, "translation should succeed");
+            var js = result.Javascript!;
+            Assert.IsTrue(js.Contains("Flatten: function (T,"),
+                "a non-external body-having generic method in a Transpose.*-named library must thread its type args\n" + js);
+        }
+
+        [TestMethod]
         public async Task ObjectLiteralInstanceMethodRunsOnPlainObject()
         {
             // The receiver is a plain object literal (no prototype), exactly like a JSON.Parse result.
