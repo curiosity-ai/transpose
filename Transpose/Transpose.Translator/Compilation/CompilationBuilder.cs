@@ -61,7 +61,7 @@ public static class CompilationBuilder
         var references = selfContainedBcl
             ? (extraReferencePaths ?? System.Array.Empty<string>())
                 .Where(File.Exists)
-                .Select(p => (MetadataReference)MetadataReference.CreateFromFile(p))
+                .Select(ReadReference)
                 .ToList()
             : GetReferenceAssemblies(extraReferencePaths);
 
@@ -81,7 +81,7 @@ public static class CompilationBuilder
     /// </summary>
     private static IReadOnlyList<MetadataReference> GetReferenceAssemblies(IEnumerable<string>? extraReferencePaths)
     {
-        var refs = new List<MetadataReference> { MetadataReference.CreateFromFile(TransposeAssemblies.TransposeDllPath) };
+        var refs = new List<MetadataReference> { ReadReference(TransposeAssemblies.TransposeDllPath) };
         if (extraReferencePaths is not null)
         {
             var tpsDll = Path.GetFullPath(TransposeAssemblies.TransposeDllPath);
@@ -89,9 +89,22 @@ public static class CompilationBuilder
             {
                 if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) continue;
                 if (string.Equals(Path.GetFullPath(path), tpsDll, StringComparison.OrdinalIgnoreCase)) continue;
-                refs.Add(MetadataReference.CreateFromFile(path));
+                refs.Add(ReadReference(path));
             }
         }
         return refs;
+    }
+
+    /// <summary>
+    /// Reads one reference assembly into a <see cref="MetadataReference"/>, logging its full path to
+    /// the compilation log first so a build records exactly which assembly file was read (and from
+    /// where — the NuGet cache, a sibling bin folder, a <c>--reference</c> path). Every reference the
+    /// compilation binds against — the base Transpose.dll, package DLLs, and the self-contained BCL's
+    /// own inputs — goes through here.
+    /// </summary>
+    private static MetadataReference ReadReference(string path)
+    {
+        CompileProgress.Report($"reading assembly {Path.GetFullPath(path)}");
+        return MetadataReference.CreateFromFile(path);
     }
 }
