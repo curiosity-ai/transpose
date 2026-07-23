@@ -1569,5 +1569,34 @@ public class Program
     }
 }", waitForOutput: "<<DONE>>");
         }
+
+        // ---- type [Convention] applies to an interface-implementing method -----
+        //
+        // A method that implicitly implements an interface member whose own JS name carries no rule
+        // (IDisposable.Dispose -> raw "Dispose") must still follow the IMPLEMENTING type's explicit
+        // [Convention]. CancellationTokenSource is [Convention(CamelCase)], so `cts.Dispose()` must
+        // emit `cts.dispose()` — the slot the hand-written runtime and h5 use; PascalCase "Dispose"
+        // threw "is not a function". A ruled interface member (templated GetEnumerator, or
+        // IEnumerator.MoveNext's own [Convention]) is still inherited unchanged.
+
+        [TestMethod]
+        public void ConventionAppliesToInterfaceImplementingMethod()
+        {
+            var code = @"
+using Transpose;
+[External]
+[Convention(Member = ConventionMember.Method, Notation = Notation.CamelCase)]
+public class Res : System.IDisposable
+{
+    public extern void Dispose();
+    public extern void DoWork();
+}
+public class Program { public static void Main() { Res r = null; r.Dispose(); r.DoWork(); } }";
+            var js = new RoslynTranslator().Translate(code).Javascript!;
+            Assert.IsTrue(js.Contains(".dispose()"),
+                "IDisposable.Dispose on a CamelCase-convention type must emit .dispose()\n" + js);
+            Assert.IsTrue(js.Contains(".doWork()"), "regular convention method still camelCases\n" + js);
+            Assert.IsFalse(js.Contains(".Dispose()"), "must not emit PascalCase .Dispose()\n" + js);
+        }
     }
 }
