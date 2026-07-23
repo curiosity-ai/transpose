@@ -1649,5 +1649,32 @@ public class Program { public static void Main() { } }";
             Assert.IsTrue(js.Contains("List$1(System.Object)"),
                 "List<T> in a generic method's metadata should resolve T to System.Object\n" + js);
         }
+
+        // ---- default(struct) zero-initializes nested non-primitive struct fields ----
+        //
+        // A struct's getDefaultValue factory must set a non-primitive struct field (DateTime, Guid, a
+        // nested struct) to the ZEROED struct, not null — otherwise default(DateTimeOffset).m_dateTime
+        // is null and .UtcDateTime/.Equals throw "reading getTime of null" (hit comparing a default
+        // DateTimeOffset during Newtonsoft serialization on several views).
+
+        [TestMethod]
+        public async Task DefaultStructZeroInitializesNestedStructFields()
+        {
+            await RunTest(@"
+using System;
+public struct Holder { public DateTime When; public int N; }
+public class Program
+{
+    public static void Main()
+    {
+        Holder h = default(Holder);
+        Console.WriteLine(h.When.Year + "" "" + h.N);      // 1 0
+        DateTimeOffset d = default(DateTimeOffset);
+        Console.WriteLine(d.UtcDateTime.Year);             // 1 (no null deref)
+        Console.WriteLine(d.Equals(default(DateTimeOffset))); // True
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
     }
 }

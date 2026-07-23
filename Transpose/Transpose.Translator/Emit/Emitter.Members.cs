@@ -54,7 +54,25 @@ public sealed partial class Emitter
                     _w.Block(() =>
                     {
                         _w.WriteLine("var $ = Object.create(this.prototype);");
-                        foreach (var (name, def, _) in slots) _w.WriteLine($"$.{name} = {def};");
+                        foreach (var (name, def, sym) in slots)
+                        {
+                            // A non-primitive struct field (DateTime, Guid, a nested struct, …)
+                            // defaults to the ZEROED struct, not null — this factory produces the
+                            // real default(T), so recurse via getDefaultValue instead of the `null`
+                            // slot literal (which is only the order-independent define-time placeholder).
+                            // Otherwise e.g. default(DateTimeOffset).m_dateTime is null and .UtcDateTime
+                            // throws "reading getTime of null".
+                            var slotType = sym switch
+                            {
+                                IFieldSymbol f    => f.Type,
+                                IPropertySymbol p => p.Type,
+                                _                 => null,
+                            };
+                            var value = slotType is not null && NeedsStructDefaultInit(slotType)
+                                ? $"Transpose.getDefaultValue({TypeRef(slotType)})"
+                                : def;
+                            _w.WriteLine($"$.{name} = {value};");
+                        }
                         _w.WriteLine("return $;");
                     });
                     if (structStaticMethods.Count > 0)
