@@ -56,7 +56,7 @@ internal static class ProjectResolver
             .Select(s => s.Trim())
             .Where(s => s.Length > 0)
             .ToList();
-        if (!defines.Contains("Transpose")) defines.Add("Transpose"); // Transpose projects always compile the Transpose branch
+        if (!defines.Contains("TRANSPOSE")) defines.Add("TRANSPOSE"); // Transpose projects always compile the TRANSPOSE branch (#if TRANSPOSE)
 
         // Configuration-driven symbols the .NET SDK defines implicitly: TRACE in every configuration,
         // DEBUG in the Debug configuration. Without these, `#if DEBUG` never compiles in a `-c Debug`

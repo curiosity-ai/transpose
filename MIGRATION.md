@@ -118,8 +118,8 @@ The change is almost entirely in `using` directives:
 - `using H5.Core;` → `using Transpose.Core;`
 - Fully-qualified references `H5.Something` → `Transpose.Something`,
   `H5.Core.Something` → `Transpose.Core.Something`.
-- Conditional compilation: `#if H5` → `#if Transpose` (Transpose defines the
-  `Transpose` symbol during transpilation).
+- Conditional compilation: `#if H5` → `#if TRANSPOSE` (Transpose defines the
+  `TRANSPOSE` symbol during transpilation).
 
 Things that **do not** change (they are unqualified names or preserved tokens):
 

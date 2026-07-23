@@ -56,7 +56,7 @@ public static class NewtonsoftJsonRunner
             sources,
             PackageAssemblyName,
             extraReferencePaths: null,
-            preprocessorSymbols: new[] { "Transpose", "TRACE" },
+            preprocessorSymbols: new[] { "TRANSPOSE", "TRACE" },
             emitAssembly: true);
 
         if (result.AssemblyBytes is null || result.Javascript is null)
