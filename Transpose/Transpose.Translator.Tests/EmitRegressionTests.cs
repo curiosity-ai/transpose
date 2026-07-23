@@ -1512,6 +1512,81 @@ public class Program
         }
 
         [TestMethod]
+        public async Task ExpressionBodiedLocalFunctionHoistsOutVar()
+        {
+            // A local function with an EXPRESSION body whose expression introduces an out-var
+            // (`string F() => dict.TryGetValue(k, out var v) ? v : null`) must predeclare `var v;`
+            // in the arrow's block — the write-back `v = $ref.v` happens inside a condition IIFE but
+            // `v` is read outside it. Without the hoist the name is undeclared and strict-mode bundles
+            // throw `ReferenceError: v is not defined` (seen as `u is not defined` in the front-end's
+            // InspectChatView.CurrentUidParam). Method/lambda bodies already hoisted; local functions did not.
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+public class Program
+{
+    public static void Main()
+    {
+        var state = new Dictionary<string, string> { { ""uid"", ""abc"" } };
+        string CurrentUidParam() => state.TryGetValue(""uid"", out var u) ? u : null;
+        string Missing() => state.TryGetValue(""nope"", out var u) ? u : ""fallback"";
+        Console.WriteLine(CurrentUidParam() ?? ""NULL"");
+        Console.WriteLine(Missing());
+    }
+}");
+        }
+
+        [TestMethod]
+        public async Task IntPlusUintPromotesToLongResult()
+        {
+            // C# binary numeric promotion: `int + uint` has no common 32-bit type, so both promote to
+            // `long` and the result is `long`. The sum must be a real Int64 at runtime — it flows into a
+            // `long`-typed variable whose later `< 0` / indexing use the Int64 helpers (.lt/.add/…). If
+            // the addition stays a plain JS number the downstream `visualIndex.lt(...)` throws
+            // `visualIndex.lt is not a function` (LogsView.ValidateVisibleRowHeights on #/manage/operate/logs).
+            await RunTest(@"
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        int startIndex = 5;
+        for (uint i = 0; i < 3; i++)
+        {
+            var visualIndex = startIndex + i;   // int + uint => long
+            Console.WriteLine(visualIndex.GetType().Name);
+            Console.WriteLine(visualIndex < 0 || visualIndex >= 100 ? ""oob"" : ""ok "" + visualIndex);
+        }
+    }
+}");
+        }
+
+        [TestMethod]
+        public void GenericMethodInTransposeNamedLibraryThreadsTypeArgs()
+        {
+            // A Transpose.*-named binding library that carries real implementation (NOT [assembly:External])
+            // must thread its generic methods' type args as leading JS parameters, so runtime uses of the
+            // type parameter in the body (IEnumerable<T>, typeof(T), …) resolve. IsTransposeCompiledSource
+            // classifies any Transpose.*-named assembly as runtime purely by name, so ThreadsTypeArgs must
+            // still thread a non-external, body-having generic method there.
+            // Regression: Transpose.Plotly.Bindings.flatten2DArrayIf1D<T> emitted `function (values)` while
+            // the body referenced `T` → `ReferenceError: T is not defined` on #/manage/operate/usage.
+            var code = @"
+using System.Collections.Generic;
+using System.Linq;
+public static class Bindings
+{
+    public static object Flatten<T>(IEnumerable<IEnumerable<T>> values) => values.First().ToArray();
+}";
+            var result = new RoslynTranslator().Translate(
+                new[] { ("App.cs", code) }, "Transpose.Plotly", null, new[] { "DEBUG" });
+            Assert.IsTrue(result.Success, "translation should succeed");
+            var js = result.Javascript!;
+            Assert.IsTrue(js.Contains("Flatten: function (T,"),
+                "a non-external body-having generic method in a Transpose.*-named library must thread its type args\n" + js);
+        }
+
+        [TestMethod]
         public async Task ObjectLiteralInstanceMethodRunsOnPlainObject()
         {
             // The receiver is a plain object literal (no prototype), exactly like a JSON.Parse result.

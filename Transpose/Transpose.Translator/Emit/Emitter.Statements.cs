@@ -870,6 +870,11 @@ public sealed partial class Emitter
                     }
                     else if (localFn.ExpressionBody is not null)
                     {
+                        // Hoist out-var / is-pattern variables the expression introduces (e.g.
+                        // `string F() => dict.TryGetValue(k, out var v) ? v : null`) so their
+                        // write-backs and later reads resolve — an expression body has no statement
+                        // to predeclare them otherwise (matches EmitMethodBody / EmitAccessorBody).
+                        PredeclareInlineVars(localFn.ExpressionBody.Expression);
                         if (symbol?.ReturnsVoid == true) EmitExpressionStatement(localFn.ExpressionBody.Expression);
                         else { _w.Write("return "); EmitExpression(localFn.ExpressionBody.Expression); _w.WriteLine(";"); }
                     }
