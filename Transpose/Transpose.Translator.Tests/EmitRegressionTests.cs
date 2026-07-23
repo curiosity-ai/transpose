@@ -1561,6 +1561,135 @@ public class Program
 }");
         }
 
+        // ---- null comparisons must never invoke a user-defined ==/!= operator -----------------
+
+        [TestMethod]
+        public void NullableStructComparedToNullDoesNotCallUserOperator()
+        {
+            // `x == null` / `x != null` on a Nullable<struct-with-user-==> is a HasValue check, never a
+            // call to the struct's op_Equality/op_Inequality. Emitting the operator passed the null
+            // literal straight into it, which then dereferenced it (DateTimeOffset.op_Inequality(x, null)
+            // → `null.UtcDateTime`).
+            var code = @"
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        DateTimeOffset? a = null;
+        DateTimeOffset? b = DateTimeOffset.UtcNow;
+        System.Console.WriteLine(a != null);
+        System.Console.WriteLine(b == null);
+    }
+}";
+            var result = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            var js = result.Javascript!;
+            Assert.IsFalse(js.Contains("op_Inequality") || js.Contains("op_Equality"),
+                "a comparison to the null literal must not call the struct's ==/!= operator\n" + js);
+        }
+
+        [TestMethod]
+        public async Task NullableBclStructNullComparisonsMatchNative()
+        {
+            // Every BCL struct with a user-defined ==/!= (DateTimeOffset, DateTime, TimeSpan, Guid),
+            // as a Nullable<T>, compared to the null literal both ways, in a ternary and via ?. — all
+            // must reduce to a HasValue check, never an operator call.
+            await RunTest(@"
+using System;
+public class Box { public DateTimeOffset? When { get; set; } }
+public class Program
+{
+    public static void Main()
+    {
+        DateTimeOffset? dto = null;
+        DateTime?       dt  = DateTime.UtcNow;
+        TimeSpan?       ts  = null;
+        Guid?           g   = Guid.Empty;
+
+        System.Console.WriteLine(dto != null);          // false
+        System.Console.WriteLine(dto == null);          // true
+        System.Console.WriteLine(null != dto);          // false (null on the left)
+        System.Console.WriteLine(dt  != null);          // true
+        System.Console.WriteLine(ts  == null);          // true
+        System.Console.WriteLine(g   != null);          // true
+        System.Console.WriteLine(dto is null);          // true
+        System.Console.WriteLine(dt  is not null);      // true
+
+        var box = new Box { When = null };
+        System.Console.WriteLine(box?.When != null ? ""has"" : ""none"");  // none
+        box.When = DateTime.UtcNow;
+        System.Console.WriteLine(box?.When != null ? ""has"" : ""none"");  // has
+        Box nullBox = null;
+        System.Console.WriteLine(nullBox?.When != null ? ""has"" : ""none""); // none
+    }
+}");
+        }
+
+        [TestMethod]
+        public async Task ReferenceAndCustomStructNullComparisonsMatchNative()
+        {
+            // Reference types and a user struct that overloads ==/!= (dereferencing a field) must all
+            // treat a null-literal comparison as a null test.
+            await RunTest(@"
+using System;
+public struct Money
+{
+    public string Currency;
+    public Money(string c) { Currency = c; }
+    // An operator that would throw if handed null (like DateTimeOffset.op_* on UtcDateTime).
+    public static bool operator ==(Money a, Money b) => a.Currency.Length == b.Currency.Length;
+    public static bool operator !=(Money a, Money b) => !(a == b);
+    public override bool Equals(object o) => o is Money m && this == m;
+    public override int GetHashCode() => Currency?.Length ?? 0;
+}
+public class Program
+{
+    public static void Main()
+    {
+        string s = null;
+        object o = ""x"";
+        Money? m = null;
+        Money? m2 = new Money(""usd"");
+
+        System.Console.WriteLine(s == null);        // true
+        System.Console.WriteLine(s != null);        // false
+        System.Console.WriteLine(o == null);        // false
+        System.Console.WriteLine(o is not null);    // true
+        System.Console.WriteLine(m == null);        // true
+        System.Console.WriteLine(m != null);        // false
+        System.Console.WriteLine(m2 != null);       // true
+        System.Console.WriteLine(m2 is null);       // false
+    }
+}");
+        }
+
+        [TestMethod]
+        public async Task ConditionalExpressionLiftsNarrowBranchToLong()
+        {
+            // A ?: whose type is `long` because one branch is long must lift a narrow (int) branch to
+            // Int64 — each branch is implicitly converted to the conditional's type. Otherwise the
+            // ternary yields a plain number and a downstream Int64 op throws `.sub is not a function`
+            // (MigrationsView.RenderTasks: `(intField==0 ? someLong : intField) - (...)`).
+            await RunTest(@"
+using System;
+public class Row { public int Ticks; public bool Flag; }
+public class Program
+{
+    static long Key(Row r)
+        => (r.Ticks == 0 ? 5000000000L : r.Ticks) - (r.Flag ? 1000000000L : 0);
+    public static void Main()
+    {
+        System.Console.WriteLine(Key(new Row { Ticks = 0,  Flag = false }));  // 5000000000
+        System.Console.WriteLine(Key(new Row { Ticks = 42, Flag = false }));  // 42
+        System.Console.WriteLine(Key(new Row { Ticks = 42, Flag = true  }));  // 42 - 1000000000
+        long l = 7; int i = 3; bool c = false;
+        long m = c ? l : i;                                                   // int branch -> long
+        System.Console.WriteLine(m);                                          // 3
+    }
+}");
+        }
+
         [TestMethod]
         public void GenericMethodInTransposeNamedLibraryThreadsTypeArgs()
         {
