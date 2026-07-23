@@ -1512,6 +1512,31 @@ public class Program
         }
 
         [TestMethod]
+        public async Task ExpressionBodiedLocalFunctionHoistsOutVar()
+        {
+            // A local function with an EXPRESSION body whose expression introduces an out-var
+            // (`string F() => dict.TryGetValue(k, out var v) ? v : null`) must predeclare `var v;`
+            // in the arrow's block — the write-back `v = $ref.v` happens inside a condition IIFE but
+            // `v` is read outside it. Without the hoist the name is undeclared and strict-mode bundles
+            // throw `ReferenceError: v is not defined` (seen as `u is not defined` in the front-end's
+            // InspectChatView.CurrentUidParam). Method/lambda bodies already hoisted; local functions did not.
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+public class Program
+{
+    public static void Main()
+    {
+        var state = new Dictionary<string, string> { { ""uid"", ""abc"" } };
+        string CurrentUidParam() => state.TryGetValue(""uid"", out var u) ? u : null;
+        string Missing() => state.TryGetValue(""nope"", out var u) ? u : ""fallback"";
+        Console.WriteLine(CurrentUidParam() ?? ""NULL"");
+        Console.WriteLine(Missing());
+    }
+}");
+        }
+
+        [TestMethod]
         public async Task ObjectLiteralInstanceMethodRunsOnPlainObject()
         {
             // The receiver is a plain object literal (no prototype), exactly like a JSON.Parse result.
