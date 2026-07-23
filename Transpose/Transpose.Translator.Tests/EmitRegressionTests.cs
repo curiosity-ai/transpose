@@ -1981,5 +1981,83 @@ public class Program
     }
 }", waitForOutput: "<<DONE>>");
         }
+
+        // ---- Nullable<T>.ToString()/GetHashCode() must not pass the type as the converter fn ----
+        //
+        // The {T:ToString} / {T:GetHashCode} template placeholders (System.Nullable.toString/.getHashCode
+        // second arg) resolved to the bound type itself, so the runtime called the *type* as a function
+        // (System.Nullable.toString(icon, UIcons) → UIcons(icon)) and crashed with "Cannot read
+        // properties of undefined (reading '$initialize')" — hit rendering search results where a
+        // UIcons? icon flowed into icon.ToString(). An enum must convert through System.Enum.toString
+        // (native toString gives the number, not the name); bool/char need their own converters; every
+        // other type (and all GetHashCode) drops the arg so the runtime falls back correctly.
+
+        [TestMethod]
+        public async Task NullableToStringAndGetHashCodeMatchNative()
+        {
+            await RunTest(@"
+using System;
+[Flags] public enum Perm { None = 0, Read = 1, Write = 2, Exec = 4 }
+public enum Big : long { A = 1L, B = 5000000000L }
+public class Program
+{
+    public static void Main()
+    {
+        Perm? icon = Perm.Read;
+        Console.WriteLine(icon.ToString());                     // Read
+        Perm? flags = Perm.Read | Perm.Write;
+        Console.WriteLine(flags.ToString());                    // Read, Write
+        Console.WriteLine(flags.GetHashCode());                 // 3
+        Perm? none = null;
+        Console.WriteLine(""["" + none.ToString() + ""]"");         // []
+        Console.WriteLine(none.GetHashCode());                  // 0
+        Big? big = Big.B;
+        Console.WriteLine(big.ToString());                      // B
+        bool? b = true;
+        Console.WriteLine(b.ToString());                        // True
+        char? c = 'X';
+        Console.WriteLine(c.ToString());                        // X
+        int? i = 42;
+        Console.WriteLine(i.ToString());                        // 42
+        Console.WriteLine(i.GetHashCode());                     // 42
+        Console.WriteLine(((int)((Perm?)null).GetValueOrDefault()).ToString()); // 0 ({T:default} still works)
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        // ---- [Name] on a property ACCESSOR renames the property's JS slot ----
+        //
+        // Roslyn attaches an accessor-level attribute to the get/set method, not the property, so a
+        // property-only [Name] lookup missed it: Tesserae's ReadOnlyArray<T>.Length has its GETTER
+        // marked [Name("length")] to hit the native JS array `.length`. From a referenced (non-source,
+        // non-external) assembly the access emitted `.Length` (capital), which is undefined on a plain
+        // array — so `.Where(g => g.Values.Length > 0)` dropped every group, GetNodeTypesAndFields
+        // returned empty, and the node/field dropdown's `.Single()` threw "No element satisfies the
+        // condition". The property's JS name must fall back to its accessor's [Name].
+
+        [TestMethod]
+        public void NameOnPropertyAccessorRenamesJsSlot()
+        {
+            var code = @"
+using Transpose;
+public class Box
+{
+    public int Count { [Name(""cnt"")] get; set; }
+    public int Total { [Name(""tot"")] set; get; }
+}
+public class Program
+{
+    public static int Read(Box b) => b.Count + b.Total;
+    public static void Main() { }
+}";
+            var result = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            var js = result.Javascript!;
+            Assert.IsTrue(js.Contains("b.cnt") && js.Contains("b.tot"),
+                "a property whose accessor carries [Name] must emit that JS slot for access\n" + js);
+            Assert.IsFalse(js.Contains("b.Count") || js.Contains("b.Total"),
+                "the verbatim C# property name must not leak when an accessor [Name] renames the slot\n" + js);
+        }
     }
 }

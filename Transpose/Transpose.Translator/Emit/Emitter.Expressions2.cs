@@ -368,6 +368,8 @@ public sealed partial class Emitter
         {
             byName[definition.TypeParameters[i].Name] = TypeRef(constructed.TypeArguments[i]);
             byName[definition.TypeParameters[i].Name + ":default"] = DefaultValueLiteral(constructed.TypeArguments[i]);
+            if (ToStringFnLiteral(constructed.TypeArguments[i]) is { } tsFn)
+                byName[definition.TypeParameters[i].Name + ":ToString"] = tsFn;
         }
 
         var defType = definition.ContainingType;
@@ -378,6 +380,8 @@ public sealed partial class Emitter
             {
                 byName[defType.TypeParameters[i].Name] = TypeRef(conType.TypeArguments[i]);
                 byName[defType.TypeParameters[i].Name + ":default"] = DefaultValueLiteral(conType.TypeArguments[i]);
+                if (ToStringFnLiteral(conType.TypeArguments[i]) is { } tsFn)
+                    byName[defType.TypeParameters[i].Name + ":ToString"] = tsFn;
             }
         }
     }

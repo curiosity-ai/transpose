@@ -687,6 +687,11 @@ public sealed partial class Emitter
                 (map ??= new())[ps[i].Name] = TypeRef(args[i]);
                 // {T:default} in a template → the default value of the bound type argument.
                 map[ps[i].Name + ":default"] = DefaultValueLiteral(args[i]);
+                // {T:ToString} → a value→string FUNCTION for the bound type (fn arg of
+                // System.Nullable.toString). Only types whose native toString diverges from
+                // .NET get one; the rest drop the arg (see SubstituteTemplate) and fall back.
+                if (ToStringFnLiteral(args[i]) is { } tsFn)
+                    map[ps[i].Name + ":ToString"] = tsFn;
             }
         }
         if (member.ContainingType is { IsGenericType: true } ct)
@@ -694,6 +699,27 @@ public sealed partial class Emitter
         if (member is IMethodSymbol { IsGenericMethod: true } m)
             Add(m.OriginalDefinition.TypeParameters, m.TypeArguments);
         return map;
+    }
+
+    /// <summary>
+    /// The JS function that converts a value of <paramref name="t"/> to its .NET <c>ToString()</c>
+    /// form — used to resolve the <c>{T:ToString}</c> template placeholder (the <c>fn</c> argument of
+    /// <c>System.Nullable.toString</c>). Returns <c>null</c> when the value's own runtime
+    /// <c>toString()</c> already matches .NET (int, double, Int64, decimal, DateTime, structs, …);
+    /// the runtime helper then falls back to <c>a.toString()</c>. Only <c>enum</c> (native toString
+    /// gives the underlying number, not the name), <c>bool</c> ("true"/"false" vs .NET "True"/"False")
+    /// and <c>char</c> (a code-point number vs the character) need an explicit converter.
+    /// </summary>
+    private string? ToStringFnLiteral(ITypeSymbol t)
+    {
+        if (t.TypeKind == TypeKind.Enum)
+            return $"System.Enum.toStringFn({TypeRef(t)})";
+        return t.SpecialType switch
+        {
+            SpecialType.System_Boolean => "function ($v) { return System.Boolean.toString($v); }",
+            SpecialType.System_Char    => "function ($v) { return String.fromCharCode($v); }",
+            _                          => null,
+        };
     }
 
     private void EmitMethodGroup(IMethodSymbol method, ExpressionSyntax? thisTarget)
@@ -904,6 +930,19 @@ public sealed partial class Emitter
             // {param:version} — the assembly/compiler version string (used by the SystemAssembly
             // version-marker template). Resolved to the version this build was invoked with.
             if (modifier == "version") return "\"" + AssemblyVersion + "\"";
+            // {T:ToString} / {T:GetHashCode} → a value→string / value→hash FUNCTION for the bound
+            // type, the fn arg of System.Nullable.toString / .getHashCode. Only a type whose native
+            // toString diverges from .NET carries an explicit converter (in the type-arg map); every
+            // other type — and all GetHashCode — drops the arg so the runtime falls back to
+            // a.toString() / Transpose.getHashCode(a). Passing the bare type here (the old behaviour)
+            // called the type as a function and crashed with "$initialize of undefined".
+            if (modifier is "ToString" or "GetHashCode")
+            {
+                var fnKey = token + ":" + modifier;
+                if (argsByName.TryGetValue(fnKey, out var fnExpr)) return fnExpr;
+                if (typeArgs is not null && typeArgs.TryGetValue(fnKey, out var fnExpr2)) return fnExpr2;
+                return drop;
+            }
             if (token == "this") return ApplyArgModifier(modifier, receiver ?? "this");
             if (token.StartsWith("*"))
             {
