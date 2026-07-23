@@ -1451,6 +1451,38 @@ public class Program
         }
 
         [TestMethod]
+        public void ScriptWriteInlinesTemplateWithDynamicArgument()
+        {
+            // A `dynamic` argument makes Roslyn bind the call as late-bound, so GetSymbolInfo().Symbol
+            // is null. The Script.Write special-case must still recover the overload from the
+            // candidate symbols and inline the raw-JS template — not emit a bogus `Transpose.Write(...)`.
+            var code = @"
+using System;
+using Transpose;
+public class Program
+{
+    public static void Main()
+    {
+        dynamic opt = 42;
+        object obj = ""x"";
+        Script.Write(""console.log({0})"", obj);   // static arg — always inlined
+        Script.Write(""console.log({0})"", opt);   // dynamic arg — the regression
+        Action<dynamic> onInit = e => Script.Write(""{0}.layout()"", e);
+        onInit(7);
+    }
+}";
+            var result = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            var js = result.Javascript!;
+            Assert.IsFalse(js.Contains("Transpose.Write("),
+                "Script.Write with a dynamic argument must inline, not emit Transpose.Write(...)\n" + js);
+            Assert.IsTrue(js.Contains("console.log(opt)"),
+                "the dynamic-argument template must substitute {0} with the argument\n" + js);
+            Assert.IsTrue(js.Contains("e.layout()"),
+                "a dynamic lambda-parameter argument must substitute into the template\n" + js);
+        }
+
+        [TestMethod]
         public async Task ObjectLiteralInstanceMethodRunsOnPlainObject()
         {
             // The receiver is a plain object literal (no prototype), exactly like a JSON.Parse result.

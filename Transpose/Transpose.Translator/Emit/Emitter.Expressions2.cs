@@ -26,6 +26,10 @@ public sealed partial class Emitter
 
         if (symbol is null)
         {
+            // A `Script.Write(...)` call with a `dynamic` argument binds as late-bound, so Symbol is
+            // null — recover it from the candidates so the raw-JS template still inlines rather than
+            // emitting a bogus `Transpose.Write("{0}…", …)` call.
+            if (TryEmitScriptWrite(invocation, null)) return;
             EmitExpression(invocation.Expression);
             _w.Write("(");
             EmitArguments(invocation.ArgumentList, null);
@@ -136,17 +140,7 @@ public sealed partial class Emitter
         }
 
         // Transpose.Script.Write(code, args) — inject raw JavaScript, substituting {0},{1}… with args.
-        if (symbol is { Name: "Write" } && symbol.ContainingType?.ToDisplayString() == "Transpose.Script"
-            && invocation.ArgumentList.Arguments.Count >= 1
-            && _model.GetConstantValue(invocation.ArgumentList.Arguments[0].Expression).Value is string rawJs)
-        {
-            var argJs = invocation.ArgumentList.Arguments.Skip(1)
-                .Select(a => Capture(() => EmitExpression(a.Expression))).ToList();
-            // With no substitution arguments the code is injected verbatim — {…} sequences are
-            // literal JS (e.g. regex quantifiers in "/^(.{8})(.{4})…$/"), not {0}/{1} placeholders.
-            _w.Write(argJs.Count == 0 ? rawJs : SubstituteTemplate(rawJs, null, new(), argJs));
-            return;
-        }
+        if (TryEmitScriptWrite(invocation, symbol)) return;
 
         var origin = symbol.OriginalDefinition;
         var template = TransposeNaming.GetTemplate(origin) ?? TransposeNaming.GetTemplate(symbol);
@@ -264,6 +258,32 @@ public sealed partial class Emitter
         _w.Write("(");
         EmitArguments(invocation.ArgumentList, symbol);
         _w.Write(")");
+    }
+
+    /// <summary>
+    /// Handles <c>Transpose.Script.Write(code, args)</c> — inject raw JavaScript, substituting
+    /// {0},{1}… with the emitted argument expressions. Returns true if the call was emitted.
+    /// <paramref name="symbol"/> is the resolved method, or null when the call binds as late-bound
+    /// (any <c>dynamic</c> argument makes Roslyn drop the symbol) — in that case the intended
+    /// overload is recovered from the candidate symbols.
+    /// </summary>
+    private bool TryEmitScriptWrite(InvocationExpressionSyntax invocation, IMethodSymbol symbol)
+    {
+        var write = symbol ?? _model.GetSymbolInfo(invocation).CandidateSymbols
+            .OfType<IMethodSymbol>().FirstOrDefault();
+
+        if (write is not { Name: "Write" } || write.ContainingType?.ToDisplayString() != "Transpose.Script")
+            return false;
+        if (invocation.ArgumentList.Arguments.Count < 1
+            || _model.GetConstantValue(invocation.ArgumentList.Arguments[0].Expression).Value is not string rawJs)
+            return false;
+
+        var argJs = invocation.ArgumentList.Arguments.Skip(1)
+            .Select(a => Capture(() => EmitExpression(a.Expression))).ToList();
+        // With no substitution arguments the code is injected verbatim — {…} sequences are
+        // literal JS (e.g. regex quantifiers in "/^(.{8})(.{4})…$/"), not {0}/{1} placeholders.
+        _w.Write(argJs.Count == 0 ? rawJs : SubstituteTemplate(rawJs, null, new(), argJs));
+        return true;
     }
 
     /// <summary>Captures each argument's JS, keyed by parameter name and by position.</summary>
