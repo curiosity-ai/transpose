@@ -251,7 +251,9 @@ public sealed partial class Emitter
                 EmitQuery(query);
                 break;
             case WithExpressionSyntax with:
-                _w.Write("(function ($w) { var $c = TransposeR.clone($w); ");
+                // Arrow so a `this`-qualified initializer value (record `with { X = this.Y }`)
+                // keeps the enclosing instance rather than rebinding `this` to undefined.
+                _w.Write("(($w) => { var $c = TransposeR.clone($w); ");
                 EmitInitializer("$c", with.Initializer);
                 _w.Write("return $c; })(");
                 EmitExpression(with.Expression);
@@ -276,6 +278,22 @@ public sealed partial class Emitter
     {
         // Numeric narrowing to an integer type needs truncation.
         var sourceType = _model.GetTypeInfo(expr).Type;
+
+        // User-defined IMPLICIT conversion operator. C# inserts these silently at conversion sites
+        // (assignment, argument, return, field/property initializer). The operator can change the
+        // runtime representation — e.g. LanguageDTO's `implicit operator LanguageDTO(Language)` turns
+        // an enum into its string code — so it must actually be invoked; emitting the raw source
+        // value leaks the wrong representation (and later breaks JSON round-tripping). Explicit casts
+        // go through EmitCast/EmitNumericConversion, not here.
+        if (targetType is not null && sourceType is not null
+            && !SymbolEqualityComparer.Default.Equals(sourceType, targetType)
+            && _compilation.ClassifyConversion(sourceType, targetType)
+                is { IsUserDefined: true, IsImplicit: true, MethodSymbol: IMethodSymbol convMethod }
+            && ShouldEmitUserConversion(convMethod))
+        {
+            EmitUserDefinedConversion(convMethod, expr);
+            return;
+        }
         if (targetType is not null && sourceType is not null
             && IsIntegerType(targetType) && IsFloatingType(sourceType))
         {
@@ -357,6 +375,44 @@ public sealed partial class Emitter
         }
 
         EmitExpression(expr);
+    }
+
+    /// <summary>Whether a user-defined conversion operator should be emitted as an actual call rather
+    /// than erased. We only materialise operators declared in THIS compilation's own source (or ones
+    /// carrying a [Template], which is real JS) — e.g. the FrontEnd's own LanguageDTO/UID128 structs,
+    /// whose operators change the runtime representation and must run. Operators coming from a
+    /// referenced assembly (a compiled library such as Tesserae, the BCL) or an EXTERNAL/DOM-union
+    /// type stay erased, matching how those bundles were built and the legacy compiler's behaviour:
+    /// materialising them can call a non-existent method (System.Object.op_Implicit) or re-enter a
+    /// library conversion that was compiled to expect the erased form (HSLColor → stack overflow).</summary>
+    private static bool ShouldEmitUserConversion(IMethodSymbol convMethod)
+        => TransposeNaming.GetTemplate(convMethod.OriginalDefinition) is not null
+           || TransposeNaming.GetTemplate(convMethod) is not null
+           || (convMethod.ContainingType.Locations.Any(l => l.IsInSource)
+               && !TransposeNaming.IsExternalType(convMethod.ContainingType));
+
+    /// <summary>Emits a call to a user-defined conversion operator (op_Implicit / op_Explicit),
+    /// honouring a [Template] on the operator (some BCL/binding types define theirs that way) and
+    /// otherwise emitting the static Type.op_X(operand) call.</summary>
+    private void EmitUserDefinedConversion(IMethodSymbol convMethod, ExpressionSyntax expr)
+    {
+        var template = TransposeNaming.GetTemplate(convMethod.OriginalDefinition)
+                       ?? TransposeNaming.GetTemplate(convMethod);
+        if (template is not null)
+        {
+            var argJs = Capture(() => EmitExpression(expr));
+            var byName = new Dictionary<string, string>();
+            if (convMethod.Parameters.Length > 0) byName[convMethod.Parameters[0].Name] = argJs;
+            WriteTemplate(template, isStatic: true, isExtension: false, receiver: null, byName,
+                new List<string> { argJs });
+            return;
+        }
+
+        _w.Write($"{TypeRef(convMethod.ContainingType)}.{TransposeNaming.MemberJsName(convMethod)}(");
+        // The operand may itself need converting to the operator's parameter type (e.g. an int
+        // literal widened before a `operator T(long)`); route it through the converter.
+        EmitExpressionConverted(expr, convMethod.Parameters.Length > 0 ? convMethod.Parameters[0].Type : null);
+        _w.Write(")");
     }
 
     /// <summary>A user-defined (source) struct — value-copy semantics apply. Primitive value

@@ -1409,5 +1409,142 @@ public class Program
     }
 }", waitForOutput: "<<DONE>>");
         }
+
+        // ---- [ObjectLiteral] instance-method dispatch --------------------------
+        //
+        // An [ObjectLiteral] class's instances are plain JS objects (typically JSON-parsed) that carry
+        // NO methods of their own, so an instance method call must dispatch through the prototype —
+        // Type.prototype.Method.call(receiver, args) — not as `receiver.Method(args)` (which throws
+        // "is not a function" at runtime). This is how the Curiosity FrontEnd's Mosaik.Schema.Node /
+        // NodeOrEdge helpers (node.TryGetSource(out …), node.GetString(…)) are consumed.
+
+        [TestMethod]
+        public void ObjectLiteralInstanceCallDispatchesThroughPrototype()
+        {
+            var code = @"
+using Transpose;
+[ObjectLiteral(ObjectCreateMode.Constructor)]
+public sealed class Bag
+{
+    private Bag() { }
+    public bool TryGet(string key, out string value) { value = Script.Write<string>(""this[key]""); return value != null; }
+    public T GetAs<T>(string key) => Script.Write<T>(""this[key]"");
+}
+public class Program
+{
+    public static void Main()
+    {
+        var b = Script.Write<Bag>(""({ name: 'x' })"");
+        b.TryGet(""name"", out var v);
+        var s = b.GetAs<string>(""name"");
+    }
+}";
+            var result = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            var js = result.Javascript!;
+            // out/ref call routes through the prototype with the receiver as the `.call` this-arg.
+            Assert.IsTrue(js.Contains("Bag.prototype.TryGet.call("),
+                "out/ref instance call on an [ObjectLiteral] type must dispatch through the prototype\n" + js);
+            // generic call: receiver precedes the threaded type argument.
+            Assert.IsTrue(js.Contains("Bag.prototype.GetAs.call(b, System.String"),
+                "generic instance call on an [ObjectLiteral] type must be Type.prototype.M.call(recv, T, args)\n" + js);
+        }
+
+        [TestMethod]
+        public async Task ObjectLiteralInstanceMethodRunsOnPlainObject()
+        {
+            // The receiver is a plain object literal (no prototype), exactly like a JSON.Parse result.
+            // Both the external call and an internal implicit-`this` sibling call must still resolve.
+            await RunTest(@"
+using System;
+using Transpose;
+[ObjectLiteral(ObjectCreateMode.Constructor)]
+public abstract class Base
+{
+    protected Base() { }
+    public bool TryGetName(out string name) => Inner(out name);      // implicit-this sibling call
+    private bool Inner(out string name) { name = GetRaw(""name""); return name != null; }
+    private string GetRaw(string key) => Script.Write<string>(""this[key]"");
+}
+[ObjectLiteral(ObjectCreateMode.Constructor)]
+public sealed class Thing : Base { private Thing() { } public int Value => Script.Write<int>(""this.Value""); }
+public class Program
+{
+    public static void Main()
+    {
+        var t = Script.Write<Thing>(""({ name: 'abc', Value: 42 })"");
+        if (t.TryGetName(out var n)) Console.WriteLine(""name="" + n + "" value="" + t.Value);
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>", skipRoslyn: true);
+        }
+
+        // ---- user-defined implicit conversion at a field/property initializer ---
+        //
+        // A property/field initialized with a value of a different type must apply the user-defined
+        // implicit conversion operator, not store the raw source value. The Curiosity FrontEnd's
+        // SearchQuery.ParsedAsLanguage (type LanguageDTO, initialized `= Language.Unknown`) relied on
+        // this: without the operator the field held the raw enum number, which then serialized to a
+        // number and blew up on JSON round-trip. The operator changes the representation, so it must run.
+
+        [TestMethod]
+        public async Task ImplicitConversionOperatorAppliedAtInitializerAndAssignment()
+        {
+            await RunTest(@"
+using System;
+public struct Wrapper
+{
+    public string Code;
+    public static implicit operator Wrapper(int value) => new Wrapper { Code = ""N"" + value };
+    public static explicit operator int(Wrapper w) => int.Parse(w.Code.Substring(1));
+    public override string ToString() => ""W("" + Code + "")"";
+}
+public class Holder
+{
+    public Wrapper Prop { get; set; } = 42;   // property initializer + implicit conversion
+    public Wrapper Field = 7;                  // field initializer + implicit conversion
+}
+public class Program
+{
+    public static void Main()
+    {
+        var h = new Holder();
+        Console.WriteLine(h.Prop);             // W(N42)
+        Console.WriteLine(h.Field);            // W(N7)
+        Wrapper w = 99; Console.WriteLine(w);  // assignment: W(N99)
+        int back = (int)w; Console.WriteLine(back); // explicit op round-trips: 99
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        // ---- `this` inside the reordered-named-argument IIFE --------------------
+        //
+        // When named arguments are supplied out of parameter order, the emitter evaluates them into a
+        // temp array (source order) inside an IIFE, then hands them back in parameter order. That IIFE
+        // must be an ARROW so a `this`-qualified argument keeps the enclosing instance; a plain
+        // `function () { … }` rebinds `this` to undefined and throws "reading X of undefined". Seen in
+        // the Curiosity FrontEnd's `new SearchResultsComponent(owner: this, …, wrapResults: this._wrapResults, …)`.
+
+        [TestMethod]
+        public async Task ThisInReorderedNamedArgumentsResolvesToInstance()
+        {
+            await RunTest(@"
+using System;
+public class C
+{
+    public int X = 9;
+    private string G(int a, int b, int c) => a + "","" + b + "","" + c;
+    public string Run() => G(c: X, a: 1, b: 2); // reordered named args + this.X
+}
+public class Program
+{
+    public static void Main()
+    {
+        Console.WriteLine(new C().Run()); // 1,2,9
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
     }
 }
