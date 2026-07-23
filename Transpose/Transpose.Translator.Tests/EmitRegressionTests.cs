@@ -1598,5 +1598,35 @@ public class Program { public static void Main() { Res r = null; r.Dispose(); r.
             Assert.IsTrue(js.Contains(".doWork()"), "regular convention method still camelCases\n" + js);
             Assert.IsFalse(js.Contains(".Dispose()"), "must not emit PascalCase .Dispose()\n" + js);
         }
+
+        // ---- DateTimeOffset operators call the runtime op_ methods --------------
+        //
+        // DateTimeOffset is a real (non-external) BCL struct whose operators are transpiled to op_
+        // methods in the runtime. `now - date` must call System.DateTimeOffset.op_Subtraction (-> a
+        // TimeSpan), not emit raw JS `now - date` on two objects (which yielded NaN and threw
+        // ".getTotalDays is not a function" on the Migrations admin view). DateTime keeps its dt*
+        // helper path. Comparisons must call the op_ methods too.
+
+        [TestMethod]
+        public async Task DateTimeOffsetOperatorsCallRuntimeMethods()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        DateTimeOffset a = new DateTime(2020, 1, 10);
+        DateTimeOffset b = new DateTime(2020, 1, 1);
+        TimeSpan diff = a - b;                     // op_Subtraction -> TimeSpan
+        Console.WriteLine(diff.TotalDays);         // 9
+        Console.WriteLine(a > b);                  // True
+        Console.WriteLine(b >= a);                 // False
+        DateTimeOffset c = a - TimeSpan.FromDays(2); // op_Subtraction(DTO, TimeSpan) -> DTO
+        Console.WriteLine(c.Day);                  // 8
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
     }
 }
