@@ -504,6 +504,14 @@ public sealed partial class Emitter
     /// <c>$n[k]</c>. Method type parameters and ignore-generic type params erase to object.</summary>
     private string MetaTypeName(ITypeSymbol type)
     {
+        // A METHOD-level generic type parameter has no runtime value in reflection metadata (it is
+        // only bound at a call site, not when the metadata function runs), so it stands in as
+        // System.Object. This must apply even when the parameter is NESTED inside another generic
+        // (e.g. List&lt;TOutput&gt; in List.ConvertAll&lt;TOutput&gt;'s return type) — otherwise the
+        // emitted metadata references a bare, undefined `TOutput`/`T`. Substitute before naming.
+        // (Type-level parameters stay: the metadata function is parameterised by them.)
+        type = SubstituteMethodTypeParamsWithObject(type);
+
         if (type is ITypeParameterSymbol tp)
             return tp.TypeParameterKind == TypeParameterKind.Method ? "System.Object" : tp.Name;
 
@@ -515,6 +523,38 @@ public sealed partial class Emitter
         if (!string.IsNullOrEmpty(ns) && ns != "<global namespace>" && full.StartsWith(ns + ".", StringComparison.Ordinal))
             return $"$n[{NsIndex(ns!)}]" + full.Substring(ns!.Length);
         return full;
+    }
+
+    /// <summary>Replaces every METHOD-level generic type parameter in <paramref name="type"/> (at any
+    /// nesting depth) with System.Object, so reflection metadata never references an unbound type
+    /// parameter. Type-level parameters and everything else are returned unchanged.</summary>
+    private ITypeSymbol SubstituteMethodTypeParamsWithObject(ITypeSymbol type)
+    {
+        switch (type)
+        {
+            case ITypeParameterSymbol { TypeParameterKind: TypeParameterKind.Method }:
+                return _compilation.GetSpecialType(SpecialType.System_Object);
+
+            case IArrayTypeSymbol arr:
+            {
+                var elem = SubstituteMethodTypeParamsWithObject(arr.ElementType);
+                return SymbolEqualityComparer.Default.Equals(elem, arr.ElementType)
+                    ? type
+                    : _compilation.CreateArrayTypeSymbol(elem, arr.Rank);
+            }
+
+            case INamedTypeSymbol { IsGenericType: true } named when named.TypeArguments.Length > 0:
+            {
+                var args = named.TypeArguments.Select(SubstituteMethodTypeParamsWithObject).ToArray();
+                var changed = false;
+                for (var i = 0; i < args.Length; i++)
+                    if (!SymbolEqualityComparer.Default.Equals(args[i], named.TypeArguments[i])) { changed = true; break; }
+                return changed ? named.OriginalDefinition.Construct(args) : type;
+            }
+
+            default:
+                return type;
+        }
     }
 
     private int NsIndex(string ns)

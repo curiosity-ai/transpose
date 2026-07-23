@@ -1628,5 +1628,26 @@ public class Program
     }
 }", waitForOutput: "<<DONE>>");
         }
+
+        // ---- method-level type parameters in reflection metadata --------------
+        //
+        // A method's generic type parameter has no runtime value in reflection metadata, so it must be
+        // emitted as System.Object — even when NESTED in another generic (List<T> in the return type of
+        // Convert<T>). Otherwise the metadata references a bare, undefined `T`/`TOutput` and evaluating
+        // it throws "ReferenceError: TOutput is not defined" (hit reflecting over List.ConvertAll<TOutput>).
+
+        [TestMethod]
+        public void MethodTypeParameterInMetadataBecomesObject()
+        {
+            var code = @"
+using System.Collections.Generic;
+public class Foo { public List<T> Convert<T>(T input) { return null; } }
+public class Program { public static void Main() { } }";
+            var js = new RoslynTranslator().Translate(code).Javascript!;
+            Assert.IsFalse(js.Contains("List$1(T)"),
+                "a method type parameter nested in a generic must not leak into metadata as bare T\n" + js);
+            Assert.IsTrue(js.Contains("List$1(System.Object)"),
+                "List<T> in a generic method's metadata should resolve T to System.Object\n" + js);
+        }
     }
 }
