@@ -236,7 +236,7 @@ public sealed partial class Emitter
                 var resources = new List<string>();
                 foreach (var v in u.Declaration.Variables)
                 {
-                    var name = NameMangler.JsIdentifier(v.Identifier.Text);
+                    var name = LocalDeclaratorJsName(v);
                     resources.Add(name);
                     _w.Write($"let {name} = ");
                     if (v.Initializer is not null) EmitExpression(v.Initializer.Value); else _w.Write("null");
@@ -317,6 +317,79 @@ public sealed partial class Emitter
         Unsupported(gotoStmt, "goto");
     }
 
+    /// <summary>The JS identifier a local variable is emitted as — the disambiguated name from
+    /// <see cref="_localJsNames"/> when it collides with a same-named sibling local, otherwise the
+    /// plain mangled name.</summary>
+    private string LocalJsName(ISymbol? symbol, string fallbackText)
+        => symbol is not null && _localJsNames.TryGetValue(symbol, out var name)
+            ? name
+            : NameMangler.JsIdentifier(fallbackText);
+
+    /// <summary>The JS name for the local declared by a <c>var</c>-hoisted declarator (plain local,
+    /// <c>for</c> / <c>using</c> variable).</summary>
+    private string LocalDeclaratorJsName(VariableDeclaratorSyntax v)
+        => LocalJsName(_model.GetDeclaredSymbol(v), v.Identifier.Text);
+
+    /// <summary>
+    /// Assigns each <c>var</c>-hoisted local a unique JS name for the current method body so that
+    /// distinct same-named siblings don't collapse to one function-scoped binding (which breaks
+    /// closure capture — see <see cref="_localJsNames"/>). Only locals that actually collide are
+    /// stored; the first keeps its plain name, later ones get a <c>$N</c> suffix. Locals introduced
+    /// by patterns / out-vars are left out (they are pre-declared / IIFE-scoped separately) and fall
+    /// back to their plain name.
+    /// </summary>
+    private void ComputeLocalNames(SyntaxNode? root)
+    {
+        _localJsNames.Clear();
+        if (root is null) return;
+
+        var seen    = new HashSet<ISymbol>(SymbolEqualityComparer.Default);
+        var byName  = new Dictionary<string, List<ISymbol>>();
+        var reserved = new HashSet<string>();
+
+        void Consider(ISymbol? sym)
+        {
+            if (sym is not ILocalSymbol || !seen.Add(sym)) return;
+            var baseName = NameMangler.JsIdentifier(sym.Name);
+            reserved.Add(baseName);
+            if (!byName.TryGetValue(baseName, out var list))
+            {
+                list = new List<ISymbol>();
+                byName[baseName] = list;
+            }
+            list.Add(sym);
+        }
+
+        foreach (var node in root.DescendantNodesAndSelf())
+        {
+            switch (node)
+            {
+                case LocalDeclarationStatementSyntax local:
+                    foreach (var v in local.Declaration.Variables) Consider(_model.GetDeclaredSymbol(v));
+                    break;
+                case ForStatementSyntax { Declaration: { } d }:
+                    foreach (var v in d.Variables) Consider(_model.GetDeclaredSymbol(v));
+                    break;
+                case ForEachStatementSyntax fe:
+                    Consider(_model.GetDeclaredSymbol(fe));
+                    break;
+            }
+        }
+
+        foreach (var (baseName, list) in byName)
+        {
+            if (list.Count <= 1) continue;
+            _localJsNames[list[0]] = baseName;
+            for (var i = 1; i < list.Count; i++)
+            {
+                var n = 1;
+                string candidate;
+                do { candidate = baseName + "$" + n; n++; } while (!reserved.Add(candidate));
+                _localJsNames[list[i]] = candidate;
+            }
+        }
+    }
+
     private void EmitLocalDeclaration(LocalDeclarationStatementSyntax local)
     {
         if (local.UsingKeyword != default)
@@ -334,7 +407,7 @@ public sealed partial class Emitter
         var kw = _loopDepth > 0 && _gotoContexts.Count == 0 ? "let" : "var";
         foreach (var variable in local.Declaration.Variables)
         {
-            _w.Write($"{kw} {NameMangler.JsIdentifier(variable.Identifier.Text)}");
+            _w.Write($"{kw} {LocalDeclaratorJsName(variable)}");
             if (variable.Initializer is not null)
             {
                 _w.Write(" = ");
@@ -393,7 +466,7 @@ public sealed partial class Emitter
             {
                 if (!first) _w.Write(", ");
                 first = false;
-                _w.Write(NameMangler.JsIdentifier(v.Identifier.Text));
+                _w.Write(LocalDeclaratorJsName(v));
                 if (v.Initializer is not null) { _w.Write(" = "); EmitExpression(v.Initializer.Value); }
             }
         }
@@ -427,7 +500,7 @@ public sealed partial class Emitter
 
     private void EmitForEach(ForEachStatementSyntax forEach)
     {
-        var iterVar = NameMangler.JsIdentifier(forEach.Identifier.Text);
+        var iterVar = LocalJsName(_model.GetDeclaredSymbol(forEach), forEach.Identifier.Text);
         var enumVar = EmitEnumeratorInit(forEach, forEach.Expression);
         // foreach disposes the enumerator when the loop ends — including on break/return/throw. Wrap
         // the iteration in try/finally so an iterator's own `finally` (and any IDisposable cleanup)
@@ -716,7 +789,7 @@ public sealed partial class Emitter
         // using var x = expr;  — dispose at end of enclosing block. Simplified: declare now.
         foreach (var variable in local.Declaration.Variables)
         {
-            _w.Write($"let {NameMangler.JsIdentifier(variable.Identifier.Text)}");
+            _w.Write($"let {LocalDeclaratorJsName(variable)}");
             if (variable.Initializer is not null) { _w.Write(" = "); EmitExpression(variable.Initializer.Value); }
             _w.WriteLine(";");
         }

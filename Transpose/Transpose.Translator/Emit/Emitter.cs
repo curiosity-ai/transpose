@@ -34,6 +34,18 @@ public sealed partial class Emitter
     /// redeclarations across flattened scopes that some code relies on.</summary>
     private int _loopDepth;
 
+    /// <summary>
+    /// Per-method map from a local variable symbol to the JS identifier it is emitted as. Distinct
+    /// C# locals that share a name live in sibling scopes (CS0136 forbids one shadowing another in
+    /// an enclosing scope of the same method), so under JS function-scoped <c>var</c> hoisting they
+    /// would collapse to a single binding — and a closure created in one block would then capture a
+    /// later block's value. To match C# block scoping we give each colliding local a distinct name
+    /// (<c>pending</c>, <c>pending$1</c>, …). Rebuilt per method body by <see cref="ComputeLocalNames"/>;
+    /// a local not present here falls back to its plain mangled name (no collision → unchanged output).
+    /// </summary>
+    private readonly System.Collections.Generic.Dictionary<ISymbol, string> _localJsNames =
+        new(SymbolEqualityComparer.Default);
+
     /// <summary>The type whose define body is currently being emitted. Its own type parameters are
     /// the ones actually bound as JS function parameters of the define, so <c>default(T)</c> may
     /// safely reference them via <c>Transpose.getDefaultValue(T)</c>; a type parameter from an enclosing

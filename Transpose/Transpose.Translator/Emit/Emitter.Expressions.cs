@@ -581,7 +581,7 @@ public sealed partial class Emitter
         switch (symbol)
         {
             case ILocalSymbol local:
-                _w.Write(NameMangler.JsIdentifier(local.Name));
+                _w.Write(LocalJsName(local, local.Name));
                 break;
             case IParameterSymbol param:
                 // A captured primary-constructor parameter referenced from an instance

@@ -1737,5 +1737,89 @@ public class Program
     }
 }", waitForOutput: "<<DONE>>");
         }
+
+        // ---- same-named locals in sibling blocks captured by deferred closures -------------------
+
+        [TestMethod]
+        public async Task SameNamedSiblingLocalsGetDistinctBindingsForClosures()
+        {
+            // Distinct C# locals that share a name live in sibling scopes (CS0136 forbids shadowing an
+            // enclosing local in the same method). Emitting them all as one function-scoped `var` made
+            // every deferred closure capture the LAST block's value. This mirrors
+            // Aggregated.ActuallyTriggerDelayedTasksIfRequired, whose per-block `pending`/`request`/`body`
+            // locals feed Task.Run(async …) bodies that run after the method returns — the shared binding
+            // sent the wrong request payload (a neighbour key parsed as a UID128). Each block must keep
+            // its own value.
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+public class Program
+{
+    public static async Task Main()
+    {
+        await Run();
+        await Task.Delay(50);
+        Console.WriteLine(""<<DONE>>"");
+    }
+    static async Task Run()
+    {
+        var results = new List<string>();
+        var tasks   = new List<Task>();
+        if (true)
+        {
+            var pending = ""A"";
+            var body    = ""bodyA"";
+            tasks.Add(Task.Run(async () => { await Task.Yield(); lock (results) results.Add(""1:"" + pending + "":"" + body); }));
+        }
+        if (true)
+        {
+            var pending = ""B"";
+            var body    = ""bodyB"";
+            tasks.Add(Task.Run(async () => { await Task.Yield(); lock (results) results.Add(""2:"" + pending + "":"" + body); }));
+        }
+        if (true)
+        {
+            var pending = ""C"";
+            var request = ""reqC"";
+            tasks.Add(Task.Run(async () => { await Task.Yield(); lock (results) results.Add(""3:"" + pending + "":"" + request); }));
+        }
+        await Task.WhenAll(tasks);
+        results.Sort();
+        foreach (var r in results) Console.WriteLine(r);
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [TestMethod]
+        public async Task SameNamedForAndForeachLocalsAcrossSiblingLoopsStayDistinct()
+        {
+            // The same disambiguation must hold for `for`/`foreach` loop variables reused across sibling
+            // loops when captured into a deferred list of closures.
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+public class Program
+{
+    public static async Task Main()
+    {
+        var actions = new List<Func<string>>();
+        foreach (var x in new[] { ""p"", ""q"" })
+        {
+            var captured = x;
+            actions.Add(() => ""fe1:"" + captured);
+        }
+        foreach (var x in new[] { ""r"" })
+        {
+            var captured = ""z-"" + x;
+            actions.Add(() => ""fe2:"" + captured);
+        }
+        foreach (var a in actions) Console.WriteLine(a());
+        await Task.CompletedTask;
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
     }
 }

@@ -358,6 +358,7 @@ public sealed partial class Emitter
                     }
                     else
                     {
+                        ComputeLocalNames((SyntaxNode?)decl?.Body ?? decl?.ExpressionBody?.Expression);
                         EmitConstructorChain(ctor, decl!, type);
                         if (decl?.Body is not null)
                             EmitStatements(decl.Body.Statements);
@@ -707,6 +708,7 @@ public sealed partial class Emitter
             return;
         }
 
+        ComputeLocalNames((SyntaxNode?)block ?? arrow?.Expression);
         _w.Block(() =>
         {
             EmitOptionalDefaults(method);
@@ -828,6 +830,7 @@ public sealed partial class Emitter
         }
 
         var syntax = accessor.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax();
+        ComputeLocalNames(syntax);
         switch (syntax)
         {
             case AccessorDeclarationSyntax { Body: { } body }:
