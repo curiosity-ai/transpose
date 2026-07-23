@@ -53,7 +53,13 @@ internal static class OutputBuilder
         public bool IsMinified;
     }
 
-    public static string Build(ResolvedProject project, TransposeJson config, string javascript, string outputDir, string configuration, string? metadataJavascript = null)
+    /// <summary>The outcome of assembling a site: the directory it was written to, and every stale
+    /// file that <c>cleanOutputFolder</c> pruned (files from a previous build this one did not
+    /// re-produce). <see cref="RemovedStaleFiles"/> is empty when cleaning is disabled or nothing was
+    /// stale.</summary>
+    public readonly record struct SiteBuildResult(string OutputDir, IReadOnlyList<string> RemovedStaleFiles);
+
+    public static SiteBuildResult Build(ResolvedProject project, TransposeJson config, string javascript, string outputDir, string configuration, string? metadataJavascript = null)
     {
         Directory.CreateDirectory(outputDir);
 
@@ -67,11 +73,18 @@ internal static class OutputBuilder
 
         var utf8 = new UTF8Encoding(false);
 
+        // Every file this build writes, by full path. After the site is assembled, cleanOutputFolder
+        // diffs the folder against this set and prunes whatever is left over from an earlier build —
+        // so nothing the current build produced is ever deleted. All disk writes below funnel through
+        // WriteText, RecordWrite, or the resource/extract helpers, each of which records here.
+        var written = new HashSet<string>(PathComparer);
+
         void WriteText(string rel, string content)
         {
             var dest = Path.Combine(outputDir, rel.Replace('/', Path.DirectorySeparatorChar));
             Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
             File.WriteAllText(dest, content, utf8);
+            written.Add(Path.GetFullPath(dest));
         }
 
         // A per-project compiler output (the app bundle, its reflection metadata, the shim): there
@@ -158,8 +171,8 @@ internal static class OutputBuilder
         foreach (var dll in TopologicalOrder(project.ReferencePaths))
         {
             RoutePackageJs(projectDlls.Contains(dll)
-                ? ExtractProjectDllResources(dll, outputDir, cssLinks, utf8)
-                : ExtractEmbeddedJs(dll, outputDir, cssLinks));
+                ? ExtractProjectDllResources(dll, outputDir, cssLinks, utf8, written)
+                : ExtractEmbeddedJs(dll, outputDir, cssLinks, written));
 
             if (string.Equals(Path.GetFileNameWithoutExtension(dll), "Transpose", StringComparison.OrdinalIgnoreCase))
                 EmitCompilerJs("tps.shim.js", RoslynTranslator.RuntimeShim);
@@ -175,7 +188,7 @@ internal static class OutputBuilder
             var cfg = projectDir == project.ProjectDir ? config : TransposeJson.TryLoad(projectDir, configuration);
             if (cfg is null) continue;
             foreach (var group in cfg.Resources)
-                ProcessResourceGroup(projectDir, outputDir, group, jsOuts, cssLinks);
+                ProcessResourceGroup(projectDir, outputDir, group, jsOuts, cssLinks, written);
         }
 
         // 3. The compiled bundle — loads last, after runtime + library deps are in place.
@@ -191,9 +204,14 @@ internal static class OutputBuilder
 
         // 4. index.html (and index.min.html when both variants exist).
         if (!config.HtmlDisabled)
-            WriteHtml(project, config, outputDir, jsOuts, cssLinks, configuration, utf8);
+            WriteHtml(project, config, outputDir, jsOuts, cssLinks, configuration, utf8, written);
 
-        return outputDir;
+        // 5. Prune whatever the previous build left behind but this one did not re-produce.
+        var removed = config.CleanOutputFolder
+            ? PruneStaleFiles(outputDir, written, config.CleanOutputFolderExclude)
+            : Array.Empty<string>();
+
+        return new SiteBuildResult(outputDir, removed);
     }
 
     /// <summary>
@@ -317,7 +335,7 @@ internal static class OutputBuilder
     /// copied through under their output subdirectory.
     /// </summary>
     private static IReadOnlyList<EmbeddedJs> ExtractProjectDllResources(
-        string dllPath, string outputDir, List<string> cssLinks, UTF8Encoding utf8)
+        string dllPath, string outputDir, List<string> cssLinks, UTF8Encoding utf8, HashSet<string> written)
     {
         var jsFiles = new List<EmbeddedJs>();
         if (!File.Exists(dllPath)) return jsFiles;
@@ -368,6 +386,7 @@ internal static class OutputBuilder
                 using (var s = asm.GetManifestResourceStream(resName)!)
                 using (var fs = File.Create(dest))
                     s.CopyTo(fs);
+                written.Add(Path.GetFullPath(dest));
                 if (load && rel.EndsWith(".css", StringComparison.OrdinalIgnoreCase)) cssLinks.Add(rel);
             }
         }
@@ -436,7 +455,7 @@ internal static class OutputBuilder
 
     private static void ProcessResourceGroup(
         string projectDir, string outputDir, TransposeJson.ResourceGroup group,
-        List<JsOut> jsOuts, List<string> cssLinks)
+        List<JsOut> jsOuts, List<string> cssLinks, HashSet<string> written)
     {
         var destSub = (group.Output ?? "").Replace('\\', '/').TrimEnd('/');
         var files = group.Files.SelectMany(p => ExpandGlob(projectDir, p)).ToList();
@@ -466,6 +485,7 @@ internal static class OutputBuilder
             var dest = Path.Combine(outputDir, rel.Replace('/', Path.DirectorySeparatorChar));
             Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
             File.WriteAllText(dest, string.Join("\n", files.Select(File.ReadAllText)));
+            written.Add(Path.GetFullPath(dest));
             if (name.EndsWith(".css", StringComparison.OrdinalIgnoreCase)) LinkCss(rel);
             else RouteJs(rel);
         }
@@ -478,6 +498,7 @@ internal static class OutputBuilder
                 var dest = Path.Combine(outputDir, rel.Replace('/', Path.DirectorySeparatorChar));
                 Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
                 File.Copy(src, dest, overwrite: true);
+                written.Add(Path.GetFullPath(dest));
                 if (rel.EndsWith(".css", StringComparison.OrdinalIgnoreCase)) LinkCss(rel);
                 else if (rel.EndsWith(".js", StringComparison.OrdinalIgnoreCase)) RouteJs(rel);
             }
@@ -550,7 +571,7 @@ internal static class OutputBuilder
     /// resources are surfaced, at the site root (other resource types cannot be identified reliably,
     /// and no per-resource output subdirectory is recorded, without the manifest).
     /// </summary>
-    private static IReadOnlyList<EmbeddedJs> ExtractEmbeddedJs(string dllPath, string outputDir, List<string> cssLinks)
+    private static IReadOnlyList<EmbeddedJs> ExtractEmbeddedJs(string dllPath, string outputDir, List<string> cssLinks, HashSet<string> written)
     {
         var jsFiles = new List<EmbeddedJs>();
         Assembly asm;
@@ -615,6 +636,7 @@ internal static class OutputBuilder
                 using (var s = asm.GetManifestResourceStream(resName)!)
                 using (var fs = File.Create(dest))
                     s.CopyTo(fs);
+                written.Add(Path.GetFullPath(dest));
                 if (load && IsCss(rel)) cssLinks.Add(rel);
             }
         }
@@ -641,7 +663,7 @@ internal static class OutputBuilder
     /// </summary>
     private static void WriteHtml(
         ResolvedProject project, TransposeJson config, string outputDir,
-        List<JsOut> jsOuts, List<string> cssLinks, string configuration, UTF8Encoding utf8)
+        List<JsOut> jsOuts, List<string> cssLinks, string configuration, UTF8Encoding utf8, HashSet<string> written)
     {
         var css = new StringBuilder();
         foreach (var link in cssLinks)
@@ -697,8 +719,100 @@ internal static class OutputBuilder
             .Replace("{BODY}", config.HtmlBody);
 
         if (htmlName is not null)
-            File.WriteAllText(Path.Combine(outputDir, htmlName), Render(js.ToString()), utf8);
+        {
+            var dest = Path.Combine(outputDir, htmlName);
+            File.WriteAllText(dest, Render(js.ToString()), utf8);
+            written.Add(Path.GetFullPath(dest));
+        }
         if (htmlMinName is not null)
-            File.WriteAllText(Path.Combine(outputDir, htmlMinName), Render(jsMin.ToString()), utf8);
+        {
+            var dest = Path.Combine(outputDir, htmlMinName);
+            File.WriteAllText(dest, Render(jsMin.ToString()), utf8);
+            written.Add(Path.GetFullPath(dest));
+        }
+    }
+
+    /// <summary>
+    /// Compares output paths for the stale-file diff. Linux file systems are case-sensitive; Windows
+    /// and macOS are not — so match the host, otherwise a rebuilt <c>App.js</c> could be mistaken for
+    /// a stale <c>app.js</c> (or a genuinely stale file could survive) on a case-insensitive volume.
+    /// </summary>
+    internal static readonly StringComparer PathComparer =
+        OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+
+    /// <summary>
+    /// The "clean output folder" step: after the site is assembled, every file already in
+    /// <paramref name="outputDir"/> that this build did <em>not</em> (re)write — recorded in
+    /// <paramref name="written"/> — is a leftover from a previous build (a removed resource, a
+    /// renamed bundle, a <c>.min</c> variant no longer produced, a stale <c>index.min.html</c>) and is
+    /// deleted; directories it empties are removed too. Files matching an <paramref name="excludeGlobs"/>
+    /// pattern are kept even when stale. Unlike the legacy h5 <c>cleanOutputFolderBeforeBuild</c> —
+    /// which deleted by glob before compiling, risking loss of output when a build later failed — this
+    /// runs after a successful assembly and can only ever remove files the current build did not
+    /// produce. A delete that fails (a locked or read-only file) is skipped rather than failing the
+    /// build. Returns the files removed, for reporting.
+    /// </summary>
+    internal static IReadOnlyList<string> PruneStaleFiles(string outputDir, HashSet<string> written, IReadOnlyList<string> excludeGlobs)
+    {
+        var removed = new List<string>();
+        var fullOut = Path.GetFullPath(outputDir);
+        if (!Directory.Exists(fullOut)) return removed;
+
+        var excludes = excludeGlobs.Where(g => !string.IsNullOrWhiteSpace(g)).Select(GlobToRegex).ToList();
+
+        foreach (var file in Directory.EnumerateFiles(fullOut, "*", SearchOption.AllDirectories))
+        {
+            var full = Path.GetFullPath(file);
+            if (written.Contains(full)) continue;   // (re)written by this build — never a candidate
+
+            if (excludes.Count > 0)
+            {
+                var rel = Path.GetRelativePath(fullOut, full).Replace('\\', '/');
+                var leaf = Path.GetFileName(full);
+                if (excludes.Any(r => r.IsMatch(rel) || r.IsMatch(leaf))) continue;   // protected by cleanOutputFolderExclude
+            }
+
+            try { File.Delete(full); removed.Add(full); }
+            catch { /* a locked/read-only file must not fail the build; leave it in place */ }
+        }
+
+        RemoveEmptyDirectories(fullOut);
+        return removed;
+    }
+
+    /// <summary>Removes directories left empty by the prune, deepest first, keeping the output root.</summary>
+    private static void RemoveEmptyDirectories(string root)
+    {
+        foreach (var dir in Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories)
+                                     .OrderByDescending(d => d.Length))   // longest path first ⇒ children before parents
+        {
+            try
+            {
+                if (!Directory.EnumerateFileSystemEntries(dir).Any()) Directory.Delete(dir);
+            }
+            catch { /* ignore: a concurrently-recreated or locked directory is not fatal */ }
+        }
+    }
+
+    /// <summary>
+    /// Compiles a <c>cleanOutputFolderExclude</c> glob into an anchored regex: <c>*</c> matches any
+    /// run of characters (path separators included, so <c>assets/*</c> spans subfolders), <c>?</c>
+    /// matches one character, everything else is literal. Case-insensitive on Windows/macOS to match
+    /// <see cref="PathComparer"/>.
+    /// </summary>
+    private static System.Text.RegularExpressions.Regex GlobToRegex(string glob)
+    {
+        var sb = new StringBuilder("^");
+        foreach (var c in glob)
+        {
+            if (c == '*') sb.Append(".*");
+            else if (c == '?') sb.Append('.');
+            else sb.Append(System.Text.RegularExpressions.Regex.Escape(c.ToString()));
+        }
+        sb.Append('$');
+        var opts = System.Text.RegularExpressions.RegexOptions.CultureInvariant;
+        if (OperatingSystem.IsWindows() || OperatingSystem.IsMacOS())
+            opts |= System.Text.RegularExpressions.RegexOptions.IgnoreCase;
+        return new System.Text.RegularExpressions.Regex(sb.ToString(), opts);
     }
 }

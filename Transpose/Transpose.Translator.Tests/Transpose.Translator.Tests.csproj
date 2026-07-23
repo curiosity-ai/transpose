@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Transpose.Translator\Transpose.Translator.csproj" />
+    <ProjectReference Include="..\Transpose.Compiler\Transpose.Compiler.csproj" />
   </ItemGroup>
 
 </Project>

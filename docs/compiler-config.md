@@ -53,6 +53,32 @@ H5 can manage and bundle external assets (JS, CSS, fonts) using the `resources` 
 - **`files`**: A list of files or wildcards to include.
 - **`output`**: The sub-directory in the output folder where the bundle will be placed.
 
+### Output Folder Cleanup
+
+Transpose keeps the output folder free of stale artifacts with `cleanOutputFolder`
+(enabled by default). After a successful build it compares the output folder with
+exactly the files the build produced and deletes only the leftovers from a previous
+build — a renamed bundle, a `.min` variant no longer emitted, a removed resource, a
+stale `index.min.html` — then removes any directory it empties. Files the current
+build wrote are never touched, and a build that fails leaves the previous output
+intact (the cleanup runs only after the site is assembled).
+
+```jsonc
+{
+  "cleanOutputFolder": true,                     // default; set false to keep stale files
+  "cleanOutputFolderExclude": [ "favicon.ico", "vendor/*" ]
+}
+```
+
+- **`cleanOutputFolder`**: `true` (default) prunes stale files; `false` disables pruning.
+- **`cleanOutputFolderExclude`**: glob patterns (`*`/`?` wildcards, matched against each
+  file's output-relative path and its name) that are never pruned even when stale — the
+  escape hatch for hand-placed files that live alongside the generated site.
+
+This is the successor to h5's `cleanOutputFolderBeforeBuild`, which deleted by glob
+*before* compiling; the diff-based approach needs no pattern and cannot remove a file the
+current build produced.
+
 ### HTML Injection
 
 The H5 compiler can generate a basic `index.html` file and inject references to the generated script and the defined resources. This is enabled by default unless `html` configuration is explicitly customized or disabled.
