@@ -547,10 +547,13 @@ public sealed partial class Emitter
     /// </summary>
     private string EmitEnumeratorInit(CommonForEachStatementSyntax forEach, ExpressionSyntax source)
     {
-        // Zero-pad to 8 hex digits before slicing: a small hashcode (< 0x1000) formats to fewer
-        // than 4 hex chars, so an unpadded Substring(0, 4) threw ArgumentOutOfRangeException on
-        // certain foreach nodes.
-        var enumVar = "$e" + ((uint)forEach.GetHashCode()).ToString("x8").Substring(0, 4);
+        // Name the enumerator from the statement's source position, not from SyntaxNode.GetHashCode():
+        // a node's hash code is reference-based, so it varies between runs and made the emitted bundle
+        // differ byte-for-byte on every compile of unchanged sources. The span start is stable and is
+        // unique within a file, which is all the uniqueness this needs — the variable is local to one
+        // JS function, and two foreach statements in the same function always start at different
+        // offsets (nested ones included).
+        var enumVar = "$e" + forEach.SpanStart.ToString("x4");
         var getEnum = _model.GetForEachStatementInfo(forEach).GetEnumeratorMethod;
         var ext = getEnum is { IsExtensionMethod: true } ? (getEnum.ReducedFrom ?? getEnum) : null;
         _w.Write($"var {enumVar} = TransposeR.getEnumerator(");

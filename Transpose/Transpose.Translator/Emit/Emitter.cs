@@ -60,19 +60,29 @@ public sealed partial class Emitter
     /// script (a full Transpose.assembly wrapper) produced by the last <see cref="Emit"/>; else null.</summary>
     public string? MetadataScript { get; private set; }
 
-    public Emitter(CSharpCompilation compilation, string assemblyName = CompilationBuilder.DefaultAssemblyName)
+    /// <param name="models">A semantic-model cache to reuse. Passing the one the
+    /// unsupported-feature scan already populated means every member that scan bound is bound
+    /// once for the whole build instead of twice.</param>
+    internal Emitter(CSharpCompilation compilation, string assemblyName, TreeModel? models)
     {
         _compilation = compilation;
         _assemblyName = assemblyName;
-        _model = new TreeModel(compilation);
+        _model = models ?? new TreeModel(compilation);
     }
 
-    private Emitter(CSharpCompilation compilation, string assemblyName, NameMangler names)
+    public Emitter(CSharpCompilation compilation, string assemblyName = CompilationBuilder.DefaultAssemblyName)
+        : this(compilation, assemblyName, null)
+    {
+    }
+
+    private Emitter(CSharpCompilation compilation, string assemblyName, NameMangler names, TreeModel model)
     {
         _compilation = compilation;
         _assemblyName = assemblyName;
         _names = names;
-        _model = new TreeModel(compilation);
+        // Share the parent's semantic-model cache rather than building a fresh one per type: see
+        // TreeModel for why that is the single biggest lever on JS-emit time.
+        _model = model;
         _w.Indent();
     }
 
@@ -81,7 +91,7 @@ public sealed partial class Emitter
         _w.WriteLine("/**");
         _w.WriteLine(" * Transpose.Translator generated output.");
         _w.WriteLine(" */");
-        var types = CollectTypes();
+        var types = PhaseTimings.Measure("  ├ collect + order types", CollectTypes);
 
         // Reflection metadata: either woven into this assembly function (inline target) or
         // collected into a standalone metadata script (file target), never both.
@@ -113,23 +123,27 @@ public sealed partial class Emitter
             // (a crash) instead of a reported error.
             try
             {
-                Parallel.ForEach(types, type =>
-                {
-                    results[type] = EmitOnlyType(this, type);
-                    var count = Interlocked.Increment(ref done);
-                    CompileProgress.ReportStep("emitting JavaScript", count, types.Count);
-                });
+                PhaseTimings.Measure("  ├ emit type bodies (parallel)", () =>
+                    Parallel.ForEach(types, type =>
+                    {
+                        results[type] = EmitOnlyType(this, type);
+                        var count = Interlocked.Increment(ref done);
+                        CompileProgress.ReportStep("emitting JavaScript", count, types.Count);
+                    }));
             }
             catch (AggregateException ex) when (ex.Flatten().InnerExceptions.OfType<TranslationException>().FirstOrDefault() is { } te)
             {
                 throw te;
             }
 
-            foreach(var type in types)
+            PhaseTimings.Measure("  ├ concatenate type bodies", () =>
             {
-                _w.Write(results[type]);
-                _w.WriteLine();
-            }
+                foreach (var type in types)
+                {
+                    _w.Write(results[type]);
+                    _w.WriteLine();
+                }
+            });
 
             // [Transpose.Ready] static methods: schedule each via Transpose.ready so it runs on
             // page load (or immediately when the assembly is loaded on demand, e.g. a lazily
@@ -143,11 +157,11 @@ public sealed partial class Emitter
             //    CompileProgress.ReportStep("emitting JavaScript", ++done, types.Count);
             //}
 
-            if (inlineMeta) EmitReflectionMetadata(types);
+            if (inlineMeta) PhaseTimings.Measure("  ├ reflection metadata (inline)", () => EmitReflectionMetadata(types));
         });
         _w.WriteLine(");");
 
-        MetadataScript = fileMeta ? BuildMetadataFile(types) : null;
+        MetadataScript = fileMeta ? PhaseTimings.Measure("  └ reflection metadata (file)", () => BuildMetadataFile(types)) : null;
         return _w.ToString();
     }
 
@@ -160,7 +174,7 @@ public sealed partial class Emitter
 
     private Emitter Clone()
     {
-        return new Emitter(_compilation, _assemblyName, _names);
+        return new Emitter(_compilation, _assemblyName, _names, _model);
     }
 
     /// <summary>The result of an <c>outputBy: ClassPath</c> emission: one bare
@@ -236,15 +250,19 @@ public sealed partial class Emitter
 
     private List<INamedTypeSymbol> CollectTypes()
     {
-        var declared = new List<INamedTypeSymbol>();
-        var seen = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
-
-        foreach (var tree in _compilation.SyntaxTrees)
+        // Resolve each file's declared types in parallel — every tree is independent and a project
+        // has hundreds of them — then merge in tree order so the emitted bundle's type order stays
+        // exactly what a sequential walk produced.
+        var trees = _compilation.SyntaxTrees as IList<SyntaxTree> ?? _compilation.SyntaxTrees.ToList();
+        var perTree = new List<INamedTypeSymbol>[trees.Count];
+        Parallel.For(0, trees.Count, i =>
         {
-            var model = _compilation.GetSemanticModel(tree);
+            var tree = trees[i];
+            var model = _model.SemanticModelFor(tree);
+            var found = new List<INamedTypeSymbol>();
             foreach (var node in tree.GetRoot().DescendantNodes().OfType<BaseTypeDeclarationSyntax>())
             {
-                if (model.GetDeclaredSymbol(node) is INamedTypeSymbol sym && seen.Add(sym))
+                if (model.GetDeclaredSymbol(node) is INamedTypeSymbol sym)
                 {
                     // External types ([External] on the type/assembly, or [Scope]/[GlobalMethods]
                     // bindings) have no emitted body: they are native JS (DOM, browser globals) or
@@ -253,10 +271,18 @@ public sealed partial class Emitter
                     // the real definition ("already defined") — so an [assembly: External] binding
                     // library such as Transpose.Core contributes no runtime defines, matching h5.core.
                     if (TransposeNaming.IsExternalType(sym)) continue;
-                    declared.Add(sym);
+                    found.Add(sym);
                 }
             }
-        }
+            perTree[i] = found;
+        });
+
+        // Dedupe across trees (a partial type is declared in several) preserving first-seen order.
+        var declared = new List<INamedTypeSymbol>();
+        var seen = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
+        foreach (var found in perTree)
+            foreach (var sym in found)
+                if (seen.Add(sym)) declared.Add(sym);
 
         // Emit each type after every source type it depends on (base class + implemented/
         // extended interfaces), so the runtime's Transpose.define never sees an undefined reference

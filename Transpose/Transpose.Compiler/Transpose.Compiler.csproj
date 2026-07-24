@@ -13,6 +13,25 @@
     <InvariantTimezone>true</InvariantTimezone>
     <PublishReadyToRun>true</PublishReadyToRun>
 
+    <!-- Runtime tuning for a short-lived, allocation-heavy, highly parallel batch process. Both of
+         these were measured with tps-bench on a real project (Tesserae, 263 files / ~69k LOC); see
+         TODO.optimization.md for the numbers.
+
+         Server GC: a build allocates ~900 MB of short-lived garbage across several Parallel.ForEach
+         phases. Workstation GC serialises those collections on one heap and stalls every worker;
+         per-core heaps cut ~15% off the wall clock. .NET's DATAS keeps the heap count adaptive, so a
+         one-file project does not pay a many-heap memory penalty for this.
+
+         TieredPGO off: this is the single largest runtime-level win (~25-30%). PGO instruments
+         tier-0 code to profile it, and Roslyn's binder is exactly the deeply polymorphic code that
+         instrumentation costs the most on — but a compile finishes in seconds, so the better tier-1
+         code the profile would eventually buy never gets to pay that cost back. Measured neutral on
+         a trivial project and a large win on a real one. Tiered compilation itself stays ON: turning
+         it off entirely is ~25% faster on a big project but more than 2× slower on a small one. -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+    <TieredPGO>false</TieredPGO>
+
 
     <!-- Packable as a dotnet global/local tool: `tps` is the compiler command the
          Transpose.Build.Target SDK invokes. -->

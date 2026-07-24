@@ -50,6 +50,7 @@ public static class Program
                 case "--reference" or "-r": extraReferences.Add(args[++i]); break;
                 case "--define" or "-D": extraDefines.Add(args[++i]); break;
                 case "--timing": PhaseTimings.Enabled = true; break;
+                case "--timing-json": _timingJsonPath = args[++i]; PhaseTimings.Enabled = true; break;
                 case "--assembly-version": assemblyVersion = args[++i]; break;
                 case "--project" or "-p": projectArg = args[++i]; break;
                 default:
@@ -104,7 +105,8 @@ public static class Program
         ResolvedProject project;
         try
         {
-            project = ProjectResolver.Resolve(csproj, configuration, separateAssemblies);
+            project = PhaseTimings.Measure("resolve project (csproj + globs + references)",
+                () => ProjectResolver.Resolve(csproj, configuration, separateAssemblies));
         }
         catch (Exception ex)
         {
@@ -190,8 +192,9 @@ public static class Program
             return 2;
         }
 
-        sw.Stop();
-
+        // The stopwatch keeps running: writing the package (minifying the embedded JS, the Cecil
+        // resource embed) and assembling the site are a real part of a build's cost, and the
+        // reported total should include them rather than stopping at the translator's last phase.
         if (!result.Success)
         {
             ReportDiagnostics(result.Diagnostics, maxErrors);
@@ -345,24 +348,78 @@ public static class Program
     }
 
     /// <summary>Prints the per-phase timing breakdown gathered when <c>--timing</c> (or
-    /// <c>TRANSPOSE_TIMING=1</c>) is set. Shows each phase's total time and its share of the sum,
-    /// so a build's hotspots (binding, JS emit, minification) are visible at a glance.</summary>
+    /// <c>TRANSPOSE_TIMING=1</c>) is set. Shows each phase's total time, its share of the sum, and
+    /// the bytes allocated while it ran, so a build's hotspots (binding, JS emit, minification) and
+    /// its garbage producers are visible at a glance. With <c>--timing-json</c> the same numbers —
+    /// plus process-wide GC/memory totals — are written as JSON for a benchmark harness to consume.</summary>
     private static void PrintTimings(long wallClockMs)
     {
         if (!PhaseTimings.Enabled) return;
         var phases = PhaseTimings.Snapshot();
         if (phases.Count == 0) return;
-        long sum = 0;
-        foreach (var p in phases) sum += p.ms;
+        // Sub-phases are named with a leading indent ("  ├ …") and are already counted inside their
+        // parent, so only top-level phases contribute to the total.
+        long sum = 0, sumBytes = 0;
+        foreach (var p in phases)
+        {
+            if (p.phase.StartsWith(" ", StringComparison.Ordinal)) continue;
+            sum += p.ms; sumBytes += p.bytes;
+        }
         var denom = sum == 0 ? 1 : sum;
         Console.WriteLine("\n  timing breakdown:");
-        foreach (var (phase, ms, count) in phases)
+        foreach (var (phase, ms, bytes, count) in phases)
         {
             var share = ms * 100.0 / denom;
             var times = count > 1 ? $" ×{count}" : "";
-            Console.WriteLine($"    {ms,7:N0} ms  {share,5:F1}%  {phase}{times}");
+            Console.WriteLine($"    {ms,7:N0} ms  {share,5:F1}%  {Mb(bytes),9} alloc  {phase}{times}");
         }
-        Console.WriteLine($"    {sum,7:N0} ms          measured phases (wall clock {wallClockMs:N0} ms)");
+        Console.WriteLine($"    {sum,7:N0} ms          {Mb(sumBytes),9} alloc  measured phases (wall clock {wallClockMs:N0} ms)");
+        Console.WriteLine($"    total allocated {Mb(GC.GetTotalAllocatedBytes(precise: true))}, "
+            + $"peak working set {Mb(Process.GetCurrentProcess().PeakWorkingSet64)}, "
+            + $"GC {GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)} (gen0/1/2)");
+
+        if (_timingJsonPath is not null) WriteTimingJson(_timingJsonPath, wallClockMs, phases);
+    }
+
+    private static string Mb(long bytes) => $"{bytes / (1024.0 * 1024.0):N1} MB";
+
+    /// <summary>Path passed to <c>--timing-json</c>: where the machine-readable build-stats dump goes.
+    /// The benchmark harness (<c>tps-bench</c>) reads this instead of scraping console output.</summary>
+    private static string? _timingJsonPath;
+
+    private static void WriteTimingJson(string path, long wallClockMs,
+        IReadOnlyList<(string phase, long ms, long bytes, int count)> phases)
+    {
+        var proc = Process.GetCurrentProcess();
+        var sb = new System.Text.StringBuilder();
+        sb.Append("{\n");
+        sb.Append($"  \"wallClockMs\": {wallClockMs},\n");
+        sb.Append($"  \"totalAllocatedBytes\": {GC.GetTotalAllocatedBytes(precise: true)},\n");
+        sb.Append($"  \"peakWorkingSetBytes\": {proc.PeakWorkingSet64},\n");
+        sb.Append($"  \"gen0\": {GC.CollectionCount(0)}, \"gen1\": {GC.CollectionCount(1)}, \"gen2\": {GC.CollectionCount(2)},\n");
+        sb.Append($"  \"processorTimeMs\": {(long)proc.TotalProcessorTime.TotalMilliseconds},\n");
+        sb.Append("  \"phases\": [\n");
+        for (var i = 0; i < phases.Count; i++)
+        {
+            var (phase, ms, bytes, count) = phases[i];
+            sb.Append($"    {{ \"name\": {JsonString(phase)}, \"ms\": {ms}, \"bytes\": {bytes}, \"count\": {count} }}");
+            sb.Append(i == phases.Count - 1 ? "\n" : ",\n");
+        }
+        sb.Append("  ]\n}\n");
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+            File.WriteAllText(path, sb.ToString());
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"  warning: could not write --timing-json: {ex.Message}"); }
+    }
+
+    private static string JsonString(string s)
+    {
+        var sb = new System.Text.StringBuilder("\"");
+        foreach (var c in s)
+            sb.Append(c switch { '"' => "\\\"", '\\' => "\\\\", '\n' => "\\n", '\r' => "\\r", '\t' => "\\t", _ => c.ToString() });
+        return sb.Append('"').ToString();
     }
 
     private static (bool reflectionEnabled, MetadataTarget target) ReflectionSettings(TransposeJson? tpscfg)
@@ -448,15 +505,16 @@ public static class Program
         Directory.CreateDirectory(Path.GetDirectoryName(dllPath)!);
         File.WriteAllBytes(dllPath, result.AssemblyBytes!);
 
-        var items = config is not null
+        var items = PhaseTimings.Measure("collect package resources (minify + read files)", () => config is not null
             ? OutputBuilder.CollectEmbeddableItems(project.ProjectDir, config, mainJsName, result.Javascript!, result.MetadataJavascript, project.MinifyLocalVariables)
-            : new List<EmbeddedItem> { new(mainJsName, System.Text.Encoding.UTF8.GetBytes(result.Javascript!), null) };
+            : new List<EmbeddedItem> { new(mainJsName, System.Text.Encoding.UTF8.GetBytes(result.Javascript!), null) });
         // Cecil re-serializes the assembly's metadata when embedding the resources; encoding a
         // parameter's default value whose type lives in a referenced assembly (e.g. a Tesserae enum)
         // makes it resolve that assembly. Seed the resolver with the reference directories so those
         // types are found (the referenced DLLs live in the NuGet cache / sibling bin folders, not
         // next to this DLL).
-        ResourceEmbedder.Embed(dllPath, items, project.ReferencePaths);
+        PhaseTimings.Measure("embed resources into DLL (Cecil)",
+            () => ResourceEmbedder.Embed(dllPath, items, project.ReferencePaths));
         return (dllPath, items);
     }
 
@@ -538,7 +596,8 @@ public static class Program
               --site-dir <dir>      Output directory for the assembled site
               --with-runtime        Prepend the tps.js runtime + shim to the output
               --max-errors <n>      Max individual errors to print (default 40)
-              --timing              Print a per-phase timing breakdown of the build
+              --timing              Print a per-phase timing/allocation breakdown of the build
+              --timing-json <file>  Also write that breakdown (plus GC/memory totals) as JSON
               -q, --quiet           Suppress warning output
               -h, --help            Show this help
             """);

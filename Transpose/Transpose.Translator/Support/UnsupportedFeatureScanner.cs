@@ -16,24 +16,53 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
     private readonly SemanticModel _model;
     private readonly List<Diagnostic> _diagnostics;
 
-    private UnsupportedFeatureScanner(SemanticModel model, List<Diagnostic> diagnostics)
+    /// <summary>Simple names of the types this scanner would reject (see <see cref="DeniedNamespaces"/>),
+    /// computed once per compilation. <see cref="VisitIdentifierName"/> fires on nearly every token in
+    /// the source, and asking the semantic model to bind each one is by far the scanner's dominant
+    /// cost; an identifier whose *text* is not in this set cannot possibly name a denied type, so it
+    /// needs no semantic query at all. See <see cref="CollectDeniedSimpleNames"/> for why this is
+    /// exact rather than a heuristic.</summary>
+    private readonly HashSet<string> _deniedSimpleNames;
+
+    /// <summary>Extra identifier texts this file must resolve semantically, contributed by its own
+    /// using directives: an alias's name (<c>using MyFile = System.IO.File;</c>) and the member names
+    /// a static import brings into scope (<c>using static System.IO.File;</c>) — the only ways a
+    /// denied type can be referenced without its own simple name appearing as an identifier. Null
+    /// until such a directive is seen, which keeps the hot path in <see cref="VisitIdentifierName"/>
+    /// down to a single set lookup for the overwhelming majority of files.</summary>
+    private HashSet<string>? _aliasedNames;
+
+    private UnsupportedFeatureScanner(SemanticModel model, List<Diagnostic> diagnostics, HashSet<string> deniedSimpleNames)
     {
         _model = model;
         _diagnostics = diagnostics;
+        _deniedSimpleNames = deniedSimpleNames;
     }
 
-    public static IReadOnlyList<Diagnostic> Scan(CSharpCompilation compilation)
+    /// <summary>
+    /// Scans every syntax tree for browser-incompatible constructs.
+    ///
+    /// <paramref name="models"/> is the same semantic-model cache the JS emitter will use. Sharing it
+    /// is what makes this scan close to free on a real build: a Roslyn <see cref="SemanticModel"/>
+    /// retains the bound form of every member it is asked about, so a member this scan binds (to
+    /// resolve, say, the inferred type of a <c>var</c>) is already bound when the emitter reaches it.
+    /// Pass null to scan against throw-away models — only useful when there is no emit to follow.
+    /// </summary>
+    public static IReadOnlyList<Diagnostic> Scan(CSharpCompilation compilation, TreeModel? models = null)
     {
+        var deniedSimpleNames = CollectDeniedSimpleNames(compilation);
+        models ??= new TreeModel(compilation);
+
         var allDiagnostics = new List<List<Diagnostic>>();
         Parallel.ForEach(compilation.SyntaxTrees, tree =>
         {
             var diagnostics = new List<Diagnostic>();
 
-            var model = compilation.GetSemanticModel(tree);
-            var scanner = new UnsupportedFeatureScanner(model, diagnostics);
+            var model = models.SemanticModelFor(tree);
+            var scanner = new UnsupportedFeatureScanner(model, diagnostics, deniedSimpleNames);
             scanner.Visit(tree.GetRoot());
 
-            if (diagnostics.Any())
+            if (diagnostics.Count > 0)
             {
                 lock (allDiagnostics)
                 {
@@ -42,6 +71,70 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
             }
         });
         return allDiagnostics.SelectMany(d => d).ToArray();
+    }
+
+    /// <summary>
+    /// The simple names of every type that <see cref="CheckDeniedType"/> would report — i.e. every
+    /// type in a denied namespace that is not on the allowed list. Enumerated from the compilation's
+    /// merged global namespace, so it covers the Transpose BCL, every referenced package, and source
+    /// types alike.
+    ///
+    /// This is a *sound* filter, not a heuristic: a syntactic identifier can only bind to a denied
+    /// type if the identifier's text equals that type's name — the one exception being an alias
+    /// (<c>using MyFile = System.IO.File;</c>) or a static import (<c>using static System.IO.File;</c>),
+    /// which name the denied type in the using directive itself and are checked there
+    /// (<see cref="VisitUsingDirective"/>).
+    /// </summary>
+    private static HashSet<string> CollectDeniedSimpleNames(CSharpCompilation compilation)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal)
+        {
+            // Native-sized integers are matched by identifier text, not by namespace.
+            "nint", "nuint",
+            // `var` binds to the inferred type, which may itself be denied even when that type's name
+            // appears nowhere in the file (`var s = Factory.OpenFile();`). It is the one identifier
+            // text that can name any type at all, so it always gets a semantic query.
+            "var",
+        };
+
+        foreach (var (segments, _) in DeniedNamespaces)
+        {
+            var ns = ResolveNamespace(compilation.GlobalNamespace, segments);
+            if (ns is null) continue;
+            AddTypeNames(ns, names);
+        }
+        return names;
+
+        static INamespaceSymbol? ResolveNamespace(INamespaceSymbol root, string[] segments)
+        {
+            var cur = root;
+            foreach (var segment in segments)
+            {
+                cur = cur.GetNamespaceMembers().FirstOrDefault(n => string.Equals(n.Name, segment, StringComparison.Ordinal));
+                if (cur is null) return null;
+            }
+            return cur;
+        }
+
+        static void AddTypeNames(INamespaceSymbol ns, HashSet<string> names)
+        {
+            // System.Threading.Tasks is the supported async model — its types are allowed wholesale,
+            // so keeping their names out of the filter spares a semantic query on every `Task`.
+            if (NamespaceMatches(ns, TasksNamespaceSegments)) return;
+
+            foreach (var type in ns.GetTypeMembers())
+                AddTypeAndNested(type, names);
+            foreach (var child in ns.GetNamespaceMembers())
+                AddTypeNames(child, names);
+        }
+
+        static void AddTypeAndNested(INamedTypeSymbol type, HashSet<string> names)
+        {
+            if (!AllowedThreadingTypes.Contains(type.ConstructUnboundGenericTypeSafeName()))
+                names.Add(type.Name);
+            foreach (var nested in type.GetTypeMembers())
+                AddTypeAndNested(nested, names);
+        }
     }
 
     private void Report(SyntaxNode node, string message)
@@ -65,6 +158,33 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
     {
         if (node.GlobalKeyword.RawKind != 0)
             Report(node, "Global usings are not supported; add per-file using directives instead.");
+
+        // An alias (`using MyFile = System.IO.File;`) or a static import (`using static System.IO.File;`)
+        // is the only way a denied type can be referenced without its own simple name appearing as an
+        // identifier — which is exactly what the fast path in VisitIdentifierName relies on. Rather
+        // than report the directive (that would reject an *unused* import, which the scanner never
+        // did before), widen this file's interesting-name set so the usage site is still resolved and
+        // reported where it occurs. A plain namespace import (`using System.IO;`) needs nothing:
+        // importing a namespace is harmless, and a type used from it appears by its own name.
+        //
+        // A using directive always precedes the members that can see it, so widening the set here —
+        // mid-walk — is in time for every usage.
+        if (node.Alias is not null)
+        {
+            (_aliasedNames ??= new HashSet<string>(StringComparer.Ordinal)).Add(node.Alias.Name.Identifier.ValueText);
+        }
+        else if (node.StaticKeyword.RawKind != 0 && node.NamespaceOrType is { } staticTarget)
+        {
+            // A static import puts the type's members in scope under their own names, so those names
+            // become resolvable identifiers that can reach a denied type.
+            if (_model.GetSymbolInfo(staticTarget).Symbol is INamedTypeSymbol imported
+                && DeniedNamespaceMessage(imported) is not null)
+            {
+                var set = _aliasedNames ??= new HashSet<string>(StringComparer.Ordinal);
+                foreach (var member in imported.GetMembers()) set.Add(member.Name);
+            }
+        }
+
         base.VisitUsingDirective(node);
     }
 
@@ -169,8 +289,15 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
 
     private void CheckDllImport(MethodDeclarationSyntax node)
     {
-        foreach (var attr in node.AttributeLists.SelectMany(a => a.Attributes))
+        foreach (var list in node.AttributeLists)
+        foreach (var attr in list.Attributes)
         {
+            // Screen on the written name before binding: resolving every attribute on every method
+            // is a real cost across a large project, and only these two attribute names can ever
+            // produce this diagnostic. `Name.ToString()` on the syntax covers the qualified form
+            // (`System.Runtime.InteropServices.DllImport`) as well as the bare one.
+            if (!LooksLikePInvokeAttributeName(attr.Name)) continue;
+
             var symbol = _model.GetSymbolInfo(attr).Symbol?.ContainingType;
             var name = symbol?.ToDisplayString();
             if (name is "System.Runtime.InteropServices.DllImportAttribute"
@@ -179,6 +306,20 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
                 Report(node, "Native interop (P/Invoke) is not supported in the browser environment.");
             }
         }
+    }
+
+    /// <summary>True if an attribute's written name could be <c>DllImport</c> or <c>LibraryImport</c>
+    /// (bare, with the <c>Attribute</c> suffix, or namespace-qualified).</summary>
+    private static bool LooksLikePInvokeAttributeName(NameSyntax name)
+    {
+        var simple = name switch
+        {
+            QualifiedNameSyntax q => q.Right.Identifier.ValueText,
+            SimpleNameSyntax s => s.Identifier.ValueText,
+            AliasQualifiedNameSyntax a => a.Name.Identifier.ValueText,
+            _ => name.ToString(),
+        };
+        return simple is "DllImport" or "DllImportAttribute" or "LibraryImport" or "LibraryImportAttribute";
     }
 
     // ---- Language features not modeled by the runtime ----------------------
@@ -227,9 +368,21 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
     // Native-sized integers (nint/nuint) have no JS representation distinct from double.
     public override void VisitIdentifierName(IdentifierNameSyntax node)
     {
-        // VisitIdentifierName fires on nearly every identifier in the source, so it is the scanner's
-        // hottest path. Resolve the symbol once and reuse it for both checks below rather than
-        // querying the semantic model twice.
+        // VisitIdentifierName fires on nearly every identifier in the source, so it is by a wide
+        // margin the scanner's hottest path — and asking the semantic model to bind an identifier is
+        // not cheap (it binds the whole enclosing member). Screen by identifier *text* first: unless
+        // the text is the simple name of a type this scanner would reject, no semantic query can
+        // change the outcome, and the vast majority of identifiers exit here having allocated nothing.
+        // `var` is in the denied-name set too, so an inferred local whose type is never written out
+        // (`var s = Factory.OpenFile();`) is still caught.
+        var text = node.Identifier.ValueText;
+        if (!_deniedSimpleNames.Contains(text) && !(_aliasedNames?.Contains(text) ?? false))
+        {
+            base.VisitIdentifierName(node);
+            return;
+        }
+
+        // Resolve the symbol once and reuse it for both checks below rather than querying twice.
         var symbol = _model.GetSymbolInfo(node).Symbol;
 
         if (node.Identifier.Text is "nint" or "nuint"
@@ -258,7 +411,11 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
     // Span/ReadOnlySpan constant-string pattern matching (`span is "literal"`) is not modeled.
     public override void VisitIsPatternExpression(IsPatternExpressionSyntax node)
     {
-        if (node.Pattern is ConstantPatternSyntax
+        // Only a *string-literal* constant pattern can be the span-pattern form (`span is "text"`),
+        // so screen on the literal before binding the operand — `x is null`, `x is 0` and every
+        // other constant pattern would otherwise pay for a semantic query that cannot match.
+        if (node.Pattern is ConstantPatternSyntax { Expression: LiteralExpressionSyntax literal }
+            && literal.Token.IsKind(SyntaxKind.StringLiteralToken)
             && _model.GetTypeInfo(node.Expression).Type is INamedTypeSymbol t
             && t.OriginalDefinition.ToDisplayString() is "System.ReadOnlySpan<T>" or "System.Span<T>")
         {
@@ -337,30 +494,34 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
 
     private readonly HashSet<Location> _reportedApiLocations = new();
 
-    private void CheckDeniedType(INamedTypeSymbol type, SyntaxNode node)
+    /// <summary>The diagnostic message template for a type in a denied namespace, or null when the
+    /// type is fine. Matches against the namespace *symbol* (a cheap segment walk) before doing any
+    /// string work, so a type that is not denied costs nothing.</summary>
+    private static string? DeniedNamespaceMessage(INamedTypeSymbol type)
     {
-        // Fast path: the vast majority of identifiers resolve to types outside the denied
-        // namespaces. Match against the namespace *symbol* (a cheap segment walk) before doing any
-        // string formatting, so the common case allocates nothing. Only when a type is actually in a
-        // denied namespace do we pay for the allowed-list check and the diagnostic message.
         var containing = type.ContainingNamespace;
-        if (containing is null || containing.IsGlobalNamespace) return;
+        if (containing is null || containing.IsGlobalNamespace) return null;
 
         string? message = null;
         foreach (var (segments, msg) in DeniedNamespaces)
         {
             if (NamespaceMatches(containing, segments)) { message = msg; break; }
         }
-        if (message is null) return;
+        if (message is null) return null;
 
         // System.Threading.Tasks.* is the supported async model (Task, ValueTask, IPromise, the
         // completion source, cancellation exceptions, …) — allow the whole sub-namespace even though
         // its parent System.Threading is denied. The genuinely-unsupported threading primitives
         // (Thread, Monitor, locks, wait handles) live directly in System.Threading and stay denied.
-        if (NamespaceMatches(containing, TasksNamespaceSegments)) return;
+        if (NamespaceMatches(containing, TasksNamespaceSegments)) return null;
 
-        var metadataName = type.ConstructUnboundGenericTypeSafeName();
-        if (AllowedThreadingTypes.Contains(metadataName)) return;
+        return AllowedThreadingTypes.Contains(type.ConstructUnboundGenericTypeSafeName()) ? null : message;
+    }
+
+    private void CheckDeniedType(INamedTypeSymbol type, SyntaxNode node)
+    {
+        var message = DeniedNamespaceMessage(type);
+        if (message is null) return;
 
         if (_reportedApiLocations.Add(node.GetLocation()))
         {

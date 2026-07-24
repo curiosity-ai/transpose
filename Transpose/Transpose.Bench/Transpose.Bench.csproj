@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Transpose.Bench</RootNamespace>
+    <AssemblyName>tps-bench</AssemblyName>
+    <StartupObject>Transpose.Bench.Program</StartupObject>
+    <InvariantGlobalization>true</InvariantGlobalization>
+
+    <!-- Packable as a dotnet tool so the benchmark can be run the same way on any machine
+         (install Transpose.Bench globally, then run `tps-bench`), which is what makes the
+         CPU-score normalisation useful: results from different machines become comparable. -->
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>tps-bench</ToolCommandName>
+    <PackageId>Transpose.Bench</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>Curiosity GmbH</Authors>
+    <Company>Curiosity GmbH</Company>
+    <Description>Transpose — compiler performance benchmark harness (CPU-score-normalised).</Description>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/curiosity-ai/transpose</PackageProjectUrl>
+  </PropertyGroup>
+
+</Project>
