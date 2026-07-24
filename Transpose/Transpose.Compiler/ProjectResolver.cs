@@ -31,20 +31,35 @@ internal sealed class ResolvedProject
     public bool MinifyLocalVariables { get; init; }
 
     /// <summary>
-    /// The csproj <c>&lt;TransposeMetadataOnlyAssembly&gt;</c> property (default false): emit the
-    /// project's .NET assembly as metadata only — full type/member metadata including private members,
-    /// but <c>throw null</c> method bodies — instead of compiling real IL.
+    /// The csproj <c>&lt;TransposeMetadataOnlyAssembly&gt;</c> property: emit the project's .NET assembly
+    /// as metadata only — full type/member metadata including private members, but <c>throw null</c>
+    /// method bodies — instead of compiling real IL. Null when the project says nothing, in which case
+    /// the configuration decides (see <see cref="MetadataOnlyAssemblyDefault"/>).
     ///
-    /// It is opt-in because it changes what a published package contains, but the reasoning behind
-    /// offering it is that a Transpose-compiled assembly can never execute anyway: it binds against
+    /// Skipping the IL codegen removes the second full bind of every method body from the build:
+    /// measured ~18% off a clean Tesserae build (8.3 s → 6.8 s), roughly halves the DLL, and produces
+    /// byte-identical JavaScript. Implies no debug information (Roslyn rejects an embedded PDB when
+    /// there are no bodies to describe).
+    ///
+    /// It is sound because a Transpose-compiled assembly can never execute: it binds against
     /// <c>Transpose.dll</c>, a stand-in BCL with no implementations, so no .NET host can load it. Its
     /// only jobs are to be *bound against* by another Transpose project and to carry the compiled JS
-    /// as embedded resources — both of which need metadata alone. Skipping the IL codegen removes the
-    /// second full bind of every method body from the build: measured at ~18% off a clean Tesserae
-    /// build (8.3 s → 6.8 s) and roughly halves the DLL, with byte-identical JavaScript output.
-    /// Implies no debug information (Roslyn rejects an embedded PDB with no bodies to describe).
+    /// as embedded resources — both of which need metadata alone.
     /// </summary>
-    public bool MetadataOnlyAssembly { get; init; }
+    public bool? MetadataOnlyAssembly { get; init; }
+
+    /// <summary>
+    /// Whether to emit a metadata-only assembly for <paramref name="configuration"/> when the project
+    /// expresses no preference: yes for Debug, no for Release.
+    ///
+    /// Debug is the inner-loop configuration — its output is consumed by the developer's own build and
+    /// by `dotnet serve`, never shipped — so it takes the faster path. Release is what
+    /// <c>dotnet pack</c> turns into a NuGet package, so it keeps real IL, and the Transpose SDK
+    /// additionally refuses to package a Debug build at all (see Sdk.targets) so a metadata-only
+    /// assembly cannot reach a feed by accident.
+    /// </summary>
+    public static bool MetadataOnlyAssemblyDefault(string configuration)
+        => string.Equals(configuration, "Debug", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Whether the emitted .NET assembly carries debug information, from the csproj's
     /// <c>&lt;DebugType&gt;</c> (<c>None</c> — or <c>DebugSymbols=false</c> — turns it off). Producing an
@@ -122,7 +137,7 @@ internal static class ProjectResolver
             DefineConstants = defines,
             LanguageVersion = lang,
             MinifyLocalVariables = string.Equals(Property(doc, "MinifyLocalVariables")?.Trim(), "true", StringComparison.OrdinalIgnoreCase),
-            MetadataOnlyAssembly = string.Equals(Property(doc, "TransposeMetadataOnlyAssembly")?.Trim(), "true", StringComparison.OrdinalIgnoreCase),
+            MetadataOnlyAssembly = ParseBool(Property(doc, "TransposeMetadataOnlyAssembly")),
             EmitDebugInformation = !string.Equals(Property(doc, "DebugType")?.Trim(), "none", StringComparison.OrdinalIgnoreCase)
                                    && !string.Equals(Property(doc, "DebugSymbols")?.Trim(), "false", StringComparison.OrdinalIgnoreCase),
             ProjectDirs = projectDirs,
@@ -328,6 +343,17 @@ internal static class ProjectResolver
         }
 
         return true;
+    }
+
+    /// <summary>Parses an MSBuild boolean property, returning null when it is absent or empty so a
+    /// caller can tell "the project did not say" from "the project said false".</summary>
+    private static bool? ParseBool(string? value)
+    {
+        value = value?.Trim();
+        if (string.IsNullOrEmpty(value)) return null;
+        if (string.Equals(value, "true", StringComparison.OrdinalIgnoreCase)) return true;
+        if (string.Equals(value, "false", StringComparison.OrdinalIgnoreCase)) return false;
+        return null;
     }
 
     /// <summary>The built output DLL path of a referenced project: bin/&lt;config&gt;/&lt;tfm&gt;/&lt;asm&gt;.dll.</summary>

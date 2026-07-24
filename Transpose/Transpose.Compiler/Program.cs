@@ -33,8 +33,9 @@ public static class Program
         var extraReferences = new List<string>();
         var extraDefines = new List<string>();
         string? assemblyVersion = null;
-        // Overrides the project's <TransposeMetadataOnlyAssembly>; see ResolvedProject for what it does.
-        var metadataOnlyAssembly = false;
+        // Overrides the project's <TransposeMetadataOnlyAssembly>, which in turn overrides the
+        // per-configuration default. Null = nothing on the command line expressed a preference.
+        bool? metadataOnlyAssembly = null;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -54,6 +55,7 @@ public static class Program
                 case "--timing": PhaseTimings.Enabled = true; break;
                 case "--timing-json": _timingJsonPath = args[++i]; PhaseTimings.Enabled = true; break;
                 case "--metadata-only-assembly": metadataOnlyAssembly = true; break;
+                case "--no-metadata-only-assembly": metadataOnlyAssembly = false; break;
                 case "--assembly-version": assemblyVersion = args[++i]; break;
                 case "--project" or "-p": projectArg = args[++i]; break;
                 default:
@@ -137,6 +139,13 @@ public static class Program
         Console.WriteLine($"  config:     {configuration}");
         Console.WriteLine($"  lang:       {project.LanguageVersion}");
 
+        // Command line beats the csproj property, which beats the per-configuration default. Printed,
+        // because "why is my DLL half the size in Debug?" should be answerable from the build log.
+        var metadataOnly = metadataOnlyAssembly
+                           ?? project.MetadataOnlyAssembly
+                           ?? ResolvedProject.MetadataOnlyAssemblyDefault(configuration);
+        Console.WriteLine($"  assembly:   {(metadataOnly ? "metadata only (throw-null bodies, not packable)" : "full IL")}");
+
         // The project's tps.json drives runtime-package detection and reflection settings. A
         // tps.<Configuration>.json overlay (e.g. tps.Release.json) is merged on top when present.
         var tpscfg = TransposeJson.TryLoad(project.ProjectDir, configuration);
@@ -189,7 +198,7 @@ public static class Program
                 emitAssembly: emitPackage || isSiteBuild,
                 assemblyVersion: assemblyVersion,
                 emitDebugInformation: project.EmitDebugInformation,
-                metadataOnlyAssembly: metadataOnlyAssembly || project.MetadataOnlyAssembly);
+                metadataOnlyAssembly: metadataOnly);
         }
         catch (Exception ex)
         {
@@ -454,7 +463,7 @@ public static class Program
     /// which builds project references (each producing a DLL with its JS embedded) before the
     /// project that consumes them.
     /// </summary>
-    private static bool EnsureReferencedProjectsBuilt(string rootCsproj, string configuration, int maxErrors, bool metadataOnlyAssembly)
+    private static bool EnsureReferencedProjectsBuilt(string rootCsproj, string configuration, int maxErrors, bool? metadataOnlyAssembly)
     {
         foreach (var dep in ProjectResolver.ReferencedProjectsInBuildOrder(rootCsproj))
         {
@@ -477,7 +486,7 @@ public static class Program
     /// <summary>Compiles one project into its Transpose package DLL (the .NET assembly with the compiled JS
     /// and tps.json resources embedded). Its own project references are consumed as their built DLLs,
     /// so they must already have been built (this is called in dependency order).</summary>
-    private static bool BuildPackage(string csproj, string configuration, int maxErrors, bool metadataOnlyAssembly)
+    private static bool BuildPackage(string csproj, string configuration, int maxErrors, bool? metadataOnlyAssembly)
     {
         ResolvedProject project;
         try { project = ProjectResolver.Resolve(csproj, configuration, separateAssemblies: true); }
@@ -495,7 +504,11 @@ public static class Program
                 reflectionEnabled, metadataTarget, emitAssembly: true,
                 assemblyVersion: ProjectResolver.ReadAssemblyVersion(csproj),
                 emitDebugInformation: project.EmitDebugInformation,
-                metadataOnlyAssembly: metadataOnlyAssembly || project.MetadataOnlyAssembly);
+                // Each dependency reads its own csproj property, but a command-line override applies
+                // to the whole invocation.
+                metadataOnlyAssembly: metadataOnlyAssembly
+                                      ?? project.MetadataOnlyAssembly
+                                      ?? ResolvedProject.MetadataOnlyAssemblyDefault(configuration));
         }
         catch (Exception ex) { Console.Error.WriteLine($"    translator threw: {ex.Message}"); return false; }
 
@@ -611,13 +624,16 @@ public static class Program
               --site-dir <dir>      Output directory for the assembled site
               --with-runtime        Prepend the tps.js runtime + shim to the output
               --max-errors <n>      Max individual errors to print (default 40)
-              --metadata-only-assembly
-                                    Emit the .NET assembly as metadata only (full metadata including
-                                    private members, `throw null` bodies) instead of real IL. A
+              --metadata-only-assembly, --no-metadata-only-assembly
+                                    Force the .NET assembly to be metadata only (full metadata
+                                    including private members, `throw null` bodies) or real IL. A
                                     Transpose assembly is only ever bound against — it cannot execute,
-                                    since it binds to the stand-in BCL — so this skips a second full
-                                    bind of every method body (~18% off a large build). Equivalent to
-                                    <TransposeMetadataOnlyAssembly>true</TransposeMetadataOnlyAssembly>.
+                                    since it binds to the stand-in BCL — so metadata-only skips a
+                                    second full bind of every method body (~18% off a large build).
+                                    Default: metadata only for Debug, real IL for Release. A project
+                                    can pin it with <TransposeMetadataOnlyAssembly>. The Transpose SDK
+                                    refuses to pack a Debug build, so a metadata-only assembly cannot
+                                    reach a NuGet feed.
               --timing              Print a per-phase timing/allocation breakdown of the build
               --timing-json <file>  Also write that breakdown (plus GC/memory totals) as JSON
               -q, --quiet           Suppress warning output
