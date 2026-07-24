@@ -110,6 +110,22 @@ internal static class TransposeNaming
     public static string? GetTemplate(ISymbol symbol)
         => GetStringAttr(symbol, TemplateAttr);
 
+    /// <summary>
+    /// The <c>Fn</c> named argument of a member's <c>[Template]</c> — the delegate/method-group form of
+    /// the template, used when the method is referenced as a method group rather than invoked (e.g.
+    /// <c>bool.ToString</c> as a <c>Func&lt;string&gt;</c> must resolve to <c>System.Boolean.toString</c>,
+    /// not the native <c>.toString</c>). Null when absent.
+    /// </summary>
+    public static string? GetTemplateFn(ISymbol? symbol)
+    {
+        if (symbol is null) return null;
+        var attr = symbol.GetAttributes().FirstOrDefault(a => AttrIs(a, TemplateAttr));
+        if (attr is null) return null;
+        foreach (var na in attr.NamedArguments)
+            if (na.Key == "Fn") return na.Value.Value as string;
+        return null;
+    }
+
     /// <summary>The explicit [Name] for a member/type, or null.</summary>
     public static string? GetName(ISymbol symbol)
         => GetStringAttr(symbol, NameAttr);

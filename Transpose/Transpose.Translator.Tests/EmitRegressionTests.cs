@@ -2260,5 +2260,46 @@ public class Program
             Assert.IsTrue(js.Contains("c.somevalone") && js.Contains("c.dothing("), "LowerCase\n" + js);
             Assert.IsTrue(js.Contains("d.SOMEVALONE") && js.Contains("d.DOTHING("), "UpperCase\n" + js);
         }
+
+        // ---- [Template] Fn — a method group of a templated method uses the Fn (delegate) form ----
+        //
+        // [Template(Fn = "...")] gives the delegate form to use when the method is referenced as a
+        // method group rather than invoked. The emitter ignored Fn, so `Func<string> f = b.ToString`
+        // emitted the native `(b).toString.bind(b)` — giving "true"/"false" (bool), the code number
+        // (char) or crashing (double.GetHashCode: a JS number has no .getHashCode). It must resolve to
+        // the Fn (System.Boolean.toString, String.fromCharCode, System.Nullable.toStringFn(…), …), with
+        // the receiver bound as the function's first argument. Test source uses no Transpose-only
+        // attributes, so native .NET is the oracle.
+
+        [TestMethod]
+        public async Task TemplateFnResolvesMethodGroupOfTemplatedMethod()
+        {
+            await RunTest(@"
+using System;
+public enum Color { Red = 1, Green = 5 }
+public class Program
+{
+    public static void Main()
+    {
+        bool b = true;
+        Func<string> fb = b.ToString;
+        Console.WriteLine(fb());              // True (not native ""true"")
+
+        char c = 'X';
+        Func<string> fc = c.ToString;
+        Console.WriteLine(fc());              // X (not the code number ""88"")
+
+        int? n = 42;
+        Func<string> fn = n.ToString;
+        Console.WriteLine(fn());              // 42
+
+        Color? col = Color.Green;
+        Func<string> fe = col.ToString;
+        Console.WriteLine(fe());              // Green (enum name via {T:ToString})
+
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
     }
 }
