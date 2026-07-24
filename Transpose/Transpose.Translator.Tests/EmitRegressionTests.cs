@@ -2301,5 +2301,83 @@ public class Program
     }
 }", waitForOutput: "<<DONE>>");
         }
+
+        // ---- [Template] 2-arg (format, nonExpandedFormat) — the non-expanded params variant ----
+        //
+        // A 2-arg [Template] gives a second template for when the trailing `params` argument is supplied
+        // NON-expanded (a single array passed directly) rather than as individual elements. The emitter
+        // only ever used the first template. It now routes a non-expanded params call to the second:
+        //   Activator.CreateInstance(type, argsArray) → Transpose.Reflection.applyConstructor(type, …)
+        //   MethodInfo.Invoke(obj, argsArray)         → midel(this,obj).apply(null, …)
+        // while expanded (individual-element) calls keep the first template. Test source uses only
+        // System.Reflection, so native .NET is the oracle.
+
+        private const string NonExpandedParamsProgram = @"
+using System;
+using System.Reflection;
+public class Foo { public int V; public Foo(int a, int b) { V = a + b; } public int Add(int a, int b) => a + b; }
+public class Program
+{
+    public static void Main()
+    {
+        object[] ctorArgs = new object[] { 2, 3 };
+        Console.WriteLine(((Foo)Activator.CreateInstance(typeof(Foo), ctorArgs)).V); // 5  (non-expanded array)
+        Console.WriteLine(((Foo)Activator.CreateInstance(typeof(Foo), 4, 5)).V);     // 9  (expanded)
+
+        var m = typeof(Foo).GetMethod(""Add"");
+        var f = new Foo(0, 0);
+        object[] callArgs = new object[] { 10, 20 };
+        Console.WriteLine(m.Invoke(f, callArgs));   // 30 (non-expanded array)
+        Console.WriteLine(m.Invoke(f, 3, 4));       // 7  (expanded)
+        Console.WriteLine(""<<DONE>>"");
+    }
+}";
+
+        [TestMethod]
+        public async Task TemplateNonExpandedParamsVariantMatchesNative()
+        {
+            // Native oracle uses only calls that also bind in real .NET: Activator.CreateInstance has a
+            // (Type, params object[]) overload (both array and expanded forms compile), and
+            // MethodInfo.Invoke(obj, object[]) takes the array form. (The expanded Invoke(obj, a, b) is a
+            // Transpose BCL params overload with no .NET counterpart, so it is covered by the
+            // translate-only assertion below, not here.)
+            await RunTest(@"
+using System;
+using System.Reflection;
+public class Foo { public int V; public Foo(int a, int b) { V = a + b; } public int Add(int a, int b) => a + b; }
+public class Program
+{
+    public static void Main()
+    {
+        object[] ctorArgs = new object[] { 2, 3 };
+        Console.WriteLine(((Foo)Activator.CreateInstance(typeof(Foo), ctorArgs)).V); // 5  (non-expanded array)
+        Console.WriteLine(((Foo)Activator.CreateInstance(typeof(Foo), 4, 5)).V);     // 9  (expanded)
+
+        var m = typeof(Foo).GetMethod(""Add"");
+        var f = new Foo(0, 0);
+        object[] callArgs = new object[] { 10, 20 };
+        Console.WriteLine(m.Invoke(f, callArgs));   // 30 (non-expanded array)
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [TestMethod]
+        public void TemplateNonExpandedParamsSelectsSecondTemplate()
+        {
+            var result = new RoslynTranslator().Translate(NonExpandedParamsProgram);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            var js = result.Javascript!;
+            // Non-expanded (single array) → the nonExpandedFormat variant.
+            Assert.IsTrue(js.Contains("Transpose.Reflection.applyConstructor(Foo, [...ctorArgs])"),
+                "a non-expanded Activator.CreateInstance must use applyConstructor\n" + js);
+            Assert.IsTrue(js.Contains(".apply(null, [...callArgs])"),
+                "a non-expanded MethodInfo.Invoke must use .apply\n" + js);
+            // Expanded (individual elements) → the primary format.
+            Assert.IsTrue(js.Contains("Transpose.createInstance(Foo, [4, 5])"),
+                "an expanded Activator.CreateInstance must use createInstance with an array literal\n" + js);
+            Assert.IsTrue(js.Contains("midel(f, f)(3, 4)") || js.Contains(")(3, 4)"),
+                "an expanded MethodInfo.Invoke must spread the individual args\n" + js);
+        }
     }
 }
