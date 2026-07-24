@@ -49,7 +49,12 @@ internal static class RuntimeAssembler
                 var rel = f.GetString();
                 if (string.IsNullOrEmpty(rel)) continue;
                 var path = Path.Combine(projectDir, rel!.Replace('\\', '/'));
-                if (!File.Exists(path)) { System.Console.Error.WriteLine($"  warning: runtime bundle file missing: {rel}"); continue; }
+                if (!File.Exists(path))
+                {
+                    MsBuildDiagnostic.WriteWarning(MsBuildDiagnostic.CodeMissingRuntimeBundle,
+                        $"runtime bundle file missing: {rel}");
+                    continue;
+                }
                 if (remark.Length > 0) sb.Append(remark.Replace("{name}", Path.GetFileName(path)));
                 sb.Append(File.ReadAllText(path));
             }

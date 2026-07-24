@@ -175,6 +175,33 @@ property is not guessed at: such an import or item is skipped, which is why SDK-
 `--metadata-only-assembly` / `--no-metadata-only-assembly`,
 `--max-errors <n>` (a cap; by default **every** error is reported, ordered by file and line).
 
+### Diagnostics are in MSBuild's canonical format
+
+Every error and warning `tps` prints goes through `MsBuildDiagnostic` (`Transpose.Compiler`), which
+writes the [canonical MSBuild/Visual Studio
+form](https://learn.microsoft.com/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks)
+`Origin : Subcategory Category Code : Text`:
+
+```
+/src/App/Main.cs(17,20): error CS0103: The name 'x' does not exist in the current context
+tps : error TPS0002: No .csproj found at '/src/Nope'.
+```
+
+MSBuild scans a tool's stdout **and** stderr line by line and promotes matching lines to real build
+errors/warnings, so this is what makes a `tps` compile error land in the IDE's error list, navigable
+to the file and line, instead of scrolling past as console text. Three rules follow from that:
+
+- The **`error`/`warning` category is mandatory** and the file must be an **absolute** path — a
+  relative one is resolved against the caller's working directory. Diagnostics with no source
+  location are attributed to the tool (`tps`), with a `TPS####` code (errors `TPS0001`–`TPS0099`,
+  warnings from `TPS0100`; the codes are a shipped contract, so retire rather than reuse one).
+- The text must be **one line**; MSBuild matches per line, so a multi-line message would be
+  truncated. A crash reports its exception chain on the diagnostic line and the stack frames
+  separately.
+- Everything else `tps` prints — progress, `--timing` tables, the "N error(s)" summary — must **not**
+  match, or a build grows errors nobody wrote. `MsBuildDiagnosticFormatTests` guards both directions
+  against MSBuild's own regex.
+
 ## Performance
 
 A clean build's cost, and how to measure it, is documented in **`TODO.optimization.md`** (the running

@@ -61,7 +61,12 @@ public static class Program
                 case "--project" or "-p": projectArg = args[++i]; break;
                 default:
                     if (projectArg is null) projectArg = args[i];
-                    else { Console.Error.WriteLine($"Unexpected argument: {args[i]}"); return 1; }
+                    else
+                    {
+                        MsBuildDiagnostic.WriteError(MsBuildDiagnostic.CodeInvalidCommandLine,
+                            $"Unexpected argument '{args[i]}'.");
+                        return 1;
+                    }
                     break;
             }
         }
@@ -70,7 +75,8 @@ public static class Program
         var csproj = LocateProject(projectArg);
         if (csproj is null)
         {
-            Console.Error.WriteLine($"No .csproj found at '{projectArg}'.");
+            MsBuildDiagnostic.WriteError(MsBuildDiagnostic.CodeProjectNotFound,
+                $"No .csproj found at '{projectArg}'.");
             return 1;
         }
 
@@ -116,7 +122,8 @@ public static class Program
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"Failed to resolve project: {ex.Message}");
+            MsBuildDiagnostic.WriteError(MsBuildDiagnostic.CodeProjectResolveFailed,
+                $"Failed to resolve project '{Path.GetFileName(csproj)}': {ex.Message}");
             return 1;
         }
 
@@ -127,7 +134,9 @@ public static class Program
         {
             var full = Path.GetFullPath(r);
             if (File.Exists(full) && !project.ReferencePaths.Contains(full)) project.ReferencePaths.Add(full);
-            else if (!File.Exists(full)) Console.Error.WriteLine($"  warning: --reference not found: {full}");
+            else if (!File.Exists(full))
+                MsBuildDiagnostic.WriteWarning(MsBuildDiagnostic.CodeReferenceNotFound,
+                    $"--reference not found: {full}");
         }
         foreach (var d in extraDefines)
             if (!project.DefineConstants.Contains(d)) project.DefineConstants.Add(d);
@@ -203,7 +212,7 @@ public static class Program
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"Translator threw: {ex}");
+            ReportCrash("Translator", ex);
             return 2;
         }
 
@@ -288,7 +297,7 @@ public static class Program
                 project.Sources, project.AssemblyName, project.DefineConstants,
                 project.LanguageVersion, reflectionEnabled);
         }
-        catch (Exception ex) { Console.Error.WriteLine($"Runtime build threw: {ex}"); return 2; }
+        catch (Exception ex) { ReportCrash("Runtime build", ex); return 2; }
 
         if (!result.Success)
         {
@@ -360,7 +369,12 @@ public static class Program
         // corlib when compiling user code against it (every type would fail with CS0518).
         byte[] assemblyBytes;
         try { assemblyBytes = result.EmitAssembly!(bundles); }
-        catch (Exception ex) { Console.Error.WriteLine($"Runtime assembly emit failed: {ex.Message}"); return 2; }
+        catch (Exception ex)
+        {
+            MsBuildDiagnostic.WriteError(MsBuildDiagnostic.CodeAssemblyEmitFailed,
+                $"Runtime assembly emit failed: {ex.Message}");
+            return 2;
+        }
         File.WriteAllBytes(dllPath, assemblyBytes);
 
         Console.WriteLine($"\nOK — built runtime {Path.GetFileName(dllPath)} with {bundles.Count} embedded bundle(s) in {sw.ElapsedMilliseconds} ms.");
@@ -434,7 +448,11 @@ public static class Program
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
             File.WriteAllText(path, sb.ToString());
         }
-        catch (Exception ex) { Console.Error.WriteLine($"  warning: could not write --timing-json: {ex.Message}"); }
+        catch (Exception ex)
+        {
+            MsBuildDiagnostic.WriteWarning(MsBuildDiagnostic.CodeTimingJsonNotWritten,
+                $"could not write --timing-json: {ex.Message}");
+        }
     }
 
     private static string JsonString(string s)
@@ -477,7 +495,8 @@ public static class Program
             Console.WriteLine($"  building dependency: {name}");
             if (!BuildPackage(dep, configuration, maxErrors, metadataOnlyAssembly))
             {
-                Console.Error.WriteLine($"  dependency build FAILED: {name}");
+                MsBuildDiagnostic.WriteError(MsBuildDiagnostic.CodeDependencyBuildFailed,
+                    $"Failed to build referenced project '{name}'.");
                 return false;
             }
         }
@@ -491,7 +510,12 @@ public static class Program
     {
         ResolvedProject project;
         try { project = ProjectResolver.Resolve(csproj, configuration, separateAssemblies: true); }
-        catch (Exception ex) { Console.Error.WriteLine($"    resolve failed: {ex.Message}"); return false; }
+        catch (Exception ex)
+        {
+            MsBuildDiagnostic.WriteError(MsBuildDiagnostic.CodeProjectResolveFailed,
+                $"Failed to resolve project '{Path.GetFileName(csproj)}': {ex.Message}");
+            return false;
+        }
 
         var tpscfg = TransposeJson.TryLoad(project.ProjectDir, configuration);
         var (reflectionEnabled, metadataTarget) = ReflectionSettings(tpscfg);
@@ -511,7 +535,7 @@ public static class Program
                                       ?? project.MetadataOnlyAssembly
                                       ?? ResolvedProject.MetadataOnlyAssemblyDefault(configuration));
         }
-        catch (Exception ex) { Console.Error.WriteLine($"    translator threw: {ex.Message}"); return false; }
+        catch (Exception ex) { ReportCrash($"Translator on '{Path.GetFileName(csproj)}'", ex); return false; }
 
         if (!result.Success)
         {
@@ -569,7 +593,8 @@ public static class Program
             if (found.Length == 1) return Path.GetFullPath(found[0]);
             if (found.Length > 1)
             {
-                Console.Error.WriteLine($"Multiple .csproj files in '{arg}'; pass one explicitly.");
+                MsBuildDiagnostic.WriteError(MsBuildDiagnostic.CodeInvalidCommandLine,
+                    $"Multiple .csproj files in '{arg}'; pass one explicitly.");
                 return null;
             }
         }
@@ -605,26 +630,54 @@ public static class Program
 
         if (errors.Count > 0)
         {
-            Console.Error.WriteLine($"\n{errors.Count} error(s):");
+            // The summary lines are deliberately not in diagnostic form, and must stay that way: any
+            // line MSBuild can parse becomes a build error, so a summary could otherwise conjure an
+            // error nobody wrote. See MsBuildDiagnostic for the shape to avoid — writing the count as
+            // "N error(s), by id: …" rather than "N error(s):" keeps a colon from ever landing where
+            // the parser expects one.
             var byId = errors.GroupBy(d => d.Id).OrderByDescending(g => g.Count());
-            Console.Error.WriteLine("  by id: " + string.Join(", ", byId.Select(g => $"{g.Key}×{g.Count()}")));
+            Console.Error.WriteLine();
+            Console.Error.WriteLine($"{errors.Count} error(s), by id: "
+                + string.Join(", ", byId.Select(g => $"{g.Key}×{g.Count()}")));
             Console.Error.WriteLine();
             var shown = maxErrors > 0 ? errors.Take(maxErrors) : errors;
             foreach (var d in shown)
-                Console.Error.WriteLine("  " + Format(d));
+                Console.Error.WriteLine(MsBuildDiagnostic.Format(d));
             if (maxErrors > 0 && errors.Count > maxErrors)
-                Console.Error.WriteLine($"  … and {errors.Count - maxErrors} more (raise or drop --max-errors to see them).");
+                Console.Error.WriteLine($"… and {errors.Count - maxErrors} more (raise or drop --max-errors to see them)");
         }
 
+        // Warnings are printed in full too, not just counted: in canonical form they reach the IDE's
+        // task list, where a count on the console never would.
+        foreach (var d in warnings)
+            Console.WriteLine(MsBuildDiagnostic.Format(d));
         if (warnings.Count > 0)
-            Console.WriteLine($"\n{warnings.Count} warning(s).");
+            Console.WriteLine($"{warnings.Count} warning(s) total");
     }
 
-    private static string Format(Diagnostic d)
+    /// <summary>
+    /// Reports an unhandled exception from the translator as a single diagnostic — a crash is a build
+    /// failure the caller must see, and MSBuild only sees a line it can parse. The messages of the
+    /// whole exception chain go into that one line; the stack frames follow as plain text, since they
+    /// are what makes a crash actionable but cannot fit on one line.
+    ///
+    /// The frames are printed on their own rather than via <c>ex.ToString()</c> deliberately: an
+    /// exception message that happens to read like "... error: ..." would be parsed as a *second*
+    /// diagnostic, and frames alone can never match.
+    /// </summary>
+    private static void ReportCrash(string what, Exception ex)
     {
-        var loc = d.Location.GetLineSpan();
-        var file = string.IsNullOrEmpty(loc.Path) ? "" : $"{Path.GetFileName(loc.Path)}({loc.StartLinePosition.Line + 1},{loc.StartLinePosition.Character + 1}): ";
-        return $"{file}{d.Id}: {d.GetMessage()}";
+        var chain = new List<string>();
+        for (var e = ex; e is not null; e = e.InnerException)
+            chain.Add($"{e.GetType().Name}: {e.Message}");
+        MsBuildDiagnostic.WriteError(MsBuildDiagnostic.CodeInternalError,
+            $"{what} threw {string.Join(" ---> ", chain)}");
+
+        for (var e = ex; e is not null; e = e.InnerException)
+        {
+            if (!ReferenceEquals(e, ex)) Console.Error.WriteLine($"--- inner {e.GetType().FullName}");
+            Console.Error.WriteLine(e.StackTrace);
+        }
     }
 
     private static void ShowHelp()
