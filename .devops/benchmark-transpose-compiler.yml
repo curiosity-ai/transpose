@@ -29,8 +29,12 @@ variables:
   publishDir: '$(Build.SourcesDirectory)/artifacts/bench-tps'
   reportDir: '$(Build.ArtifactStagingDirectory)/benchmark'
 
+# Same image as build-transpose-compiler.yml (pinned there because the NuGet push needs Mono). A
+# benchmark wants a fixed host anyway: score normalisation corrects for a faster or slower CPU, but not
+# for a different kernel or preinstalled SDK, so a floating "latest" would drift the baseline underneath
+# the comparison against docs/perf/optimized.json.
 pool:
-  vmImage: 'ubuntu-latest'
+  vmImage: 'ubuntu-22.04'
 
 # Every compiler change gets a measurement, and a nightly run tracks drift in the runtime/SDK even
 # when nothing in the repo changed.

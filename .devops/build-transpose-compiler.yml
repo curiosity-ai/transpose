@@ -12,12 +12,18 @@ variables:
 # Transpose.Compiler package that maps RIDs to them. `dotnet tool install Transpose.Compiler` keeps
 # working unchanged and resolves the right one automatically.
 #
-# Pool is ubuntu-latest: that host was verified end-to-end to cross-compile R2R for all nine RIDs
+# Pool is a Linux host: it was verified end-to-end to cross-compile R2R for all nine RIDs
 # (win/linux/osx x x64/arm64/x86/musl) from a single pack. Any host should manage it — crossgen2 targets
 # a RID rather than the host — but this is the configuration with evidence behind it. The verify step
 # below fails the build if R2R is ever silently lost, whatever the agent.
+#
+# Pinned to 22.04, *not* ubuntu-latest: the NuGetCommand@2 push at the end of this file runs on Mono,
+# and the hosted images dropped Mono in 24.04, so ubuntu-latest fails the push with
+# "you are using Ubuntu 24.04 or later without mono installed" (https://aka.ms/nuget-task-mono).
+# If this image is ever retired, the fix is to replace that task with a `dotnet nuget push`, which
+# needs no Mono — do not just bump the image back to latest.
 pool:
-  vmImage: 'ubuntu-latest'
+  vmImage: 'ubuntu-22.04'
 
 trigger:
   branches:
