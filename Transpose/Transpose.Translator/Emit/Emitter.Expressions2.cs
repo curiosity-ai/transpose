@@ -1016,7 +1016,12 @@ public sealed partial class Emitter
         // ObjectInitializationMode controls which property initializers seed the object:
         // Initializer(1) emits the members that carry a `= value` initializer, DefaultValue(2)
         // emits every property, Ignore(0)/unspecified emits an empty object.
-        if (type.GetAttributes().FirstOrDefault(a => TransposeNaming.AttrIs(a, "Transpose.ObjectLiteralAttribute")) is { } objLit)
+        if (type.GetAttributes().FirstOrDefault(a => TransposeNaming.AttrIs(a, "Transpose.ObjectLiteralAttribute")) is { } objLit
+            // ObjectCreateMode.Constructor builds the instance by RUNNING its constructor (the runtime
+            // Class is the real ctor when the type defines one), so `new T(a,b,c)` must invoke the ctor
+            // and set the members — fall through to the normal constructor-call path below. Only
+            // ObjectCreateMode.Plain (the default) emits the {} + initializer form here.
+            && ObjectLiteralCreateMode(objLit) != 1)
         {
             var mode = ObjectLiteralInitMode(objLit);
             _w.Write("{");
@@ -1103,6 +1108,17 @@ public sealed partial class Emitter
     {
         foreach (var arg in attr.ConstructorArguments)
             if (arg.Type?.ToDisplayString() == "Transpose.ObjectInitializationMode" && arg.Value is int v)
+                return v;
+        return 0;
+    }
+
+    /// <summary>The ObjectCreateMode of an [ObjectLiteral] attribute (0=Plain, 1=Constructor), or 0
+    /// (Plain) when unspecified. Constructor means `new T(...)` runs the type's constructor instead of
+    /// emitting a {} literal.</summary>
+    private static int ObjectLiteralCreateMode(AttributeData attr)
+    {
+        foreach (var arg in attr.ConstructorArguments)
+            if (arg.Type?.ToDisplayString() == "Transpose.ObjectCreateMode" && arg.Value is int v)
                 return v;
         return 0;
     }

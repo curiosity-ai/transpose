@@ -2094,5 +2094,101 @@ public class Program
             Assert.IsTrue(js.Contains("765"),
                 "FromString must run to 765 — the JS must not fail with a let/var redeclaration\n" + js);
         }
+
+        // ---- [ObjectLiteral] — every attribute-parameter combination ----
+        //
+        // The attribute has four ctor overloads: (), (ObjectInitializationMode),
+        // (ObjectCreateMode), (ObjectInitializationMode, ObjectCreateMode). Two orthogonal axes:
+        //   ObjectInitializationMode  Ignore(0) | Initializer(1) | DefaultValue(2)  — how the {} literal
+        //                             is seeded (Plain create only).
+        //   ObjectCreateMode          Plain(0) | Constructor(1)                     — {} literal vs a real
+        //                             `new T(args)` that RUNS the constructor.
+        // ObjectCreateMode was being ignored entirely, so Constructor collapsed to Ignore/{} and dropped
+        // the constructor arguments — the Curiosity FileExtensions dictionary came out full of empty {}.
+        // The h5 baseline (and native .NET, where [ObjectLiteral] is a no-op) run the constructor.
+        //
+        // Test class shape: ctor sets X (from the arg) and Y=99; X and Z carry `= 5` / `= 7`
+        // initializers; Y has none. Construction is `new T(3)`.
+        //   Plain + Ignore        → {}                     (arg dropped, no seeding)
+        //   Plain + Initializer   → {X:5, Z:7}             (only initialized properties)
+        //   Plain + DefaultValue  → {X:5, Y:0, Z:7}        (all properties)
+        //   Constructor (any init)→ {X:3, Z:7, Y:99}       (ctor runs: arg → X, field inits, ctor body → Y)
+
+        private const string ObjectLiteralMatrix = @"
+using System;
+using Transpose;
+[ObjectLiteral]                                                                      public class A { public A(int a){X=a;Y=99;} public int X{get;set;}=5; public int Y{get;set;} public int Z{get;set;}=7; }
+[ObjectLiteral(ObjectInitializationMode.Ignore)]                                     public class B { public B(int a){X=a;Y=99;} public int X{get;set;}=5; public int Y{get;set;} public int Z{get;set;}=7; }
+[ObjectLiteral(ObjectInitializationMode.Initializer)]                                public class C { public C(int a){X=a;Y=99;} public int X{get;set;}=5; public int Y{get;set;} public int Z{get;set;}=7; }
+[ObjectLiteral(ObjectInitializationMode.DefaultValue)]                               public class D { public D(int a){X=a;Y=99;} public int X{get;set;}=5; public int Y{get;set;} public int Z{get;set;}=7; }
+[ObjectLiteral(ObjectCreateMode.Plain)]                                              public class E { public E(int a){X=a;Y=99;} public int X{get;set;}=5; public int Y{get;set;} public int Z{get;set;}=7; }
+[ObjectLiteral(ObjectCreateMode.Constructor)]                                        public class F { public F(int a){X=a;Y=99;} public int X{get;set;}=5; public int Y{get;set;} public int Z{get;set;}=7; }
+[ObjectLiteral(ObjectInitializationMode.Ignore, ObjectCreateMode.Plain)]             public class G { public G(int a){X=a;Y=99;} public int X{get;set;}=5; public int Y{get;set;} public int Z{get;set;}=7; }
+[ObjectLiteral(ObjectInitializationMode.Ignore, ObjectCreateMode.Constructor)]       public class H { public H(int a){X=a;Y=99;} public int X{get;set;}=5; public int Y{get;set;} public int Z{get;set;}=7; }
+[ObjectLiteral(ObjectInitializationMode.Initializer, ObjectCreateMode.Plain)]        public class I { public I(int a){X=a;Y=99;} public int X{get;set;}=5; public int Y{get;set;} public int Z{get;set;}=7; }
+[ObjectLiteral(ObjectInitializationMode.Initializer, ObjectCreateMode.Constructor)]  public class J { public J(int a){X=a;Y=99;} public int X{get;set;}=5; public int Y{get;set;} public int Z{get;set;}=7; }
+[ObjectLiteral(ObjectInitializationMode.DefaultValue, ObjectCreateMode.Plain)]       public class K { public K(int a){X=a;Y=99;} public int X{get;set;}=5; public int Y{get;set;} public int Z{get;set;}=7; }
+[ObjectLiteral(ObjectInitializationMode.DefaultValue, ObjectCreateMode.Constructor)] public class L { public L(int a){X=a;Y=99;} public int X{get;set;}=5; public int Y{get;set;} public int Z{get;set;}=7; }
+public class Program
+{
+    public static void Main()
+    {
+        Script.Write(""console.log('A',JSON.stringify({0}))"", new A(3));
+        Script.Write(""console.log('B',JSON.stringify({0}))"", new B(3));
+        Script.Write(""console.log('C',JSON.stringify({0}))"", new C(3));
+        Script.Write(""console.log('D',JSON.stringify({0}))"", new D(3));
+        Script.Write(""console.log('E',JSON.stringify({0}))"", new E(3));
+        Script.Write(""console.log('F',JSON.stringify({0}))"", new F(3));
+        Script.Write(""console.log('G',JSON.stringify({0}))"", new G(3));
+        Script.Write(""console.log('H',JSON.stringify({0}))"", new H(3));
+        Script.Write(""console.log('I',JSON.stringify({0}))"", new I(3));
+        Script.Write(""console.log('J',JSON.stringify({0}))"", new J(3));
+        Script.Write(""console.log('K',JSON.stringify({0}))"", new K(3));
+        Script.Write(""console.log('L',JSON.stringify({0}))"", new L(3));
+        Console.WriteLine(""<<DONE>>"");
+    }
+}";
+
+        [TestMethod]
+        public async Task ObjectLiteralAllModesProduceExpectedRuntimeShape()
+        {
+            var js = await RunTest(ObjectLiteralMatrix, waitForOutput: "<<DONE>>", skipRoslyn: true);
+            void Expect(string tag, string json) =>
+                Assert.IsTrue(js.Contains(tag + " " + json),
+                    $"[ObjectLiteral] {tag} should produce {json}\n{js}");
+
+            Expect("A", "{}");                       // [ObjectLiteral]              → Ignore + Plain
+            Expect("B", "{}");                       // Ignore
+            Expect("C", "{\"X\":5,\"Z\":7}");          // Initializer
+            Expect("D", "{\"X\":5,\"Y\":0,\"Z\":7}");   // DefaultValue
+            Expect("E", "{}");                       // Plain
+            Expect("F", "{\"X\":3,\"Z\":7,\"Y\":99}");  // Constructor — ctor runs
+            Expect("G", "{}");                       // Ignore + Plain
+            Expect("H", "{\"X\":3,\"Z\":7,\"Y\":99}");  // Ignore + Constructor
+            Expect("I", "{\"X\":5,\"Z\":7}");          // Initializer + Plain
+            Expect("J", "{\"X\":3,\"Z\":7,\"Y\":99}");  // Initializer + Constructor
+            Expect("K", "{\"X\":5,\"Y\":0,\"Z\":7}");   // DefaultValue + Plain
+            Expect("L", "{\"X\":3,\"Z\":7,\"Y\":99}");  // DefaultValue + Constructor
+        }
+
+        [TestMethod]
+        public void ObjectLiteralCreateModeControlsConstructionForm()
+        {
+            var result = new RoslynTranslator().Translate(ObjectLiteralMatrix);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            var js = result.Javascript!;
+
+            // Plain create (default) → {} literal (+ initializer seeding); the constructor arg is dropped.
+            Assert.IsTrue(js.Contains("JSON.stringify({}))"),
+                "Plain/Ignore modes must emit an empty object literal\n" + js);
+            Assert.IsTrue(js.Contains("JSON.stringify({X: 5, Z: 7}))"),
+                "Initializer mode must seed only the initialized properties\n" + js);
+            Assert.IsTrue(js.Contains("JSON.stringify({X: 5, Y: 0, Z: 7}))"),
+                "DefaultValue mode must seed every property\n" + js);
+            // Constructor create → a real `new T(3)` call so the constructor runs (never {}).
+            foreach (var t in new[] { "F", "H", "J", "L" })
+                Assert.IsTrue(js.Contains($"JSON.stringify(new {t}(3)))"),
+                    $"ObjectCreateMode.Constructor for {t} must emit `new {t}(3)`, not a literal\n" + js);
+        }
     }
 }
