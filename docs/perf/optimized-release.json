@@ -1,6 +1,6 @@
 {
-  "Label": "r2r-debug",
-  "Score": 95.16912972237111,
+  "Label": "r2r-release",
+  "Score": 87.18700001630394,
   "CpuModel": "Intel(R) Xeon(R) Processor @ 2.80GHz",
   "LogicalCores": 4,
   "PhysicalCores": 4,
@@ -28,44 +28,44 @@
     "AES",
     "PCLMULQDQ"
   ],
-  "Configuration": "Debug",
+  "Configuration": "Release",
   "Iterations": 3,
   "CpuWorkloads": [
     {
       "Name": "pointer-chase",
-      "Ms": 96.0204,
+      "Ms": 145.6865,
       "ReferenceMs": 85,
-      "Score": 88.5228555598602
+      "Score": 58.34445882082417
     },
     {
       "Name": "dictionary",
-      "Ms": 68.4894,
+      "Ms": 69.6849,
       "ReferenceMs": 68,
-      "Score": 99.28543687052303
+      "Score": 97.58211606818693
     },
     {
       "Name": "string-churn",
-      "Ms": 64.6071,
+      "Ms": 71.4104,
       "ReferenceMs": 62,
-      "Score": 95.9646849959215
+      "Score": 86.82208753906994
     },
     {
       "Name": "scalar-int",
-      "Ms": 69.6677,
+      "Ms": 69.1367,
       "ReferenceMs": 69,
-      "Score": 99.04159316297223
+      "Score": 99.80227578116975
     },
     {
       "Name": "sort",
-      "Ms": 73.5757,
+      "Ms": 73.5769,
       "ReferenceMs": 74,
-      "Score": 100.57668496528065
+      "Score": 100.57504461318703
     },
     {
       "Name": "memcpy",
-      "Ms": 70.1104,
+      "Ms": 70.0345,
       "ReferenceMs": 62,
-      "Score": 88.43195873935964
+      "Score": 88.52779701432866
     }
   ],
   "Scenarios": [
@@ -73,73 +73,68 @@
       "Name": "tesserae",
       "Project": "/home/user/transpose/benchmarks/tesserae/Tesserae/Tesserae.csproj",
       "Clean": true,
-      "WallMs": 6000.5959,
-      "MinWallMs": 5947.765,
-      "StdDevMs": 86.52063325166976,
-      "NormalisedWallMs": 5710.714896186283,
-      "CpuMs": 18345,
-      "AllocBytes": 633364248,
-      "PeakWorkingSetBytes": 426106880,
+      "WallMs": 9566.8616,
+      "MinWallMs": 9371.0963,
+      "StdDevMs": 207.66485336287298,
+      "NormalisedWallMs": 8341.059624751775,
+      "CpuMs": 26961,
+      "AllocBytes": 1154727640,
+      "PeakWorkingSetBytes": 765919232,
       "Phases": [
         {
           "Name": "resolve project (csproj \u002B globs \u002B references)",
-          "Ms": 37,
-          "Bytes": 15204624
+          "Ms": 46,
+          "Bytes": 15204632
         },
         {
           "Name": "build compilation (parse \u002B references)",
-          "Ms": 287,
-          "Bytes": 30345488
+          "Ms": 296,
+          "Bytes": 30236160
         },
         {
           "Name": "scan unsupported features",
-          "Ms": 1264,
-          "Bytes": 59321448
+          "Ms": 1354,
+          "Bytes": 58999232
         },
         {
           "Name": "bind \u002B emit .NET assembly",
-          "Ms": 1139,
-          "Bytes": 60018920
+          "Ms": 3254,
+          "Bytes": 208197384
         },
         {
           "Name": "  \u251C collect \u002B order types",
-          "Ms": 44,
+          "Ms": 49,
           "Bytes": 0
         },
         {
           "Name": "  \u251C emit type bodies (parallel)",
-          "Ms": 1487,
+          "Ms": 1262,
           "Bytes": 0
         },
         {
           "Name": "  \u251C concatenate type bodies",
-          "Ms": 4,
+          "Ms": 8,
           "Bytes": 0
         },
         {
           "Name": "  \u2514 reflection metadata (file)",
-          "Ms": 373,
+          "Ms": 436,
           "Bytes": 0
         },
         {
           "Name": "emit JavaScript",
-          "Ms": 1898,
-          "Bytes": 292558808
-        },
-        {
-          "Name": "body diagnostics (semantic models)",
-          "Ms": 899,
-          "Bytes": 78734872
+          "Ms": 1774,
+          "Bytes": 287385968
         },
         {
           "Name": "collect package resources (minify \u002B read files)",
-          "Ms": 60,
-          "Bytes": 41853344
+          "Ms": 2064,
+          "Bytes": 478582944
         },
         {
           "Name": "embed resources into DLL (Cecil)",
-          "Ms": 257,
-          "Bytes": 54054784
+          "Ms": 644,
+          "Bytes": 74102160
         }
       ]
     },
@@ -147,83 +142,78 @@
       "Name": "tesserae\u002Btests",
       "Project": "/home/user/transpose/benchmarks/tesserae/Tesserae.Tests/Tesserae.Tests.csproj",
       "Clean": true,
-      "WallMs": 7149.5414,
-      "MinWallMs": 7013.1789,
-      "StdDevMs": 80.29550481670829,
-      "NormalisedWallMs": 6804.156329520628,
-      "CpuMs": 22006,
-      "AllocBytes": 868722256,
-      "PeakWorkingSetBytes": 556404736,
+      "WallMs": 10720.8277,
+      "MinWallMs": 10427.7571,
+      "StdDevMs": 268.88126102548154,
+      "NormalisedWallMs": 9347.168048546917,
+      "CpuMs": 30524,
+      "AllocBytes": 1568793984,
+      "PeakWorkingSetBytes": 898740224,
       "Phases": [
         {
           "Name": "resolve project (csproj \u002B globs \u002B references)",
-          "Ms": 22,
-          "Bytes": 4106016
+          "Ms": 21,
+          "Bytes": 4106024
         },
         {
           "Name": "build compilation (parse \u002B references)",
-          "Ms": 359,
-          "Bytes": 35672016
+          "Ms": 331,
+          "Bytes": 35813336
         },
         {
           "Name": "scan unsupported features",
-          "Ms": 1438,
-          "Bytes": 102874592
+          "Ms": 1462,
+          "Bytes": 106570104
         },
         {
           "Name": "bind \u002B emit .NET assembly",
-          "Ms": 1185,
-          "Bytes": 64335800
+          "Ms": 3438,
+          "Bytes": 283595736
         },
         {
           "Name": "  \u251C collect \u002B order types",
-          "Ms": 61,
+          "Ms": 60,
           "Bytes": 0
         },
         {
           "Name": "  \u251C emit type bodies (parallel)",
-          "Ms": 1814,
+          "Ms": 1650,
           "Bytes": 0
         },
         {
           "Name": "  \u251C concatenate type bodies",
-          "Ms": 4,
+          "Ms": 7,
           "Bytes": 0
         },
         {
           "Name": "  \u2514 reflection metadata (file)",
-          "Ms": 328,
+          "Ms": 403,
           "Bytes": 0
         },
         {
           "Name": "emit JavaScript",
-          "Ms": 2242,
-          "Bytes": 372886432
-        },
-        {
-          "Name": "body diagnostics (semantic models)",
-          "Ms": 1150,
-          "Bytes": 120375840
+          "Ms": 2186,
+          "Bytes": 365456784
         },
         {
           "Name": "collect package resources (minify \u002B read files)",
-          "Ms": 47,
-          "Bytes": 42682344
+          "Ms": 2173,
+          "Bytes": 538141008
         },
         {
           "Name": "embed resources into DLL (Cecil)",
-          "Ms": 323,
-          "Bytes": 57804960
+          "Ms": 507,
+          "Bytes": 90611616
         },
         {
           "Name": "  \u251C reflection metadata (inline)",
-          "Ms": 16,
+          "Ms": 17,
           "Bytes": 0
         },
         {
           "Name": "write site (minify \u002B resources \u002B html)",
-          "Ms": 128,
-          "Bytes": 50716328
+          "Ms": 402,
+          "Bytes": 123838088
         }
       ]
     },
@@ -231,42 +221,42 @@
       "Name": "tesserae\u002Btests-warm",
       "Project": "/home/user/transpose/benchmarks/tesserae/Tesserae.Tests/Tesserae.Tests.csproj",
       "Clean": false,
-      "WallMs": 3375.9626,
-      "MinWallMs": 3365.9326,
-      "StdDevMs": 179.07445439105317,
-      "NormalisedWallMs": 3212.8742261727325,
-      "CpuMs": 9388,
-      "AllocBytes": 249779488,
-      "PeakWorkingSetBytes": 297766912,
+      "WallMs": 4283.0996,
+      "MinWallMs": 4273.7566,
+      "StdDevMs": 83.59388744701012,
+      "NormalisedWallMs": 3734.3060489503137,
+      "CpuMs": 11606,
+      "AllocBytes": 427586136,
+      "PeakWorkingSetBytes": 360378368,
       "Phases": [
         {
           "Name": "resolve project (csproj \u002B globs \u002B references)",
-          "Ms": 21,
-          "Bytes": 4114184
+          "Ms": 24,
+          "Bytes": 4108040
         },
         {
           "Name": "build compilation (parse \u002B references)",
-          "Ms": 189,
-          "Bytes": 11405904
+          "Ms": 178,
+          "Bytes": 11339144
         },
         {
           "Name": "scan unsupported features",
-          "Ms": 952,
-          "Bytes": 46187368
+          "Ms": 1044,
+          "Bytes": 48585552
         },
         {
           "Name": "bind \u002B emit .NET assembly",
-          "Ms": 365,
-          "Bytes": 4870792
+          "Ms": 1319,
+          "Bytes": 77688264
         },
         {
           "Name": "  \u251C collect \u002B order types",
-          "Ms": 38,
+          "Ms": 24,
           "Bytes": 0
         },
         {
           "Name": "  \u251C emit type bodies (parallel)",
-          "Ms": 814,
+          "Ms": 700,
           "Bytes": 0
         },
         {
@@ -276,33 +266,28 @@
         },
         {
           "Name": "  \u251C reflection metadata (inline)",
-          "Ms": 26,
+          "Ms": 24,
           "Bytes": 0
         },
         {
           "Name": "emit JavaScript",
-          "Ms": 887,
-          "Bytes": 84981312
-        },
-        {
-          "Name": "body diagnostics (semantic models)",
-          "Ms": 534,
-          "Bytes": 41603400
+          "Ms": 763,
+          "Bytes": 83458056
         },
         {
           "Name": "collect package resources (minify \u002B read files)",
-          "Ms": 98,
-          "Bytes": 843552
+          "Ms": 260,
+          "Bytes": 59764944
         },
         {
           "Name": "embed resources into DLL (Cecil)",
-          "Ms": 119,
-          "Bytes": 3805160
+          "Ms": 176,
+          "Bytes": 16569760
         },
         {
           "Name": "write site (minify \u002B resources \u002B html)",
-          "Ms": 141,
-          "Bytes": 50860640
+          "Ms": 373,
+          "Bytes": 123924528
         }
       ]
     }

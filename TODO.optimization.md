@@ -16,42 +16,58 @@ Clean-slate builds of the tesserae corpus, `-c Debug`, medians of 3, CPU-score-n
 
 | scenario | before | after | delta | alloc delta |
 |---|--:|--:|--:|--:|
-| `tesserae` — 263 files / ~69k LOC → package DLL | 15.82 s | **7.23 s** | **−54.3%** | −36.9% |
-| `tesserae+tests` — multi-project: dependency + site build | 23.16 s | **8.64 s** | **−62.7%** | −41.5% |
-| `tesserae+tests-warm` — dependency already up to date | 9.03 s | **4.23 s** | **−53.1%** | −46.4% |
+| `tesserae` — 263 files / ~69k LOC → package DLL | 15.82 s | **5.71 s** | **−63.9%** | −44.4% |
+| `tesserae+tests` — multi-project: dependency + site build | 23.16 s | **6.80 s** | **−70.6%** | −48.9% |
+| `tesserae+tests-warm` — dependency already up to date | 9.03 s | **3.21 s** | **−64.4%** | −55.0% |
 
-Baseline commit `79fcfc1`. The recorded reports are checked in as `docs/perf/baseline.json` and
-`docs/perf/optimized.json` (plus `optimized.md`), so a later change can be compared against either
+"After" is the compiler as it now ships: a ReadyToRun publish, `-c Debug` (which emits a metadata-only
+assembly). The equivalent Release figures — full IL, and both minified and formatted bundles — are
+8.34 s / 9.35 s / 3.73 s; Release is the slower configuration by design.
+
+Baseline commit `79fcfc1`. The recorded reports are checked in so a later change can be compared
 without rebuilding an old compiler:
 
+| file | what it is |
+|---|---|
+| `docs/perf/baseline.json` | before any of this work (JIT compiler, full-IL Debug) |
+| `docs/perf/optimized.json` | current, ReadyToRun publish, Debug — the default comparison target |
+| `docs/perf/optimized-release.json` | current, ReadyToRun publish, Release |
+
 ```bash
-tps-bench --tps <tps> --tesserae <tesserae> --iterations 3 --baseline docs/perf/optimized.json
+tps-bench --tps <tps> --tesserae benchmarks/tesserae --iterations 3 --baseline docs/perf/optimized.json
 ```
+
+The corpus is a submodule (`benchmarks/tesserae`), so `git submodule update --init` before benchmarking.
 
 Emitted output is **byte-identical** to the pre-optimization compiler across all of it (verified with
 `compare-site.sh` over the whole `Tesserae.Tests` site), and the 499-test suite stays green.
 
-### Phase split now, for `tesserae`
+### Phase split now, for `tesserae` (Debug, ReadyToRun compiler)
 
 | phase | ms | share | alloc |
 |---|--:|--:|--:|
-| resolve project | 47 | 0.6% | 15 MB |
-| build compilation (parse + references) | 396 | 5.0% | 29 MB |
-| scan unsupported features | 1 823 | 23.1% | 57 MB |
-| bind + emit .NET assembly | 3 258 | 41.3% | 199 MB |
-| emit JavaScript | 1 689 | 21.4% | 274 MB |
-| collect package resources (minify) | 49 | 0.6% | 40 MB |
-| embed resources into DLL (Mono.Cecil) | 633 | 8.0% | 71 MB |
+| resolve project | 37 | 0.6% | 15 MB |
+| build compilation (parse + references) | 287 | 4.9% | 29 MB |
+| scan unsupported features | 1 264 | 21.6% | 57 MB |
+| bind + emit .NET assembly (metadata only) | 1 139 | 19.5% | 57 MB |
+| emit JavaScript | 1 898 | 32.5% | 279 MB |
+| body diagnostics (semantic models) | 899 | 15.4% | 75 MB |
+| collect package resources (minify) | 60 | 1.0% | 40 MB |
+| embed resources into DLL (Mono.Cecil) | 257 | 4.4% | 52 MB |
 
-Two structural facts that bound everything below:
+Two structural facts that bounded everything, and where they now stand:
 
-1. **A build binds the whole project about twice** — once inside `Compilation.Emit` (to produce IL) and
-   once through the `SemanticModel` (to drive the JS emitter). Roslyn's internal bound trees are not
-   reachable from the public API, so the two cannot be merged. The only way to remove one is to stop
-   producing IL at all (see `--metadata-only-assembly` below).
-2. **Every `tps` invocation has a ~2.2 s floor.** A *one-file* project takes 2.2 s and allocates 5 MB;
-   that is JIT of Roslyn plus importing `Transpose.dll`'s metadata. The SDK runs `tps` once per
-   project, so a solution pays it per project.
+1. **A build used to bind the whole project about twice** — once inside `Compilation.Emit` (to produce
+   IL) and once through the `SemanticModel` (to drive the JS emitter). Roslyn's internal bound trees
+   are not reachable from the public API, so the two cannot be merged; the only way to remove one is to
+   stop producing IL, which is what the metadata-only Debug emit does (§12). What is left is one bind,
+   shared between the scan, the JS emit, and the body-diagnostics pass.
+2. **Every `tps` invocation had a ~2.2 s floor** — a *one-file* project took 2.2 s while allocating only
+   5 MB, essentially all JIT of Roslyn — and the SDK runs `tps` once per project. ReadyToRun packaging
+   (§13) halves that floor.
+
+In Release (full IL, both bundle variants) the assembly emit is back to ~3.3 s and minification adds its
+own cost, which is why Release measures 8.34 s against Debug's 5.71 s.
 
 ---
 
@@ -207,26 +223,65 @@ is also what makes the `diff -r` correctness gate usable.
 
 ---
 
-## Available but not enabled: `--metadata-only-assembly` — a further ~18%
+### 12. Metadata-only assembly in Debug — ~18%
 
-`<TransposeMetadataOnlyAssembly>true</TransposeMetadataOnlyAssembly>` or `--metadata-only-assembly`
-emits the project's .NET assembly as metadata only (full metadata **including private members**,
-`throw null` method bodies) instead of compiling IL. Method-body diagnostics then come from the
-semantic models, which the scan and the JS emit have already populated, so that pass reads cached bound
-trees instead of binding again.
+`Compilation.Emit` with `metadataOnly: true, includePrivateMembers: true` produces full metadata with
+`throw null` method bodies instead of compiling IL. Method-body diagnostics then come from the semantic
+models, which the scan and the JS emit have already populated, so that pass reads cached bound trees
+instead of binding again — 0.8 s where the body codegen it replaces cost 2.1 s.
 
-Measured on `tesserae`: **8.3 s → 6.8 s (−18%)**, `bind + emit .NET assembly` 3.4 s → 1.3 s (the
-replacement diagnostics pass costs 0.8 s), total allocation 687 MB → 603 MB, and the DLL roughly halves
-(1.58 MB → 0.81 MB). Emitted JavaScript is byte-identical, and body errors (CS0103 / CS0029 / CS1503)
-are still reported — verified on a purpose-built broken project.
+Measured on `tesserae`: **8.3 s → 6.8 s (−18%)**, `bind + emit .NET assembly` 3.4 s → 1.3 s, total
+allocation 687 MB → 603 MB, DLL roughly halved. Emitted JavaScript byte-identical; body errors
+(CS0103 / CS0029 / CS1503) still reported, verified on a purpose-built broken project.
 
-**Off by default because it changes what a published package contains, and that is a maintainer
-decision.** The argument for turning it on: a Transpose-compiled assembly can never execute. It binds
-against `Transpose.dll`, a stand-in BCL with no implementations, so no .NET host can load it and no
-ordinary .NET project can reference it. Its only jobs are being *bound against* by another Transpose
-project and carrying the compiled JS as embedded resources — both need metadata alone, so the IL is
-already dead weight. Note it implies no debug information (Roslyn rejects an embedded PDB when there
-are no bodies to describe).
+**Default: on for Debug, off for Release.** It is sound because a Transpose-compiled assembly can never
+execute — it binds against `Transpose.dll`, a stand-in BCL with no implementations, so no .NET host can
+load it and no ordinary .NET project can reference it; its only jobs are being *bound against* by
+another Transpose project and carrying the compiled JS as embedded resources, and both need metadata
+alone. But Release is what `dotnet pack` publishes, so Release keeps real IL, and the SDK makes a Debug
+package impossible: `GeneratePackageOnBuild` is forced off for Debug and `dotnet pack -c Debug` fails
+with TPS1001. (`<TransposeMetadataOnlyAssembly>` / `--metadata-only-assembly` /
+`--no-metadata-only-assembly` override the default.) It implies no debug information — Roslyn rejects
+an embedded PDB when there are no bodies to describe.
+
+The pack guard hooks `BeforeTargets="GenerateNuspec"`, not `"Pack"`: GenerateNuspec is a *dependency* of
+Pack and is what writes the .nupkg, so a Pack hook fires after the package is already on disk. That was
+observed, not theorised.
+
+### 13. ReadyToRun tool packaging — ~1 s off every invocation
+
+A `tps` run has a fixed floor — a one-file project takes 2.2 s and allocates 5 MB, essentially all of
+it JIT-compiling Roslyn — and the SDK invokes tps once per project, so a solution pays it per project.
+Publishing the tool ReadyToRun precompiles that away: **2.2 s → 1.1 s** on a one-file project, and on
+`tesserae` the installed R2R tool measured 5.84–6.51 s against 6.72–7.18 s for the JIT build (~18%).
+
+R2R is native code, so it requires RID-specific tool packages. `TransposePackRidSpecificTools=true`
+(in `Transpose.Compiler.csproj`) sets `RuntimeIdentifiers` + `PublishReadyToRun`, and one `dotnet pack`
+then produces nine `Transpose.Compiler.<rid>` packages plus a 2 KB outer `Transpose.Compiler` package
+whose `DotnetToolSettings.xml` maps each RID to its package. `dotnet tool install Transpose.Compiler`
+resolves the right one with no change for users — verified end to end locally, including that the
+installed payload is R2R.
+
+Things that cost time to work out, recorded so they do not have to be again:
+
+- Use **`RuntimeIdentifiers`**, not `ToolPackageRuntimeIdentifiers`. The SDK derives the tool-package
+  RID list from either, but only `RuntimeIdentifiers` also makes *restore* fetch the per-RID assets;
+  with the other one every inner build fails `NETSDK1047`. The pipeline's restore step must pass the
+  property too.
+- A list-valued property cannot be passed as `-p:X=a;b;c` on the command line (MSBuild parses the
+  semicolons as argument separators, and escaping them makes it one RID literal). It has to live in the
+  csproj, gated by a plain boolean property.
+- With RID-specific packages the outer package contains **no implementation**, so a platform absent
+  from the RID list cannot run the tool at all. Hence the deliberately broad list (win/linux/osx ×
+  x64/arm64, plus win-x86 and musl for Alpine containers) — an extra RID costs one ~15 MB package per
+  release, a missing one breaks somebody.
+- Cross-OS and cross-architecture R2R works: a single pack on Linux produced verified-R2R payloads for
+  win-x64, win-arm64, osx-arm64 and the rest. The compiler pipeline runs on `ubuntu-latest` because
+  that is the host this was verified on.
+- `tps-bench --verify-r2r <dir>` opens each produced `.nupkg` and checks the PE ManagedNativeHeader of
+  the assemblies inside, so the pipeline gates on what it is about to push rather than on the build
+  tree (which contains both the pre-publish IL copy and the R2R publish copy of every RID).
+  `--require-r2r` does the same for a single compiler before benchmarking it.
 
 ---
 
@@ -310,13 +365,6 @@ not something a user's build runs, so the risk/benefit is much worse than on the
 
 Roughly in expected-value order.
 
-- **Ship `tps` ReadyToRun — the largest untaken win.** Measured: a one-file project 2.2 s → **1.1 s**,
-  and `tesserae` 8.4–9.4 s → **7.3–7.9 s** (~11%), i.e. ~1 s off *every* invocation. The csproj already
-  sets `PublishReadyToRun`, so it only needs a RID-specific publish:
-  `dotnet publish -c Release -r linux-x64 --self-contained false -p:PublishReadyToRun=true`.
-  The blocker is packaging: `Transpose.Compiler` ships as a portable dotnet tool, so capturing this
-  means RID-specific tool packages and per-platform CI. Since the SDK invokes `tps` once per project,
-  the saving multiplies across a solution.
 - **Replace the Mono.Cecil resource embed with Roslyn `manifestResources`** (0.6 s + 71 MB, and Cecil
   re-serialises the whole assembly). `BuildRuntimePackage` already does this. The obstacle is ordering:
   the resources include the compiled JS, available only *after* the JS emit, while the assembly is

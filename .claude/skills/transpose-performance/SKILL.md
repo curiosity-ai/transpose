@@ -54,19 +54,30 @@ git worktree add /tmp/tps-base <base-commit>
 BASE=/tmp/tps-base/Transpose/Transpose.Compiler/bin/Release/net10.0/tps
 ```
 
-The corpus is the **tesserae** repo (a sibling checkout): `Tesserae` is a single 263-file / ~69k-line
-project, and `Tesserae.Tests` adds a second project that depends on it — which is what exercises the
-multi-project path (`tps` compiles the dependency first, then the site build).
+The corpus is the **tesserae** repo, checked in as a submodule at `benchmarks/tesserae` so CI and a
+local run measure the same code:
+
+```bash
+git submodule update --init benchmarks/tesserae
+```
+
+`Tesserae` is a single 263-file / ~69k-line project; `Tesserae.Tests` adds a second project that depends
+on it, which is what exercises the multi-project path (`tps` compiles the dependency first, then the
+site build). A sibling checkout also works — pass `--tesserae <path>`.
 
 ## The loop
 
 ### 1. Where does this build spend its time and memory?
 
 ```bash
-cd <tesserae>
+cd benchmarks/tesserae
 rm -rf Tesserae/bin Tesserae/obj                 # clean slate — see "Cleaning" below
 $TPS --project Tesserae/Tesserae.csproj -c Debug --timing
 ```
+
+**Debug and Release are structurally different builds**, not just different optimisation flags: Debug
+emits a *metadata-only* assembly (no IL, ~18% faster) while Release emits full IL and both bundle
+variants. Measure the configuration you mean, and say which one a number came from.
 
 `--timing` prints per-phase wall time, each phase's share, **and the bytes allocated while it ran**,
 plus process totals (allocated, peak working set, gen0/1/2 counts). `--timing-json <file>` writes the
@@ -83,13 +94,29 @@ top-level phases sum to the total.
 ### 3. The full report (what to paste into a PR)
 
 ```bash
-$BENCH --tps $TPS --tesserae <tesserae> --iterations 3 --label my-change \
+$BENCH --tps $TPS --tesserae benchmarks/tesserae --iterations 3 --label my-change \
        --json artifacts/bench/my-change.json --markdown artifacts/bench/my-change.md \
        --baseline docs/perf/optimized.json
 ```
 
-`docs/perf/baseline.json` (before any of this work) and `docs/perf/optimized.json` (current) are
-checked in, so you can compare against either without rebuilding an old compiler.
+Checked-in references, so you can compare without rebuilding an old compiler:
+`docs/perf/baseline.json` (before any of this work), `docs/perf/optimized.json` (current, Debug) and
+`docs/perf/optimized-release.json` (current, Release).
+
+**Benchmark the compiler as it ships — ReadyToRun.** A plain `dotnet build` output is JIT-only and ~1 s
+per invocation slower, which will silently skew anything you conclude:
+
+```bash
+dotnet publish Transpose/Transpose.Compiler/Transpose.Compiler.csproj -c Release \
+  -r linux-x64 --self-contained false -p:PublishReadyToRun=true -o artifacts/bench-tps
+$BENCH --tps artifacts/bench-tps/tps --tesserae benchmarks/tesserae --require-r2r …
+```
+
+`tps-bench` reports whether the compiler is R2R on every run; `--require-r2r` makes it a hard failure,
+and `--verify-r2r <dir>` checks a whole pack output (that is what the release pipeline gates on).
+
+Use `--env KEY=VALUE` to re-test a runtime default rather than trusting it — e.g.
+`--env DOTNET_TieredPGO=1` confirms PGO is still a loss (last measured 8.70 s vs 6.18 s with it off).
 
 `tps-bench` prints, in order: the machine (CPU model, physical/logical cores, RAM, and the SIMD/crypto
 ISAs the JIT will use), a short deterministic **CPU+memory benchmark** and the **score** it yields,
@@ -214,3 +241,17 @@ once per project. `PublishReadyToRun` halves it (measured 2.2 s → 1.1 s on a o
   (`var`, using aliases, static imports) explicitly.
 - **Don't keep a change that measures flat.** Pooling `Emitter.Capture`'s writers looked obviously right
   and moved allocation by 0.5 MB out of 312 MB. It was reverted; the finding is logged.
+
+## The CI pipelines
+
+- **`.devops/build-transpose-compiler.yml`** packs the tool. `TransposePackRidSpecificTools=true` makes
+  one `dotnet pack` produce nine ReadyToRun `Transpose.Compiler.<rid>` packages plus the outer selector
+  package, and the build then *gates* on `tps-bench --verify-r2r` over the produced `.nupkg` files, so a
+  silently-JIT-only tool cannot be published. Restore must pass the same property (it is what sets
+  `RuntimeIdentifiers`), or every inner build fails `NETSDK1047`.
+- **`.devops/benchmark-transpose-compiler.yml`** measures. It publishes the R2R compiler, benchmarks the
+  `benchmarks/tesserae` submodule in both Debug and Release against `docs/perf/optimized.json`, re-checks
+  the TieredPGO decision with `--env DOTNET_TieredPGO=1`, and publishes the reports as an artifact. It
+  runs on every compiler change and nightly, and deliberately **does not fail on a regression** — hosted
+  agents vary too much for a tight threshold to mean anything, and a build that cries wolf gets ignored.
+  Read the artifact.

@@ -102,12 +102,20 @@ internal sealed class ScenarioRunner
     private readonly string _tps;
     private readonly string _tempDir;
     private readonly bool _verbose;
+    private readonly IReadOnlyList<(string key, string value)> _env;
 
-    public ScenarioRunner(string tpsPath, string tempDir, bool verbose)
+    /// <param name="env">Extra environment variables for each compiler process. The compiler's runtime
+    /// configuration is load-bearing (TieredPGO off and Server GC are together worth ~40% of a build),
+    /// and those are exactly the settings a DOTNET_* variable can override — so being able to set them
+    /// per run is what makes "is that still the right default on this runtime?" a measurable question
+    /// rather than a belief.</param>
+    public ScenarioRunner(string tpsPath, string tempDir, bool verbose,
+                          IReadOnlyList<(string key, string value)>? env = null)
     {
         _tps = tpsPath;
         _tempDir = tempDir;
         _verbose = verbose;
+        _env = env ?? Array.Empty<(string, string)>();
         Directory.CreateDirectory(_tempDir);
     }
 
@@ -159,6 +167,7 @@ internal sealed class ScenarioRunner
         psi.ArgumentList.Add(scenario.Configuration);
         psi.ArgumentList.Add("--timing-json");
         psi.ArgumentList.Add(statsPath);
+        foreach (var (key, value) in _env) psi.Environment[key] = value;
 
         var sw = Stopwatch.StartNew();
         using var proc = Process.Start(psi)!;

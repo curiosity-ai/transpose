@@ -45,6 +45,7 @@ Transpose/                     # The compiler toolchain
 │   ├── MachineInfo.cs         #   CPU model / cores / RAM / SIMD-ISA detection
 │   ├── CpuScore.cs            #   short deterministic CPU+memory benchmark -> normalisation score
 │   ├── Scenario.cs            #   clean-slate `tps` runs (wipes bin/obj of the project closure)
+│   ├── R2RCheck.cs            #   is this tps (or .nupkg) ReadyToRun-compiled?
 │   ├── Report.cs              #   console / Markdown / JSON output + --baseline comparison
 │   └── ab.sh                  #   interleaved A/B of two tps binaries on one project
 ├── Transpose.Build.Target/    # MSBuild SDK (package id Transpose.Build.Target) that invokes `tps`
@@ -66,6 +67,10 @@ Packages/                      # Additional binding libraries (all [assembly: Ex
 ├── Transpose.P2/              #   package Transpose.P2
 ├── Transpose.HttpClient/      #   package Transpose.HttpClient
 └── Transpose.Placeholders/    #   placeholder attributes (package Transpose.Placeholders)
+
+benchmarks/tesserae/           # git submodule: the benchmark corpus (see Performance below)
+docs/perf/                     # recorded tps-bench reports (baseline + current)
+.devops/                       # Azure DevOps pipelines (one per package, plus the benchmark)
 
 docs/, logo/, lib/, External-less # docs, transpose.png/svg, misc
 ```
@@ -176,6 +181,19 @@ The short version:
   build. Do not "tidy them away".
 - Any change here must keep the emitted site **byte-identical** — output is reproducible, so
   `diff -r` against a baseline compiler is the gate. The 499-test suite is the other gate.
+- The benchmark corpus is the **tesserae** submodule at `benchmarks/tesserae`
+  (`git submodule update --init benchmarks/tesserae`). Recorded reports live in `docs/perf/`.
+- **Debug and Release are structurally different builds.** Debug emits a *metadata-only* assembly
+  (full metadata, `throw null` bodies — ~18% faster, and sound because a Transpose assembly binds
+  against the stand-in BCL and can never execute); Release emits full IL. Consequently the SDK
+  **refuses to package a Debug build**: `GeneratePackageOnBuild` is forced off and `dotnet pack -c Debug`
+  fails with TPS1001. Pack Release.
+- **The published tool is ReadyToRun.** `TransposePackRidSpecificTools=true` makes one `dotnet pack`
+  produce a ReadyToRun `Transpose.Compiler.<rid>` package per RID plus the outer selector package;
+  `dotnet tool install Transpose.Compiler` resolves the right one. That is worth ~1 s off *every*
+  invocation, and `.devops/build-transpose-compiler.yml` gates on `tps-bench --verify-r2r` so it cannot
+  be lost silently. Benchmark an R2R publish, not a `dotnet build` output, or you understate the
+  shipped compiler.
 
 ## Known remaining work (compilation-related)
 

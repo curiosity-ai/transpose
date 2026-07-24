@@ -46,6 +46,40 @@
     <PackageProjectUrl>https://github.com/curiosity-ai/transpose</PackageProjectUrl>
   </PropertyGroup>
 
+  <!--
+    ReadyToRun tool packaging (CI only; see .devops/build-transpose-compiler.yml).
+
+    A `tps` run has a ~2.2 s floor on a one-file project, essentially all of it JIT-compiling Roslyn,
+    and the SDK invokes tps once per project. Publishing the tool ReadyToRun precompiles that to
+    native code: measured 2.2 s -> 1.1 s on a one-file project and ~1 s off every build (-11% on
+    Tesserae). See TODO.optimization.md.
+
+    R2R is native code, so it requires RID-specific packages. Setting ToolPackageRuntimeIdentifiers
+    makes `dotnet pack` produce one `Transpose.Compiler.<rid>` package per RID plus the outer
+    `Transpose.Compiler` package that selects between them, and `dotnet tool install
+    Transpose.Compiler` then resolves the right one automatically — no change for users.
+
+    The catch, and the reason the RID list below is broad: with RID-specific packages the outer
+    package contains NO implementation, so a platform that is not in this list cannot run the tool at
+    all. Adding a RID costs one more ~15 MB package per release; omitting one that somebody uses
+    breaks them. Hence: every platform .NET itself ships a runtime pack for that anyone plausibly
+    builds on, musl (Alpine containers) included.
+
+    Gated behind a property so the ordinary `dotnet build` / `dotnet pack` dev loop stays a plain,
+    fast, RID-agnostic build. Without it, `dotnet pack` produces exactly the portable package it
+    always did.
+  -->
+  <PropertyGroup Condition="'$(TransposePackRidSpecificTools)' == 'true'">
+    <!-- RuntimeIdentifiers, not ToolPackageRuntimeIdentifiers: the SDK derives the tool-package RID
+         list from either, but only RuntimeIdentifiers also makes *restore* fetch the per-RID assets.
+         With ToolPackageRuntimeIdentifiers alone every inner build fails with NETSDK1047. -->
+    <RuntimeIdentifiers>win-x64;win-arm64;win-x86;linux-x64;linux-arm64;linux-musl-x64;linux-musl-arm64;osx-x64;osx-arm64</RuntimeIdentifiers>
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <!-- Composite R2R would be faster still but bloats each package considerably and cannot be
+         cross-compiled as reliably; plain R2R already captures the JIT win. -->
+    <PublishReadyToRunComposite>false</PublishReadyToRunComposite>
+  </PropertyGroup>
+
   <ItemGroup>
     <Using Include="Transpose.Translator" />
   </ItemGroup>

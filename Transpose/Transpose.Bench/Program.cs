@@ -34,6 +34,21 @@ public static class Program
     {
         if (args.Contains("-h") || args.Contains("--help")) { ShowHelp(); return 0; }
 
+        // Standalone verification mode: no benchmarking, just answer "is every tps payload under this
+        // directory ReadyToRun-compiled?" and set the exit code. A release pipeline runs this over its
+        // publish/pack output, where there is one payload per RID and none of them can be executed on
+        // the build agent.
+        var verifyIndex = Array.IndexOf(args, "--verify-r2r");
+        if (verifyIndex >= 0)
+        {
+            if (verifyIndex + 1 >= args.Length)
+            {
+                Console.Error.WriteLine("--verify-r2r needs a directory to search for tps payloads.");
+                return 1;
+            }
+            return VerifyR2R(args[verifyIndex + 1]);
+        }
+
         var tps = "tps";
         var configuration = "Debug";
         var iterations = 3;
@@ -41,7 +56,9 @@ public static class Program
         string? jsonOut = null, markdownOut = null, baselineIn = null, label = null;
         var runCpuBench = true;
         var verbose = false;
+        var requireR2R = false;
         var scenarioArgs = new List<string>();
+        var envOverrides = new List<(string key, string value)>();
         string? tesseraeRoot = null;
 
         for (var i = 0; i < args.Length; i++)
@@ -59,6 +76,19 @@ public static class Program
                 case "--baseline": baselineIn = args[++i]; break;
                 case "--label": label = args[++i]; break;
                 case "--no-cpu-bench": runCpuBench = false; break;
+                case "--require-r2r": requireR2R = true; break;
+                case "--env":
+                {
+                    var spec = args[++i];
+                    var eq = spec.IndexOf('=');
+                    if (eq <= 0)
+                    {
+                        Console.Error.WriteLine($"--env expects KEY=VALUE, got '{spec}'.");
+                        return 1;
+                    }
+                    envOverrides.Add((spec[..eq], spec[(eq + 1)..]));
+                    break;
+                }
                 case "--verbose" or "-v": verbose = true; break;
                 default:
                     Console.Error.WriteLine($"Unexpected argument: {args[i]}");
@@ -96,11 +126,25 @@ public static class Program
             Console.Error.WriteLine($"Could not find the tps compiler at '{tps}'. Pass --tps <path>.");
             return 1;
         }
+        // Report (and optionally enforce) whether the compiler is ReadyToRun. A JIT-only build pays
+        // ~1 s of extra JIT per invocation, so a timing is not interpretable without knowing which it
+        // was — and a release pipeline wants to fail rather than ship a silently-slower tool.
+        var r2r = R2RCheck.Inspect(resolvedTps);
         Console.WriteLine($"Compiler: {resolvedTps}");
+        Console.WriteLine($"          {r2r.Describe()}");
+        if (requireR2R && !r2r.IsReadyToRun)
+        {
+            Console.Error.WriteLine($"\n--require-r2r: the compiler at {resolvedTps} is not ReadyToRun-compiled.");
+            Console.Error.WriteLine("Publish it with a RID and -p:PublishReadyToRun=true, or pack with "
+                                  + "-p:TransposePackRidSpecificTools=true.");
+            return 2;
+        }
         Console.WriteLine($"Config:   {configuration}   iterations: {iterations} (+{warmups} warm-up)\n");
 
         var tempDir = Path.Combine(Path.GetTempPath(), "tps-bench");
-        var runner = new ScenarioRunner(resolvedTps, tempDir, verbose);
+        if (envOverrides.Count > 0)
+            Console.WriteLine("Env:      " + string.Join(", ", envOverrides.Select(e => $"{e.key}={e.value}")));
+        var runner = new ScenarioRunner(resolvedTps, tempDir, verbose, envOverrides);
 
         var results = new List<ScenarioResult>();
         foreach (var s in scenarios)
@@ -120,6 +164,68 @@ public static class Program
         if (markdownOut is not null) { report.WriteMarkdown(markdownOut, score, baseline); Console.WriteLine($"Wrote {markdownOut}"); }
 
         return results.All(r => r.Succeeded) ? 0 : 1;
+    }
+
+    /// <summary>Verifies every tps payload under <paramref name="root"/> is ReadyToRun-compiled,
+    /// printing one line each. Exit 0 when all are, 2 when any is not, 1 when none were found —
+    /// "found nothing" must fail, or a mistyped path would silently pass a release.</summary>
+    private static int VerifyR2R(string root)
+    {
+        var full = Path.GetFullPath(root);
+        Console.WriteLine($"Verifying ReadyToRun under {full}");
+
+        // Packages first: if the directory holds .nupkg files it is a pack output, and verifying what
+        // is about to be pushed beats verifying whatever the build tree happens to contain.
+        var packages = R2RCheck.InspectPackages(full);
+        if (packages.Count > 0)
+        {
+            var badPackages = 0;
+            foreach (var p in packages)
+            {
+                Console.WriteLine($"  [{(p.IsAcceptable ? "ok  " : "FAIL")}] {Path.GetFileName(p.PackagePath)}: {p.Describe()}");
+                if (!p.IsAcceptable) badPackages++;
+            }
+            var implementations = packages.Count(p => p.Kind == R2RCheck.PackageKind.ToolImplementation);
+            Console.WriteLine($"\n{implementations - badPackages}/{implementations} implementation package(s) ReadyToRun-compiled"
+                            + $" ({packages.Count} package(s) inspected).");
+            if (implementations == 0)
+            {
+                Console.Error.WriteLine("No tool implementation package found — nothing was verified. A RID-agnostic "
+                                      + "pack cannot be ReadyToRun; pack with -p:TransposePackRidSpecificTools=true.");
+                return 1;
+            }
+            if (badPackages > 0)
+            {
+                Console.Error.WriteLine("Not every package is ReadyToRun. Make sure restore ran with the same "
+                                      + "-p:TransposePackRidSpecificTools=true as the pack.");
+                return 2;
+            }
+            return 0;
+        }
+
+        var results = R2RCheck.InspectAll(full);
+        if (results.Count == 0)
+        {
+            Console.Error.WriteLine("No tps payload (tps.dll) or .nupkg found — nothing was verified.");
+            return 1;
+        }
+
+        var bad = 0;
+        foreach (var r in results)
+        {
+            var relative = Path.GetRelativePath(full, r.Directory);
+            Console.WriteLine($"  [{(r.IsReadyToRun ? "ok  " : "FAIL")}] {relative}: {r.Describe()}");
+            if (!r.IsReadyToRun) bad++;
+        }
+        Console.WriteLine($"\n{results.Count - bad}/{results.Count} payload(s) ReadyToRun-compiled.");
+        if (bad > 0)
+        {
+            Console.Error.WriteLine("Not every payload is ReadyToRun. Pack with "
+                                  + "-p:TransposePackRidSpecificTools=true (which sets RuntimeIdentifiers "
+                                  + "and PublishReadyToRun), and make sure restore ran with the same property.");
+            return 2;
+        }
+        return 0;
     }
 
     /// <summary>Parses <c>name=path.csproj[:clean|:warm]</c>. Clean is the default — an incremental
@@ -224,6 +330,16 @@ public static class Program
           --markdown <file>         Write a Markdown summary table.
           --baseline <file>         Compare against a previous --json run and print the deltas.
           --no-cpu-bench            Skip the CPU benchmark (score assumed 100).
+          --require-r2r             Fail (exit 2) unless the compiler is ReadyToRun-compiled. For a
+                                    release pipeline: R2R is worth ~1 s per invocation and is easy to
+                                    lose silently.
+          --verify-r2r <dir>        Verify-only mode (no benchmarking). If <dir> holds .nupkg files,
+                                    verifies the payload inside each — exactly what a pipeline is about
+                                    to push; otherwise verifies every tps payload found beneath it.
+                                    Exit 2 if any is not ReadyToRun, 1 if there was nothing to verify.
+          --env KEY=VALUE           Set an environment variable for each compiler process (repeatable).
+                                    Use it to re-test a runtime default, e.g.
+                                    --env DOTNET_TieredPGO=1 to confirm PGO is still a loss.
           -v, --verbose             Echo the compiler's output for each run.
         """);
 }

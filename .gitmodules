@@ -1,0 +1,4 @@
+[submodule "benchmarks/tesserae"]
+	path = benchmarks/tesserae
+	url = https://github.com/curiosity-ai/tesserae.git
+	branch = master
