@@ -26,7 +26,8 @@ public static class Program
         var configuration = "Debug";
         var withRuntime = false;
         var quiet = false;
-        var maxErrors = 40;
+        // 0 = print every error. A cap loses information the user needs, so it is opt-in.
+        var maxErrors = 0;
         var emitPackage = false;
         var separateAssemblies = false;
         var buildRuntime = false;
@@ -49,7 +50,7 @@ public static class Program
                 case "--separate-assemblies": separateAssemblies = true; break;
                 case "--with-runtime": withRuntime = true; break;
                 case "--quiet" or "-q": quiet = true; break;
-                case "--max-errors": maxErrors = int.Parse(args[++i]); break;
+                case "--max-errors": maxErrors = Math.Max(0, int.Parse(args[++i])); break;
                 case "--reference" or "-r": extraReferences.Add(args[++i]); break;
                 case "--define" or "-D": extraDefines.Add(args[++i]); break;
                 case "--timing": PhaseTimings.Enabled = true; break;
@@ -163,7 +164,7 @@ public static class Program
             string.Equals(Path.GetFileNameWithoutExtension(p), "Transpose", StringComparison.OrdinalIgnoreCase));
         if (buildRuntime
             || (string.Equals(tpscfg?.OutputBy, "ClassPath", StringComparison.OrdinalIgnoreCase) && !referencesTransposeBcl))
-            return BuildRuntime(project, configuration, sw, outPath);
+            return BuildRuntime(project, configuration, sw, outPath, maxErrors);
 
         // Reflection settings come from the project's tps.json (target inline vs a .meta.js file).
         var (reflectionEnabled, metadataTarget) = ReflectionSettings(tpscfg);
@@ -275,7 +276,7 @@ public static class Program
     /// those with the hand-written Resources/*.js primitives into tps.js (and the reflection block
     /// into tps.meta.js) per the project's tps.json, and embeds both into Transpose.dll.
     /// </summary>
-    private static int BuildRuntime(ResolvedProject project, string configuration, Stopwatch sw, string? outPath)
+    private static int BuildRuntime(ResolvedProject project, string configuration, Stopwatch sw, string? outPath, int maxErrors)
     {
         var cfg = TransposeJson.TryLoad(project.ProjectDir, configuration);
         var reflectionEnabled = !(cfg?.ReflectionDisabled ?? false);
@@ -291,7 +292,7 @@ public static class Program
 
         if (!result.Success)
         {
-            ReportDiagnostics(result.Diagnostics, 40);
+            ReportDiagnostics(result.Diagnostics, maxErrors);
             Console.Error.WriteLine($"\nFAILED building runtime in {sw.ElapsedMilliseconds} ms.");
             return 1;
         }
@@ -575,9 +576,31 @@ public static class Program
         return null;
     }
 
+    /// <summary>
+    /// Prints the build's diagnostics. **Every** error is printed by default: a truncated list makes a
+    /// broken build take several compile cycles to fix, and the caller has no way to know whether the
+    /// errors it cannot see are the same problem or a different one. <paramref name="maxErrors"/> caps
+    /// the list only when a caller explicitly asked for a cap (<c>--max-errors</c>).
+    ///
+    /// Ordering comes from <see cref="OrderErrorsForReport"/>.
+    /// </summary>
+    /// <summary>
+    /// The errors to report, in the order to report them: by file, then line, then column — the order
+    /// you would fix them in — rather than by the phase that produced them (the unsupported-feature
+    /// scan runs before Roslyn's diagnostics, and its parallel per-file walk has no inherent order).
+    /// Nothing is filtered out here; truncation, if any, is the caller's decision.
+    /// </summary>
+    internal static List<Diagnostic> OrderErrorsForReport(IReadOnlyList<Diagnostic> diagnostics)
+        => diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error)
+            .OrderBy(d => d.Location.SourceTree?.FilePath ?? "", StringComparer.OrdinalIgnoreCase)
+            .ThenBy(d => d.Location.GetLineSpan().StartLinePosition.Line)
+            .ThenBy(d => d.Location.GetLineSpan().StartLinePosition.Character)
+            .ThenBy(d => d.Id, StringComparer.Ordinal)
+            .ToList();
+
     private static void ReportDiagnostics(IReadOnlyList<Diagnostic> diagnostics, int maxErrors)
     {
-        var errors = diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).ToList();
+        var errors = OrderErrorsForReport(diagnostics);
         var warnings = diagnostics.Where(d => d.Severity == DiagnosticSeverity.Warning).ToList();
 
         if (errors.Count > 0)
@@ -586,10 +609,11 @@ public static class Program
             var byId = errors.GroupBy(d => d.Id).OrderByDescending(g => g.Count());
             Console.Error.WriteLine("  by id: " + string.Join(", ", byId.Select(g => $"{g.Key}×{g.Count()}")));
             Console.Error.WriteLine();
-            foreach (var d in errors.Take(maxErrors))
+            var shown = maxErrors > 0 ? errors.Take(maxErrors) : errors;
+            foreach (var d in shown)
                 Console.Error.WriteLine("  " + Format(d));
-            if (errors.Count > maxErrors)
-                Console.Error.WriteLine($"  … and {errors.Count - maxErrors} more.");
+            if (maxErrors > 0 && errors.Count > maxErrors)
+                Console.Error.WriteLine($"  … and {errors.Count - maxErrors} more (raise or drop --max-errors to see them).");
         }
 
         if (warnings.Count > 0)
@@ -623,7 +647,9 @@ public static class Program
                                     embedded JS) instead of recompiling their source into the bundle.
               --site-dir <dir>      Output directory for the assembled site
               --with-runtime        Prepend the tps.js runtime + shim to the output
-              --max-errors <n>      Max individual errors to print (default 40)
+              --max-errors <n>      Cap how many individual errors are printed. By default there is
+                                    no cap — every error is reported, ordered by file and line. Pass 0
+                                    to restore that explicitly.
               --metadata-only-assembly, --no-metadata-only-assembly
                                     Force the .NET assembly to be metadata only (full metadata
                                     including private members, `throw null` bodies) or real IL. A

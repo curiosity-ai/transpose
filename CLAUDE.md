@@ -158,12 +158,22 @@ items, transpiles, and writes the site (runtime + bundle + resources + `index.ht
 DLL (`--emit-package`). **There is no compilation server and no cache** — the new compiler is a
 plain CLI, by design.
 
+Because there is no MSBuild evaluation, `ProjectXml` does the one bit of evaluation that changes
+which files compile: it follows `<Import Project="…"/>` transitively and flattens the result, so a
+**shared project**'s `.projitems` (where its `<Compile>` items live) is picked up. Each item is
+expanded against the directory of the file that *declared* it for `$(MSBuildThisFileDirectory)`, and
+against the project directory for a plain relative path — MSBuild's two rules. Any other `$(…)`
+property is not guessed at: such an import or item is skipped, which is why SDK-internal imports
+(`$(MSBuildToolsPath)…`) never get followed. Conditions are not evaluated anywhere in the resolver.
+
 ### `tps` CLI options (selected)
 
 `--out/-o`, `--site-dir`, `--configuration/-c`, `--emit-package`, `--separate-assemblies`,
 `--with-runtime`, `--reference/-r <dll>` (extra assemblies not in the NuGet cache),
-`--define/-D <SYM>`, `--assembly-version <v>`, `--project/-p`, `--max-errors`, `--quiet/-q`,
-`--timing` (per-phase time + allocations), `--timing-json <file>`, `--metadata-only-assembly`.
+`--define/-D <SYM>`, `--assembly-version <v>`, `--project/-p`, `--quiet/-q`,
+`--timing` (per-phase time + allocations), `--timing-json <file>`,
+`--metadata-only-assembly` / `--no-metadata-only-assembly`,
+`--max-errors <n>` (a cap; by default **every** error is reported, ordered by file and line).
 
 ## Performance
 
@@ -224,6 +234,8 @@ The short version:
   `HtmlGenerator`. **Source maps** for the emitted bundle are still remaining.
 - **Reference resolution beyond the NuGet cache** — `<Reference HintPath>` and `tps.json`
   `references`/`referencesPath` (partially covered by `--reference`).
+- **MSBuild evaluation** stays deliberately shallow: `<Import>` is followed (see above) but
+  conditions, arbitrary properties, `Directory.Build.props` and item metadata are not evaluated.
 - **Wider `tps.json` surface** (outputBy, module formats, locales, before/after build, etc.).
 
 Caching and the compilation server are intentionally **out of scope**.
