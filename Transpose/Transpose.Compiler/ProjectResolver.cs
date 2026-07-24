@@ -30,6 +30,30 @@ internal sealed class ResolvedProject
     /// legacy compiler's safe minifier profile that keeps local names.</summary>
     public bool MinifyLocalVariables { get; init; }
 
+    /// <summary>
+    /// The csproj <c>&lt;TransposeMetadataOnlyAssembly&gt;</c> property (default false): emit the
+    /// project's .NET assembly as metadata only — full type/member metadata including private members,
+    /// but <c>throw null</c> method bodies — instead of compiling real IL.
+    ///
+    /// It is opt-in because it changes what a published package contains, but the reasoning behind
+    /// offering it is that a Transpose-compiled assembly can never execute anyway: it binds against
+    /// <c>Transpose.dll</c>, a stand-in BCL with no implementations, so no .NET host can load it. Its
+    /// only jobs are to be *bound against* by another Transpose project and to carry the compiled JS
+    /// as embedded resources — both of which need metadata alone. Skipping the IL codegen removes the
+    /// second full bind of every method body from the build: measured at ~18% off a clean Tesserae
+    /// build (8.3 s → 6.8 s) and roughly halves the DLL, with byte-identical JavaScript output.
+    /// Implies no debug information (Roslyn rejects an embedded PDB with no bodies to describe).
+    /// </summary>
+    public bool MetadataOnlyAssembly { get; init; }
+
+    /// <summary>Whether the emitted .NET assembly carries debug information, from the csproj's
+    /// <c>&lt;DebugType&gt;</c> (<c>None</c> — or <c>DebugSymbols=false</c> — turns it off). Producing an
+    /// embedded PDB is real work and adds ~12% to the assembly's size, and a Transpose project's DLL
+    /// exists to be *bound against* by other Transpose projects — nobody steps through its IL — so a
+    /// project that says it wants no symbols should not pay for them. Defaults to true, so a project
+    /// that says nothing keeps the debug information it has always got.</summary>
+    public bool EmitDebugInformation { get; init; } = true;
+
     /// <summary>Directories of every project in the closure — the root first, then the
     /// referenced projects it pulls in (each may contribute tps.json resources).</summary>
     public required List<string> ProjectDirs { get; init; }
@@ -98,6 +122,9 @@ internal static class ProjectResolver
             DefineConstants = defines,
             LanguageVersion = lang,
             MinifyLocalVariables = string.Equals(Property(doc, "MinifyLocalVariables")?.Trim(), "true", StringComparison.OrdinalIgnoreCase),
+            MetadataOnlyAssembly = string.Equals(Property(doc, "TransposeMetadataOnlyAssembly")?.Trim(), "true", StringComparison.OrdinalIgnoreCase),
+            EmitDebugInformation = !string.Equals(Property(doc, "DebugType")?.Trim(), "none", StringComparison.OrdinalIgnoreCase)
+                                   && !string.Equals(Property(doc, "DebugSymbols")?.Trim(), "false", StringComparison.OrdinalIgnoreCase),
             ProjectDirs = projectDirs,
             ReferencedProjectDlls = projectDlls,
         };

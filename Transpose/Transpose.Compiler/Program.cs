@@ -33,6 +33,8 @@ public static class Program
         var extraReferences = new List<string>();
         var extraDefines = new List<string>();
         string? assemblyVersion = null;
+        // Overrides the project's <TransposeMetadataOnlyAssembly>; see ResolvedProject for what it does.
+        var metadataOnlyAssembly = false;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -51,6 +53,7 @@ public static class Program
                 case "--define" or "-D": extraDefines.Add(args[++i]); break;
                 case "--timing": PhaseTimings.Enabled = true; break;
                 case "--timing-json": _timingJsonPath = args[++i]; PhaseTimings.Enabled = true; break;
+                case "--metadata-only-assembly": metadataOnlyAssembly = true; break;
                 case "--assembly-version": assemblyVersion = args[++i]; break;
                 case "--project" or "-p": projectArg = args[++i]; break;
                 default:
@@ -160,7 +163,7 @@ public static class Program
         // separate-assembly / package mode this project binds against its dependencies' built DLLs
         // and extracts their embedded JS, so each must be compiled — in dependency order — before
         // this one. Up-to-date packages are skipped.
-        if (separateAssemblies && !EnsureReferencedProjectsBuilt(csproj, configuration, maxErrors))
+        if (separateAssemblies && !EnsureReferencedProjectsBuilt(csproj, configuration, maxErrors, metadataOnlyAssembly))
         {
             Console.Error.WriteLine("\nFAILED building referenced projects.");
             return 1;
@@ -184,7 +187,9 @@ public static class Program
                 reflectionEnabled,
                 metadataTarget,
                 emitAssembly: emitPackage || isSiteBuild,
-                assemblyVersion: assemblyVersion);
+                assemblyVersion: assemblyVersion,
+                emitDebugInformation: project.EmitDebugInformation,
+                metadataOnlyAssembly: metadataOnlyAssembly || project.MetadataOnlyAssembly);
         }
         catch (Exception ex)
         {
@@ -441,7 +446,7 @@ public static class Program
     /// which builds project references (each producing a DLL with its JS embedded) before the
     /// project that consumes them.
     /// </summary>
-    private static bool EnsureReferencedProjectsBuilt(string rootCsproj, string configuration, int maxErrors)
+    private static bool EnsureReferencedProjectsBuilt(string rootCsproj, string configuration, int maxErrors, bool metadataOnlyAssembly)
     {
         foreach (var dep in ProjectResolver.ReferencedProjectsInBuildOrder(rootCsproj))
         {
@@ -452,7 +457,7 @@ public static class Program
                 continue;
             }
             Console.WriteLine($"  building dependency: {name}");
-            if (!BuildPackage(dep, configuration, maxErrors))
+            if (!BuildPackage(dep, configuration, maxErrors, metadataOnlyAssembly))
             {
                 Console.Error.WriteLine($"  dependency build FAILED: {name}");
                 return false;
@@ -464,7 +469,7 @@ public static class Program
     /// <summary>Compiles one project into its Transpose package DLL (the .NET assembly with the compiled JS
     /// and tps.json resources embedded). Its own project references are consumed as their built DLLs,
     /// so they must already have been built (this is called in dependency order).</summary>
-    private static bool BuildPackage(string csproj, string configuration, int maxErrors)
+    private static bool BuildPackage(string csproj, string configuration, int maxErrors, bool metadataOnlyAssembly)
     {
         ResolvedProject project;
         try { project = ProjectResolver.Resolve(csproj, configuration, separateAssemblies: true); }
@@ -480,7 +485,9 @@ public static class Program
                 project.Sources, project.AssemblyName, project.ReferencePaths,
                 project.DefineConstants, project.LanguageVersion,
                 reflectionEnabled, metadataTarget, emitAssembly: true,
-                assemblyVersion: ProjectResolver.ReadAssemblyVersion(csproj));
+                assemblyVersion: ProjectResolver.ReadAssemblyVersion(csproj),
+                emitDebugInformation: project.EmitDebugInformation,
+                metadataOnlyAssembly: metadataOnlyAssembly || project.MetadataOnlyAssembly);
         }
         catch (Exception ex) { Console.Error.WriteLine($"    translator threw: {ex.Message}"); return false; }
 
@@ -596,6 +603,13 @@ public static class Program
               --site-dir <dir>      Output directory for the assembled site
               --with-runtime        Prepend the tps.js runtime + shim to the output
               --max-errors <n>      Max individual errors to print (default 40)
+              --metadata-only-assembly
+                                    Emit the .NET assembly as metadata only (full metadata including
+                                    private members, `throw null` bodies) instead of real IL. A
+                                    Transpose assembly is only ever bound against — it cannot execute,
+                                    since it binds to the stand-in BCL — so this skips a second full
+                                    bind of every method body (~18% off a large build). Equivalent to
+                                    <TransposeMetadataOnlyAssembly>true</TransposeMetadataOnlyAssembly>.
               --timing              Print a per-phase timing/allocation breakdown of the build
               --timing-json <file>  Also write that breakdown (plus GC/memory totals) as JSON
               -q, --quiet           Suppress warning output
