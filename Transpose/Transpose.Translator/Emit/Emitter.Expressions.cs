@@ -724,6 +724,32 @@ public sealed partial class Emitter
 
     private void EmitMethodGroup(IMethodSymbol method, ExpressionSyntax? thisTarget)
     {
+        // A [Template] method referenced as a method group / delegate resolves to its `Fn` template
+        // (the delegate form), not a bare member reference — e.g. `Func<string> f = someBool.ToString`
+        // must be `System.Boolean.toString`, not `(b).toString.bind(b)` (native toString → "true", not
+        // .NET "True"). The Fn expression is a function taking the value as its first argument
+        // (System.Boolean.toString(v), System.DateTime.format(date, fmt), System.Nullable.toStringFn(fn)
+        // → function(v)…), so an instance method group binds the receiver as that first argument.
+        if (TransposeNaming.GetTemplateFn(method.OriginalDefinition) is { } fnTemplate)
+        {
+            var byName = new Dictionary<string, string>();
+            AddTypeArguments(byName, method.OriginalDefinition, method);
+            var fn = SubstituteTemplate(fnTemplate, null, byName, new List<string>());
+            if (method.IsStatic)
+            {
+                _w.Write(fn);
+            }
+            else
+            {
+                _w.Write("(");
+                _w.Write(fn);
+                _w.Write(").bind(null, ");
+                EmitReceiverExpr(thisTarget);
+                _w.Write(")");
+            }
+            return;
+        }
+
         if (method.IsStatic)
         {
             _w.Write(StaticMemberAccess(method));

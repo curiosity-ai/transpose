@@ -2190,5 +2190,116 @@ public class Program
                 Assert.IsTrue(js.Contains($"JSON.stringify(new {t}(3)))"),
                     $"ObjectCreateMode.Constructor for {t} must emit `new {t}(3)`, not a literal\n" + js);
         }
+
+        // ---- [Enum(Emit.*)] — the NAME-casing modes (the enum member's JS slot name) ----
+        //
+        // Enum.Emit has value-casing modes (StringName* / Value — how ToString/the emitted value read)
+        // AND name-casing modes (Name / NamePreserveCase / NameLowerCase / NameUpperCase) that set the
+        // enum member's JS PROPERTY name. The value-casing modes were covered; the name-casing ones were
+        // not — the same "an attribute enum parameter changes emission but is untested" gap as
+        // ObjectCreateMode. NameLowerCase lowercases the slot, NameUpperCase uppercases it, Name /
+        // NamePreserveCase preserve.
+
+        [TestMethod]
+        public void EnumEmitNameCasingModesRenameTheMemberSlot()
+        {
+            var code = @"
+using Transpose;
+[Enum(Emit.NameLowerCase)]    public enum LowerE { AlphaOne, BetaTwo }
+[Enum(Emit.NameUpperCase)]    public enum UpperE { AlphaOne, BetaTwo }
+[Enum(Emit.Name)]             public enum NameE  { AlphaOne, BetaTwo }
+[Enum(Emit.NamePreserveCase)] public enum PresE  { AlphaOne, BetaTwo }
+public class Program
+{
+    public static object A = LowerE.AlphaOne;
+    public static object B = UpperE.BetaTwo;
+    public static object C = NameE.AlphaOne;
+    public static object D = PresE.BetaTwo;
+    public static void Main() { }
+}";
+            var result = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            var js = result.Javascript!;
+            Assert.IsTrue(js.Contains("LowerE.alphaone"), "NameLowerCase must lowercase the member slot\n" + js);
+            Assert.IsTrue(js.Contains("UpperE.BETATWO"),  "NameUpperCase must uppercase the member slot\n" + js);
+            Assert.IsTrue(js.Contains("NameE.AlphaOne"),  "Name must preserve the member slot\n" + js);
+            Assert.IsTrue(js.Contains("PresE.BetaTwo"),   "NamePreserveCase must preserve the member slot\n" + js);
+        }
+
+        // ---- [Convention(Notation.*)] — every notation on an [External] type's members ----
+        //
+        // Convention has a Notation axis (None / LowerCase / UpperCase / CamelCase / PascalCase) plus
+        // Member / Target / Accessibility axes. Only CamelCase was tested; the other notations rename
+        // members differently and were uncovered — same class of gap as ObjectCreateMode.
+
+        [TestMethod]
+        public void ConventionNotationModesRenameMembers()
+        {
+            var code = @"
+using Transpose;
+[External][Convention(Notation.CamelCase)]  public class CamC { public extern int SomevalOne { get; } public extern void DoThing(); }
+[External][Convention(Notation.PascalCase)] public class PasC { public extern int somevalOne { get; } public extern void doThing(); }
+[External][Convention(Notation.LowerCase)]  public class LowC { public extern int SomeValOne { get; } public extern void DoThing(); }
+[External][Convention(Notation.UpperCase)]  public class UppC { public extern int SomeValOne { get; } public extern void DoThing(); }
+public class Program
+{
+    public static void Main()
+    {
+        CamC a = null; PasC b = null; LowC c = null; UppC d = null;
+        Script.Write(""x({0})"", a.SomevalOne); a.DoThing();
+        Script.Write(""x({0})"", b.somevalOne); b.doThing();
+        Script.Write(""x({0})"", c.SomeValOne); c.DoThing();
+        Script.Write(""x({0})"", d.SomeValOne); d.DoThing();
+    }
+}";
+            var result = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            var js = result.Javascript!;
+            Assert.IsTrue(js.Contains("a.somevalOne") && js.Contains("a.doThing("), "CamelCase\n" + js);
+            Assert.IsTrue(js.Contains("b.SomevalOne") && js.Contains("b.DoThing("), "PascalCase\n" + js);
+            Assert.IsTrue(js.Contains("c.somevalone") && js.Contains("c.dothing("), "LowerCase\n" + js);
+            Assert.IsTrue(js.Contains("d.SOMEVALONE") && js.Contains("d.DOTHING("), "UpperCase\n" + js);
+        }
+
+        // ---- [Template] Fn — a method group of a templated method uses the Fn (delegate) form ----
+        //
+        // [Template(Fn = "...")] gives the delegate form to use when the method is referenced as a
+        // method group rather than invoked. The emitter ignored Fn, so `Func<string> f = b.ToString`
+        // emitted the native `(b).toString.bind(b)` — giving "true"/"false" (bool), the code number
+        // (char) or crashing (double.GetHashCode: a JS number has no .getHashCode). It must resolve to
+        // the Fn (System.Boolean.toString, String.fromCharCode, System.Nullable.toStringFn(…), …), with
+        // the receiver bound as the function's first argument. Test source uses no Transpose-only
+        // attributes, so native .NET is the oracle.
+
+        [TestMethod]
+        public async Task TemplateFnResolvesMethodGroupOfTemplatedMethod()
+        {
+            await RunTest(@"
+using System;
+public enum Color { Red = 1, Green = 5 }
+public class Program
+{
+    public static void Main()
+    {
+        bool b = true;
+        Func<string> fb = b.ToString;
+        Console.WriteLine(fb());              // True (not native ""true"")
+
+        char c = 'X';
+        Func<string> fc = c.ToString;
+        Console.WriteLine(fc());              // X (not the code number ""88"")
+
+        int? n = 42;
+        Func<string> fn = n.ToString;
+        Console.WriteLine(fn());              // 42
+
+        Color? col = Color.Green;
+        Func<string> fe = col.ToString;
+        Console.WriteLine(fe());              // Green (enum name via {T:ToString})
+
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
     }
 }
