@@ -251,13 +251,22 @@ public sealed class RoslynTranslator
         LanguageVersion languageVersion = LanguageVersion.Latest,
         bool reflectionEnabled = true)
     {
-        var compilation = CompilationBuilder.Build(
-            sources, assemblyName, languageVersion,
-            preprocessorSymbols: preprocessorSymbols, selfContainedBcl: true);
+        CompileProgress.Report("parsing the base library");
+        var compilation = PhaseTimings.Measure("build compilation (parse, self-contained BCL)", () =>
+            CompilationBuilder.Build(
+                sources, assemblyName, languageVersion,
+                preprocessorSymbols: preprocessorSymbols, selfContainedBcl: true));
 
+        // Note for anyone optimizing this path: it binds the BCL three times over — here, again
+        // through the emitter's semantic models, and a third time inside EmitAssembly below. The main
+        // BuildAssembly path collapsed two of its binds (see the comments there); the same is possible
+        // here but has not been done, because this build's diagnostics gate the JS emit and the
+        // assembly emit happens last (it needs the assembled bundles as manifest resources).
         var diagnostics = new List<Diagnostic>();
-        diagnostics.AddRange(compilation.GetDiagnostics()
-            .Where(d => d.Severity == DiagnosticSeverity.Error && !BenignForJs.Contains(d.Id)));
+        CompileProgress.Report("binding + analyzing the base library");
+        diagnostics.AddRange(PhaseTimings.Measure("bind + diagnostics", () => compilation.GetDiagnostics()
+            .Where(d => d.Severity == DiagnosticSeverity.Error && !BenignForJs.Contains(d.Id))
+            .ToList()));
         if (diagnostics.Count > 0)
             return new RuntimePackageResult(null, null, diagnostics);
 
@@ -269,7 +278,8 @@ public sealed class RoslynTranslator
             compilation.Options.WithOutputKind(OutputKind.DynamicallyLinkedLibrary));
 
         var emitter = new Emitter(compilation, assemblyName) { ReflectionEnabled = reflectionEnabled };
-        var classPath = emitter.EmitClassPath();
+        CompileProgress.Report("emitting per-class JavaScript");
+        var classPath = PhaseTimings.Measure("emit JavaScript (ClassPath)", emitter.EmitClassPath);
 
         // Emit the assembly with the runtime JS bundles embedded as manifest resources, through
         // Roslyn — see RuntimePackageResult.EmitAssembly for why this must not be a Mono.Cecil
@@ -281,8 +291,9 @@ public sealed class RoslynTranslator
                 .Select(r => new ResourceDescription(r.name, () => new MemoryStream(r.bytes), isPublic: false))
                 .ToList();
             using var ms = new MemoryStream();
-            var emit = asmCompilation.Emit(ms, manifestResources: descriptions,
-                options: new Microsoft.CodeAnalysis.Emit.EmitOptions(metadataOnly: false, includePrivateMembers: true));
+            var emit = PhaseTimings.Measure("bind + emit runtime assembly (with bundles)", () =>
+                asmCompilation.Emit(ms, manifestResources: descriptions,
+                    options: new Microsoft.CodeAnalysis.Emit.EmitOptions(metadataOnly: false, includePrivateMembers: true)));
             if (!emit.Success)
             {
                 var errors = string.Join("\n", emit.Diagnostics

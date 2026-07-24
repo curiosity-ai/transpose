@@ -289,6 +289,8 @@ public static class Program
 
         // Write the ClassPath per-class files + reflection metadata under Resources/.generated/.
         var genRoot = Path.Combine(project.ProjectDir, "Resources", ".generated");
+        PhaseTimings.Measure("write ClassPath files", () =>
+        {
         if (Directory.Exists(genRoot)) Directory.Delete(genRoot, recursive: true);
         Directory.CreateDirectory(genRoot);
         // Group types that share a ClassPath file (same simple name across generic arities, e.g.
@@ -302,6 +304,7 @@ public static class Program
         }
         if (result.ClassPath.MetaBlock is not null)
             File.WriteAllText(Path.Combine(genRoot, project.AssemblyName + ".meta.js"), result.ClassPath.MetaBlock);
+        });
         Console.WriteLine($"  emitted:    {result.ClassPath.Files.Count} ClassPath file(s) into Resources/.generated");
         if (result.ClassPath.Skipped.Count > 0)
         {
@@ -313,8 +316,11 @@ public static class Program
         // pre-minified variant of each next to it. Embedding the .min.js in the runtime package
         // means a referencing build never re-minifies the (large) runtime — it just picks the
         // variant its configuration wants, exactly as it does for the formatted/minified pair.
-        var bundles = RuntimeAssembler.Assemble(project.ProjectDir);
-        var minBundles = new List<(string name, byte[] bytes)>();
+        var bundles = PhaseTimings.Measure("assemble runtime bundles (tps.js)",
+            () => RuntimeAssembler.Assemble(project.ProjectDir));
+        var minBundles = PhaseTimings.Measure("minify runtime bundles", () =>
+        {
+        var mins = new List<(string name, byte[] bytes)>();
         foreach (var (name, bytes) in bundles)
         {
             var minName = name.EndsWith(".js", StringComparison.OrdinalIgnoreCase) && !name.EndsWith(".min.js", StringComparison.OrdinalIgnoreCase)
@@ -322,8 +328,10 @@ public static class Program
                 : null;
             if (minName is null) continue;
             var minText = JsMinifier.Minify(System.Text.Encoding.UTF8.GetString(bytes), name, project.MinifyLocalVariables);
-            minBundles.Add((minName, System.Text.Encoding.UTF8.GetBytes(minText)));
+            mins.Add((minName, System.Text.Encoding.UTF8.GetBytes(minText)));
         }
+        return mins;
+        });
         bundles = bundles.Concat(minBundles).ToList();
         // Write the assembly to bin/<config>/<tfm>/, matching the SDK's output path so `dotnet pack`
         // finds it (the Transpose.Build.Target SDK forces netstandard2.0, so that is the effective tfm).

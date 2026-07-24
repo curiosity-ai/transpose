@@ -251,6 +251,16 @@ recycling them looked obviously right. Measured allocation was **unchanged**: 31
 `Capture`'s large inclusive cost is the emission work beneath it, not the writer itself. Reverted
 rather than carry the complexity.
 
+### Caching `ISymbol.ToDisplayString()` for the emitter's literal comparisons — **rejected (no effect)**
+
+A fair amount of the emitter's dispatch is `type.ToDisplayString() == "System.DateTime"`-style, and
+`ToDisplayString` formats a fresh string every call — including in `IsTaskType` (per await),
+`ShouldWrapParams` (per `params` call) and the DateTime/TimeSpan arithmetic check (per binary
+expression). Routing all 17 such sites through a per-symbol cache measured **flat**: 272.3–274.1 MB vs
+273.8 MB, no time change. The paths turn out to be guarded by earlier returns often enough that they
+were never hot, and once the naming layer was cached (§3) nothing else asked for these strings in bulk.
+Reverted rather than carry an unbounded per-symbol dictionary for no measured benefit.
+
 ### `gcConcurrent=0` with Server GC — **rejected**
 
 13.8 s vs 11.7 s with background GC on.
@@ -261,6 +271,40 @@ Fastest single setting for a big project (9.7 s) but 2.3× slower on a one-file 
 2.11 s). A compiler must not punish small projects to reward large ones.
 
 ---
+
+## The runtime build (`--build-runtime`) — instrumented, not yet optimized
+
+Building the base library (`BCL/Transpose.BCL`, 527 files) into `Transpose.dll` + `tps.js` is the
+heaviest single operation in the repo, and until now it reported no phases at all. It is now
+instrumented; measured on the reference box:
+
+| phase | ms | share | alloc |
+|---|--:|--:|--:|
+| resolve project | 154 | 1.1% | 64 MB |
+| build compilation (parse, self-contained BCL) | 892 | 6.4% | 87 MB |
+| **bind + diagnostics** | **4 768** | **34.4%** | **1 383 MB** |
+| emit JavaScript (ClassPath) | 1 910 | 13.8% | 103 MB |
+| write ClassPath files | 58 | 0.4% | 1 MB |
+| assemble runtime bundles (tps.js) | 29 | 0.2% | 25 MB |
+| minify runtime bundles | 1 195 | 8.6% | 192 MB |
+| **bind + emit runtime assembly (with bundles)** | **4 836** | **34.9%** | **1 911 MB** |
+| total | 13 842 | | **3 767 MB** |
+
+It binds the BCL **three times**: `GetDiagnostics`, then again through the emitter's semantic models,
+then a third time inside the final `Emit`. The two visible binds alone are 3.3 GB of the 3.8 GB.
+
+The main `BuildAssembly` path collapsed two of its binds, but the same fix is not a drop-in here:
+
+- The diagnostics **gate the JS emit**, and the assembly emit must come *last* (it takes the assembled
+  `tps.js`/`tps.meta.js` bundles as manifest resources), so its diagnostics arrive too late to gate.
+- Swapping `Compilation.GetDiagnostics()` for per-tree `SemanticModel.GetDiagnostics()` on a
+  `TreeModel` shared with the emitter *would* prepay the emitter's bind (the trick that works in the
+  main path), but a self-contained-BCL compilation is exactly where compilation-level diagnostics like
+  `CS0518 predefined type not defined` matter, and those are not guaranteed to come out of a per-tree
+  pass. Needs a careful diagnostics diff on a deliberately-broken BCL before it can be trusted.
+
+Left alone deliberately: this is a maintainer-only operation (producing the `Transpose.BCL` package),
+not something a user's build runs, so the risk/benefit is much worse than on the project path.
 
 ## Ideas not yet tried
 
@@ -289,15 +333,15 @@ Roughly in expected-value order.
 - **`MetadataImportOptions.All`** makes Roslyn import every non-public member of every reference
   (`Transpose.dll` is large). It is required for overload numbering to match, but its cost has never
   been isolated — worth measuring before assuming it is unavoidable.
-- **`ISymbol.ToDisplayString()` comparisons against string literals** remain in the emitter
-  (`IsTaskType` and friends in `Emitter.cs`, ~11 sites in `Emitter.Expressions2.cs`). Each formats a
-  fresh fully-qualified string. Resolving the target types once from the compilation and comparing with
-  `SymbolEqualityComparer` would remove them from hot paths. Smaller now that the naming layer is
-  cached, but still real.
-- **Remaining allocation sites** after the current round (from a fresh trace, ~557 MB total):
-  `ImmutableArray.CreateRange` 36 MB, `StringBuilder.ExpandByABlock` 30 MB, `StringBuilder.ToString`
-  23 MB, `SyntaxNode.ChildNodes()` 11 MB. Most are inside Roslyn, reached through `GetMembers()` /
-  `AllInterfaces` / syntax walks — reducing them means making fewer such calls, not micro-tuning.
+- **Remaining allocation sites.** A fresh trace of the current compiler totals ~519 MB (down from
+  669 MB at the start) and shows **no dominant site left in Transpose's own code** — `TransposeNaming`
+  has disappeared from the profile entirely (it was 164 MB / 24% inclusive). What is left is spread
+  thinly through Roslyn's data structures: `StringBuilder.ExpandByABlock` 30 MB,
+  `StringBuilder.ToString` 24 MB, bare array allocation 16 MB, `ImmutableArray.CreateRange` 12 MB,
+  `ImmutableArray.Builder.ToArray` 11 MB, `SyntaxNode.ChildNodes()` 11 MB, `MethodSymbol.AsMember`
+  11 MB. Reducing these means making *fewer* Roslyn calls (fewer `GetMembers()` / `AllInterfaces`
+  walks, fewer syntax re-walks), not micro-tuning — and each is now worth only ~2% of allocation, so
+  measure before investing.
 - **`TransposeAssemblies.RuntimeJs` uses `Assembly.LoadFrom`** on the stand-in BCL just to read an
   embedded resource. Not on the hot path (only `--with-runtime`), but a `PEReader` read — as
   `NoBodyMethodTokens` already does — would avoid loading a fake corlib into the compiler process.
