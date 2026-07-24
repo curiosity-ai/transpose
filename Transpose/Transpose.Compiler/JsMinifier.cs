@@ -25,8 +25,10 @@ internal static class JsMinifier
     // parentheses around a `??` operand of `&&`/`||`, emitting `a && b && c ?? d` — a hard SYNTAX
     // ERROR — for any C# `a && (b ?? c)` (we emit native `??`, whereas legacy h5 lowered `?.`/`??`
     // through runtime helpers and so never fed NUglify a native `??`). NUglify 1.21.14 fixed the
-    // precedence handling, so the pinned 1.22.0 preserves the grouping in every position (plain
-    // operands and the `if (cond) stmt;` → `cond && stmt;` collapse alike).
+    // precedence handling, so the pinned 1.21.15 preserves the grouping in every position (plain
+    // operands and the `if (cond) stmt;` → `cond && stmt;` collapse alike). We stay on 1.21.15 rather
+    // than 1.22.0: the latter regressed, emitting a stray empty statement when it unwraps a braced
+    // if/else body (`if (c) { for(...){...} } else …` → `for(...)…;;else …`, a syntax error).
     //
     // The `if (cond) stmt;` → `cond && stmt;` collapse is still disabled here as defence-in-depth:
     // it is the one transform that would *introduce* a `??`-under-`&&` mix that isn't already in the

@@ -169,8 +169,10 @@ plain CLI, by design.
   build above) is implemented; the other layouts still emit a single bundle.
 - **Bundle minification (done).** `outputFormatting` (`Formatted`/`Minified`/`Both`, read from
   `tps.json` and a merged `tps.<Configuration>.json` overlay) drives NUglify-based minification
-  (pinned to `NUglify 1.22.0`; the legacy compiler used 1.20.7, but that version mis-parenthesised
-  a `??` operand of `&&`/`||` and emitted invalid JS, fixed in NUglify 1.21.14) via `JsMinifier`. Packages ship
+  (pinned to `NUglify 1.21.15`; the legacy compiler used 1.20.7, but that version mis-parenthesised
+  a `??` operand of `&&`/`||` and emitted invalid JS, fixed in NUglify 1.21.14 — not the newer
+  1.22.0, which regressed by inserting a stray empty statement when unwrapping a braced if/else
+  body) via `JsMinifier`. Packages ship
   their compiled JS in both a formatted and a pre-minified variant — the runtime (`tps.min.js` /
   `tps.meta.min.js`, embedded by `tps --build-runtime`) and library packages (`CollectEmbeddableItems`)
   — so a site build reuses those and only minifies the per-project bundle/metadata/shim itself (with a

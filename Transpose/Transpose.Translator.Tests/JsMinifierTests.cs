@@ -30,6 +30,25 @@ public sealed class JsMinifierTests
     }
 
     [TestMethod]
+    public void BracedIfElseBodyUnwrapsWithoutStrayEmptyStatement()
+    {
+        // NUglify 1.22.0 regressed here: unwrapping the braces of an if/else whose body is a single
+        // (braced) loop inserted a stray empty statement, e.g. `if (c) { for(...){...} } else …`
+        // minified to `if(c)for(...)…;;else …` — the `;;` orphans the `else` (a syntax error). This
+        // is the exact shape of TransposeR.array in tps.shim.js. 1.21.15 keeps it valid.
+        var source =
+            "var R={};R.f=function(n,d){var a=[];" +
+            "if(typeof d==='function'){for(var i=0;i<n;i++){a[i]=d();}}" +
+            "else if(d&&typeof d==='object'){for(var i=0;i<n;i++){a[i]=R.c(d);}}" +
+            "else{for(var i=0;i<n;i++){a[i]=d;}}return a;};";
+
+        var min = JsMinifier.Minify(source, "shim.js");
+
+        Assert.IsFalse(min.Contains(";;else") || min.Contains(";;}"),
+            $"minifier inserted a stray empty statement that orphans `else`: {min}");
+    }
+
+    [TestMethod]
     public void NullConditionalCoalesceInLogicalChainStaysValid()
     {
         // The exact shape emitted for `a != null && b >= 0 && (fn?.Invoke() ?? false)` — the `?.` is

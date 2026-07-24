@@ -42,8 +42,10 @@
     <PackageReference Include="Mono.Cecil" Version="0.11.6" />
     <!-- JS minifier for the "outputFormatting": "Minified"/"Both" bundle variants. The legacy
          compiler used 1.20.7, but that version mis-parenthesised a `??` operand of `&&`/`||` and
-         emitted invalid JS (fixed in NUglify 1.21.14); pinned to 1.22.0. See JsMinifier.cs. -->
-    <PackageReference Include="NUglify" Version="1.22.0" />
+         emitted invalid JS (fixed in NUglify 1.21.14). Pinned to 1.21.15 rather than the newer
+         1.22.0, which regressed by inserting a stray empty statement when unwrapping a braced
+         if/else body (`for(...);;else` — invalid). See JsMinifier.cs. -->
+    <PackageReference Include="NUglify" Version="1.21.15" />
   </ItemGroup>
 
 </Project>
