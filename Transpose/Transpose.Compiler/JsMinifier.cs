@@ -20,12 +20,19 @@ internal static class JsMinifier
         "tps.js", "tps.min.js", "tps.collections.js", "tps.collections.min.js",
     };
 
-    // NUglify's `if (cond) stmt;` → `cond && stmt;` collapse is unsafe for our output: when `cond`
-    // is a null-coalescing expression (e.g. `x ?? false`, emitted for C#'s `a ?? b`), it strips the
-    // parentheses and yields `x ?? false && stmt`, which is a SYNTAX ERROR — ES2020 forbids mixing
-    // `??` with `&&`/`||` unparenthesized. Disabling this one tree modification keeps `if (cond) stmt;`
-    // intact (a negligible size cost) and never produces the invalid mix. The legacy compiler never hit
-    // this because it lowered `?.`/`??` through runtime helpers instead of emitting native `??`.
+    // ES2020 forbids mixing `??` with `&&`/`||` unparenthesized, so `a && b && (c ?? d)` MUST keep
+    // its grouping in the output. NUglify 1.20.7 got this wrong: its precedence model dropped the
+    // parentheses around a `??` operand of `&&`/`||`, emitting `a && b && c ?? d` — a hard SYNTAX
+    // ERROR — for any C# `a && (b ?? c)` (we emit native `??`, whereas legacy h5 lowered `?.`/`??`
+    // through runtime helpers and so never fed NUglify a native `??`). NUglify 1.21.14 fixed the
+    // precedence handling, so the pinned 1.21.15 preserves the grouping in every position (plain
+    // operands and the `if (cond) stmt;` → `cond && stmt;` collapse alike). We stay on 1.21.15 rather
+    // than 1.22.0: the latter regressed, emitting a stray empty statement when it unwraps a braced
+    // if/else body (`if (c) { for(...){...} } else …` → `for(...)…;;else …`, a syntax error).
+    //
+    // The `if (cond) stmt;` → `cond && stmt;` collapse is still disabled here as defence-in-depth:
+    // it is the one transform that would *introduce* a `??`-under-`&&` mix that isn't already in the
+    // source, and keeping `if (cond) stmt;` intact costs negligible size.
     private const long KillIfConditionCollapse = (long)TreeModifications.IfConditionCallToConditionAndCall;
 
     // Safe profile: never rename locals, terminate statements with semicolons, escape non-ASCII.
