@@ -126,6 +126,21 @@ internal static class TransposeNaming
         return null;
     }
 
+    /// <summary>
+    /// The second positional argument of a 2-arg <c>[Template(format, nonExpandedFormat)]</c> — the
+    /// template to use when the method's trailing <c>params</c> argument is supplied NON-expanded (a
+    /// single array passed directly) rather than as individual elements. E.g. MethodInfo.Invoke uses
+    /// <c>midel(this,obj).apply(null, {arguments:array})</c> instead of <c>midel(this,obj)({*arguments})</c>.
+    /// Null when the attribute has fewer than two positional string arguments.
+    /// </summary>
+    public static string? GetTemplateNonExpanded(ISymbol? symbol)
+    {
+        if (symbol is null) return null;
+        var attr = symbol.GetAttributes().FirstOrDefault(a => AttrIs(a, TemplateAttr));
+        if (attr is null || attr.ConstructorArguments.Length < 2) return null;
+        return attr.ConstructorArguments[1].Value as string;
+    }
+
     /// <summary>The explicit [Name] for a member/type, or null.</summary>
     public static string? GetName(ISymbol symbol)
         => GetStringAttr(symbol, NameAttr);

@@ -145,6 +145,16 @@ public sealed partial class Emitter
         var origin = symbol.OriginalDefinition;
         var template = TransposeNaming.GetTemplate(origin) ?? TransposeNaming.GetTemplate(symbol);
 
+        // A 2-arg [Template(format, nonExpandedFormat)]: when the trailing `params` argument is supplied
+        // as a single array passed directly (non-expanded), prefer the nonExpandedFormat variant — e.g.
+        // MethodInfo.Invoke(obj, argsArray) → midel(this,obj).apply(null, {arguments:array}) rather than
+        // the expanded midel(this,obj)({*arguments}). Individual-element (expanded) calls keep `format`.
+        if (template is not null && IsNonExpandedParamsCall(invocation.ArgumentList, symbol)
+            && (TransposeNaming.GetTemplateNonExpanded(origin) ?? TransposeNaming.GetTemplateNonExpanded(symbol)) is { } nonExpandedTemplate)
+        {
+            template = nonExpandedTemplate;
+        }
+
         // by-ref args (no template): holder objects with write-back.
         if (template is null && HasByRefArguments(invocation.ArgumentList, symbol))
         {
@@ -319,6 +329,25 @@ public sealed partial class Emitter
     }
 
     /// <summary>Captures each argument's JS, keyed by parameter name and by position.</summary>
+    /// <summary>
+    /// True when the call supplies the method's trailing <c>params</c> parameter as a SINGLE array
+    /// passed directly (non-expanded) — one positional argument per parameter, the last assignable to
+    /// the params array type — rather than as individual elements. Mirrors the spread test in
+    /// <see cref="CaptureArguments"/>; used to select the 2-arg [Template]'s nonExpandedFormat.
+    /// </summary>
+    private bool IsNonExpandedParamsCall(ArgumentListSyntax argList, IMethodSymbol method)
+    {
+        if (method.Parameters.Length == 0 || !method.Parameters[^1].IsParams) return false;
+
+        var args = argList.Arguments;
+        if (args.Count != method.Parameters.Length) return false;
+        if (args.Any(a => a.NameColon is not null)) return false;
+
+        var pi = method.Parameters.Length - 1;
+        var soleArgType = _model.GetTypeInfo(args[pi].Expression).Type;
+        return soleArgType is not null && _compilation.ClassifyConversion(soleArgType, method.Parameters[pi].Type).Exists;
+    }
+
     private (Dictionary<string, string> byName, List<string> byPos) CaptureArguments(ArgumentListSyntax argList, IMethodSymbol method)
     {
         var byName = new Dictionary<string, string>();
