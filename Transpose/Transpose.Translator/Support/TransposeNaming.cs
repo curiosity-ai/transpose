@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Collections.Immutable;
 using System.Linq;
 using Microsoft.CodeAnalysis;
 
@@ -27,6 +28,37 @@ internal static class TransposeNaming
     /// namespaces against the constant by offset instead, allocating nothing on the (dominant)
     /// non-matching path.</summary>
     public static bool AttrIs(AttributeData a, string fullName) => IsFullyQualified(a.AttributeClass, fullName);
+
+    /// <summary>
+    /// The first attribute on <paramref name="symbol"/> matching <paramref name="fullName"/>, or null.
+    ///
+    /// Deliberately a plain loop rather than <c>GetAttributes().FirstOrDefault(a =&gt; AttrIs(a, name))</c>:
+    /// that form allocates a closure (it captures <paramref name="fullName"/>) and boxes the
+    /// <see cref="ImmutableArray{T}"/>'s enumerator on *every* call, and these lookups run for
+    /// essentially every symbol the emitter touches — they were the single largest allocation site in
+    /// a build (~42 MB on a 69k-line project) before this became allocation-free.
+    /// </summary>
+    internal static AttributeData? FindAttr(ISymbol? symbol, string fullName)
+    {
+        if (symbol is null) return null;
+        foreach (var a in symbol.GetAttributes())
+            if (AttrIs(a, fullName)) return a;
+        return null;
+    }
+
+    /// <summary>Whether <paramref name="symbol"/> carries <paramref name="fullName"/>. Allocation-free,
+    /// for the same reason as <see cref="FindAttr"/>.</summary>
+    internal static bool HasAttr(ISymbol? symbol, string fullName) => FindAttr(symbol, fullName) is not null;
+
+    /// <summary>Whether any of <paramref name="locations"/> is in source. Allocation-free replacement
+    /// for <c>Locations.Any(l =&gt; l.IsInSource)</c>, which boxes the ImmutableArray enumerator on a
+    /// path the emitter takes for every symbol it names.</summary>
+    internal static bool AnyInSource(ImmutableArray<Location> locations)
+    {
+        foreach (var l in locations)
+            if (l.IsInSource) return true;
+        return false;
+    }
 
     /// <summary>True if <paramref name="cls"/>'s fully-qualified name equals <paramref name="dotted"/>
     /// (namespaces + type name, e.g. "Transpose.NameAttribute"). Walks name then containing namespaces
@@ -69,8 +101,8 @@ internal static class TransposeNaming
     public static string? ScopePrefix(ITypeSymbol? type)
     {
         if (type is null) return null;
-        var scope = type.GetAttributes().FirstOrDefault(a => AttrIs(a, ScopeAttr));
-        var global = type.GetAttributes().Any(a => AttrIs(a, GlobalMethodsAttr));
+        var scope = FindAttr(type, ScopeAttr);
+        var global = HasAttr(type, GlobalMethodsAttr);
         if (scope is null && !global) return null;
         return (scope?.ConstructorArguments.FirstOrDefault().Value as string) ?? "";
     }
@@ -83,7 +115,7 @@ internal static class TransposeNaming
     /// </summary>
     public static int EnumEmitMode(ITypeSymbol enumType)
     {
-        var a = enumType.GetAttributes().FirstOrDefault(x => AttrIs(x, EnumAttr));
+        var a = FindAttr(enumType, EnumAttr);
         if (a is null || a.ConstructorArguments.Length == 0) return 7;
         return a.ConstructorArguments[0].Value is int m ? m : 7;
     }
@@ -119,7 +151,7 @@ internal static class TransposeNaming
     public static string? GetTemplateFn(ISymbol? symbol)
     {
         if (symbol is null) return null;
-        var attr = symbol.GetAttributes().FirstOrDefault(a => AttrIs(a, TemplateAttr));
+        var attr = FindAttr(symbol, TemplateAttr);
         if (attr is null) return null;
         foreach (var na in attr.NamedArguments)
             if (na.Key == "Fn") return na.Value.Value as string;
@@ -136,7 +168,7 @@ internal static class TransposeNaming
     public static string? GetTemplateNonExpanded(ISymbol? symbol)
     {
         if (symbol is null) return null;
-        var attr = symbol.GetAttributes().FirstOrDefault(a => AttrIs(a, TemplateAttr));
+        var attr = FindAttr(symbol, TemplateAttr);
         if (attr is null || attr.ConstructorArguments.Length < 2) return null;
         return attr.ConstructorArguments[1].Value as string;
     }
@@ -172,7 +204,7 @@ internal static class TransposeNaming
     /// </summary>
     public static string[]? GetScriptBody(ISymbol symbol)
     {
-        var a = symbol.GetAttributes().FirstOrDefault(x => AttrIs(x, ScriptAttr));
+        var a = FindAttr(symbol, ScriptAttr);
         if (a is null || a.ConstructorArguments.Length == 0) return null;
         var arg = a.ConstructorArguments[0];
         if (arg.Kind == TypedConstantKind.Array)
@@ -199,7 +231,7 @@ internal static class TransposeNaming
         if (type is null) return null;
         var outer = type;
         while (outer.ContainingType is { } ct) outer = ct;
-        var a = outer.GetAttributes().FirstOrDefault(x => AttrIs(x, NamespaceAttr));
+        var a = FindAttr(outer, NamespaceAttr);
         if (a is null || a.ConstructorArguments.Length == 0) return null;
         var arg = a.ConstructorArguments[0].Value;
         // [Namespace(false)] suppresses; [Namespace(true)] is the default (no override).
@@ -218,7 +250,7 @@ internal static class TransposeNaming
     /// </summary>
     public static bool? ReflectableOverride(ISymbol symbol)
     {
-        var a = symbol.GetAttributes().FirstOrDefault(x => AttrIs(x, ReflectableAttr));
+        var a = FindAttr(symbol, ReflectableAttr);
         if (a is null) return null;
         if (a.ConstructorArguments.Length > 0 && a.ConstructorArguments[0].Value is bool b) return b;
         return true;
@@ -242,7 +274,7 @@ internal static class TransposeNaming
         // types are native JS objects, so their indexer is bracket access. Real Transpose runtime
         // collection classes (List<T>, Dictionary<,>, …) are not external and keep getItem/setItem.
         if (indexer.ContainingType is not { TypeKind: TypeKind.Class } ct || !IsExternalType(ct)) return false;
-        if (indexer.ContainingType.GetAttributes().Any(a => AttrIs(a, AccessorsIndexerAttr))) return false;
+        if (HasAttr(indexer.ContainingType, AccessorsIndexerAttr)) return false;
         if (GetName(indexer) is not null) return false;
         if (GetTemplate(indexer.GetMethod?.OriginalDefinition) is not null) return false;
         if (GetTemplate(indexer.SetMethod?.OriginalDefinition) is not null) return false;
@@ -307,7 +339,7 @@ internal static class TransposeNaming
         // with the hand-written primitives and with how user code calls the referenced BCL.
         if (IsTransposeRuntimeAssembly(type.ContainingAssembly)) return false;
         if (IsExternalType(type)) return false;
-        if (type.Locations.Any(l => l.IsInSource)) return true;
+        if (AnyInSource(type.Locations)) return true;
         return true; // referenced user library (compiled with --emit-package)
     }
 
@@ -350,7 +382,7 @@ internal static class TransposeNaming
     {
         for (var t = type; t is not null; t = t.ContainingType)
         {
-            if (t.GetAttributes().Any(a => AttrIs(a, ExternalAttr)))
+            if (HasAttr(t, ExternalAttr))
                 return true;
         }
         // Assembly-level [assembly: External] (how binding libraries such as Transpose.Core mark
@@ -360,24 +392,22 @@ internal static class TransposeNaming
 
     /// <summary>True if the assembly carries <c>[assembly: Transpose.External]</c>.</summary>
     public static bool AssemblyHasExternalAttribute(IAssemblySymbol? asm)
-        => asm is not null && asm.GetAttributes().Any(a => AttrIs(a, ExternalAttr));
+        => HasAttr(asm, ExternalAttr);
 
     public static bool IsExternal(ISymbol symbol)
     {
         for (var s = symbol; s is not null; s = s.ContainingType)
         {
-            if (s.GetAttributes().Any(a => AttrIs(a, ExternalAttr)))
+            if (HasAttr(s, ExternalAttr))
                 return true;
         }
         // Types defined in the Transpose assembly (not in user source) are external BCL.
-        return !symbol.Locations.Any(l => l.IsInSource);
+        return !AnyInSource(symbol.Locations);
     }
 
     private static string? GetStringAttr(ISymbol? symbol, string attrName)
     {
-        if (symbol is null) return null;
-        var attr = symbol.GetAttributes()
-            .FirstOrDefault(a => AttrIs(a, attrName));
+        var attr = FindAttr(symbol, attrName);
         if (attr is null || attr.ConstructorArguments.Length == 0) return null;
         return attr.ConstructorArguments[0].Value as string;
     }
@@ -388,6 +418,26 @@ internal static class TransposeNaming
     /// keep their C# name, with the entry point mapped to "main").
     /// </summary>
     public static string MemberJsName(ISymbol symbol)
+        => _memberCache.TryGetValue(symbol, out var cached) ? cached : _memberCache[symbol] = MemberJsNameCore(symbol);
+
+    /// <summary>
+    /// Resolved JS member names, cached per symbol.
+    ///
+    /// <see cref="MemberJsNameCore"/> is a pure function of the symbol but a genuinely expensive one:
+    /// for a property/field it walks <c>AllInterfaces</c> and every interface's members to decide
+    /// whether the member must yield its plain slot, and for a method it can build and sort the whole
+    /// overload group. The emitter asks for the same member's name once per *reference* in the source,
+    /// so on a real project this recomputation dominated allocation (~164 MB on a 69k-line project).
+    /// Methods keep their own cache inside <see cref="MethodJsName"/> (keyed on the original
+    /// definition, and populated a group at a time); this one covers every symbol kind.
+    ///
+    /// Keyed on the symbol exactly as passed, not on its original definition: a constructed generic's
+    /// member is a distinct symbol and caching it separately cannot change an answer, whereas
+    /// normalising here would.
+    /// </summary>
+    private static readonly ConcurrentDictionary<ISymbol, string> _memberCache = new(SymbolEqualityComparer.Default);
+
+    private static string MemberJsNameCore(ISymbol symbol)
     {
         // An explicit interface implementation is named by the interface-qualified mangled
         // name Transpose uses (e.g. IMyInterface.Method → Namespace$IMyInterface$method), so it
@@ -508,7 +558,7 @@ internal static class TransposeNaming
         // NOT short-circuit here even when in source (self-building the BCL): its members bind to
         // native JS names via [Convention]/casing — e.g. String.Length ([External] +
         // [Convention(CamelCase)]) must emit `length` to hit the native JS string property.
-        if (symbol.Locations.Any(l => l.IsInSource) && !IsExternalType(symbol.ContainingType))
+        if (AnyInSource(symbol.Locations) && !IsExternalType(symbol.ContainingType))
             return symbol.Name;
 
         // Property / field / event: camelCase under an [External] type or a
@@ -733,8 +783,18 @@ internal static class TransposeNaming
     /// object-override runtime names, an explicit [Name], an inherited [Name] (from an
     /// overridden base or implemented interface member), the implemented interface member's
     /// own name, then the convention-derived name.
+    ///
+    /// Cached per method: <see cref="OverloadGroup"/> calls this for every candidate method in every
+    /// base type in order to group overloads by their final JS name, and it recurses into interface
+    /// members, so the same method's base name was being derived many times over.
     /// </summary>
+    private static readonly ConcurrentDictionary<IMethodSymbol, string> _baseNameCache = new(SymbolEqualityComparer.Default);
+
     private static string JsBaseName(IMethodSymbol method)
+        => _baseNameCache.TryGetValue(method, out var cached) ? cached : _baseNameCache[method] = JsBaseNameCore(method);
+
+    /// <inheritdoc cref="JsBaseName"/>
+    private static string JsBaseNameCore(IMethodSymbol method)
     {
         if (IsObjectToString(method)) return "toString";
         if (IsObjectGetHashCode(method)) return "getHashCode";
@@ -777,7 +837,7 @@ internal static class TransposeNaming
     /// </summary>
     public static bool HasNoBody(IMethodSymbol method)
     {
-        if (method.Locations.Any(l => l.IsInSource))
+        if (AnyInSource(method.Locations))
         {
             // Self-building the BCL (--build-runtime): the runtime types are in source, but their
             // `extern` members are hand-written-JS backed exactly as when referenced from metadata,
@@ -799,8 +859,23 @@ internal static class TransposeNaming
         return null;
     }
 
-    /// <summary>The interface member this method implements (implicitly), or null.</summary>
+    /// <summary>
+    /// Resolved implicit interface members, cached per method. <see cref="ImplementedInterfaceMemberCore"/>
+    /// is O(interfaces x their members) with a <c>FindImplementationForInterfaceMember</c> call for each,
+    /// walked once per level of the override chain — and it is reached from <see cref="JsBaseName"/>,
+    /// which <see cref="OverloadGroup"/> calls for every candidate in every base type. Caching it turns
+    /// a repeatedly-recomputed graph walk into one lookup. A null result is cached too (as the absent
+    /// value of the nullable), since "implements nothing" is the common answer.
+    /// </summary>
+    private static readonly ConcurrentDictionary<IMethodSymbol, IMethodSymbol?> _implementedIfaceCache = new(SymbolEqualityComparer.Default);
+
     private static IMethodSymbol? ImplementedInterfaceMember(IMethodSymbol method)
+        => _implementedIfaceCache.TryGetValue(method, out var cached)
+            ? cached
+            : _implementedIfaceCache[method] = ImplementedInterfaceMemberCore(method);
+
+    /// <summary>The interface member this method implements (implicitly), or null.</summary>
+    private static IMethodSymbol? ImplementedInterfaceMemberCore(IMethodSymbol method)
     {
         // Walk the override chain: an override implements whatever interface member its overridden
         // base declared as the implementation. Roslyn's FindImplementationForInterfaceMember resolves
@@ -816,8 +891,9 @@ internal static class TransposeNaming
             if (type is null) continue;
             foreach (var iface in type.AllInterfaces)
             {
-                foreach (var member in iface.GetMembers().OfType<IMethodSymbol>())
+                foreach (var ifaceMember in iface.GetMembers())
                 {
+                    if (ifaceMember is not IMethodSymbol member) continue;
                     if (type.FindImplementationForInterfaceMember(member) is IMethodSymbol impl
                         && SymbolEqualityComparer.Default.Equals(impl.OriginalDefinition, m.OriginalDefinition))
                         return member.OriginalDefinition;
@@ -882,8 +958,9 @@ internal static class TransposeNaming
         if (type is null) return false;
         foreach (var iface in type.AllInterfaces)
         {
-            foreach (var member in iface.GetMembers().OfType<IMethodSymbol>())
+            foreach (var ifaceMember in iface.GetMembers())
             {
+                if (ifaceMember is not IMethodSymbol member) continue;
                 if (type.FindImplementationForInterfaceMember(member) is IMethodSymbol im
                     && SymbolEqualityComparer.Default.Equals(im.OriginalDefinition, method.OriginalDefinition))
                     return true;
@@ -906,8 +983,9 @@ internal static class TransposeNaming
         var seen = new System.Collections.Generic.HashSet<IMethodSymbol>(SymbolEqualityComparer.Default);
         for (var t = method.ContainingType; t is not null; t = t.BaseType)
         {
-            foreach (var candidate in t.GetMembers().OfType<IMethodSymbol>())
+            foreach (var typeMember in t.GetMembers())
             {
+                if (typeMember is not IMethodSymbol candidate) continue;
                 var c = candidate.OriginalDefinition;
                 if (c.MethodKind != kind || c.IsStatic != isStatic) continue;
                 if (c.ExplicitInterfaceImplementations.Length > 0) continue;
@@ -996,7 +1074,7 @@ internal static class TransposeNaming
     /// <summary>A [Convention] applied directly to a member (e.g. KeyValuePair.Key).</summary>
     private static Notation? MemberConventionNotation(ISymbol symbol)
     {
-        var a = symbol.GetAttributes().FirstOrDefault(x => AttrIs(x, ConventionAttr));
+        var a = FindAttr(symbol, ConventionAttr);
         if (a is null) return null;
         var notation = a.ConstructorArguments.Length > 0 && a.ConstructorArguments[0].Value is int cn
             ? cn
@@ -1010,8 +1088,9 @@ internal static class TransposeNaming
         AttributeData? best = null;
         var bestPriority = int.MinValue;
         var bestSpecific = -1;
-        foreach (var a in type.GetAttributes().Where(a => AttrIs(a, ConventionAttr)))
+        foreach (var a in type.GetAttributes())
         {
+            if (!AttrIs(a, ConventionAttr)) continue;
             var member = NamedInt(a, "Member", ConvAll);
             if (member != ConvAll && (member & memberKindFlag) == 0) continue;
             var priority = NamedInt(a, "Priority", 0);
@@ -1063,8 +1142,7 @@ internal static class TransposeNaming
     public static string? GlobalTargetName(IMethodSymbol? method)
     {
         if (method is null) return null;
-        var a = method.OriginalDefinition.GetAttributes()
-            .FirstOrDefault(x => AttrIs(x, "Transpose.GlobalTargetAttribute"));
+        var a = FindAttr(method.OriginalDefinition, "Transpose.GlobalTargetAttribute");
         return a?.ConstructorArguments.Length > 0 ? a.ConstructorArguments[0].Value as string : null;
     }
 
