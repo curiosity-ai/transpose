@@ -74,9 +74,10 @@ internal static class OutputBuilder
         var utf8 = new UTF8Encoding(false);
 
         // Every file this build writes, by full path. After the site is assembled, cleanOutputFolder
-        // diffs the folder against this set and prunes whatever is left over from an earlier build —
-        // so nothing the current build produced is ever deleted. All disk writes below funnel through
-        // WriteText, RecordWrite, or the resource/extract helpers, each of which records here.
+        // diffs *this project's own* previous output (a persisted manifest) against this set and prunes
+        // only what this project wrote last time but no longer writes — never a file some other project
+        // or package placed in a shared output folder. All disk writes below funnel through WriteText or
+        // the resource/extract helpers, each of which records here.
         var written = new HashSet<string>(PathComparer);
 
         void WriteText(string rel, string content)
@@ -206,10 +207,16 @@ internal static class OutputBuilder
         if (!config.HtmlDisabled)
             WriteHtml(project, config, outputDir, jsOuts, cssLinks, configuration, utf8, written);
 
-        // 5. Prune whatever the previous build left behind but this one did not re-produce.
+        // 5. Prune only files THIS project authored in an earlier build and no longer writes — read
+        //    from its own manifest — then persist the current file list as the next manifest. Files
+        //    other projects/packages/tools placed in a shared output folder are never in this project's
+        //    manifest, so they are never touched.
+        var manifestPath = ManifestPath(outputDir, project.AssemblyName);
         var removed = config.CleanOutputFolder
-            ? PruneStaleFiles(outputDir, written, config.CleanOutputFolderExclude)
+            ? PruneStaleFiles(outputDir, written, ReadManifest(manifestPath, outputDir), config.CleanOutputFolderExclude)
             : Array.Empty<string>();
+
+        WriteManifest(manifestPath, outputDir, written, utf8);
 
         return new SiteBuildResult(outputDir, removed);
     }
@@ -741,29 +748,39 @@ internal static class OutputBuilder
         OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
 
     /// <summary>
-    /// The "clean output folder" step: after the site is assembled, every file already in
-    /// <paramref name="outputDir"/> that this build did <em>not</em> (re)write — recorded in
-    /// <paramref name="written"/> — is a leftover from a previous build (a removed resource, a
-    /// renamed bundle, a <c>.min</c> variant no longer produced, a stale <c>index.min.html</c>) and is
-    /// deleted; directories it empties are removed too. Files matching an <paramref name="excludeGlobs"/>
-    /// pattern are kept even when stale. Unlike the legacy h5 <c>cleanOutputFolderBeforeBuild</c> —
-    /// which deleted by glob before compiling, risking loss of output when a build later failed — this
-    /// runs after a successful assembly and can only ever remove files the current build did not
-    /// produce. A delete that fails (a locked or read-only file) is skipped rather than failing the
-    /// build. Returns the files removed, for reporting.
+    /// The "clean output folder" step: prunes files THIS project authored in an <em>earlier</em> build
+    /// (recorded in <paramref name="previouslyWritten"/>, read from its own manifest) that the current
+    /// build no longer writes (not in <paramref name="written"/>) — a removed resource, a renamed
+    /// bundle, a <c>.min</c> variant no longer produced, a stale <c>index.min.html</c>. Directories it
+    /// empties are removed too. Files matching an <paramref name="excludeGlobs"/> pattern are kept even
+    /// when stale.
+    ///
+    /// Crucially, the candidate set is <em>this project's own</em> previous output, not "every file in
+    /// the folder": a site output directory is routinely shared — several entry apps compile into one
+    /// folder, and MSBuild or other tools drop assets there — and diffing against the whole folder
+    /// would delete files this project never authored. Diffing against the project's manifest confines
+    /// the prune to files it is actually responsible for. (The first build after upgrading from a
+    /// compiler with no manifest simply writes one and prunes nothing — strictly safe.)
+    ///
+    /// Unlike the legacy h5 <c>cleanOutputFolderBeforeBuild</c> — which deleted by glob before
+    /// compiling, risking loss of output when a build later failed — this runs after a successful
+    /// assembly and can only ever remove files the current build did not produce. A delete that fails
+    /// (a locked or read-only file) is skipped rather than failing the build. Returns the files
+    /// removed, for reporting.
     /// </summary>
-    internal static IReadOnlyList<string> PruneStaleFiles(string outputDir, HashSet<string> written, IReadOnlyList<string> excludeGlobs)
+    internal static IReadOnlyList<string> PruneStaleFiles(
+        string outputDir, HashSet<string> written, IReadOnlyCollection<string> previouslyWritten, IReadOnlyList<string> excludeGlobs)
     {
         var removed = new List<string>();
         var fullOut = Path.GetFullPath(outputDir);
-        if (!Directory.Exists(fullOut)) return removed;
+        if (!Directory.Exists(fullOut) || previouslyWritten.Count == 0) return removed;
 
         var excludes = excludeGlobs.Where(g => !string.IsNullOrWhiteSpace(g)).Select(GlobToRegex).ToList();
 
-        foreach (var file in Directory.EnumerateFiles(fullOut, "*", SearchOption.AllDirectories))
+        foreach (var full in previouslyWritten)
         {
-            var full = Path.GetFullPath(file);
-            if (written.Contains(full)) continue;   // (re)written by this build — never a candidate
+            if (written.Contains(full)) continue;   // (re)written by this build — not stale
+            if (!File.Exists(full)) continue;        // already gone (manual delete, another build)
 
             if (excludes.Count > 0)
             {
@@ -778,6 +795,63 @@ internal static class OutputBuilder
 
         RemoveEmptyDirectories(fullOut);
         return removed;
+    }
+
+    /// <summary>
+    /// The per-project build manifest: a hidden file in the output directory listing every file the
+    /// project's last build wrote, so the next build knows exactly which files it is responsible for
+    /// pruning. Keyed by assembly name (sanitised to a safe leaf) so several projects compiling into
+    /// the same output folder each keep — and prune against — their own manifest without clobbering
+    /// one another's. The manifest is never itself recorded in <c>written</c>, so it is never a prune
+    /// candidate and never listed in the generated HTML.
+    /// </summary>
+    private static string ManifestPath(string outputDir, string assemblyName)
+    {
+        var safe = new string(assemblyName.Select(c => char.IsLetterOrDigit(c) || c is '.' or '_' or '-' ? c : '_').ToArray());
+        if (safe.Length == 0) safe = "project";
+        return Path.Combine(Path.GetFullPath(outputDir), $".tps-manifest.{safe}.json");
+    }
+
+    /// <summary>Reads the paths a previous build of this project wrote (full, normalised paths), or an
+    /// empty set when there is no manifest yet (first build, or upgrade from a manifest-less compiler)
+    /// or it can't be read — in which case nothing is pruned.</summary>
+    private static IReadOnlyCollection<string> ReadManifest(string manifestPath, string outputDir)
+    {
+        var result = new HashSet<string>(PathComparer);
+        if (!File.Exists(manifestPath)) return result;
+
+        var fullOut = Path.GetFullPath(outputDir);
+        try
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(manifestPath));
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return result;
+            foreach (var e in doc.RootElement.EnumerateArray())
+            {
+                var rel = e.GetString();
+                if (string.IsNullOrEmpty(rel)) continue;
+                result.Add(Path.GetFullPath(Path.Combine(fullOut, rel.Replace('/', Path.DirectorySeparatorChar))));
+            }
+        }
+        catch { /* a corrupt/unreadable manifest simply means "prune nothing this run" */ }
+        return result;
+    }
+
+    /// <summary>Persists the files this build wrote as the next run's manifest, as output-relative,
+    /// forward-slashed paths (portable if the site folder moves). A write failure is non-fatal — the
+    /// next build just falls back to pruning nothing.</summary>
+    private static void WriteManifest(string manifestPath, string outputDir, HashSet<string> written, UTF8Encoding utf8)
+    {
+        var fullOut = Path.GetFullPath(outputDir);
+        try
+        {
+            var rels = written
+                .Select(f => Path.GetRelativePath(fullOut, f).Replace('\\', '/'))
+                .OrderBy(r => r, StringComparer.Ordinal)
+                .ToList();
+            var json = JsonSerializer.Serialize(rels, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(manifestPath, json, utf8);
+        }
+        catch { /* non-fatal: without a manifest the next build prunes nothing, which is safe */ }
     }
 
     /// <summary>Removes directories left empty by the prune, deepest first, keeping the output root.</summary>
