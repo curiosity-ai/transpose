@@ -32,7 +32,15 @@ internal static class ResourceEmbedder
         catch { return false; }
     }
 
-    public static void Embed(string assemblyPath, IReadOnlyList<EmbeddedItem> items, IEnumerable<string>? referencePaths = null)
+    /// <summary>
+    /// Writes <paramref name="assemblyBytes"/> to <paramref name="assemblyPath"/> with
+    /// <paramref name="items"/> embedded as private manifest resources.
+    ///
+    /// The freshly-emitted assembly is handed over in memory rather than written first and re-read:
+    /// with the JS, CSS and fonts embedded, a package DLL runs to tens of megabytes, and writing it
+    /// once and then reading it straight back only to rewrite it was pure I/O.
+    /// </summary>
+    public static void Embed(string assemblyPath, byte[] assemblyBytes, IReadOnlyList<EmbeddedItem> items, IEnumerable<string>? referencePaths = null)
     {
         // Cecil resolves referenced assemblies when it re-serializes metadata on Write() — e.g. to
         // determine the underlying type of a parameter's default value whose type is a referenced
@@ -44,8 +52,8 @@ internal static class ResourceEmbedder
             foreach (var dir in referencePaths.Select(p => Path.GetDirectoryName(Path.GetFullPath(p))!).Distinct())
                 resolver.AddSearchDirectory(dir);
 
-        // Read → modify → write back the assembly in place (ReadWrite so we can overwrite it).
-        using var asm = AssemblyDefinition.ReadAssembly(assemblyPath, new ReaderParameters { ReadWrite = true, AssemblyResolver = resolver });
+        using var source = new MemoryStream(assemblyBytes, writable: false);
+        using var asm = AssemblyDefinition.ReadAssembly(source, new ReaderParameters { AssemblyResolver = resolver });
         var resources = asm.MainModule.Resources;
 
         void Replace(string name, byte[] bytes)
@@ -71,6 +79,6 @@ internal static class ResourceEmbedder
         var json = JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true });
         Replace(ManifestName, Utf8NoBom.GetBytes(json));
 
-        asm.Write();
+        asm.Write(assemblyPath);
     }
 }

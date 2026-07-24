@@ -41,6 +41,12 @@ Transpose/                     # The compiler toolchain
 │   ├── OutputBuilder.cs       #   site build (runtime + bundle + resources + index.html) + stale-output prune
 │   ├── ResourceEmbedder.cs    #   embeds JS + resources into the package DLL (Mono.Cecil)
 │   └── TransposeJson.cs       #   reads tps.json (output/fileName/html/resources/reflection)
+├── Transpose.Bench/           # Benchmark harness. AssemblyName + tool command: `tps-bench`
+│   ├── MachineInfo.cs         #   CPU model / cores / RAM / SIMD-ISA detection
+│   ├── CpuScore.cs            #   short deterministic CPU+memory benchmark -> normalisation score
+│   ├── Scenario.cs            #   clean-slate `tps` runs (wipes bin/obj of the project closure)
+│   ├── Report.cs              #   console / Markdown / JSON output + --baseline comparison
+│   └── ab.sh                  #   interleaved A/B of two tps binaries on one project
 ├── Transpose.Build.Target/    # MSBuild SDK (package id Transpose.Build.Target) that invokes `tps`
 ├── Transpose.Template/        # `dotnet new` template (package id Transpose.Template)
 └── Transpose.Translator.Tests/# MSTest suite; transpiles snippets and diffs vs native .NET via Playwright
@@ -151,7 +157,25 @@ plain CLI, by design.
 
 `--out/-o`, `--site-dir`, `--configuration/-c`, `--emit-package`, `--separate-assemblies`,
 `--with-runtime`, `--reference/-r <dll>` (extra assemblies not in the NuGet cache),
-`--define/-D <SYM>`, `--assembly-version <v>`, `--project/-p`, `--max-errors`, `--quiet/-q`.
+`--define/-D <SYM>`, `--assembly-version <v>`, `--project/-p`, `--max-errors`, `--quiet/-q`,
+`--timing` (per-phase time + allocations), `--timing-json <file>`, `--metadata-only-assembly`.
+
+## Performance
+
+A clean build's cost, and how to measure it, is documented in **`TODO.optimization.md`** (the running
+log of what has been tried, including what did not work) and the **`transpose-performance`** skill.
+The short version:
+
+- `tps --timing` prints a per-phase breakdown with the bytes allocated in each phase, plus GC and
+  peak-working-set totals. `--timing-json` writes the same machine-readably.
+- `tps-bench` (`Transpose/Transpose.Bench`) reports the machine (CPU/cores/RAM/ISAs), scores it with a
+  short deterministic CPU+memory benchmark, then times clean-slate builds and normalises every timing
+  by that score so results from different machines are comparable. `ab.sh` interleaves two compilers.
+- The compiler's runtime configuration is load-bearing: `<TieredPGO>false</TieredPGO>` and Server GC
+  in `Transpose.Compiler.csproj` (plus `runtimeconfig.template.json`) are together worth ~40% of a
+  build. Do not "tidy them away".
+- Any change here must keep the emitted site **byte-identical** — output is reproducible, so
+  `diff -r` against a baseline compiler is the gate. The 499-test suite is the other gate.
 
 ## Known remaining work (compilation-related)
 
@@ -202,6 +226,10 @@ Claude Code; read the `SKILL.md` directly in other contexts):
 - **`transpose-runtime-and-bcl`** — rebuild the runtime (`--build-runtime`), add/modify BCL APIs
   (extern+`[Template]`+`Resources/*.js` vs. real C# in a non-external class + a `tps.json` bundle
   entry), and add/run regression tests in `EmitRegressionTests.cs`.
+- **`transpose-performance`** — measure and improve *build* performance: the `tps-bench` harness
+  (CPU-score-normalised, clean-slate scenarios), `--timing`, dotnet-trace allocation/CPU profiles, and
+  the correctness gate that keeps emitted output byte-identical. Captures the measurement traps on this
+  hardware (the host drifts 20–40%, so never trust a single run) and the cost structure of a build.
 
 ## Conventions when editing
 

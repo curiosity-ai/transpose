@@ -510,7 +510,6 @@ public static class Program
         var mainJsName = config?.ExplicitFileName ?? project.AssemblyName + ".js";
         var dllPath = ProjectResolver.OutputDll(project.CsprojPath, configuration)!;
         Directory.CreateDirectory(Path.GetDirectoryName(dllPath)!);
-        File.WriteAllBytes(dllPath, result.AssemblyBytes!);
 
         var items = PhaseTimings.Measure("collect package resources (minify + read files)", () => config is not null
             ? OutputBuilder.CollectEmbeddableItems(project.ProjectDir, config, mainJsName, result.Javascript!, result.MetadataJavascript, project.MinifyLocalVariables)
@@ -520,8 +519,9 @@ public static class Program
         // makes it resolve that assembly. Seed the resolver with the reference directories so those
         // types are found (the referenced DLLs live in the NuGet cache / sibling bin folders, not
         // next to this DLL).
+        // Writes the DLL — the emitted assembly plus the embedded resources — in one pass.
         PhaseTimings.Measure("embed resources into DLL (Cecil)",
-            () => ResourceEmbedder.Embed(dllPath, items, project.ReferencePaths));
+            () => ResourceEmbedder.Embed(dllPath, result.AssemblyBytes!, items, project.ReferencePaths));
         return (dllPath, items);
     }
 
