@@ -81,7 +81,9 @@ public sealed class RoslynTranslator
         bool reflectionEnabled = true,
         MetadataTarget metadataTarget = MetadataTarget.Inline,
         bool emitAssembly = true,
-        string? assemblyVersion = null)
+        string? assemblyVersion = null,
+        bool emitDebugInformation = true,
+        bool metadataOnlyAssembly = false)
     {
         CompileProgress.Report("parsing sources + resolving references");
         var compilation = PhaseTimings.Measure("build compilation (parse + references)", () =>
@@ -91,67 +93,148 @@ public sealed class RoslynTranslator
                 preprocessorSymbols: preprocessorSymbols));
 
         var diagnostics = new List<Diagnostic>();
-        CompileProgress.Report("binding + analyzing");
-        var roslynErrors = PhaseTimings.Measure("bind + diagnostics", () => compilation.GetDiagnostics()
-            .Where(d => d.Severity == DiagnosticSeverity.Error && !BenignForJs.Contains(d.Id))
-            .ToList());
 
-        // Run the unsupported-feature scanner even when Roslyn reported errors: an unsupported
-        // construct (e.g. an [InlineArray] whose attribute the BCL keeps internal) can surface a
-        // Roslyn error first, and we still want the clear "… not supported" message to be reported
-        // alongside it. Scanning a compilation with errors is safe — the scanner tolerates missing
-        // symbols — but guard against an unexpected throw so the Roslyn errors are never lost.
-        IReadOnlyList<Diagnostic> unsupported;
+        // One semantic-model cache for the whole build, shared by the unsupported-feature scan and
+        // the JS emitter. A SemanticModel retains the bound form of each member it is asked about, so
+        // a member the scan binds (to resolve the inferred type behind a `var`, say) is already bound
+        // when the emitter gets to it — the two passes bind the project once between them instead of
+        // once each.
+        var models = new TreeModel(compilation);
+
+        // The scan runs before the assembly emit deliberately: it is the cheaper of the two and its
+        // diagnostics are the ones a user most wants to see first. It runs even when Roslyn reported
+        // errors — an unsupported construct (e.g. an [InlineArray] whose attribute the BCL keeps
+        // internal) can surface a Roslyn error first, and the clear "… not supported" message should
+        // still appear alongside it. Scanning a compilation with errors is safe (the scanner tolerates
+        // missing symbols), but an unexpected throw must never lose the Roslyn errors.
         CompileProgress.Report("scanning for unsupported features");
-        try { unsupported = PhaseTimings.Measure("scan unsupported features", () => UnsupportedFeatureScanner.Scan(compilation)); }
-        catch { unsupported = new List<Diagnostic>(); }
-        diagnostics.AddRange(unsupported);
-        diagnostics.AddRange(roslynErrors);
-        if (diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error))
-            return new AssemblyBuildResult(null, null, null, diagnostics);
+        IReadOnlyList<Diagnostic> unsupported;
+        try { unsupported = PhaseTimings.Measure("scan unsupported features", () => UnsupportedFeatureScanner.Scan(compilation, models)); }
+        catch { unsupported = System.Array.Empty<Diagnostic>(); }
 
-        // Emit the real .NET assembly (as a library) so referencing projects can bind to its
-        // types. Emitted before translation so an emit failure is reported like any other error.
+        // Binding the whole compilation is the single most expensive thing a build does, and
+        // Compilation.Emit already does it — its result carries every declaration and method-body
+        // diagnostic GetDiagnostics would have produced. So when an assembly is being emitted we take
+        // the diagnostics from the emit and never bind twice; only a source-only build (the test
+        // suite, `--out`) needs a standalone GetDiagnostics pass.
+
+        CompileProgress.Report("binding + analyzing");
+
         byte[]? assemblyBytes = null;
+        List<Diagnostic> roslynErrors;
+
         if (emitAssembly)
         {
             var asmCompilation = compilation.WithOptions(
                 compilation.Options.WithOutputKind(OutputKind.DynamicallyLinkedLibrary));
             using var ms = new MemoryStream();
-            CompileProgress.Report("emitting .NET assembly");
             // Include private members so a referencing project sees the full member set — the
             // overload numbering (e.g. $ctorN) must match what this assembly emits for itself,
             // and that numbering counts private overloads too.
-            var emit = PhaseTimings.Measure("emit .NET assembly", () => asmCompilation.Emit(ms, options: new Microsoft.CodeAnalysis.Emit.EmitOptions(
-                metadataOnly: false,
+            // Debug information is embedded in the PE (there is no separate .pdb alongside a tps
+            // output) unless the project asked for none — see ResolvedProject.EmitDebugInformation.
+            // Roslyn rejects an embedded PDB alongside a metadata-only emit (there are no bodies to
+            // describe), so the metadata-only mode implies no debug information.
+            var debugFormat = emitDebugInformation && !metadataOnlyAssembly
+                ? Microsoft.CodeAnalysis.Emit.DebugInformationFormat.Embedded
+                : default;
+            var emit = PhaseTimings.Measure("bind + emit .NET assembly", () => asmCompilation.Emit(ms, options: new Microsoft.CodeAnalysis.Emit.EmitOptions(
+                metadataOnly: metadataOnlyAssembly,
                 includePrivateMembers: true,
-                debugInformationFormat: Microsoft.CodeAnalysis.Emit.DebugInformationFormat.Embedded)));
+                debugInformationFormat: debugFormat)));
+
+            roslynErrors = emit.Diagnostics
+                .Where(d => d.Severity == DiagnosticSeverity.Error && !BenignForJs.Contains(d.Id))
+                .ToList();
+
+            // A failed emit stops before compiling method bodies when the *declarations* already have
+            // errors, so its diagnostic list can be a subset of the full picture. Only on that (rare,
+            // already-failing) path do we pay for a full GetDiagnostics, so the reported error list is
+            // as complete as it always was.
             if (!emit.Success)
             {
-                diagnostics.AddRange(emit.Diagnostics
-                    .Where(d => d.Severity == DiagnosticSeverity.Error && !BenignForJs.Contains(d.Id)));
-                return new AssemblyBuildResult(null, null, null, diagnostics);
+                var full = PhaseTimings.Measure("bind + diagnostics (error path)", () => compilation.GetDiagnostics()
+                    .Where(d => d.Severity == DiagnosticSeverity.Error && !BenignForJs.Contains(d.Id))
+                    .ToList());
+                // Diagnostic has reference equality, so the same error reported by both passes has to
+                // be matched on what identifies it to a user — its id and location — or the list would
+                // show every error twice.
+                var already = new HashSet<(string, Location)>();
+                foreach (var d in roslynErrors) already.Add((d.Id, d.Location));
+                foreach (var d in full)
+                    if (already.Add((d.Id, d.Location))) roslynErrors.Add(d);
             }
-            assemblyBytes = ms.ToArray();
+            else
+            {
+                assemblyBytes = ms.ToArray();
+            }
+        }
+        else
+        {
+            roslynErrors = PhaseTimings.Measure("bind + diagnostics", () => compilation.GetDiagnostics()
+                .Where(d => d.Severity == DiagnosticSeverity.Error && !BenignForJs.Contains(d.Id))
+                .ToList());
         }
 
+        diagnostics.AddRange(unsupported);
+        diagnostics.AddRange(roslynErrors);
+        if (diagnostics.Count > 0 && diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error))
+            return new AssemblyBuildResult(null, null, null, diagnostics);
+
+        string? js = null, metadataJs = null;
+        TranslationException? emitterFailure = null;
         try
         {
-            var emitter = new Emitter(compilation, assemblyName)
+            var emitter = new Emitter(compilation, assemblyName, models)
             {
                 ReflectionEnabled = reflectionEnabled,
                 MetadataTarget = metadataTarget,
                 AssemblyVersion = string.IsNullOrWhiteSpace(assemblyVersion) ? "1.0.0.0" : assemblyVersion!,
             };
             CompileProgress.Report("emitting JavaScript");
-            var js = PhaseTimings.Measure("emit JavaScript", () => emitter.Emit());
-            return new AssemblyBuildResult(js, emitter.MetadataScript, assemblyBytes, diagnostics);
+            js = PhaseTimings.Measure("emit JavaScript", () => emitter.Emit());
+            metadataJs = emitter.MetadataScript;
         }
         catch (TranslationException ex)
         {
-            diagnostics.Add(Diagnostics.Create(Diagnostics.Unsupported, ex.Location, ex.Message));
+            emitterFailure = ex;
+        }
+
+        // A metadata-only assembly emit never compiled the method bodies, so their diagnostics have
+        // to come from somewhere else. They come from the semantic models — which the scan and the JS
+        // emit have already populated, so this pass mostly reads cached bound trees rather than
+        // binding again, and is an order of magnitude cheaper than the body codegen it replaced.
+        // (It runs after the JS emit for exactly that reason; on the error path that means a broken
+        // project does the JS emit first, which is why an emitter failure is held rather than thrown.)
+        if (emitAssembly && metadataOnlyAssembly)
+        {
+            var bodyErrors = PhaseTimings.Measure("body diagnostics (semantic models)", () =>
+            {
+                var found = new System.Collections.Concurrent.ConcurrentBag<Diagnostic>();
+                Parallel.ForEach(compilation.SyntaxTrees, tree =>
+                {
+                    foreach (var d in models.SemanticModelFor(tree).GetDiagnostics())
+                        if (d.Severity == DiagnosticSeverity.Error && !BenignForJs.Contains(d.Id))
+                            found.Add(d);
+                });
+                return found.ToList();
+            });
+            if (bodyErrors.Count > 0)
+            {
+                // Real compile errors explain an emitter failure far better than the emitter's own
+                // "unsupported construct" would, so they are reported instead of it.
+                diagnostics.AddRange(bodyErrors);
+                return new AssemblyBuildResult(null, null, null, diagnostics);
+            }
+        }
+
+        if (emitterFailure is not null)
+        {
+            diagnostics.Add(Diagnostics.Create(Diagnostics.Unsupported, emitterFailure.Location, emitterFailure.Message));
             return new AssemblyBuildResult(null, null, null, diagnostics);
         }
+
+        return new AssemblyBuildResult(js, metadataJs, assemblyBytes, diagnostics);
     }
 
     /// <summary>
@@ -168,13 +251,22 @@ public sealed class RoslynTranslator
         LanguageVersion languageVersion = LanguageVersion.Latest,
         bool reflectionEnabled = true)
     {
-        var compilation = CompilationBuilder.Build(
-            sources, assemblyName, languageVersion,
-            preprocessorSymbols: preprocessorSymbols, selfContainedBcl: true);
+        CompileProgress.Report("parsing the base library");
+        var compilation = PhaseTimings.Measure("build compilation (parse, self-contained BCL)", () =>
+            CompilationBuilder.Build(
+                sources, assemblyName, languageVersion,
+                preprocessorSymbols: preprocessorSymbols, selfContainedBcl: true));
 
+        // Note for anyone optimizing this path: it binds the BCL three times over — here, again
+        // through the emitter's semantic models, and a third time inside EmitAssembly below. The main
+        // BuildAssembly path collapsed two of its binds (see the comments there); the same is possible
+        // here but has not been done, because this build's diagnostics gate the JS emit and the
+        // assembly emit happens last (it needs the assembled bundles as manifest resources).
         var diagnostics = new List<Diagnostic>();
-        diagnostics.AddRange(compilation.GetDiagnostics()
-            .Where(d => d.Severity == DiagnosticSeverity.Error && !BenignForJs.Contains(d.Id)));
+        CompileProgress.Report("binding + analyzing the base library");
+        diagnostics.AddRange(PhaseTimings.Measure("bind + diagnostics", () => compilation.GetDiagnostics()
+            .Where(d => d.Severity == DiagnosticSeverity.Error && !BenignForJs.Contains(d.Id))
+            .ToList()));
         if (diagnostics.Count > 0)
             return new RuntimePackageResult(null, null, diagnostics);
 
@@ -186,7 +278,8 @@ public sealed class RoslynTranslator
             compilation.Options.WithOutputKind(OutputKind.DynamicallyLinkedLibrary));
 
         var emitter = new Emitter(compilation, assemblyName) { ReflectionEnabled = reflectionEnabled };
-        var classPath = emitter.EmitClassPath();
+        CompileProgress.Report("emitting per-class JavaScript");
+        var classPath = PhaseTimings.Measure("emit JavaScript (ClassPath)", emitter.EmitClassPath);
 
         // Emit the assembly with the runtime JS bundles embedded as manifest resources, through
         // Roslyn — see RuntimePackageResult.EmitAssembly for why this must not be a Mono.Cecil
@@ -198,8 +291,9 @@ public sealed class RoslynTranslator
                 .Select(r => new ResourceDescription(r.name, () => new MemoryStream(r.bytes), isPublic: false))
                 .ToList();
             using var ms = new MemoryStream();
-            var emit = asmCompilation.Emit(ms, manifestResources: descriptions,
-                options: new Microsoft.CodeAnalysis.Emit.EmitOptions(metadataOnly: false, includePrivateMembers: true));
+            var emit = PhaseTimings.Measure("bind + emit runtime assembly (with bundles)", () =>
+                asmCompilation.Emit(ms, manifestResources: descriptions,
+                    options: new Microsoft.CodeAnalysis.Emit.EmitOptions(metadataOnly: false, includePrivateMembers: true)));
             if (!emit.Success)
             {
                 var errors = string.Join("\n", emit.Diagnostics

@@ -4,10 +4,12 @@ using Microsoft.CodeAnalysis.CSharp;
 namespace Transpose.Compiler;
 
 /// <summary>
-/// Minimal resolver for an Transpose project: gathers the C# sources (the SDK's default glob),
-/// and resolves the package references — transitively — to their assemblies in the NuGet
-/// global-packages cache. Transpose projects reference Transpose.dll as their whole BCL plus a few Transpose.*
-/// packages (Transpose.Core, Transpose.Newtonsoft.Json), all of which live in the cache once restored.
+/// Minimal resolver for an Transpose project: gathers the C# sources (the SDK's default glob, explicit
+/// <c>&lt;Compile&gt;</c> items, and anything the project <c>&lt;Import&gt;</c>s — see
+/// <see cref="ProjectXml"/>), and resolves the package references — transitively — to their assemblies
+/// in the NuGet global-packages cache. Transpose projects reference Transpose.dll as their whole BCL plus a
+/// few Transpose.* packages (Transpose.Core, Transpose.Newtonsoft.Json), all of which live in the cache
+/// once restored.
 /// </summary>
 internal sealed class ResolvedProject
 {
@@ -30,6 +32,45 @@ internal sealed class ResolvedProject
     /// legacy compiler's safe minifier profile that keeps local names.</summary>
     public bool MinifyLocalVariables { get; init; }
 
+    /// <summary>
+    /// The csproj <c>&lt;TransposeMetadataOnlyAssembly&gt;</c> property: emit the project's .NET assembly
+    /// as metadata only — full type/member metadata including private members, but <c>throw null</c>
+    /// method bodies — instead of compiling real IL. Null when the project says nothing, in which case
+    /// the configuration decides (see <see cref="MetadataOnlyAssemblyDefault"/>).
+    ///
+    /// Skipping the IL codegen removes the second full bind of every method body from the build:
+    /// measured ~18% off a clean Tesserae build (8.3 s → 6.8 s), roughly halves the DLL, and produces
+    /// byte-identical JavaScript. Implies no debug information (Roslyn rejects an embedded PDB when
+    /// there are no bodies to describe).
+    ///
+    /// It is sound because a Transpose-compiled assembly can never execute: it binds against
+    /// <c>Transpose.dll</c>, a stand-in BCL with no implementations, so no .NET host can load it. Its
+    /// only jobs are to be *bound against* by another Transpose project and to carry the compiled JS
+    /// as embedded resources — both of which need metadata alone.
+    /// </summary>
+    public bool? MetadataOnlyAssembly { get; init; }
+
+    /// <summary>
+    /// Whether to emit a metadata-only assembly for <paramref name="configuration"/> when the project
+    /// expresses no preference: yes for Debug, no for Release.
+    ///
+    /// Debug is the inner-loop configuration — its output is consumed by the developer's own build and
+    /// by `dotnet serve`, never shipped — so it takes the faster path. Release is what
+    /// <c>dotnet pack</c> turns into a NuGet package, so it keeps real IL, and the Transpose SDK
+    /// additionally refuses to package a Debug build at all (see Sdk.targets) so a metadata-only
+    /// assembly cannot reach a feed by accident.
+    /// </summary>
+    public static bool MetadataOnlyAssemblyDefault(string configuration)
+        => string.Equals(configuration, "Debug", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Whether the emitted .NET assembly carries debug information, from the csproj's
+    /// <c>&lt;DebugType&gt;</c> (<c>None</c> — or <c>DebugSymbols=false</c> — turns it off). Producing an
+    /// embedded PDB is real work and adds ~12% to the assembly's size, and a Transpose project's DLL
+    /// exists to be *bound against* by other Transpose projects — nobody steps through its IL — so a
+    /// project that says it wants no symbols should not pay for them. Defaults to true, so a project
+    /// that says nothing keeps the debug information it has always got.</summary>
+    public bool EmitDebugInformation { get; init; } = true;
+
     /// <summary>Directories of every project in the closure — the root first, then the
     /// referenced projects it pulls in (each may contribute tps.json resources).</summary>
     public required List<string> ProjectDirs { get; init; }
@@ -45,13 +86,15 @@ internal static class ProjectResolver
     {
         csprojPath = Path.GetFullPath(csprojPath);
         var projectDir = Path.GetDirectoryName(csprojPath)!;
-        var doc = XDocument.Load(csprojPath);
+        // Loads the csproj *and everything it <Import>s* — a shared project's .projitems is where its
+        // <Compile> items live, so ignoring imports silently dropped that source. See ProjectXml.
+        var doc = ProjectXml.Load(csprojPath);
 
-        var assemblyName = Property(doc, "AssemblyName") ?? Path.GetFileNameWithoutExtension(csprojPath);
+        var assemblyName = doc.Property("AssemblyName") ?? Path.GetFileNameWithoutExtension(csprojPath);
 
         var targetFramework = EffectiveTargetFramework(doc);
 
-        var defines = (Property(doc, "DefineConstants") ?? "")
+        var defines = (doc.Property("DefineConstants") ?? "")
             .Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries)
             .Select(s => s.Trim())
             .Where(s => s.Length > 0)
@@ -73,7 +116,7 @@ internal static class ProjectResolver
         foreach (var fx in FrameworkDefines(targetFramework))
             if (!defines.Contains(fx)) defines.Add(fx);
 
-        var lang = ParseLangVersion(Property(doc, "LangVersion"));
+        var lang = ParseLangVersion(doc.Property("LangVersion"));
 
         // Default (bundle) mode: translate the whole closure of source projects into one JS
         // output. Separate-assembly mode: compile only this project's own sources and reference
@@ -97,7 +140,10 @@ internal static class ProjectResolver
             ReferencePaths = references.Values.ToList(),
             DefineConstants = defines,
             LanguageVersion = lang,
-            MinifyLocalVariables = string.Equals(Property(doc, "MinifyLocalVariables")?.Trim(), "true", StringComparison.OrdinalIgnoreCase),
+            MinifyLocalVariables = string.Equals(doc.Property("MinifyLocalVariables")?.Trim(), "true", StringComparison.OrdinalIgnoreCase),
+            MetadataOnlyAssembly = ParseBool(doc.Property("TransposeMetadataOnlyAssembly")),
+            EmitDebugInformation = !string.Equals(doc.Property("DebugType")?.Trim(), "none", StringComparison.OrdinalIgnoreCase)
+                                   && !string.Equals(doc.Property("DebugSymbols")?.Trim(), "false", StringComparison.OrdinalIgnoreCase),
             ProjectDirs = projectDirs,
             ReferencedProjectDlls = projectDlls,
         };
@@ -110,10 +156,10 @@ internal static class ProjectResolver
     /// This is what makes binding libraries such as Transpose.Core (which mark the whole assembly
     /// <c>[assembly: External]</c>) compile: every type is external and its extern members are JS bindings.
     /// </summary>
-    private static string? SynthesizeAssemblyAttributes(XDocument doc)
+    private static string? SynthesizeAssemblyAttributes(ProjectXml doc)
     {
         var lines = new List<string>();
-        foreach (var e in doc.Descendants().Where(e => e.Name.LocalName == "AssemblyAttribute"))
+        foreach (var (e, _) in doc.Elements("AssemblyAttribute"))
         {
             var name = e.Attribute("Include")?.Value?.Trim();
             if (string.IsNullOrWhiteSpace(name)) continue;
@@ -161,7 +207,7 @@ internal static class ProjectResolver
         csprojPath = Path.GetFullPath(csprojPath);
         if (!visited.Add(csprojPath) || !File.Exists(csprojPath)) return;
 
-        var doc = XDocument.Load(csprojPath);
+        var doc = ProjectXml.Load(csprojPath);
         var projectDir = Path.GetDirectoryName(csprojPath)!;
 
         // In separate mode only the root contributes source + tps.json resources; a referenced
@@ -176,7 +222,7 @@ internal static class ProjectResolver
         foreach (var (name, path) in ResolvePackageReferenceDlls(doc, roots))
             references.TryAdd(name, path);
 
-        foreach (var pr in doc.Descendants().Where(e => e.Name.LocalName == "ProjectReference"))
+        foreach (var (pr, _) in doc.Elements("ProjectReference"))
         {
             var include = pr.Attribute("Include")?.Value;
             if (string.IsNullOrWhiteSpace(include)) continue;
@@ -192,13 +238,12 @@ internal static class ProjectResolver
                     references[Path.GetFileNameWithoutExtension(dll)] = dll;
                     if (!projectDlls.Contains(dll)) projectDlls.Add(dll);
                 }
-                if (visited.Add(refPath) && File.Exists(refPath))
+                if (visited.Add(refPath) && ProjectXml.TryLoad(refPath) is { } refDoc)
                 {
-                    var refDoc = XDocument.Load(refPath);
                     var refDir = Path.GetDirectoryName(refPath)!;
                     foreach (var (name, path) in ResolvePackageReferenceDlls(refDoc, roots))
                         references.TryAdd(name, path);
-                    foreach (var nested in refDoc.Descendants().Where(e => e.Name.LocalName == "ProjectReference"))
+                    foreach (var (nested, _) in refDoc.Elements("ProjectReference"))
                     {
                         var ninc = nested.Attribute("Include")?.Value;
                         if (string.IsNullOrWhiteSpace(ninc)) continue;
@@ -235,8 +280,9 @@ internal static class ProjectResolver
             csproj = Path.GetFullPath(csproj);
             if (!visited.Add(csproj) || !File.Exists(csproj)) return;
             var dir = Path.GetDirectoryName(csproj)!;
-            var doc = XDocument.Load(csproj);
-            foreach (var pr in doc.Descendants().Where(e => e.Name.LocalName == "ProjectReference"))
+            var doc = ProjectXml.TryLoad(csproj);
+            if (doc is null) return;
+            foreach (var (pr, _) in doc.Elements("ProjectReference"))
             {
                 var include = pr.Attribute("Include")?.Value;
                 if (string.IsNullOrWhiteSpace(include)) continue;
@@ -260,10 +306,9 @@ internal static class ProjectResolver
     /// </summary>
     public static bool IsPackable(string csprojPath)
     {
-        if (!File.Exists(csprojPath)) return false;
-        var doc = XDocument.Load(csprojPath);
+        if (ProjectXml.TryLoad(csprojPath) is not { } doc) return false;
         static bool IsTrue(string? v) => string.Equals(v?.Trim(), "true", StringComparison.OrdinalIgnoreCase);
-        return IsTrue(Property(doc, "GeneratePackageOnBuild")) || IsTrue(Property(doc, "IsPackable"));
+        return IsTrue(doc.Property("GeneratePackageOnBuild")) || IsTrue(doc.Property("IsPackable"));
     }
 
     /// <summary>
@@ -290,9 +335,18 @@ internal static class ProjectResolver
             if (File.GetLastWriteTimeUtc(src) > dllTime) return false;
         }
 
+        if (ProjectXml.TryLoad(csprojPath) is not { } doc) return false;
+
+        // Imported files (a shared project's .projitems) and the sources they contribute live outside
+        // this project's directory, so the glob above never sees them. Without this, editing shared
+        // source left the package "up to date" and the change simply did not reach the output.
+        foreach (var imported in doc.ImportedFiles)
+            if (File.GetLastWriteTimeUtc(imported) > dllTime) return false;
+        foreach (var (path, _) in ResolveSources(doc, dir))
+            if (File.Exists(path) && File.GetLastWriteTimeUtc(path) > dllTime) return false;
+
         // A dependency rebuilt more recently invalidates this project too.
-        var doc = XDocument.Load(csprojPath);
-        foreach (var pr in doc.Descendants().Where(e => e.Name.LocalName == "ProjectReference"))
+        foreach (var (pr, _) in doc.Elements("ProjectReference"))
         {
             var include = pr.Attribute("Include")?.Value;
             if (string.IsNullOrWhiteSpace(include)) continue;
@@ -303,20 +357,30 @@ internal static class ProjectResolver
         return true;
     }
 
+    /// <summary>Parses an MSBuild boolean property, returning null when it is absent or empty so a
+    /// caller can tell "the project did not say" from "the project said false".</summary>
+    private static bool? ParseBool(string? value)
+    {
+        value = value?.Trim();
+        if (string.IsNullOrEmpty(value)) return null;
+        if (string.Equals(value, "true", StringComparison.OrdinalIgnoreCase)) return true;
+        if (string.Equals(value, "false", StringComparison.OrdinalIgnoreCase)) return false;
+        return null;
+    }
+
     /// <summary>The built output DLL path of a referenced project: bin/&lt;config&gt;/&lt;tfm&gt;/&lt;asm&gt;.dll.</summary>
     private static string? ProjectOutputDll(string csprojPath, string configuration)
     {
-        if (!File.Exists(csprojPath)) return null;
-        var doc = XDocument.Load(csprojPath);
+        if (ProjectXml.TryLoad(csprojPath) is not { } doc) return null;
         var dir = Path.GetDirectoryName(csprojPath)!;
-        var asm = Property(doc, "AssemblyName") ?? Path.GetFileNameWithoutExtension(csprojPath);
+        var asm = doc.Property("AssemblyName") ?? Path.GetFileNameWithoutExtension(csprojPath);
         var tfm = EffectiveTargetFramework(doc);
         var binBase = Path.Combine(dir, "bin", configuration, tfm);
         var dll = Path.Combine(binBase, asm + ".dll");
         return dll;
     }
 
-    private static List<(string path, string text)> ResolveSources(XDocument doc, string projectDir)
+    private static List<(string path, string text)> ResolveSources(ProjectXml doc, string projectDir)
     {
         // The set of compiled files, in a deterministic order (glob first, then explicit includes),
         // deduplicated by full path (case-insensitive).
@@ -330,7 +394,7 @@ internal static class ProjectResolver
 
         // SDK default glob: every .cs under the project directory, minus the build output — unless the
         // project opts out with <EnableDefaultCompileItems>false</EnableDefaultCompileItems>.
-        if (!IsFalse(Property(doc, "EnableDefaultCompileItems")))
+        if (!IsFalse(doc.Property("EnableDefaultCompileItems")))
         {
             foreach (var f in Directory.EnumerateFiles(projectDir, "*.cs", SearchOption.AllDirectories))
                 if (!IsUnderBuildOutput(f, projectDir)) AddFile(f);
@@ -340,20 +404,29 @@ internal static class ProjectResolver
         // *outside* the project directory (e.g. shared source linked in via ..\..\Shared\*.cs). MSBuild
         // resolves these; tps reads the csproj raw, so it must expand them itself. Link/LinkBase only
         // affect IDE/output layout, not which file is compiled, so they are ignored here.
-        foreach (var inc in doc.Descendants().Where(e => e.Name.LocalName == "Compile")
-                     .Select(e => e.Attribute("Include")?.Value)
-                     .Where(v => !string.IsNullOrWhiteSpace(v)))
+        //
+        // Items from an <Import>ed file (a shared project's .projitems) come through here too, which is
+        // the whole point of the flattened view: such a file writes its includes as
+        // $(MSBuildThisFileDirectory)Foo.cs, so each item is expanded against the directory of the file
+        // that *declared* it, while a plain relative path still resolves against the project directory
+        // exactly as MSBuild does.
+        foreach (var (element, declaringDir) in doc.Elements("Compile"))
         {
-            foreach (var f in ExpandInclude(projectDir, inc!))
+            var inc = element.Attribute("Include")?.Value;
+            if (string.IsNullOrWhiteSpace(inc)) continue;
+            foreach (var f in ExpandInclude(projectDir, declaringDir, inc!))
                 if (!IsUnderBuildOutput(f, projectDir)) AddFile(f);
         }
 
-        // Honour explicit <Compile Remove="..."/> (glob or exact, relative to the project dir).
-        var removed = doc.Descendants().Where(e => e.Name.LocalName == "Compile")
-            .Select(e => e.Attribute("Remove")?.Value)
-            .Where(v => !string.IsNullOrWhiteSpace(v))
-            .Select(v => NormalizeGlob(projectDir, v!))
-            .ToList();
+        // Honour explicit <Compile Remove="..."/> (glob or exact), with the same two-directory rule.
+        var removed = new List<string>();
+        foreach (var (element, declaringDir) in doc.Elements("Compile"))
+        {
+            var rem = element.Attribute("Remove")?.Value;
+            if (string.IsNullOrWhiteSpace(rem)) continue;
+            if (SubstituteThisFileDirectory(rem!, declaringDir) is { } pattern)
+                removed.Add(NormalizeGlob(projectDir, pattern));
+        }
 
         var result = new List<(string, string)>();
         foreach (var full in files)
@@ -364,13 +437,16 @@ internal static class ProjectResolver
         return result;
     }
 
-    /// <summary>Expands a <c>&lt;Compile Include&gt;</c> pattern (relative to the project directory)
-    /// into concrete .cs files. Handles a single file, a same-directory glob (<c>*.cs</c>), and a
-    /// recursive glob (<c>**\*.cs</c>), and resolves patterns that reach outside the project directory
-    /// (shared source linked in via <c>..\..\Shared\...</c>).</summary>
-    private static IEnumerable<string> ExpandInclude(string projectDir, string pattern)
+    /// <summary>Expands a <c>&lt;Compile Include&gt;</c> pattern into concrete .cs files. Handles a
+    /// single file, a same-directory glob (<c>*.cs</c>), and a recursive glob (<c>**\*.cs</c>), and
+    /// resolves patterns that reach outside the project directory (shared source linked in via
+    /// <c>..\..\Shared\...</c>). <paramref name="declaringDir"/> is the directory of the file the item
+    /// was written in, which is what <c>$(MSBuildThisFileDirectory)</c> means; everything relative is
+    /// still resolved against <paramref name="projectDir"/>, as MSBuild does. A pattern containing a
+    /// property this resolver cannot expand yields nothing rather than a guess.</summary>
+    private static IEnumerable<string> ExpandInclude(string projectDir, string declaringDir, string rawPattern)
     {
-        pattern = pattern.Replace('\\', '/');
+        if (SubstituteThisFileDirectory(rawPattern, declaringDir) is not { } pattern) yield break;
         if (!pattern.Contains('*'))
         {
             var single = Path.GetFullPath(Path.Combine(projectDir, pattern));
@@ -401,6 +477,20 @@ internal static class ProjectResolver
             || rel.Contains("/obj/") || rel.Contains("/bin/");
     }
 
+    /// <summary>Expands <c>$(MSBuildThisFileDirectory)</c> (and the project-directory equivalent) in an
+    /// item specification, returning null when some other unexpandable <c>$(…)</c> remains — see
+    /// <see cref="ProjectXml.ResolvePath"/> for why guessing is worse than skipping.</summary>
+    private static string? SubstituteThisFileDirectory(string spec, string declaringDir)
+    {
+        var value = spec.Replace('\\', '/').Trim();
+        var dirWithSlash = declaringDir.Replace('\\', '/').TrimEnd('/') + "/";
+        value = value
+            .Replace("$(MSBuildThisFileDirectory)", dirWithSlash, StringComparison.OrdinalIgnoreCase)
+            .Replace("$(MSBuildProjectDirectory)/", dirWithSlash, StringComparison.OrdinalIgnoreCase)
+            .Replace("$(MSBuildProjectDirectory)", dirWithSlash, StringComparison.OrdinalIgnoreCase);
+        return value.Contains("$(", StringComparison.Ordinal) ? null : value;
+    }
+
     private static string NormalizeGlob(string projectDir, string pattern)
         => Path.GetFullPath(Path.Combine(projectDir, pattern.Replace('\\', '/'))).Replace('\\', '/');
 
@@ -416,12 +506,12 @@ internal static class ProjectResolver
 
     // ---- reference resolution (NuGet global-packages cache) -----------------
 
-    private static IEnumerable<(string name, string path)> ResolvePackageReferenceDlls(XDocument doc, List<string> roots)
+    private static IEnumerable<(string name, string path)> ResolvePackageReferenceDlls(ProjectXml doc, List<string> roots)
     {
         var resolved = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); // asmName → dll path
         var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);             // pkgId@version
 
-        foreach (var pr in doc.Descendants().Where(e => e.Name.LocalName == "PackageReference"))
+        foreach (var (pr, _) in doc.Elements("PackageReference"))
         {
             var id = pr.Attribute("Include")?.Value ?? pr.Attribute("Update")?.Value;
             var version = pr.Attribute("Version")?.Value ?? pr.Element(pr.Name.Namespace + "Version")?.Value;
@@ -493,14 +583,11 @@ internal static class ProjectResolver
         yield return "/root/.nuget/packages";
     }
 
-    private static string? Property(XDocument doc, string name)
-        => doc.Descendants().FirstOrDefault(e => e.Name.LocalName == name)?.Value;
-
     /// <summary>The project's <c>&lt;AssemblyVersion&gt;</c> (falling back to <c>&lt;Version&gt;</c>),
     /// emitted into the bundle as <c>Transpose.assemblyVersion(...)</c>. Null when neither is set.</summary>
     public static string? ReadAssemblyVersion(string csprojPath)
     {
-        try { var doc = XDocument.Load(csprojPath); return Property(doc, "AssemblyVersion") ?? Property(doc, "Version"); }
+        try { var doc = ProjectXml.Load(csprojPath); return doc.Property("AssemblyVersion") ?? doc.Property("Version"); }
         catch { return null; }
     }
 
@@ -515,15 +602,13 @@ internal static class ProjectResolver
     /// <c>netstandard2.0</c>. Honour that here, otherwise tps writes the DLL under the declared tfm
     /// and <c>dotnet pack</c> fails with NU5026 (<c>&lt;Assembly&gt;.dll</c> not found).
     /// </summary>
-    private static string EffectiveTargetFramework(XDocument doc)
+    private static string EffectiveTargetFramework(ProjectXml doc)
     {
-        var sdk = doc.Root?.Attribute("Sdk")?.Value
-                  ?? doc.Descendants().FirstOrDefault(e => e.Name.LocalName == "Sdk")?.Attribute("Name")?.Value
-                  ?? "";
+        var sdk = doc.SdkName ?? "";
         if (sdk.StartsWith("Transpose.Build.Target", StringComparison.OrdinalIgnoreCase))
             return "netstandard2.0";
-        return Property(doc, "TargetFramework")
-               ?? Property(doc, "TargetFrameworks")?.Split(';', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim()
+        return doc.Property("TargetFramework")
+               ?? doc.Property("TargetFrameworks")?.Split(';', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim()
                ?? "netstandard2.0";
     }
 

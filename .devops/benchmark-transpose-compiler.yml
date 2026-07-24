@@ -1,0 +1,139 @@
+# Compiler performance benchmark.
+#
+# Compiles a real project — the tesserae submodule under benchmarks/tesserae, 263 files / ~69k lines,
+# plus a second project that depends on it — with the ReadyToRun-published compiler, and records
+# wall time, CPU time, allocations, peak working set and the per-phase breakdown.
+#
+# Two things make the numbers usable despite hosted agents being wildly inconsistent:
+#
+#   * tps-bench scores the agent with a short deterministic CPU+memory benchmark and reports every
+#     timing *normalised* by that score, i.e. converted to reference-machine milliseconds. A run on a
+#     fast agent and a run on a slow one are then directly comparable.
+#   * It compares against docs/perf/optimized.json, the recorded state of the compiler, and prints the
+#     deltas.
+#
+# It deliberately does NOT fail on a regression. Hosted agents differ enough — different CPU SKUs,
+# noisy neighbours — that a threshold tight enough to catch a real 10% regression would fire on noise
+# constantly, and a build that cries wolf gets ignored. The report is published as an artifact and
+# printed in the log; read it. If you want a gate, gate on a large threshold and on several
+# consecutive runs, not one.
+
+variables:
+  compiler: '$(Build.SourcesDirectory)/Transpose/Transpose.Compiler/Transpose.Compiler.csproj'
+  bench: '$(Build.SourcesDirectory)/Transpose/Transpose.Bench/Transpose.Bench.csproj'
+  corpus: '$(Build.SourcesDirectory)/benchmarks/tesserae'
+  buildConfiguration: 'Release'
+  # The agent's own RID. Publishing for it (rather than a portable publish) is what makes the measured
+  # compiler the ReadyToRun one users actually get.
+  benchRid: 'linux-x64'
+  publishDir: '$(Build.SourcesDirectory)/artifacts/bench-tps'
+  reportDir: '$(Build.ArtifactStagingDirectory)/benchmark'
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+# Every compiler change gets a measurement, and a nightly run tracks drift in the runtime/SDK even
+# when nothing in the repo changed.
+trigger:
+  branches:
+    include:
+    - master
+  paths:
+    include:
+    - Transpose/Transpose.Compiler/*
+    - Transpose/Transpose.Translator/*
+    - Transpose/Transpose.Bench/*
+    - .devops/benchmark-transpose-compiler.yml
+
+pr: none
+
+schedules:
+- cron: "0 3 * * *"
+  displayName: 'Nightly performance run'
+  branches:
+    include:
+    - master
+  always: true
+
+steps:
+# The corpus is a submodule, so it has to be fetched explicitly.
+- checkout: self
+  submodules: true
+
+- task: UseDotNet@2
+  displayName: 'Use .NET 10.0 SDK'
+  inputs:
+    packageType: sdk
+    version: 10.x
+    includePreviewVersions: false
+    installationPath: $(Agent.ToolsDirectory)/dotnet
+
+- script: |
+    set -euo pipefail
+    test -f "$(corpus)/Tesserae/Tesserae.csproj" \
+      || { echo "benchmarks/tesserae is empty — the submodule was not checked out"; exit 1; }
+    echo "corpus commit: $(git -C "$(corpus)" rev-parse --short HEAD)"
+  displayName: 'check the benchmark corpus is present'
+
+# Publish the compiler exactly as it ships: RID-specific and ReadyToRun. Benchmarking a plain
+# `dotnet build` output would understate the shipped compiler by ~1 s per invocation.
+- script: |
+    set -euo pipefail
+    dotnet publish "$(compiler)" -c $(buildConfiguration) -r $(benchRid) --self-contained false \
+      -p:PublishReadyToRun=true -o "$(publishDir)"
+  displayName: 'publish the compiler (ReadyToRun, $(benchRid))'
+
+- task: DotNetCoreCLI@2
+  displayName: 'build bench'
+  inputs:
+    command: 'build'
+    projects: '$(bench)'
+    arguments: '-c $(buildConfiguration)'
+
+# --require-r2r: if the publish above silently lost ReadyToRun, the numbers would be measuring a
+# different compiler than the one that ships, so stop rather than record a misleading result.
+# Debug is the configuration a developer waits on, and since Debug emits a metadata-only assembly
+# while Release emits full IL, the two are structurally different builds — both are worth recording.
+- script: |
+    set -euo pipefail
+    BENCH="$(Build.SourcesDirectory)/Transpose/Transpose.Bench/bin/$(buildConfiguration)/net10.0/tps-bench.dll"
+    mkdir -p "$(reportDir)"
+
+    for cfg in Debug Release; do
+      echo "=============== $cfg ==============="
+      dotnet "$BENCH" \
+        --tps "$(publishDir)/tps" \
+        --tesserae "$(corpus)" \
+        --configuration "$cfg" \
+        --iterations 3 --warmups 1 \
+        --require-r2r \
+        --label "$cfg-$(Build.SourceVersion)" \
+        --baseline "$(Build.SourcesDirectory)/docs/perf/optimized.json" \
+        --json "$(reportDir)/benchmark-$cfg.json" \
+        --markdown "$(reportDir)/benchmark-$cfg.md"
+    done
+  displayName: 'benchmark the compiler (Debug + Release)'
+
+# Re-validate a runtime default rather than trusting it forever. TieredPGO is turned OFF in
+# Transpose.Compiler.csproj because instrumented tier-0 code costs a short-lived compiler far more than
+# the better tier-1 code ever repays (~25-30% measured). That trade depends on the runtime's PGO
+# implementation, so this step measures with PGO forced back ON: if that ever becomes the faster
+# column, the csproj should change. Informational — one scenario, so it stays cheap.
+- script: |
+    set -euo pipefail
+    BENCH="$(Build.SourcesDirectory)/Transpose/Transpose.Bench/bin/$(buildConfiguration)/net10.0/tps-bench.dll"
+    dotnet "$BENCH" \
+      --tps "$(publishDir)/tps" \
+      --scenario "tesserae=$(corpus)/Tesserae/Tesserae.csproj" \
+      --iterations 3 --warmups 1 --no-cpu-bench \
+      --env DOTNET_TieredPGO=1 \
+      --label "tieredpgo-on" \
+      --json "$(reportDir)/tieredpgo-on.json"
+  displayName: 're-check that TieredPGO=off is still the faster default'
+  continueOnError: true
+
+- task: PublishPipelineArtifact@1
+  displayName: 'publish the benchmark report'
+  inputs:
+    targetPath: '$(reportDir)'
+    artifact: 'benchmark'

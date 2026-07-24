@@ -1,10 +1,23 @@
 variables:
   compiler: '$(Build.SourcesDirectory)/Transpose/Transpose.Compiler/Transpose.Compiler.csproj'
+  bench: '$(Build.SourcesDirectory)/Transpose/Transpose.Bench/Transpose.Bench.csproj'
   buildConfiguration: 'Release'
   targetVersion: yy.M.$(build.buildId)
 
+# ReadyToRun-compiling the tool is worth ~1 s off *every* `tps` invocation (a one-file project goes
+# 2.2 s -> 1.1 s; a clean Tesserae build -11%), and the SDK runs tps once per project, so it multiplies
+# across a solution. R2R is native code, so it needs RID-specific tool packages: the csproj's
+# TransposePackRidSpecificTools property turns on RuntimeIdentifiers + PublishReadyToRun, and a single
+# `dotnet pack` then produces one Transpose.Compiler.<rid> package per RID plus the small outer
+# Transpose.Compiler package that maps RIDs to them. `dotnet tool install Transpose.Compiler` keeps
+# working unchanged and resolves the right one automatically.
+#
+# Pool is ubuntu-latest: that host was verified end-to-end to cross-compile R2R for all nine RIDs
+# (win/linux/osx x x64/arm64/x86/musl) from a single pack. Any host should manage it — crossgen2 targets
+# a RID rather than the host — but this is the configuration with evidence behind it. The verify step
+# below fails the build if R2R is ever silently lost, whatever the agent.
 pool:
-  vmImage: 'windows-latest'
+  vmImage: 'ubuntu-latest'
 
 trigger:
   branches:
@@ -14,6 +27,7 @@ trigger:
     include:
     - Transpose/Transpose.Compiler/*
     - Transpose/Transpose.Translator/*
+    - Transpose/Transpose.Bench/*
     - .devops/build-transpose-compiler.yml
 
 pr: none
@@ -36,6 +50,7 @@ steps:
   displayName: 'Create CalVer Version'
   inputs:
     targetType: 'inline'
+    pwsh: true
     script: |
       $dottedDate = (Get-Date).ToString("yy.M")
       $buildID = $($env:BUILD_BUILDID)
@@ -44,11 +59,15 @@ steps:
       Write-Host "##vso[task.setvariable variable=targetVersion;]$newTargetVersion"
       Write-Host "Updated targetVersion to '$newTargetVersion'"
 
+# Restore has to see the same property as the pack: TransposePackRidSpecificTools sets
+# RuntimeIdentifiers, and without it in the restore the per-RID assets are missing and every inner
+# build fails with NETSDK1047.
 - task: DotNetCoreCLI@2
-  displayName: 'restore nuget compiler'
+  displayName: 'restore nuget compiler (all RIDs)'
   inputs:
     command: 'restore'
     projects: '$(compiler)'
+    arguments: '-p:TransposePackRidSpecificTools=true'
 
 - task: DotNetCoreCLI@2
   displayName: 'build compiler'
@@ -57,14 +76,35 @@ steps:
     projects: '$(compiler)'
     arguments: '-c $(buildConfiguration) /p:Version=$(targetVersion)'
 
+# One pack produces the outer selector package plus one ReadyToRun package per RID (~15 MB each).
 - task: DotNetCoreCLI@2
-  displayName: 'pack nuget compiler'
+  displayName: 'pack nuget compiler (ReadyToRun, per RID)'
   inputs:
     command: 'pack'
     configuration: '$(buildConfiguration)'
     packagesToPack: '$(compiler)'
     versioningScheme: 'off'
-    buildProperties: 'Version="$(targetVersion)";AllowUnsafeBlocks="True";LangVersion="latest"'
+    buildProperties: 'Version="$(targetVersion)";AllowUnsafeBlocks="True";LangVersion="latest";TransposePackRidSpecificTools="true"'
+
+- task: DotNetCoreCLI@2
+  displayName: 'build bench (for the ReadyToRun gate)'
+  inputs:
+    command: 'build'
+    projects: '$(bench)'
+    arguments: '-c $(buildConfiguration)'
+
+# Gate: refuse to publish a tool that is not actually precompiled. R2R is easy to lose silently (a
+# restore missing the property, a RID-agnostic pack) and the only symptom would be that everyone's
+# builds quietly get ~1 s slower per project. `tps-bench --verify-r2r` opens each produced .nupkg and
+# checks the PE ManagedNativeHeader of the assemblies inside, so it validates exactly what is about to
+# be pushed rather than whatever is in the build tree. It also expects the outer selector package to
+# have no implementation, and fails if there is nothing to verify at all.
+# Exit 2 = a package is IL-only; exit 1 = nothing verified.
+- script: |
+    set -euo pipefail
+    dotnet "$(Build.SourcesDirectory)/Transpose/Transpose.Bench/bin/$(buildConfiguration)/net10.0/tps-bench.dll" \
+      --verify-r2r "$(Build.ArtifactStagingDirectory)"
+  displayName: 'verify the packed tool is ReadyToRun'
 
 - task: NuGetCommand@2
   displayName: 'push nuget'

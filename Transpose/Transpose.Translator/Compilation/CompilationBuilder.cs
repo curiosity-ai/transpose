@@ -31,11 +31,20 @@ public static class CompilationBuilder
         // Give each source text an explicit encoding: emitting the assembly with embedded debug
         // information (as the package build does) requires it — Roslyn otherwise reports CS8055
         // ("Cannot emit debug information for a source text without encoding").
-        var trees = sources
-            .Select(s => CSharpSyntaxTree.ParseText(
-                Microsoft.CodeAnalysis.Text.SourceText.From(s.text, System.Text.Encoding.UTF8),
-                parseOptions, path: s.path))
-            .ToList();
+        //
+        // Parsing is embarrassingly parallel (each file is independent) and a real project has
+        // hundreds of files, so fan it out. The result must keep the input order: the emitted JS is
+        // ordered by declaration, and reordering the trees would reorder the bundle for no reason.
+        var sourceList = sources as IList<(string path, string text)> ?? sources.ToList();
+        var treeArray = new SyntaxTree[sourceList.Count];
+        Parallel.For(0, sourceList.Count, i =>
+        {
+            var (path, text) = sourceList[i];
+            treeArray[i] = CSharpSyntaxTree.ParseText(
+                Microsoft.CodeAnalysis.Text.SourceText.From(text, System.Text.Encoding.UTF8),
+                parseOptions, path: path);
+        });
+        var trees = treeArray;
 
         // Nullable reference types only exist from C# 8; enabling the annotations context
         // under an earlier language version (e.g. a project pinned to 7.2) is a hard error.

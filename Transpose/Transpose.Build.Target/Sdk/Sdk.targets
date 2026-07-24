@@ -486,5 +486,33 @@
     <Message Importance="high" Text="... Transpose compilation finished!" />
   </Target>
 
+  <!--
+    A Debug build must never become a NuGet package.
+
+    In Debug, tps emits the project's .NET assembly as *metadata only* (real metadata, `throw null`
+    method bodies) because that is measurably faster and nothing consumes a Debug assembly except the
+    developer's own build. That assembly is fine to bind against and carries the compiled JavaScript
+    as embedded resources, but it must not be published: a consumer restoring it would get a package
+    whose IL is gone. Release keeps full IL and is the configuration to pack.
+
+    So: silently turn off GeneratePackageOnBuild for Debug (this file is imported after the project
+    body, so it wins over a project that sets it), and fail loudly if someone explicitly asks to pack
+    a Debug build. Set TransposeAllowDebugPackaging=true to override — only sensible together with
+    TransposeMetadataOnlyAssembly=false, which restores full IL in Debug.
+  -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug' And '$(TransposeAllowDebugPackaging)' != 'true'">
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+  </PropertyGroup>
+
+  <!-- Hooked before GenerateNuspec, not before Pack: GenerateNuspec is a *dependency* of Pack and is
+       what actually writes the .nupkg, so a BeforeTargets="Pack" hook fires too late — the package is
+       already on disk by then (observed). Pack is listed as well so the guard still fires for any
+       flow that reaches Pack without GenerateNuspec. -->
+  <Target Name="_TransposeBlockDebugPackaging" BeforeTargets="GenerateNuspec;Pack"
+          Condition="'$(Configuration)' == 'Debug' And '$(TransposeAllowDebugPackaging)' != 'true'">
+    <Error Code="TPS1001"
+           Text="Refusing to pack a Debug build of $(MSBuildProjectName). In Debug, Transpose emits a metadata-only assembly (no method bodies), which must not be published. Pack the Release configuration instead: dotnet pack -c Release. To override, set TransposeAllowDebugPackaging=true (and TransposeMetadataOnlyAssembly=false so the assembly carries real IL)." />
+  </Target>
+
   <Import Project="$(CustomAfterTranspose)" Condition="'$(CustomAfterTranspose)' != '' And Exists('$(CustomAfterTranspose)')" />
 </Project>

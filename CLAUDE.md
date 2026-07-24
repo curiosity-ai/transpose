@@ -41,6 +41,13 @@ Transpose/                     # The compiler toolchain
 │   ├── OutputBuilder.cs       #   site build (runtime + bundle + resources + index.html) + stale-output prune
 │   ├── ResourceEmbedder.cs    #   embeds JS + resources into the package DLL (Mono.Cecil)
 │   └── TransposeJson.cs       #   reads tps.json (output/fileName/html/resources/reflection)
+├── Transpose.Bench/           # Benchmark harness. AssemblyName + tool command: `tps-bench`
+│   ├── MachineInfo.cs         #   CPU model / cores / RAM / SIMD-ISA detection
+│   ├── CpuScore.cs            #   short deterministic CPU+memory benchmark -> normalisation score
+│   ├── Scenario.cs            #   clean-slate `tps` runs (wipes bin/obj of the project closure)
+│   ├── R2RCheck.cs            #   is this tps (or .nupkg) ReadyToRun-compiled?
+│   ├── Report.cs              #   console / Markdown / JSON output + --baseline comparison
+│   └── ab.sh                  #   interleaved A/B of two tps binaries on one project
 ├── Transpose.Build.Target/    # MSBuild SDK (package id Transpose.Build.Target) that invokes `tps`
 ├── Transpose.Template/        # `dotnet new` template (package id Transpose.Template)
 └── Transpose.Translator.Tests/# MSTest suite; transpiles snippets and diffs vs native .NET via Playwright
@@ -60,6 +67,10 @@ Packages/                      # Additional binding libraries (all [assembly: Ex
 ├── Transpose.P2/              #   package Transpose.P2
 ├── Transpose.HttpClient/      #   package Transpose.HttpClient
 └── Transpose.Placeholders/    #   placeholder attributes (package Transpose.Placeholders)
+
+benchmarks/tesserae/           # git submodule: the benchmark corpus (see Performance below)
+docs/perf/                     # recorded tps-bench reports (baseline + current)
+.devops/                       # Azure DevOps pipelines (one per package, plus the benchmark)
 
 docs/, logo/, lib/, External-less # docs, transpose.png/svg, misc
 ```
@@ -147,11 +158,52 @@ items, transpiles, and writes the site (runtime + bundle + resources + `index.ht
 DLL (`--emit-package`). **There is no compilation server and no cache** — the new compiler is a
 plain CLI, by design.
 
+Because there is no MSBuild evaluation, `ProjectXml` does the one bit of evaluation that changes
+which files compile: it follows `<Import Project="…"/>` transitively and flattens the result, so a
+**shared project**'s `.projitems` (where its `<Compile>` items live) is picked up. Each item is
+expanded against the directory of the file that *declared* it for `$(MSBuildThisFileDirectory)`, and
+against the project directory for a plain relative path — MSBuild's two rules. Any other `$(…)`
+property is not guessed at: such an import or item is skipped, which is why SDK-internal imports
+(`$(MSBuildToolsPath)…`) never get followed. Conditions are not evaluated anywhere in the resolver.
+
 ### `tps` CLI options (selected)
 
 `--out/-o`, `--site-dir`, `--configuration/-c`, `--emit-package`, `--separate-assemblies`,
 `--with-runtime`, `--reference/-r <dll>` (extra assemblies not in the NuGet cache),
-`--define/-D <SYM>`, `--assembly-version <v>`, `--project/-p`, `--max-errors`, `--quiet/-q`.
+`--define/-D <SYM>`, `--assembly-version <v>`, `--project/-p`, `--quiet/-q`,
+`--timing` (per-phase time + allocations), `--timing-json <file>`,
+`--metadata-only-assembly` / `--no-metadata-only-assembly`,
+`--max-errors <n>` (a cap; by default **every** error is reported, ordered by file and line).
+
+## Performance
+
+A clean build's cost, and how to measure it, is documented in **`TODO.optimization.md`** (the running
+log of what has been tried, including what did not work) and the **`transpose-performance`** skill.
+The short version:
+
+- `tps --timing` prints a per-phase breakdown with the bytes allocated in each phase, plus GC and
+  peak-working-set totals. `--timing-json` writes the same machine-readably.
+- `tps-bench` (`Transpose/Transpose.Bench`) reports the machine (CPU/cores/RAM/ISAs), scores it with a
+  short deterministic CPU+memory benchmark, then times clean-slate builds and normalises every timing
+  by that score so results from different machines are comparable. `ab.sh` interleaves two compilers.
+- The compiler's runtime configuration is load-bearing: `<TieredPGO>false</TieredPGO>` and Server GC
+  in `Transpose.Compiler.csproj` (plus `runtimeconfig.template.json`) are together worth ~40% of a
+  build. Do not "tidy them away".
+- Any change here must keep the emitted site **byte-identical** — output is reproducible, so
+  `diff -r` against a baseline compiler is the gate. The 499-test suite is the other gate.
+- The benchmark corpus is the **tesserae** submodule at `benchmarks/tesserae`
+  (`git submodule update --init benchmarks/tesserae`). Recorded reports live in `docs/perf/`.
+- **Debug and Release are structurally different builds.** Debug emits a *metadata-only* assembly
+  (full metadata, `throw null` bodies — ~18% faster, and sound because a Transpose assembly binds
+  against the stand-in BCL and can never execute); Release emits full IL. Consequently the SDK
+  **refuses to package a Debug build**: `GeneratePackageOnBuild` is forced off and `dotnet pack -c Debug`
+  fails with TPS1001. Pack Release.
+- **The published tool is ReadyToRun.** `TransposePackRidSpecificTools=true` makes one `dotnet pack`
+  produce a ReadyToRun `Transpose.Compiler.<rid>` package per RID plus the outer selector package;
+  `dotnet tool install Transpose.Compiler` resolves the right one. That is worth ~1 s off *every*
+  invocation, and `.devops/build-transpose-compiler.yml` gates on `tps-bench --verify-r2r` so it cannot
+  be lost silently. Benchmark an R2R publish, not a `dotnet build` output, or you understate the
+  shipped compiler.
 
 ## Known remaining work (compilation-related)
 
@@ -182,6 +234,8 @@ plain CLI, by design.
   `HtmlGenerator`. **Source maps** for the emitted bundle are still remaining.
 - **Reference resolution beyond the NuGet cache** — `<Reference HintPath>` and `tps.json`
   `references`/`referencesPath` (partially covered by `--reference`).
+- **MSBuild evaluation** stays deliberately shallow: `<Import>` is followed (see above) but
+  conditions, arbitrary properties, `Directory.Build.props` and item metadata are not evaluated.
 - **Wider `tps.json` surface** (outputBy, module formats, locales, before/after build, etc.).
 
 Caching and the compilation server are intentionally **out of scope**.
@@ -202,6 +256,10 @@ Claude Code; read the `SKILL.md` directly in other contexts):
 - **`transpose-runtime-and-bcl`** — rebuild the runtime (`--build-runtime`), add/modify BCL APIs
   (extern+`[Template]`+`Resources/*.js` vs. real C# in a non-external class + a `tps.json` bundle
   entry), and add/run regression tests in `EmitRegressionTests.cs`.
+- **`transpose-performance`** — measure and improve *build* performance: the `tps-bench` harness
+  (CPU-score-normalised, clean-slate scenarios), `--timing`, dotnet-trace allocation/CPU profiles, and
+  the correctness gate that keeps emitted output byte-identical. Captures the measurement traps on this
+  hardware (the host drifts 20–40%, so never trust a single run) and the cost structure of a build.
 
 ## Conventions when editing
 

@@ -13,6 +13,25 @@
     <InvariantTimezone>true</InvariantTimezone>
     <PublishReadyToRun>true</PublishReadyToRun>
 
+    <!-- Runtime tuning for a short-lived, allocation-heavy, highly parallel batch process. Both of
+         these were measured with tps-bench on a real project (Tesserae, 263 files / ~69k LOC); see
+         TODO.optimization.md for the numbers.
+
+         Server GC: a build allocates ~900 MB of short-lived garbage across several Parallel.ForEach
+         phases. Workstation GC serialises those collections on one heap and stalls every worker;
+         per-core heaps cut ~15% off the wall clock. .NET's DATAS keeps the heap count adaptive, so a
+         one-file project does not pay a many-heap memory penalty for this.
+
+         TieredPGO off: this is the single largest runtime-level win (~25-30%). PGO instruments
+         tier-0 code to profile it, and Roslyn's binder is exactly the deeply polymorphic code that
+         instrumentation costs the most on — but a compile finishes in seconds, so the better tier-1
+         code the profile would eventually buy never gets to pay that cost back. Measured neutral on
+         a trivial project and a large win on a real one. Tiered compilation itself stays ON: turning
+         it off entirely is ~25% faster on a big project but more than 2× slower on a small one. -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+    <TieredPGO>false</TieredPGO>
+
 
     <!-- Packable as a dotnet global/local tool: `tps` is the compiler command the
          Transpose.Build.Target SDK invokes. -->
@@ -25,6 +44,40 @@
     <Description>Transpose — Roslyn-based C# to JavaScript compiler.</Description>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/curiosity-ai/transpose</PackageProjectUrl>
+  </PropertyGroup>
+
+  <!--
+    ReadyToRun tool packaging (CI only; see .devops/build-transpose-compiler.yml).
+
+    A `tps` run has a ~2.2 s floor on a one-file project, essentially all of it JIT-compiling Roslyn,
+    and the SDK invokes tps once per project. Publishing the tool ReadyToRun precompiles that to
+    native code: measured 2.2 s -> 1.1 s on a one-file project and ~1 s off every build (-11% on
+    Tesserae). See TODO.optimization.md.
+
+    R2R is native code, so it requires RID-specific packages. Setting ToolPackageRuntimeIdentifiers
+    makes `dotnet pack` produce one `Transpose.Compiler.<rid>` package per RID plus the outer
+    `Transpose.Compiler` package that selects between them, and `dotnet tool install
+    Transpose.Compiler` then resolves the right one automatically — no change for users.
+
+    The catch, and the reason the RID list below is broad: with RID-specific packages the outer
+    package contains NO implementation, so a platform that is not in this list cannot run the tool at
+    all. Adding a RID costs one more ~15 MB package per release; omitting one that somebody uses
+    breaks them. Hence: every platform .NET itself ships a runtime pack for that anyone plausibly
+    builds on, musl (Alpine containers) included.
+
+    Gated behind a property so the ordinary `dotnet build` / `dotnet pack` dev loop stays a plain,
+    fast, RID-agnostic build. Without it, `dotnet pack` produces exactly the portable package it
+    always did.
+  -->
+  <PropertyGroup Condition="'$(TransposePackRidSpecificTools)' == 'true'">
+    <!-- RuntimeIdentifiers, not ToolPackageRuntimeIdentifiers: the SDK derives the tool-package RID
+         list from either, but only RuntimeIdentifiers also makes *restore* fetch the per-RID assets.
+         With ToolPackageRuntimeIdentifiers alone every inner build fails with NETSDK1047. -->
+    <RuntimeIdentifiers>win-x64;win-arm64;win-x86;linux-x64;linux-arm64;linux-musl-x64;linux-musl-arm64;osx-x64;osx-arm64</RuntimeIdentifiers>
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <!-- Composite R2R would be faster still but bloats each package considerably and cannot be
+         cross-compiled as reliably; plain R2R already captures the JIT win. -->
+    <PublishReadyToRunComposite>false</PublishReadyToRunComposite>
   </PropertyGroup>
 
   <ItemGroup>

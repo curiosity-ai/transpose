@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/Transpose/">
+    <Project Path="Transpose/Transpose.Bench/Transpose.Bench.csproj" />
     <Project Path="Transpose/Transpose.Build.Target/Transpose.Build.Target.csproj" />
     <Project Path="Transpose/Transpose.Compiler/Transpose.Compiler.csproj" />
     <Project Path="Transpose/Transpose.Template/Transpose.Template.csproj" />

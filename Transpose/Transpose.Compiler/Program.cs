@@ -26,13 +26,17 @@ public static class Program
         var configuration = "Debug";
         var withRuntime = false;
         var quiet = false;
-        var maxErrors = 40;
+        // 0 = print every error. A cap loses information the user needs, so it is opt-in.
+        var maxErrors = 0;
         var emitPackage = false;
         var separateAssemblies = false;
         var buildRuntime = false;
         var extraReferences = new List<string>();
         var extraDefines = new List<string>();
         string? assemblyVersion = null;
+        // Overrides the project's <TransposeMetadataOnlyAssembly>, which in turn overrides the
+        // per-configuration default. Null = nothing on the command line expressed a preference.
+        bool? metadataOnlyAssembly = null;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -46,10 +50,13 @@ public static class Program
                 case "--separate-assemblies": separateAssemblies = true; break;
                 case "--with-runtime": withRuntime = true; break;
                 case "--quiet" or "-q": quiet = true; break;
-                case "--max-errors": maxErrors = int.Parse(args[++i]); break;
+                case "--max-errors": maxErrors = Math.Max(0, int.Parse(args[++i])); break;
                 case "--reference" or "-r": extraReferences.Add(args[++i]); break;
                 case "--define" or "-D": extraDefines.Add(args[++i]); break;
                 case "--timing": PhaseTimings.Enabled = true; break;
+                case "--timing-json": _timingJsonPath = args[++i]; PhaseTimings.Enabled = true; break;
+                case "--metadata-only-assembly": metadataOnlyAssembly = true; break;
+                case "--no-metadata-only-assembly": metadataOnlyAssembly = false; break;
                 case "--assembly-version": assemblyVersion = args[++i]; break;
                 case "--project" or "-p": projectArg = args[++i]; break;
                 default:
@@ -104,7 +111,8 @@ public static class Program
         ResolvedProject project;
         try
         {
-            project = ProjectResolver.Resolve(csproj, configuration, separateAssemblies);
+            project = PhaseTimings.Measure("resolve project (csproj + globs + references)",
+                () => ProjectResolver.Resolve(csproj, configuration, separateAssemblies));
         }
         catch (Exception ex)
         {
@@ -132,6 +140,13 @@ public static class Program
         Console.WriteLine($"  config:     {configuration}");
         Console.WriteLine($"  lang:       {project.LanguageVersion}");
 
+        // Command line beats the csproj property, which beats the per-configuration default. Printed,
+        // because "why is my DLL half the size in Debug?" should be answerable from the build log.
+        var metadataOnly = metadataOnlyAssembly
+                           ?? project.MetadataOnlyAssembly
+                           ?? ResolvedProject.MetadataOnlyAssemblyDefault(configuration);
+        Console.WriteLine($"  assembly:   {(metadataOnly ? "metadata only (throw-null bodies, not packable)" : "full IL")}");
+
         // The project's tps.json drives runtime-package detection and reflection settings. A
         // tps.<Configuration>.json overlay (e.g. tps.Release.json) is merged on top when present.
         var tpscfg = TransposeJson.TryLoad(project.ProjectDir, configuration);
@@ -149,7 +164,7 @@ public static class Program
             string.Equals(Path.GetFileNameWithoutExtension(p), "Transpose", StringComparison.OrdinalIgnoreCase));
         if (buildRuntime
             || (string.Equals(tpscfg?.OutputBy, "ClassPath", StringComparison.OrdinalIgnoreCase) && !referencesTransposeBcl))
-            return BuildRuntime(project, configuration, sw, outPath);
+            return BuildRuntime(project, configuration, sw, outPath, maxErrors);
 
         // Reflection settings come from the project's tps.json (target inline vs a .meta.js file).
         var (reflectionEnabled, metadataTarget) = ReflectionSettings(tpscfg);
@@ -158,7 +173,7 @@ public static class Program
         // separate-assembly / package mode this project binds against its dependencies' built DLLs
         // and extracts their embedded JS, so each must be compiled — in dependency order — before
         // this one. Up-to-date packages are skipped.
-        if (separateAssemblies && !EnsureReferencedProjectsBuilt(csproj, configuration, maxErrors))
+        if (separateAssemblies && !EnsureReferencedProjectsBuilt(csproj, configuration, maxErrors, metadataOnlyAssembly))
         {
             Console.Error.WriteLine("\nFAILED building referenced projects.");
             return 1;
@@ -182,7 +197,9 @@ public static class Program
                 reflectionEnabled,
                 metadataTarget,
                 emitAssembly: emitPackage || isSiteBuild,
-                assemblyVersion: assemblyVersion);
+                assemblyVersion: assemblyVersion,
+                emitDebugInformation: project.EmitDebugInformation,
+                metadataOnlyAssembly: metadataOnly);
         }
         catch (Exception ex)
         {
@@ -190,8 +207,9 @@ public static class Program
             return 2;
         }
 
-        sw.Stop();
-
+        // The stopwatch keeps running: writing the package (minifying the embedded JS, the Cecil
+        // resource embed) and assembling the site are a real part of a build's cost, and the
+        // reported total should include them rather than stopping at the translator's last phase.
         if (!result.Success)
         {
             ReportDiagnostics(result.Diagnostics, maxErrors);
@@ -258,7 +276,7 @@ public static class Program
     /// those with the hand-written Resources/*.js primitives into tps.js (and the reflection block
     /// into tps.meta.js) per the project's tps.json, and embeds both into Transpose.dll.
     /// </summary>
-    private static int BuildRuntime(ResolvedProject project, string configuration, Stopwatch sw, string? outPath)
+    private static int BuildRuntime(ResolvedProject project, string configuration, Stopwatch sw, string? outPath, int maxErrors)
     {
         var cfg = TransposeJson.TryLoad(project.ProjectDir, configuration);
         var reflectionEnabled = !(cfg?.ReflectionDisabled ?? false);
@@ -274,13 +292,15 @@ public static class Program
 
         if (!result.Success)
         {
-            ReportDiagnostics(result.Diagnostics, 40);
+            ReportDiagnostics(result.Diagnostics, maxErrors);
             Console.Error.WriteLine($"\nFAILED building runtime in {sw.ElapsedMilliseconds} ms.");
             return 1;
         }
 
         // Write the ClassPath per-class files + reflection metadata under Resources/.generated/.
         var genRoot = Path.Combine(project.ProjectDir, "Resources", ".generated");
+        PhaseTimings.Measure("write ClassPath files", () =>
+        {
         if (Directory.Exists(genRoot)) Directory.Delete(genRoot, recursive: true);
         Directory.CreateDirectory(genRoot);
         // Group types that share a ClassPath file (same simple name across generic arities, e.g.
@@ -294,6 +314,7 @@ public static class Program
         }
         if (result.ClassPath.MetaBlock is not null)
             File.WriteAllText(Path.Combine(genRoot, project.AssemblyName + ".meta.js"), result.ClassPath.MetaBlock);
+        });
         Console.WriteLine($"  emitted:    {result.ClassPath.Files.Count} ClassPath file(s) into Resources/.generated");
         if (result.ClassPath.Skipped.Count > 0)
         {
@@ -305,8 +326,11 @@ public static class Program
         // pre-minified variant of each next to it. Embedding the .min.js in the runtime package
         // means a referencing build never re-minifies the (large) runtime — it just picks the
         // variant its configuration wants, exactly as it does for the formatted/minified pair.
-        var bundles = RuntimeAssembler.Assemble(project.ProjectDir);
-        var minBundles = new List<(string name, byte[] bytes)>();
+        var bundles = PhaseTimings.Measure("assemble runtime bundles (tps.js)",
+            () => RuntimeAssembler.Assemble(project.ProjectDir));
+        var minBundles = PhaseTimings.Measure("minify runtime bundles", () =>
+        {
+        var mins = new List<(string name, byte[] bytes)>();
         foreach (var (name, bytes) in bundles)
         {
             var minName = name.EndsWith(".js", StringComparison.OrdinalIgnoreCase) && !name.EndsWith(".min.js", StringComparison.OrdinalIgnoreCase)
@@ -314,8 +338,10 @@ public static class Program
                 : null;
             if (minName is null) continue;
             var minText = JsMinifier.Minify(System.Text.Encoding.UTF8.GetString(bytes), name, project.MinifyLocalVariables);
-            minBundles.Add((minName, System.Text.Encoding.UTF8.GetBytes(minText)));
+            mins.Add((minName, System.Text.Encoding.UTF8.GetBytes(minText)));
         }
+        return mins;
+        });
         bundles = bundles.Concat(minBundles).ToList();
         // Write the assembly to bin/<config>/<tfm>/, matching the SDK's output path so `dotnet pack`
         // finds it (the Transpose.Build.Target SDK forces netstandard2.0, so that is the effective tfm).
@@ -345,24 +371,78 @@ public static class Program
     }
 
     /// <summary>Prints the per-phase timing breakdown gathered when <c>--timing</c> (or
-    /// <c>TRANSPOSE_TIMING=1</c>) is set. Shows each phase's total time and its share of the sum,
-    /// so a build's hotspots (binding, JS emit, minification) are visible at a glance.</summary>
+    /// <c>TRANSPOSE_TIMING=1</c>) is set. Shows each phase's total time, its share of the sum, and
+    /// the bytes allocated while it ran, so a build's hotspots (binding, JS emit, minification) and
+    /// its garbage producers are visible at a glance. With <c>--timing-json</c> the same numbers —
+    /// plus process-wide GC/memory totals — are written as JSON for a benchmark harness to consume.</summary>
     private static void PrintTimings(long wallClockMs)
     {
         if (!PhaseTimings.Enabled) return;
         var phases = PhaseTimings.Snapshot();
         if (phases.Count == 0) return;
-        long sum = 0;
-        foreach (var p in phases) sum += p.ms;
+        // Sub-phases are named with a leading indent ("  ├ …") and are already counted inside their
+        // parent, so only top-level phases contribute to the total.
+        long sum = 0, sumBytes = 0;
+        foreach (var p in phases)
+        {
+            if (p.phase.StartsWith(" ", StringComparison.Ordinal)) continue;
+            sum += p.ms; sumBytes += p.bytes;
+        }
         var denom = sum == 0 ? 1 : sum;
         Console.WriteLine("\n  timing breakdown:");
-        foreach (var (phase, ms, count) in phases)
+        foreach (var (phase, ms, bytes, count) in phases)
         {
             var share = ms * 100.0 / denom;
             var times = count > 1 ? $" ×{count}" : "";
-            Console.WriteLine($"    {ms,7:N0} ms  {share,5:F1}%  {phase}{times}");
+            Console.WriteLine($"    {ms,7:N0} ms  {share,5:F1}%  {Mb(bytes),9} alloc  {phase}{times}");
         }
-        Console.WriteLine($"    {sum,7:N0} ms          measured phases (wall clock {wallClockMs:N0} ms)");
+        Console.WriteLine($"    {sum,7:N0} ms          {Mb(sumBytes),9} alloc  measured phases (wall clock {wallClockMs:N0} ms)");
+        Console.WriteLine($"    total allocated {Mb(GC.GetTotalAllocatedBytes(precise: true))}, "
+            + $"peak working set {Mb(Process.GetCurrentProcess().PeakWorkingSet64)}, "
+            + $"GC {GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)} (gen0/1/2)");
+
+        if (_timingJsonPath is not null) WriteTimingJson(_timingJsonPath, wallClockMs, phases);
+    }
+
+    private static string Mb(long bytes) => $"{bytes / (1024.0 * 1024.0):N1} MB";
+
+    /// <summary>Path passed to <c>--timing-json</c>: where the machine-readable build-stats dump goes.
+    /// The benchmark harness (<c>tps-bench</c>) reads this instead of scraping console output.</summary>
+    private static string? _timingJsonPath;
+
+    private static void WriteTimingJson(string path, long wallClockMs,
+        IReadOnlyList<(string phase, long ms, long bytes, int count)> phases)
+    {
+        var proc = Process.GetCurrentProcess();
+        var sb = new System.Text.StringBuilder();
+        sb.Append("{\n");
+        sb.Append($"  \"wallClockMs\": {wallClockMs},\n");
+        sb.Append($"  \"totalAllocatedBytes\": {GC.GetTotalAllocatedBytes(precise: true)},\n");
+        sb.Append($"  \"peakWorkingSetBytes\": {proc.PeakWorkingSet64},\n");
+        sb.Append($"  \"gen0\": {GC.CollectionCount(0)}, \"gen1\": {GC.CollectionCount(1)}, \"gen2\": {GC.CollectionCount(2)},\n");
+        sb.Append($"  \"processorTimeMs\": {(long)proc.TotalProcessorTime.TotalMilliseconds},\n");
+        sb.Append("  \"phases\": [\n");
+        for (var i = 0; i < phases.Count; i++)
+        {
+            var (phase, ms, bytes, count) = phases[i];
+            sb.Append($"    {{ \"name\": {JsonString(phase)}, \"ms\": {ms}, \"bytes\": {bytes}, \"count\": {count} }}");
+            sb.Append(i == phases.Count - 1 ? "\n" : ",\n");
+        }
+        sb.Append("  ]\n}\n");
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+            File.WriteAllText(path, sb.ToString());
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"  warning: could not write --timing-json: {ex.Message}"); }
+    }
+
+    private static string JsonString(string s)
+    {
+        var sb = new System.Text.StringBuilder("\"");
+        foreach (var c in s)
+            sb.Append(c switch { '"' => "\\\"", '\\' => "\\\\", '\n' => "\\n", '\r' => "\\r", '\t' => "\\t", _ => c.ToString() });
+        return sb.Append('"').ToString();
     }
 
     private static (bool reflectionEnabled, MetadataTarget target) ReflectionSettings(TransposeJson? tpscfg)
@@ -384,7 +464,7 @@ public static class Program
     /// which builds project references (each producing a DLL with its JS embedded) before the
     /// project that consumes them.
     /// </summary>
-    private static bool EnsureReferencedProjectsBuilt(string rootCsproj, string configuration, int maxErrors)
+    private static bool EnsureReferencedProjectsBuilt(string rootCsproj, string configuration, int maxErrors, bool? metadataOnlyAssembly)
     {
         foreach (var dep in ProjectResolver.ReferencedProjectsInBuildOrder(rootCsproj))
         {
@@ -395,7 +475,7 @@ public static class Program
                 continue;
             }
             Console.WriteLine($"  building dependency: {name}");
-            if (!BuildPackage(dep, configuration, maxErrors))
+            if (!BuildPackage(dep, configuration, maxErrors, metadataOnlyAssembly))
             {
                 Console.Error.WriteLine($"  dependency build FAILED: {name}");
                 return false;
@@ -407,7 +487,7 @@ public static class Program
     /// <summary>Compiles one project into its Transpose package DLL (the .NET assembly with the compiled JS
     /// and tps.json resources embedded). Its own project references are consumed as their built DLLs,
     /// so they must already have been built (this is called in dependency order).</summary>
-    private static bool BuildPackage(string csproj, string configuration, int maxErrors)
+    private static bool BuildPackage(string csproj, string configuration, int maxErrors, bool? metadataOnlyAssembly)
     {
         ResolvedProject project;
         try { project = ProjectResolver.Resolve(csproj, configuration, separateAssemblies: true); }
@@ -423,7 +503,13 @@ public static class Program
                 project.Sources, project.AssemblyName, project.ReferencePaths,
                 project.DefineConstants, project.LanguageVersion,
                 reflectionEnabled, metadataTarget, emitAssembly: true,
-                assemblyVersion: ProjectResolver.ReadAssemblyVersion(csproj));
+                assemblyVersion: ProjectResolver.ReadAssemblyVersion(csproj),
+                emitDebugInformation: project.EmitDebugInformation,
+                // Each dependency reads its own csproj property, but a command-line override applies
+                // to the whole invocation.
+                metadataOnlyAssembly: metadataOnlyAssembly
+                                      ?? project.MetadataOnlyAssembly
+                                      ?? ResolvedProject.MetadataOnlyAssemblyDefault(configuration));
         }
         catch (Exception ex) { Console.Error.WriteLine($"    translator threw: {ex.Message}"); return false; }
 
@@ -446,17 +532,18 @@ public static class Program
         var mainJsName = config?.ExplicitFileName ?? project.AssemblyName + ".js";
         var dllPath = ProjectResolver.OutputDll(project.CsprojPath, configuration)!;
         Directory.CreateDirectory(Path.GetDirectoryName(dllPath)!);
-        File.WriteAllBytes(dllPath, result.AssemblyBytes!);
 
-        var items = config is not null
+        var items = PhaseTimings.Measure("collect package resources (minify + read files)", () => config is not null
             ? OutputBuilder.CollectEmbeddableItems(project.ProjectDir, config, mainJsName, result.Javascript!, result.MetadataJavascript, project.MinifyLocalVariables)
-            : new List<EmbeddedItem> { new(mainJsName, System.Text.Encoding.UTF8.GetBytes(result.Javascript!), null) };
+            : new List<EmbeddedItem> { new(mainJsName, System.Text.Encoding.UTF8.GetBytes(result.Javascript!), null) });
         // Cecil re-serializes the assembly's metadata when embedding the resources; encoding a
         // parameter's default value whose type lives in a referenced assembly (e.g. a Tesserae enum)
         // makes it resolve that assembly. Seed the resolver with the reference directories so those
         // types are found (the referenced DLLs live in the NuGet cache / sibling bin folders, not
         // next to this DLL).
-        ResourceEmbedder.Embed(dllPath, items, project.ReferencePaths);
+        // Writes the DLL — the emitted assembly plus the embedded resources — in one pass.
+        PhaseTimings.Measure("embed resources into DLL (Cecil)",
+            () => ResourceEmbedder.Embed(dllPath, result.AssemblyBytes!, items, project.ReferencePaths));
         return (dllPath, items);
     }
 
@@ -489,9 +576,31 @@ public static class Program
         return null;
     }
 
+    /// <summary>
+    /// Prints the build's diagnostics. **Every** error is printed by default: a truncated list makes a
+    /// broken build take several compile cycles to fix, and the caller has no way to know whether the
+    /// errors it cannot see are the same problem or a different one. <paramref name="maxErrors"/> caps
+    /// the list only when a caller explicitly asked for a cap (<c>--max-errors</c>).
+    ///
+    /// Ordering comes from <see cref="OrderErrorsForReport"/>.
+    /// </summary>
+    /// <summary>
+    /// The errors to report, in the order to report them: by file, then line, then column — the order
+    /// you would fix them in — rather than by the phase that produced them (the unsupported-feature
+    /// scan runs before Roslyn's diagnostics, and its parallel per-file walk has no inherent order).
+    /// Nothing is filtered out here; truncation, if any, is the caller's decision.
+    /// </summary>
+    internal static List<Diagnostic> OrderErrorsForReport(IReadOnlyList<Diagnostic> diagnostics)
+        => diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error)
+            .OrderBy(d => d.Location.SourceTree?.FilePath ?? "", StringComparer.OrdinalIgnoreCase)
+            .ThenBy(d => d.Location.GetLineSpan().StartLinePosition.Line)
+            .ThenBy(d => d.Location.GetLineSpan().StartLinePosition.Character)
+            .ThenBy(d => d.Id, StringComparer.Ordinal)
+            .ToList();
+
     private static void ReportDiagnostics(IReadOnlyList<Diagnostic> diagnostics, int maxErrors)
     {
-        var errors = diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).ToList();
+        var errors = OrderErrorsForReport(diagnostics);
         var warnings = diagnostics.Where(d => d.Severity == DiagnosticSeverity.Warning).ToList();
 
         if (errors.Count > 0)
@@ -500,10 +609,11 @@ public static class Program
             var byId = errors.GroupBy(d => d.Id).OrderByDescending(g => g.Count());
             Console.Error.WriteLine("  by id: " + string.Join(", ", byId.Select(g => $"{g.Key}×{g.Count()}")));
             Console.Error.WriteLine();
-            foreach (var d in errors.Take(maxErrors))
+            var shown = maxErrors > 0 ? errors.Take(maxErrors) : errors;
+            foreach (var d in shown)
                 Console.Error.WriteLine("  " + Format(d));
-            if (errors.Count > maxErrors)
-                Console.Error.WriteLine($"  … and {errors.Count - maxErrors} more.");
+            if (maxErrors > 0 && errors.Count > maxErrors)
+                Console.Error.WriteLine($"  … and {errors.Count - maxErrors} more (raise or drop --max-errors to see them).");
         }
 
         if (warnings.Count > 0)
@@ -537,8 +647,21 @@ public static class Program
                                     embedded JS) instead of recompiling their source into the bundle.
               --site-dir <dir>      Output directory for the assembled site
               --with-runtime        Prepend the tps.js runtime + shim to the output
-              --max-errors <n>      Max individual errors to print (default 40)
-              --timing              Print a per-phase timing breakdown of the build
+              --max-errors <n>      Cap how many individual errors are printed. By default there is
+                                    no cap — every error is reported, ordered by file and line. Pass 0
+                                    to restore that explicitly.
+              --metadata-only-assembly, --no-metadata-only-assembly
+                                    Force the .NET assembly to be metadata only (full metadata
+                                    including private members, `throw null` bodies) or real IL. A
+                                    Transpose assembly is only ever bound against — it cannot execute,
+                                    since it binds to the stand-in BCL — so metadata-only skips a
+                                    second full bind of every method body (~18% off a large build).
+                                    Default: metadata only for Debug, real IL for Release. A project
+                                    can pin it with <TransposeMetadataOnlyAssembly>. The Transpose SDK
+                                    refuses to pack a Debug build, so a metadata-only assembly cannot
+                                    reach a NuGet feed.
+              --timing              Print a per-phase timing/allocation breakdown of the build
+              --timing-json <file>  Also write that breakdown (plus GC/memory totals) as JSON
               -q, --quiet           Suppress warning output
               -h, --help            Show this help
             """);
