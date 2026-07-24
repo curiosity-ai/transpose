@@ -276,8 +276,10 @@ Things that cost time to work out, recorded so they do not have to be again:
   x64/arm64, plus win-x86 and musl for Alpine containers) — an extra RID costs one ~15 MB package per
   release, a missing one breaks somebody.
 - Cross-OS and cross-architecture R2R works: a single pack on Linux produced verified-R2R payloads for
-  win-x64, win-arm64, osx-arm64 and the rest. The compiler pipeline runs on `ubuntu-latest` because
-  that is the host this was verified on.
+  win-x64, win-arm64, osx-arm64 and the rest. The compiler pipeline therefore runs on a Linux agent —
+  pinned to `ubuntu-22.04`, not `ubuntu-latest`, because `NuGetCommand@2` runs on Mono and the hosted
+  images dropped Mono in 24.04 (the push fails with "Ubuntu 24.04 or later without mono installed").
+  If that image is retired, swap the push for `dotnet nuget push` rather than moving back to latest.
 - `tps-bench --verify-r2r <dir>` opens each produced `.nupkg` and checks the PE ManagedNativeHeader of
   the assemblies inside, so the pipeline gates on what it is about to push rather than on the build
   tree (which contains both the pre-publish IL copy and the R2R publish copy of every RID).
