@@ -2059,5 +2059,40 @@ public class Program
             Assert.IsFalse(js.Contains("b.Count") || js.Contains("b.Total"),
                 "the verbatim C# property name must not leak when an accessor [Name] renames the slot\n" + js);
         }
+
+        // ---- a C# local must not be emitted as `let` when a Script.Write redeclares it as `var` ----
+        //
+        // Raw JS in a Script.Write(...) often redeclares a local the method also computes into — e.g.
+        // Tesserae's Color.FromString has C# `int r, g, b` and a Script.Write("… var r … var g … var b
+        // …"). Legacy h5 emitted the locals as `var`, so the two merged into one function-scoped var;
+        // the var->let block-scoping change made the local a `let`, and a `let` beside a same-named
+        // `var` in one scope is a hard "Identifier 'r' has already been declared" SyntaxError that broke
+        // the whole tss.js bundle. A local whose name a Script.Write declares (outside a loop) must fall
+        // back to `var`.
+
+        [TestMethod]
+        public async Task ScriptWriteVarDoesNotCollideWithLetLocal()
+        {
+            var js = await RunTest(@"
+using System;
+using Transpose;
+public class Program
+{
+    static int FromString(string s)
+    {
+        int r = 0; int g = 0; int b = 0;
+        if (s.Length == 0) { return r + g + b; }
+        Script.Write(""var bigint = parseInt(s, 16); var r = (bigint >> 16) & 255; var g = (bigint >> 8) & 255; var b = bigint & 255;"");
+        return r + g + b;
+    }
+    public static void Main()
+    {
+        Console.WriteLine(FromString(""ffffff""));   // 765 (no let/var redeclaration SyntaxError)
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>", skipRoslyn: true);
+            Assert.IsTrue(js.Contains("765"),
+                "FromString must run to 765 — the JS must not fail with a let/var redeclaration\n" + js);
+        }
     }
 }

@@ -149,13 +149,12 @@ public sealed partial class Emitter
         // out-var coexist with a same-named regular local elsewhere in the function (both flattened
         // to function scope) — a `let` predeclaration would collide with such a `var` local
         // ("Identifier 'x' has already been declared").
-        var kw = _gotoContexts.Count > 0 ? "var" : "let";
         var blockScope = _predeclaredInScope.Count > 0 ? _predeclaredInScope.Peek() : null;
         foreach (var name in names.Distinct())
         {
             var jsName = NameMangler.JsIdentifier(name);
             if (blockScope is not null && !blockScope.Add(jsName)) continue; // already declared in this block
-            _w.WriteLine($"{kw} {jsName};");
+            _w.WriteLine($"{LocalDeclKeyword(scope, jsName)} {jsName};");
         }
     }
 
@@ -317,6 +316,67 @@ public sealed partial class Emitter
         Unsupported(gotoStmt, "goto");
     }
 
+    // Per-function cache of identifiers a Script.Write(...) raw-JS template declares with var/let/const
+    // in the same JS function scope (see ScriptDeclaredVarNames).
+    private readonly Dictionary<SyntaxNode, HashSet<string>> _scriptVarNamesCache = new();
+    private static readonly HashSet<string> _noScriptVars = new();
+
+    /// <summary>
+    /// The keyword to declare a C# local <paramref name="jsName"/> at <paramref name="at"/>: normally
+    /// <c>let</c> (block scope, so a loop local captured by a closure binds per-iteration), but
+    /// <c>var</c> when a goto state machine needs the local to persist across <c>case</c> transitions,
+    /// OR when a <c>Script.Write(...)</c> raw-JS block in the same function scope declares the same
+    /// name and we are not inside a loop. Raw JS often redeclares a local it computes into (e.g.
+    /// Tesserae's <c>Color.FromString</c>: C# <c>int r,g,b</c> plus a <c>Script.Write("… var r … var g
+    /// … var b …")</c>); legacy h5 emitted the locals as <c>var</c> so the two merged, but a <c>let</c>
+    /// local beside a <c>var</c> of the same name in one scope is a hard "Identifier already declared"
+    /// error. Loops keep <c>let</c> — the closure-capture semantics outweigh this rare name clash.
+    /// </summary>
+    private string LocalDeclKeyword(SyntaxNode at, string jsName)
+    {
+        if (_gotoContexts.Count > 0) return "var";
+        if (_loopDepth == 0 && ScriptDeclaredVarNames(at).Contains(jsName)) return "var";
+        return "let";
+    }
+
+    /// <summary>
+    /// Identifiers declared with <c>var</c>/<c>let</c>/<c>const</c> inside a <c>Script.Write(...)</c>
+    /// template in the nearest enclosing function scope of <paramref name="node"/> (not descending into
+    /// deeper lambdas / local functions). Cached per function-scope node.
+    /// </summary>
+    private HashSet<string> ScriptDeclaredVarNames(SyntaxNode node)
+    {
+        var fn = EnclosingFunctionScope(node);
+        if (fn is null) return _noScriptVars;
+        if (_scriptVarNamesCache.TryGetValue(fn, out var cached)) return cached;
+
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var inv in fn.DescendantNodes(n => n == fn || !IsFunctionScope(n)).OfType<InvocationExpressionSyntax>())
+        {
+            if (inv.Expression is not MemberAccessExpressionSyntax { Name.Identifier.Text: "Write" } ma) continue;
+            var recv = ma.Expression.ToString();
+            if (recv != "Script" && !recv.EndsWith(".Script", StringComparison.Ordinal)) continue;
+            if (inv.ArgumentList.Arguments.Count < 1) continue;
+            if (_model.GetConstantValue(inv.ArgumentList.Arguments[0].Expression).Value is not string raw) continue;
+            foreach (System.Text.RegularExpressions.Match m in
+                     System.Text.RegularExpressions.Regex.Matches(raw, @"\b(?:var|let|const)\s+([A-Za-z_$][A-Za-z0-9_$]*)"))
+                set.Add(m.Groups[1].Value);
+        }
+        _scriptVarNamesCache[fn] = set;
+        return set;
+    }
+
+    private static bool IsFunctionScope(SyntaxNode n)
+        => n is BaseMethodDeclarationSyntax or AccessorDeclarationSyntax
+              or LocalFunctionStatementSyntax or AnonymousFunctionExpressionSyntax;
+
+    private static SyntaxNode? EnclosingFunctionScope(SyntaxNode node)
+    {
+        for (var n = node; n is not null; n = n.Parent)
+            if (IsFunctionScope(n)) return n;
+        return null;
+    }
+
     private void EmitLocalDeclaration(LocalDeclarationStatementSyntax local)
     {
         if (local.UsingKeyword != default)
@@ -331,10 +391,11 @@ public sealed partial class Emitter
         // Transpose's model and tolerates the same-name redeclarations across flattened scopes that some
         // code relies on (which `let` would reject). A goto state machine also needs `var` so a
         // local persists across `case` transitions as the loop re-enters the switch.
-        var kw = _gotoContexts.Count > 0 ? "var" : "let";
         foreach (var variable in local.Declaration.Variables)
         {
-            _w.Write($"{kw} {NameMangler.JsIdentifier(variable.Identifier.Text)}");
+            var jsName = NameMangler.JsIdentifier(variable.Identifier.Text);
+            var kw = LocalDeclKeyword(local, jsName);
+            _w.Write($"{kw} {jsName}");
             if (variable.Initializer is not null)
             {
                 _w.Write(" = ");
