@@ -213,11 +213,15 @@ public sealed partial class Emitter
                 _w.Write(NameMangler.JsIdentifier(d.Identifier.Text));
                 break;
             case ThrowExpressionSyntax throwExpr:
-                // Arrow so a `this`-qualified thrown expression keeps the enclosing instance.
-                _w.Write("(() => { throw ");
+            {
+                // `x ?? throw new E(await Msg())` awaits inside the wrapper, so it needs the async form.
+                var hasAwait = OpenIife(throwExpr.Expression);
+                _w.Write("throw ");
                 EmitExpression(throwExpr.Expression);
-                _w.Write("; })()");
+                _w.Write("; ");
+                CloseIife(hasAwait);
                 break;
+            }
             case CheckedExpressionSyntax checkedExpr:
                 EmitExpression(checkedExpr.Expression);
                 break;

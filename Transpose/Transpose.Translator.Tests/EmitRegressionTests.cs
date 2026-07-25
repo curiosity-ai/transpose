@@ -4,10 +4,13 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 namespace Transpose.Translator.Tests
 {
     /// <summary>
-    /// Regression tests for three emit bugs found compiling the Curiosity FrontEnd:
-    ///  - an out/ref call whose argument contains an `await` (e.g. bool.TryParse(await t, out var s))
-    ///    must run its holder IIFE as an `async` arrow and be awaited — a bare `await` inside a plain
-    ///    arrow is a syntax error ("Unexpected identifier 'Transpose'");
+    /// Regression tests for emit bugs found compiling the Curiosity FrontEnd and Mosaik:
+    ///  - an expression IIFE that wraps an `await` must be an `async` arrow and be awaited — a bare
+    ///    `await` inside a plain arrow is a syntax error ("Unexpected identifier 'Transpose'") that
+    ///    breaks the whole bundle, not just that call. This applies to every wrapper the emitter
+    ///    produces (out/ref holders, object initializers, reordered named arguments, concrete
+    ///    collections, throw expressions), and to an `await` anywhere inside them — including in a
+    ///    call's RECEIVER, e.g. `(await Query()).Nodes.TryGetFirst(out var n)`;
     ///  - a generic method threading its type argument (WithBody&lt;T&gt;(T)) called with an anonymous
     ///    type must pass System.Object for T, not an empty slot (which produced `WithBody$1(, {...})`);
     ///  - an iterator LOCAL FUNCTION (a nested `IEnumerable&lt;T&gt;` with `yield return`) must compile
@@ -57,6 +60,215 @@ public class Program
             Assert.IsTrue(result.Success, "translation should succeed");
             Assert.IsTrue(result.Javascript!.Contains("await (async () => {"),
                 "an out/ref call with an awaited argument should run its IIFE as an awaited async arrow\n" + result.Javascript);
+        }
+
+        // ---- await anywhere inside an expression IIFE --------------------------
+        //
+        // The emitter wraps a C# expression in an IIFE wherever emitting it needs statements: out/ref
+        // holders, an object initializer, argument temporaries for reordered named arguments, building a
+        // concrete collection, a throw expression. Every one of those has to become an `async` arrow —
+        // and be awaited — once the syntax it wraps contains an `await`, because a bare `await` inside a
+        // plain arrow is a *syntax* error, so the whole bundle fails to parse rather than just that call.
+        //
+        // Originally only an awaited *argument* of an out/ref call was handled, which left every other
+        // wrapper (and even the same call awaiting in its RECEIVER, the shape reported from Mosaik:
+        // `(await Query()).Nodes.TryGetFirst(out var n)`) emitting unparsable JavaScript.
+
+        [TestMethod]
+        public async Task AwaitInTheReceiverOfAnOutCallRunsAsync()
+        {
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+public sealed class Box { public List<string> Nodes = new List<string>(); }
+public static class Ext
+{
+    public static bool TryGetFirst<T>(this IEnumerable<T> src, out T value)
+    {
+        foreach (var v in src) { value = v; return true; }
+        value = default(T);
+        return false;
+    }
+}
+public class Program
+{
+    static Task<Box> QueryAsync()
+    {
+        var b = new Box();
+        b.Nodes.Add(""first"");
+        return Task.FromResult(b);
+    }
+    static async Task Run()
+    {
+        // The await is in the receiver, not in an argument — it still lands inside the holder IIFE.
+        if ((await QueryAsync()).Nodes.TryGetFirst(out var n)) Console.WriteLine(""got:"" + n);
+        else Console.WriteLine(""none"");
+    }
+    public static void Main() { Run(); }
+}");
+        }
+
+        [TestMethod]
+        public async Task AwaitInReorderedNamedArgumentsRunsAsync()
+        {
+            await RunTest(@"
+using System;
+using System.Threading.Tasks;
+public class Program
+{
+    static string Join(string a = ""a"", string b = ""b"", string c = ""c"") => a + ""|"" + b + ""|"" + c;
+    static Task<string> TextAsync(string s) => Task.FromResult(s);
+    static async Task Run()
+    {
+        // Named arguments out of parameter order are evaluated into temps inside an IIFE to keep C#'s
+        // source-order evaluation; the awaits go with them.
+        Console.WriteLine(Join(c: await TextAsync(""C""), a: await TextAsync(""A"")));
+    }
+    public static void Main() { Run(); }
+}");
+        }
+
+        [TestMethod]
+        public async Task AwaitInAnObjectInitializerRunsAsync()
+        {
+            await RunTest(@"
+using System;
+using System.Threading.Tasks;
+public sealed class Bag
+{
+    public string Name;
+    public int Count;
+    public Bag() { }
+    public Bag(string seed) { Name = seed; }
+}
+public class Program
+{
+    static Task<string> TextAsync(string s) => Task.FromResult(s);
+    static Task<int> NumAsync(int i) => Task.FromResult(i);
+    static async Task Run()
+    {
+        var bag = new Bag(await TextAsync(""seed"")) { Count = await NumAsync(7) };
+        Console.WriteLine(bag.Name + "":"" + bag.Count);
+    }
+    public static void Main() { Run(); }
+}");
+        }
+
+        [TestMethod]
+        public async Task AwaitInACollectionExpressionRunsAsync()
+        {
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+public class Program
+{
+    static Task<int> NumAsync(int i) => Task.FromResult(i);
+    static async Task Run()
+    {
+        // A concrete collection target is built and filled inside an IIFE.
+        List<int> xs = [await NumAsync(1), 2, await NumAsync(3)];
+        var total = 0;
+        foreach (var x in xs) total += x;
+        Console.WriteLine(""total:"" + total);
+    }
+    public static void Main() { Run(); }
+}");
+        }
+
+        [TestMethod]
+        public async Task AwaitInAParamsCollectionRunsAsync()
+        {
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+public class Program
+{
+    static int Sum(params List<int> xs) { var t = 0; foreach (var x in xs) t += x; return t; }
+    static Task<int> NumAsync(int i) => Task.FromResult(i);
+    static async Task Run()
+    {
+        Console.WriteLine(""sum:"" + Sum(await NumAsync(4), 5, await NumAsync(6)));
+    }
+    public static void Main() { Run(); }
+}");
+        }
+
+        [TestMethod]
+        public async Task AwaitInAThrowExpressionRunsAsync()
+        {
+            await RunTest(@"
+using System;
+using System.Threading.Tasks;
+public class Program
+{
+    static Task<string> TextAsync(string s) => Task.FromResult(s);
+    static async Task Run()
+    {
+        string missing = null;
+        try { Console.WriteLine(missing ?? throw new InvalidOperationException(await TextAsync(""boom""))); }
+        catch (InvalidOperationException e) { Console.WriteLine(""caught:"" + e.Message); }
+    }
+    public static void Main() { Run(); }
+}");
+        }
+
+        /// <summary>
+        /// The invariant behind all of the above, checked on the emitted JavaScript so it also catches a
+        /// *new* IIFE site added later without the async form: no plain <c>(() =&gt; {</c> wrapper may
+        /// contain an <c>await</c>. Each wrapper is emitted on a single line, so scanning per line
+        /// finds the whole wrapper.
+        /// </summary>
+        [TestMethod]
+        public void NoPlainArrowIifeWrapsAnAwait()
+        {
+            var code = @"
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+public sealed class Bag { public string Name; public int Count; public Bag(string s) { Name = s; } }
+public sealed class Box { public List<string> Nodes = new List<string>(); }
+public static class Ext
+{
+    public static bool TryGetFirst<T>(this IEnumerable<T> src, out T value)
+    {
+        foreach (var v in src) { value = v; return true; }
+        value = default(T); return false;
+    }
+}
+public class Program
+{
+    static string Join(string a = ""a"", string b = ""b"", string c = ""c"") => a + b + c;
+    static int Sum(params List<int> xs) => xs.Count;
+    static Task<string> TextAsync() => Task.FromResult(""x"");
+    static Task<int> NumAsync() => Task.FromResult(1);
+    static Task<Box> BoxAsync() => Task.FromResult(new Box());
+    static async Task Run()
+    {
+        if ((await BoxAsync()).Nodes.TryGetFirst(out var n)) Console.WriteLine(n);
+        if (int.TryParse(await TextAsync(), out var p)) Console.WriteLine(p);
+        Console.WriteLine(Join(c: await TextAsync(), a: await TextAsync()));
+        Console.WriteLine(new Bag(await TextAsync()) { Count = await NumAsync() }.Name);
+        List<int> xs = [await NumAsync(), 2];
+        Console.WriteLine(Sum(await NumAsync(), 3));
+        string missing = null;
+        Console.WriteLine(missing ?? throw new InvalidOperationException(await TextAsync()));
+    }
+    public static void Main() { }
+}";
+            var result = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(result.Success, "translation should succeed");
+
+            foreach (var line in result.Javascript!.Split('\n'))
+            {
+                var at = line.IndexOf("(() => {", System.StringComparison.Ordinal);
+                if (at < 0) continue;
+                Assert.IsFalse(line[at..].Contains("await", System.StringComparison.Ordinal),
+                    "a plain (non-async) arrow IIFE must never wrap an await — that is a JavaScript "
+                    + "syntax error that breaks the whole bundle:\n" + line.Trim());
+            }
         }
 
         // ---- generic method threading + anonymous type -------------------------
