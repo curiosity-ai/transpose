@@ -2382,6 +2382,48 @@ public sealed partial class Emitter
 
     // ---- interpolated string -----------------------------------------------
 
+    /// <summary>
+    /// True for a raw interpolated string (<c>$"""…"""</c>, any number of <c>$</c>). Raw strings have
+    /// no brace-doubling escape — the <c>$</c> count decides how many consecutive braces open an
+    /// interpolation, and any shorter brace run is literal text (doubling in a single-<c>$</c> raw
+    /// string is CS9006/CS9007, not an escape). Classic and verbatim interpolated strings do use
+    /// <c>{{</c>/<c>}}</c>, so the two families need opposite brace handling.
+    /// </summary>
+    private static bool IsRawInterpolatedString(InterpolatedStringExpressionSyntax interp)
+        => interp.StringStartToken.Kind() is SyntaxKind.InterpolatedSingleLineRawStringStartToken
+                                          or SyntaxKind.InterpolatedMultiLineRawStringStartToken;
+
+    /// <summary>
+    /// The literal text of an interpolated-string text segment. Roslyn's <c>ValueText</c> decodes
+    /// standard escape sequences (<c>\n</c>, <c>\"</c>) but deliberately KEEPS composite-format brace
+    /// escaping (<c>{{</c>/<c>}}</c>) for classic/verbatim interpolated strings, so those must be
+    /// collapsed to a single brace here — the string target concatenates the text directly and never
+    /// passes it through a composite-format parser that would unescape it. A raw string's ValueText
+    /// already holds literal braces and is used verbatim.
+    /// </summary>
+    private static string InterpolatedTextValue(InterpolatedStringExpressionSyntax interp, InterpolatedStringTextSyntax text)
+    {
+        var value = text.TextToken.ValueText;
+        if (IsRawInterpolatedString(interp) || value.IndexOfAny(Braces) < 0) return value;
+        // Non-overlapping left-to-right, matching C#: "{{{{" is two literal braces, not one.
+        return value.Replace("{{", "{").Replace("}}", "}");
+    }
+
+    /// <summary>
+    /// The same text segment rendered for a <em>composite format string</em> (the
+    /// <c>FormattableStringFactory.Create</c> first argument), where a literal brace is escaped by
+    /// doubling. Classic/verbatim ValueText is already in that form; a raw string's literal braces
+    /// must be doubled, or a raw <c>{0}</c> would be misread as a placeholder.
+    /// </summary>
+    private static string CompositeFormatTextValue(InterpolatedStringExpressionSyntax interp, InterpolatedStringTextSyntax text)
+    {
+        var value = text.TextToken.ValueText;
+        if (!IsRawInterpolatedString(interp) || value.IndexOfAny(Braces) < 0) return value;
+        return value.Replace("{", "{{").Replace("}", "}}");
+    }
+
+    private static readonly char[] Braces = ['{', '}'];
+
     private void EmitInterpolatedString(InterpolatedStringExpressionSyntax interp)
     {
         // An interpolated string CONVERTED to FormattableString / IFormattable is not a plain string:
@@ -2405,7 +2447,7 @@ public sealed partial class Emitter
             {
                 case InterpolatedStringTextSyntax text:
                     if (!first) _w.Write(" + ");
-                    _w.Write(JsString(text.TextToken.ValueText));
+                    _w.Write(JsString(InterpolatedTextValue(interp, text)));
                     first = false; hadContent = true;
                     break;
                 case InterpolationSyntax interpolation:
@@ -2465,10 +2507,7 @@ public sealed partial class Emitter
             switch (content)
             {
                 case InterpolatedStringTextSyntax text:
-                    // ValueText decodes standard escape sequences (\n, \") but KEEPS composite-format
-                    // brace escaping ({{ / }}) for interpolated-string text tokens, which is exactly the
-                    // composite format string FormattableStringFactory.Create expects — use it verbatim.
-                    format.Append(text.TextToken.ValueText);
+                    format.Append(CompositeFormatTextValue(interp, text));
                     break;
                 case InterpolationSyntax interpolation:
                     format.Append('{').Append(args.Count);
