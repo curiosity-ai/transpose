@@ -311,6 +311,109 @@ public class Program
                 "a string-typed interpolation must not use the FormattableString factory\n" + result.Javascript);
         }
 
+        // ---- brace escaping in interpolated strings ---------------------------
+
+        [TestMethod]
+        public async Task InterpolatedStringUnescapesDoubledBracesAsync()
+        {
+            // `{{` / `}}` inside `$"…"` are escapes for a single literal brace. The string target
+            // concatenates the text segments directly, so the emitter must collapse them itself —
+            // nothing downstream runs a composite-format parser that would. Regression: every case
+            // below used to keep the braces doubled (`$"{{x}}"` -> "{{x}}" instead of "{x}").
+            await RunTest("""
+using System;
+public class Program
+{
+    const string C = $"const {{a}} b";
+    enum E { Red }
+    public static void Main()
+    {
+        var n = "W";
+        var ch = 'c';
+        Console.WriteLine($"{{{n}}}");
+        Console.WriteLine($"a {{ b }} c");
+        Console.WriteLine($"{{literal}} and {n}");
+        Console.WriteLine($@"verbatim {{x}} {n}");
+        Console.WriteLine("plain {{ not escaped }}");
+        Console.WriteLine($"json: {{ \"k\": {1 + 1} }}");
+        Console.WriteLine($"align {{a}} {n,8} {{b}}");
+        Console.WriteLine($"fmtclause {{a}} {42:X} {{b}}");
+        Console.WriteLine($"char {{a}} {ch} {{b}}");
+        Console.WriteLine($"enum {{a}} {E.Red} {{b}}");
+        Console.WriteLine($"{{}}");
+        Console.WriteLine($"{{{{}}}}");
+        Console.WriteLine($"{{{{{n}}}}}");
+        Console.WriteLine($"trailing {n}{{");
+        Console.WriteLine($"}}leading {n}");
+        Console.WriteLine($"nested {$"inner {{x}} {n}"} {{y}}");
+        Console.WriteLine(C);
+    }
+}
+""");
+        }
+
+        [TestMethod]
+        public async Task RawInterpolatedStringKeepsLiteralBracesAsync()
+        {
+            // The opposite rule: a raw interpolated string has NO brace-doubling escape — the `$` count
+            // decides how many braces open an interpolation and shorter runs are literal text. So the
+            // text must NOT be unescaped, and when such a string becomes a FormattableString its literal
+            // braces have to be doubled to form a valid composite format string (a raw `{0}` would
+            // otherwise be misread as a placeholder).
+            await RunTest("""""
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        var n = "W";
+        Console.WriteLine($$"""raw {a} {{n}} }""");
+        Console.WriteLine($$$""""raw3 {a} {{b}} {{{n}}}"""");
+        FormattableString f = $$"""fsraw {0} {{n}} {b}""";
+        Console.WriteLine(f.Format);
+        Console.WriteLine(f.ToString());
+    }
+}
+""""");
+        }
+
+        [TestMethod]
+        public void InterpolatedStringEmitsSingleBraceForDoubledBrace()
+        {
+            var code = """
+using System;
+public class Program
+{
+    public static void Main() { int a = 1; Console.WriteLine($"{{x}}={a}"); }
+}
+""";
+            var result = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            Assert.IsTrue(result.Javascript!.Contains("\"{x}=\""),
+                "$\"{{x}}={a}\" should emit the literal text \"{x}=\"\n" + result.Javascript);
+            Assert.IsFalse(result.Javascript!.Contains("{{x}}"),
+                "the doubled braces must not survive into the emitted string\n" + result.Javascript);
+        }
+
+        [TestMethod]
+        public void FormattableStringKeepsDoubledBracesInCompositeFormat()
+        {
+            // Inverse guard for the non-raw FormattableString path: there the composite format string
+            // is what gets emitted, and it *keeps* the doubling (matching FormattableString.Format).
+            var code = """
+using System;
+public class Program
+{
+    static void Use(FormattableString fs) { }
+    public static void Main() { int a = 1; Use($"lit {{x}} {a}"); }
+}
+""";
+            var result = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            Assert.IsTrue(result.Javascript!.Contains("FormattableStringFactory.Create(\"lit {{x}} {0}\", ["),
+                "the composite format string must keep the doubled braces\n" + result.Javascript);
+        }
+
         // ---- null string concatenation ----------------------------------------
 
         [TestMethod]

@@ -21,6 +21,18 @@ RUNTIME_DLL="$REPO/BCL/Transpose.BCL/bin/Debug/netstandard2.0/Transpose.dll"
 
 echo "repo: $REPO"
 
+# The runners reference Transpose.Translator.dll directly, so they must compile against the SAME
+# Roslyn version it does — a lower one is CS1705 ("uses Microsoft.CodeAnalysis vX which has a higher
+# version than referenced assembly"). Read it from the translator's csproj instead of pinning it here,
+# so bumping the translator's Roslyn doesn't silently break this script.
+ROSLYN_VERSION="$(sed -n 's/.*Microsoft\.CodeAnalysis\.CSharp" Version="\([^"]*\)".*/\1/p' \
+  "$REPO/Transpose/Transpose.Translator/Transpose.Translator.csproj" | head -1)"
+if [ -z "$ROSLYN_VERSION" ]; then
+  echo "could not determine the Microsoft.CodeAnalysis.CSharp version from Transpose.Translator.csproj" >&2
+  exit 1
+fi
+echo "roslyn: $ROSLYN_VERSION (from Transpose.Translator.csproj)"
+
 echo "==> building Release Transpose.Translator (referenced by the runners)"
 dotnet build "$REPO/Transpose/Transpose.Translator/Transpose.Translator.csproj" -c Release \
   | grep -E "error|Build succeeded" | tail -3
@@ -71,7 +83,7 @@ cat > /tmp/emitrunner/emitrunner.csproj <<EOF
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="Transpose.Translator"><HintPath>$TR_REL_DLL</HintPath></Reference>
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.3.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="$ROSLYN_VERSION" />
   </ItemGroup>
 </Project>
 EOF
@@ -109,7 +121,7 @@ cat > /tmp/jsonrunner/jsonrunner.csproj <<EOF
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="Transpose.Translator"><HintPath>$TR_REL_DLL</HintPath></Reference>
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.3.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="$ROSLYN_VERSION" />
   </ItemGroup>
 </Project>
 EOF
@@ -140,7 +152,14 @@ EOF
 
 echo "==> building the runner projects"
 for r in jsdumper emitrunner jsonrunner; do
-  dotnet build "/tmp/$r/$r.csproj" -c Debug | grep -E "error|Build succeeded" | tail -1
+  # Piping into grep would mask a failed build behind grep's exit status (set -e only sees the last
+  # command in a pipeline), so check dotnet's own status and surface the errors before bailing out.
+  if ! out="$(dotnet build "/tmp/$r/$r.csproj" -c Debug 2>&1)"; then
+    printf '%s\n' "$out" | grep -E "error" | head -10
+    echo "FAILED building /tmp/$r — see the errors above" >&2
+    exit 1
+  fi
+  printf '%s\n' "$out" | grep -E "error|Build succeeded" | tail -1
 done
 
 if [ ! -f "$RUNTIME_DLL" ]; then
