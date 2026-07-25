@@ -457,15 +457,10 @@ public sealed partial class Emitter
         var byName = new Dictionary<string, string>();
         var byPos = new List<string>();
 
-        // An out/ref template call whose arguments contain an `await` (e.g.
-        // bool.TryParse(await t.Text(), out var s)) must run the holder IIFE as an `async` arrow and be
-        // awaited — a bare `await` inside a plain arrow is a syntax error. The enclosing method is
-        // guaranteed async (C# only allows await there), so the surrounding `await` is valid.
-        var hasAwait = args.Any(a => ContainsAwait(a.Expression));
-
-        // Arrow (not `function`) so a `this`-qualified receiver inside the call resolves to the
-        // enclosing instance rather than being rebound to undefined in strict mode.
-        _w.Write(hasAwait ? "(await (async () => { " : "(() => { ");
+        // The whole invocation is the await scope, receiver included: `(await Q()).Items.TryGetFirst(out
+        // var n)` awaits in the *receiver*, which the template's {this} emits inside the IIFE just as an
+        // argument would.
+        var hasAwait = OpenIife(invocation);
         for (var i = 0; i < args.Count; i++)
         {
             var isRef = args[i].RefKindKeyword.IsKind(SyntaxKind.OutKeyword) || args[i].RefKindKeyword.IsKind(SyntaxKind.RefKeyword);
@@ -506,7 +501,8 @@ public sealed partial class Emitter
             EmitByRefWriteBackTarget(args[i].Expression);
             _w.Write($" = {holders[i]}.v; ");
         }
-        _w.Write(hasAwait ? "return $ret; })())" : "return $ret; })()");
+        _w.Write("return $ret; ");
+        CloseIife(hasAwait);
     }
 
     private void EmitByRefInvocation(InvocationExpressionSyntax invocation, IMethodSymbol symbol)
@@ -514,15 +510,10 @@ public sealed partial class Emitter
         var args = invocation.ArgumentList.Arguments;
         var holders = new string?[args.Count];
 
-        // An out/ref call whose arguments contain an `await` (e.g. bool.TryParse(await t.Text(), out var s))
-        // must run the holder IIFE as an `async` arrow and be awaited — a bare `await` inside a plain
-        // arrow is a syntax error. The enclosing method is guaranteed async (C# only allows await there),
-        // so the surrounding `await` is valid.
-        var hasAwait = args.Any(a => ContainsAwait(a.Expression));
-
-        // Arrow (not `function`) so a `this`-qualified receiver inside the call resolves to the
-        // enclosing instance rather than being rebound to undefined in strict mode.
-        _w.Write(hasAwait ? "(await (async () => { " : "(() => { ");
+        // The whole invocation is the await scope, receiver included — the reported failure was
+        // `(await Query()).Nodes.TryGetFirst(out var n)`, where the await sits in the receiver rather
+        // than in an argument, yet still lands inside the holder IIFE.
+        var hasAwait = OpenIife(invocation);
 
         for (var i = 0; i < args.Count; i++)
         {
@@ -651,7 +642,8 @@ public sealed partial class Emitter
             _w.Write($" = {holders[i]}.v; ");
         }
 
-        _w.Write(hasAwait ? "return $ret; })())" : "return $ret; })()");
+        _w.Write("return $ret; ");
+        CloseIife(hasAwait);
     }
 
     /// <summary>True if the expression contains an <c>await</c> in its own async context — i.e. not
@@ -665,6 +657,38 @@ public sealed partial class Emitter
         }
         return false;
     }
+
+    /// <summary>
+    /// Opens an expression IIFE — <c>(() =&gt; { … })()</c> — the construct used wherever a C# expression
+    /// needs statements to emit (out/ref holders, an object initializer, argument temporaries, …).
+    ///
+    /// When the wrapped syntax contains an <c>await</c> the arrow must be <c>async</c> and the call
+    /// awaited: <c>await</c> inside a plain arrow is a JavaScript *syntax* error, so the whole bundle
+    /// fails to parse — not just that one call. The enclosing function is guaranteed to be async, since
+    /// C# only allows <c>await</c> inside an async method or lambda and the emitter emits those as async
+    /// JS functions, so the added <c>await</c> is always legal.
+    ///
+    /// <paramref name="awaitScopes"/> must be the syntax that will actually be emitted *inside* the
+    /// IIFE — pass the operands, not the whole expression, so a call that awaits somewhere outside the
+    /// wrapper keeps its plain-arrow form.
+    /// </summary>
+    /// <returns>Whether the async form was written; hand it back to <see cref="CloseIife"/>.</returns>
+    private bool OpenIife(params SyntaxNode?[] awaitScopes)
+    {
+        var hasAwait = false;
+        foreach (var scope in awaitScopes)
+        {
+            if (scope is not null && ContainsAwait(scope)) { hasAwait = true; break; }
+        }
+        // Arrow (not `function`) so a `this`-qualified expression inside resolves to the enclosing
+        // instance rather than being rebound to undefined in strict mode.
+        _w.Write(hasAwait ? "(await (async () => { " : "(() => { ");
+        return hasAwait;
+    }
+
+    /// <summary>Closes an IIFE opened by <see cref="OpenIife"/> — the extra parenthesis balances the
+    /// <c>(await …</c> the async form opened with.</summary>
+    private void CloseIife(bool hasAwait) => _w.Write(hasAwait ? "})())" : "})()");
 
     /// <summary>True for a discard target (out _ or a discard designation).</summary>
     private bool IsDiscardTarget(ExpressionSyntax expr)
@@ -764,10 +788,11 @@ public sealed partial class Emitter
             if (reordered && !hasParams)
             {
                 if (lead) _w.Write(", ");
-                // Arrow (not `function`) so a `this`-qualified argument (e.g. a named arg
-                // `wrapResults: this._wrapResults`) resolves to the enclosing instance rather than
-                // being rebound to undefined in strict mode.
-                _w.Write("...(() => { var $ = [");
+                // Every argument is evaluated inside this wrapper, so an await in any of them makes it
+                // an async IIFE: `M(b: await X(), a: 1)`.
+                _w.Write("...");
+                var reorderHasAwait = OpenIife(argList);
+                _w.Write("var $ = [");
                 for (var k = 0; k < args.Count; k++)
                 {
                     if (k > 0) _w.Write(", ");
@@ -782,7 +807,8 @@ public sealed partial class Emitter
                     var src = Array.IndexOf(paramIndexOf, i);
                     _w.Write(src >= 0 ? $"$[{src}]" : "void 0");
                 }
-                _w.Write("]; })()");
+                _w.Write("]; ");
+                CloseIife(reorderHasAwait);
                 return;
             }
 
@@ -898,7 +924,7 @@ public sealed partial class Emitter
                         EmitExpressionConverted(trailing[i].Expression, paramsElem);
                     }
                     _w.Write("]");
-                });
+                }, trailing);
             }
             return;
         }
@@ -943,7 +969,7 @@ public sealed partial class Emitter
                 _w.Write("[");
                 EmitExpressionConverted(arg, paramsElem);
                 _w.Write("]");
-            });
+            }, [arg]);
         }
     }
 
@@ -995,11 +1021,15 @@ public sealed partial class Emitter
     {
         if (initializer is { Expressions.Count: > 0 })
         {
-            _w.Write("(() => { var $o = ");
+            // Both the constructor arguments and the initializer body are emitted inside the wrapper, so
+            // either can carry the await: `new T(await A()) { X = await B() }`.
+            var hasAwait = OpenIife(argList, initializer);
+            _w.Write("var $o = ");
             EmitBareConstruction(type, ctor, argList);
             _w.Write("; ");
             EmitInitializer("$o", initializer);
-            _w.Write("return $o; })()");
+            _w.Write("return $o; ");
+            CloseIife(hasAwait);
             return;
         }
 
@@ -2796,7 +2826,7 @@ public sealed partial class Emitter
             _w.Write("]");
         }
 
-        EmitCollectionOf(_model.GetTypeInfo(collection).ConvertedType, EmitArray);
+        EmitCollectionOf(_model.GetTypeInfo(collection).ConvertedType, EmitArray, [collection]);
     }
 
     /// <summary>
@@ -2806,7 +2836,10 @@ public sealed partial class Emitter
     /// natively; a concrete collection (e.g. List&lt;T&gt;) is built and filled via <c>add</c>
     /// (works regardless of its constructor overload numbering).
     /// </summary>
-    private void EmitCollectionOf(ITypeSymbol? target, Action emitArrayLiteral)
+    /// <param name="awaitScopes">The syntax <paramref name="emitArrayLiteral"/> will emit, so an
+    /// awaited element (<c>List&lt;int&gt; l = [await X()]</c>) gets an async IIFE.</param>
+    private void EmitCollectionOf(ITypeSymbol? target, Action emitArrayLiteral,
+                                  IReadOnlyList<SyntaxNode>? awaitScopes = null)
     {
         // A concrete array target tags the literal with its element type (System.Array.init) so the
         // value's runtime type carries $elementType — same as a `new T[]{…}` creation.
@@ -2827,9 +2860,11 @@ public sealed partial class Emitter
             return;
         }
 
-        _w.Write($"(() => {{ var $c = new ({TypeRef(target)})(); var $s = ");
+        var hasAwait = OpenIife(awaitScopes is null ? [] : [.. awaitScopes]);
+        _w.Write($"var $c = new ({TypeRef(target)})(); var $s = ");
         emitArrayLiteral();
-        _w.Write("; for (var $i = 0; $i < $s.length; $i++) { $c.add($s[$i]); } return $c; })()");
+        _w.Write("; for (var $i = 0; $i < $s.length; $i++) { $c.add($s[$i]); } return $c; ");
+        CloseIife(hasAwait);
     }
 
     /// <summary>The element type of a params parameter (array element or the collection's T).</summary>

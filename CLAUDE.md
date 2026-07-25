@@ -298,3 +298,9 @@ Claude Code; read the `SKILL.md` directly in other contexts):
   `Transpose` and `Transpose.*` as runtime/BCL packages (fixed JS names), distinct from user
   libraries compiled with `--emit-package`.
 - Do not blanket-replace `h5`/`H5` — non-library tokens (HTML tags, hash locals) must be preserved.
+- **Never emit a raw `(() => { … })()` wrapper.** Where a C# expression needs statements to emit (out/ref
+  holders, object initializers, reordered named arguments, building a concrete collection, a throw
+  expression), go through `OpenIife`/`CloseIife` (`Emitter.Expressions2.cs`) and pass the syntax that will
+  be emitted *inside* the wrapper. If that syntax contains an `await`, the arrow must be `async` and the
+  call awaited — a bare `await` in a plain arrow is a JavaScript **syntax** error, so one such expression
+  makes the entire bundle fail to parse. `EmitRegressionTests.NoPlainArrowIifeWrapsAnAwait` guards this.
