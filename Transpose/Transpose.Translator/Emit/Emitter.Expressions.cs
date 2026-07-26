@@ -647,6 +647,33 @@ public sealed partial class Emitter
         }
     }
 
+    /// <summary>
+    /// <summary>
+    /// Emits a <c>const</c> read. Inlining the literal bakes the value into every consumer, so
+    /// updating a base package without rebuilding the packages between it and the app leaves those
+    /// carrying the OLD value; reading the emitted static slot instead takes the value from whichever
+    /// build of the declaring package is actually loaded.
+    ///
+    /// Three cases:
+    /// Every type Transpose DEFINES gets a static slot per const (see <see cref="EmitStatics"/>) —
+    /// this compilation's source, a referenced user library, and the runtime/BCL and binding projects
+    /// alike — so the read goes through the slot in all of those. The one exception is an
+    /// <c>[External]</c> type: Transpose never emits a definition for it (its members are hand-written
+    /// or native JS), so there is no slot and its consts still inline — <c>int.MaxValue</c> is
+    /// <c>[External] System.Int32</c>, and DOM bindings are the same.
+    ///
+    /// Enum members are not routed here; they have their own access path.
+    /// </summary>
+    private void EmitConstRead(IFieldSymbol field)
+    {
+        var type = field.ContainingType;
+
+        if (type is { TypeKind: not TypeKind.Enum } && !TransposeNaming.IsExternalType(type))
+            _w.Write(StaticMemberAccess(field));
+        else
+            _w.Write(ConstantLiteral(field.ConstantValue, field.Type));
+    }
+
     private void EmitFieldAccess(IFieldSymbol field, ExpressionSyntax? thisTarget)
     {
         // A [Template] on the field defines how the access emits — e.g. the DOM literal fields
@@ -660,7 +687,7 @@ public sealed partial class Emitter
         }
         if (field.IsConst)
         {
-            _w.Write(ConstantLiteral(field.ConstantValue, field.Type));
+            EmitConstRead(field);
             return;
         }
         if (field.IsStatic)
@@ -850,7 +877,7 @@ public sealed partial class Emitter
         switch (symbol)
         {
             case IFieldSymbol { IsConst: true, ContainingType.TypeKind: not TypeKind.Enum } constField:
-                _w.Write(ConstantLiteral(constField.ConstantValue, constField.Type));
+                EmitConstRead(constField);
                 return;
             case IFieldSymbol { ContainingType.TypeKind: TypeKind.Enum } enumField:
                 EmitEnumMemberAccess(enumField);
