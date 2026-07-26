@@ -4,16 +4,19 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 namespace Transpose.Translator.Tests
 {
     /// <summary>
-    /// A <c>const</c> is inlined at every use site, but it must ALSO be emitted as a real static slot
-    /// holding its value, so the member exists for reflection, for a debugger, and for hand-written JS
-    /// reaching into the type. Transpose previously only inlined, so a type's consts were absent from
-    /// the emitted class entirely (the reference runtime emits them as static fields).
+    /// A <c>const</c> is emitted as a real static slot holding its value, and every read goes through
+    /// that slot rather than being inlined. Inlining baked the value into each consumer, so updating a
+    /// base package without rebuilding the packages between it and the app left those carrying the OLD
+    /// value; reading the slot takes the value from whichever build of the declaring package is loaded.
+    ///
+    /// The exception is an <c>[External]</c> type — Transpose never emits a definition for it, so there
+    /// is no slot and its consts still inline (<c>int.MaxValue</c> is <c>[External] System.Int32</c>).
     /// </summary>
     [TestClass]
     public class ConstFieldEmissionTests : TranslatorTestBase
     {
         [TestMethod]
-        public void ConstsAreEmittedAsStaticFieldsAndStillInlined()
+        public void ConstsAreEmittedAsStaticFieldsAndReadThroughThem()
         {
             var code = @"
 public class Holder
@@ -42,9 +45,29 @@ public class Program
             Assert.IsTrue(js.Contains("ENABLED: true"), "bool const missing from the emitted fields\n" + js);
             Assert.IsTrue(js.Contains("NOTHING: null"), "null string const missing from the emitted fields\n" + js);
 
-            // Still inlined at the use site — emitting the slot must not turn reads into field access.
-            Assert.IsTrue(js.Contains("return 42;"),
-                "a const use site must remain inlined, not become a field read\n" + js);
+            // The use site reads the slot, so a rebuilt declaring package changes the value everywhere.
+            Assert.IsTrue(js.Contains("return Holder.COUNT;"),
+                "a const use site must read the emitted slot, not an inlined literal\n" + js);
+            Assert.IsFalse(js.Contains("return 42;"),
+                "the const literal must not be inlined at the use site\n" + js);
+        }
+
+        /// <summary>An <c>[External]</c> type has no emitted definition, so there is no slot to read —
+        /// its consts must still inline. <c>int.MaxValue</c> is the canonical case.</summary>
+        [TestMethod]
+        public void ExternalTypeConstsStayInlined()
+        {
+            var code = @"
+public class Program
+{
+    public static int Max() => int.MaxValue;
+    public static void Main() { }
+}";
+            var result = new RoslynTranslator().Translate(code);
+
+            Assert.IsTrue(result.Success, "translation should succeed");
+            Assert.IsTrue(result.Javascript!.Contains("return 2147483647;"),
+                "an [External] type's const has no emitted slot and must stay inlined\n" + result.Javascript);
         }
 
         /// <summary>An enum's members are consts too, but the enum has its own emit path — the const
