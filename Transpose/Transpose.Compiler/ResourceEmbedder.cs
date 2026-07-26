@@ -44,13 +44,8 @@ internal static class ResourceEmbedder
     {
         // Cecil resolves referenced assemblies when it re-serializes metadata on Write() — e.g. to
         // determine the underlying type of a parameter's default value whose type is a referenced
-        // enum. The default resolver only searches the assembly's own directory, so seed it with the
-        // directories of the project's references (NuGet-cache DLLs, sibling project bin folders).
-        var resolver = new DefaultAssemblyResolver();
-        resolver.AddSearchDirectory(Path.GetDirectoryName(Path.GetFullPath(assemblyPath))!);
-        if (referencePaths is not null)
-            foreach (var dir in referencePaths.Select(p => Path.GetDirectoryName(Path.GetFullPath(p))!).Distinct())
-                resolver.AddSearchDirectory(dir);
+        // enum. It must resolve to the very files the compilation bound to, hence the resolver below.
+        using var resolver = new ReferencePathResolver(assemblyPath, referencePaths);
 
         using var source = new MemoryStream(assemblyBytes, writable: false);
         using var asm = AssemblyDefinition.ReadAssembly(source, new ReaderParameters { AssemblyResolver = resolver });
@@ -80,5 +75,66 @@ internal static class ResourceEmbedder
         Replace(ManifestName, Utf8NoBom.GetBytes(json));
 
         asm.Write(assemblyPath);
+    }
+
+    /// <summary>
+    /// Resolves an assembly reference to the exact file the compilation bound to, keyed by the
+    /// assembly's simple name.
+    ///
+    /// Cecil's own <see cref="DefaultAssemblyResolver"/> searches *directories* instead: it takes the
+    /// first <c>&lt;name&gt;.dll</c> it finds, in the order the directories were added, and never looks at
+    /// the assembly's version. The first candidate is the folder the DLL is being written to — where a
+    /// copy-local copy of a referenced assembly from an earlier build routinely sits — plus Cecil's own
+    /// implicit <c>.</c> and <c>bin</c> entries (relative to the process working directory). Binding to
+    /// one of those instead of the reference Roslyn compiled against makes a type that exists in the
+    /// real reference look missing, and re-serializing a constant of that type then fails:
+    /// <c>Mono.Cecil.ResolutionException: Failed to resolve Tesserae.PixelAvatarDesign</c> — from a
+    /// project whose C# compiled cleanly against a package that does define the enum.
+    ///
+    /// A name outside the reference set still falls back to the old directory search, so nothing that
+    /// resolves today stops resolving.
+    /// </summary>
+    private sealed class ReferencePathResolver : IAssemblyResolver
+    {
+        private readonly Dictionary<string, string>              _byName;
+        private readonly Dictionary<string, AssemblyDefinition>  _opened  = new(StringComparer.OrdinalIgnoreCase);
+        private readonly DefaultAssemblyResolver                 _byDirectory = new();
+
+        public ReferencePathResolver(string assemblyPath, IEnumerable<string>? referencePaths)
+        {
+            _byName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            _byDirectory.AddSearchDirectory(Path.GetDirectoryName(Path.GetFullPath(assemblyPath))!);
+
+            foreach (var reference in referencePaths ?? Enumerable.Empty<string>())
+            {
+                var full = Path.GetFullPath(reference);
+                if (!File.Exists(full)) continue;
+                // First wins, matching how the resolved reference set itself is built.
+                if (!_byName.ContainsKey(Path.GetFileNameWithoutExtension(full)))
+                    _byName[Path.GetFileNameWithoutExtension(full)] = full;
+                _byDirectory.AddSearchDirectory(Path.GetDirectoryName(full)!);
+            }
+        }
+
+        public AssemblyDefinition Resolve(AssemblyNameReference name)
+            => Resolve(name, new ReaderParameters());
+
+        public AssemblyDefinition Resolve(AssemblyNameReference name, ReaderParameters parameters)
+        {
+            if (_opened.TryGetValue(name.Name, out var already)) return already;
+            if (!_byName.TryGetValue(name.Name, out var path)) return _byDirectory.Resolve(name, parameters);
+
+            parameters.AssemblyResolver ??= this;
+            var assembly = AssemblyDefinition.ReadAssembly(path, parameters);
+            _opened[name.Name] = assembly;
+            return assembly;
+        }
+
+        public void Dispose()
+        {
+            foreach (var assembly in _opened.Values) assembly.Dispose();
+            _opened.Clear();
+            _byDirectory.Dispose();
+        }
     }
 }

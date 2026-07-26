@@ -506,48 +506,66 @@ internal static class ProjectResolver
 
     // ---- reference resolution (NuGet global-packages cache) -----------------
 
+    /// <summary>
+    /// The assemblies a project's <c>&lt;PackageReference&gt;</c> items contribute, resolved from the
+    /// NuGet global-packages cache as <c>assembly simple name → dll path</c>.
+    ///
+    /// Precedence follows NuGet's own rules rather than the order the items happen to appear in: the
+    /// version the project declares itself wins over one reached through another package's
+    /// dependencies (NuGet's "direct dependency wins"), and between two transitive candidates the
+    /// higher version wins. Resolving in document order instead silently downgraded a package — a
+    /// csproj listing <c>Tesserae.GraphKit</c> above <c>Tesserae</c> compiled against the older
+    /// Tesserae that GraphKit's nuspec declares, ignoring the version written right there in the
+    /// csproj.
+    /// </summary>
     private static IEnumerable<(string name, string path)> ResolvePackageReferenceDlls(ProjectXml doc, List<string> roots)
     {
-        var resolved = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); // asmName → dll path
-        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);             // pkgId@version
-
+        // pkgId → the version the project declares (highest, if it declares one id twice).
+        var declared = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var (pr, _) in doc.Elements("PackageReference"))
         {
             var id = pr.Attribute("Include")?.Value ?? pr.Attribute("Update")?.Value;
             var version = pr.Attribute("Version")?.Value ?? pr.Element(pr.Name.Namespace + "Version")?.Value;
             if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(version)) continue;
-            ResolvePackage(roots, id!, version!, resolved, visited);
+            if (!declared.TryGetValue(id!, out var already) || CompareVersions(version!, already) > 0)
+                declared[id!] = version!;
         }
 
-        return resolved.Select(kv => (kv.Key, kv.Value));
-    }
+        var resolved = new Dictionary<string, (string path, string version, bool declared)>(StringComparer.OrdinalIgnoreCase);
+        var visited  = new HashSet<string>(StringComparer.OrdinalIgnoreCase);                     // pkgId@version
+        var queue    = new Queue<(string id, string version, bool isDeclared)>();
 
-    private static void ResolvePackage(
-        List<string> roots, string id, string version,
-        Dictionary<string, string> resolved, HashSet<string> visited)
-    {
-        var key = id + "@" + version;
-        if (!visited.Add(key)) return;
+        // Breadth-first from the declared set, so every declared package is resolved before any
+        // transitive one can offer the same assembly.
+        foreach (var (id, version) in declared) queue.Enqueue((id, version, true));
 
-        var pkgDir = roots
-            .Select(r => Path.Combine(r, id.ToLowerInvariant(), version))
-            .FirstOrDefault(Directory.Exists);
-        if (pkgDir is null) return;
-
-        var libDir = BestLibDir(pkgDir);
-        if (libDir is not null)
+        while (queue.Count > 0)
         {
-            foreach (var dll in Directory.GetFiles(libDir, "*.dll"))
+            var (id, version, isDeclared) = queue.Dequeue();
+
+            // A transitive dependency on a package the project declares itself is ignored outright:
+            // the declared version supersedes it, so its cache folder is never even read.
+            if (!isDeclared && declared.ContainsKey(id)) continue;
+            if (!visited.Add(id + "@" + version)) continue;
+
+            var pkgDir = roots
+                .Select(r => Path.Combine(r, id.ToLowerInvariant(), version))
+                .FirstOrDefault(Directory.Exists);
+            if (pkgDir is null) continue;
+
+            var libDir = BestLibDir(pkgDir);
+            if (libDir is not null)
             {
-                var name = Path.GetFileNameWithoutExtension(dll);
-                if (!resolved.ContainsKey(name)) resolved[name] = dll;
+                foreach (var dll in Directory.GetFiles(libDir, "*.dll"))
+                {
+                    var name = Path.GetFileNameWithoutExtension(dll);
+                    if (Wins(name, version, isDeclared)) resolved[name] = (dll, version, isDeclared);
+                }
             }
-        }
 
-        // Follow the package's declared dependencies so transitive BCL/interop types resolve.
-        var nuspec = Path.Combine(pkgDir, id.ToLowerInvariant() + ".nuspec");
-        if (File.Exists(nuspec))
-        {
+            // Follow the package's declared dependencies so transitive BCL/interop types resolve.
+            var nuspec = Path.Combine(pkgDir, id.ToLowerInvariant() + ".nuspec");
+            if (!File.Exists(nuspec)) continue;
             try
             {
                 var ndoc = XDocument.Load(nuspec);
@@ -556,11 +574,41 @@ internal static class ProjectResolver
                     var depId = dep.Attribute("id")?.Value;
                     var depVer = dep.Attribute("version")?.Value?.Trim('[', ']', '(', ')').Split(',')[0];
                     if (!string.IsNullOrWhiteSpace(depId) && !string.IsNullOrWhiteSpace(depVer))
-                        ResolvePackage(roots, depId!, depVer!, resolved, visited);
+                        queue.Enqueue((depId!, depVer!, false));
                 }
             }
             catch { /* best-effort transitive resolution */ }
         }
+
+        return resolved.Select(kv => (kv.Key, kv.Value.path));
+
+        bool Wins(string name, string version, bool isDeclared)
+        {
+            if (!resolved.TryGetValue(name, out var current)) return true;
+            if (current.declared) return false;                        // a declared version is never displaced
+            return isDeclared || CompareVersions(version, current.version) > 0;
+        }
+    }
+
+    /// <summary>Compares two NuGet version strings by their numeric segments, ignoring any
+    /// prerelease/metadata suffix — enough to pick between two versions of one package in the cache
+    /// (a full NuGet.Versioning dependency would buy nothing here).</summary>
+    private static int CompareVersions(string a, string b)
+    {
+        var left  = Segments(a);
+        var right = Segments(b);
+
+        for (var i = 0; i < Math.Max(left.Length, right.Length); i++)
+        {
+            var x = i < left.Length ? left[i] : 0;
+            var y = i < right.Length ? right[i] : 0;
+            if (x != y) return x.CompareTo(y);
+        }
+        return 0;
+
+        static int[] Segments(string v) => v.Trim().Split('-', '+')[0].Split('.')
+            .Select(s => int.TryParse(s, out var n) ? n : 0)
+            .ToArray();
     }
 
     private static string? BestLibDir(string pkgDir)
