@@ -14,6 +14,15 @@
     // Box a char (a bare code-point number at runtime) so it stringifies / compares as its
     // character once widened to object — `object o = 'A'; o.ToString()` must be "A", not "65".
     TransposeR.boxChar = function (c) { return Transpose.box(c, System.Char, TransposeR.chr); };
+    // Exception.StackTrace. A value caught by `catch (Exception)` is either a real System.Exception,
+    // which captured an Error into `errorStack` when it was constructed, or a raw JS error thrown by
+    // interop / a rejected promise, which has a native `stack` and no `errorStack`. C# matches both,
+    // so read whichever shape arrived instead of assuming errorStack (a raw error gave undefined).
+    TransposeR.stackTrace = function (e) {
+        if (e === null || e === undefined) { return null; }
+        if (e.errorStack && e.errorStack.stack !== null && e.errorStack.stack !== undefined) { return e.errorStack.stack; }
+        return (e.stack !== null && e.stack !== undefined) ? e.stack : null;
+    };
     TransposeR.is = function (v, t) { return Transpose.is(v, t); };
     TransposeR.as = function (v, t) { return Transpose.as ? Transpose.as(v, t) : (Transpose.is(v, t) ? v : null); };
     TransposeR.equals = function (a, b) { return Transpose.equals ? Transpose.equals(a, b) : a === b; };
