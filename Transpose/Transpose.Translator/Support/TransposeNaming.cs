@@ -461,9 +461,14 @@ internal static class TransposeNaming
         { "name", "length", "caller", "arguments", "prototype", "constructor" };
 
     /// <summary>Prefixes a static member whose JS name collides with a Function own-property
-    /// (name/length/…) with <c>$</c> — matching the reference runtime (enum member `name` → `$name`).</summary>
+    /// (name/length/…) with <c>$</c> — matching the reference runtime (enum member `name` → `$name`).
+    /// A member of a <c>[GlobalMethods]</c> binding is exempt: it is emitted as a BARE identifier, not
+    /// as a property of a constructor function, so there is nothing to collide with and the escape
+    /// would invent an undeclared global (`window.name` → `$name`, a strict-mode ReferenceError).</summary>
     private static string EscapeStaticReserved(ISymbol symbol, string name)
-        => symbol.IsStatic && _functionReserved.Contains(name) ? "$" + name : name;
+        => symbol.IsStatic && _functionReserved.Contains(name) && ScopePrefix(symbol.ContainingType) != ""
+            ? "$" + name
+            : name;
 
     /// <summary>The un-mangled JS name of a member (ignoring interface qualification).</summary>
     private static string LeafJsName(ISymbol symbol)

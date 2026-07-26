@@ -16,6 +16,13 @@ public sealed partial class Emitter
         var staticFields = type.GetMembers().Where(m => m.IsStatic).Select(m => m switch
         {
             IFieldSymbol f when !f.IsConst && f.AssociatedSymbol is null => ((string name, string def)?)(TransposeNaming.MemberJsName(f), FieldDefaultLiteral(f.Type)),
+            // A const is inlined at every use site, but it is also emitted as a real static slot
+            // holding its value: the member then exists for reflection, for a debugger, and for
+            // hand-written JS reaching into the type — matching the reference runtime, which
+            // exposes consts as static fields. An enum's members are consts too, but the enum type
+            // has its own emit path, so they must not be duplicated here.
+            IFieldSymbol { IsConst: true, ContainingType.TypeKind: not TypeKind.Enum } c when c.CanBeReferencedByName
+                => (TransposeNaming.MemberJsName(c), ConstantLiteral(c.ConstantValue, c.Type)),
             IPropertySymbol p when IsAutoProperty(p) => (TransposeNaming.MemberJsName(p), FieldDefaultLiteral(p.Type)),
             _ => null,
         }).Where(x => x is not null).Select(x => x!.Value).ToList();
