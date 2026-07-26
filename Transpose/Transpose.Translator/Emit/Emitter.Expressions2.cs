@@ -1981,81 +1981,9 @@ public sealed partial class Emitter
         var leftType = _model.GetTypeInfo(assignment.Left).Type;
         var rightType = _model.GetTypeInfo(assignment.Right).Type;
 
-        // Discard assignment: _ = expr → evaluate expr for its side effects only.
-        if (op == "=" && _model.GetSymbolInfo(assignment.Left).Symbol is IDiscardSymbol)
+        if (op == "=")
         {
-            EmitExpression(assignment.Right);
-            return;
-        }
-
-        // `this = expr` inside a struct member (JS cannot assign `this`): copy the value's fields
-        // onto the current instance, matching C# struct value-replacement semantics.
-        if (op == "=" && assignment.Left is ThisExpressionSyntax)
-        {
-            _w.Write("Object.assign(this, ");
-            EmitExpression(assignment.Right);
-            _w.Write(")");
-            return;
-        }
-
-        // Multi-dimensional array element write grid[i, j] = v → System.Array.set(grid, v, i, j).
-        if (op == "=" && assignment.Left is ElementAccessExpressionSyntax mdea
-            && mdea.ArgumentList.Arguments.Count > 1
-            && _model.GetTypeInfo(mdea.Expression).Type is IArrayTypeSymbol { Rank: > 1 })
-        {
-            _w.Write("System.Array.set(");
-            EmitExpression(mdea.Expression);
-            _w.Write(", ");
-            EmitExpressionConverted(assignment.Right, leftType);
-            foreach (var a in mdea.ArgumentList.Arguments) { _w.Write(", "); EmitExpression(a.Expression); }
-            _w.Write(")");
-            return;
-        }
-
-        // Indexer set on a collection: coll[i] = v → coll.setItem(i, v)
-        if (op == "=" && assignment.Left is ElementAccessExpressionSyntax ea
-            && _model.GetSymbolInfo(ea).Symbol is IPropertySymbol { IsIndexer: true } idx
-            && idx.ContainingType.SpecialType != SpecialType.System_String)
-        {
-            // Indexer setter [Template].
-            if (idx.SetMethod is { } setIdx && TransposeNaming.GetTemplate(setIdx.OriginalDefinition) is { } setIdxTpl)
-            {
-                var recv = Capture(() => EmitExpression(ea.Expression));
-                var args = ea.ArgumentList.Arguments.Select(a => Capture(() => EmitExpression(a.Expression))).ToList();
-                args.Add(Capture(() => EmitExpressionConverted(assignment.Right, leftType)));
-                WriteTemplate(setIdxTpl, idx.IsStatic, isExtension: false, recv, new(), args);
-                return;
-            }
-            // An [External] type's plain indexer sets via native bracket access (domElement["name"] = v).
-            if (TransposeNaming.IsNativeIndexer(idx))
-            {
-                EmitExpression(ea.Expression);
-                _w.Write("[");
-                EmitArgumentList(ea.ArgumentList);
-                _w.Write("] = ");
-                EmitExpressionConverted(assignment.Right, leftType);
-                return;
-            }
-            EmitExpression(ea.Expression);
-            _w.Write("." + TransposeNaming.IndexerAccessorName(idx, isGet: false) + "(");
-            EmitArgumentList(ea.ArgumentList);
-            _w.Write(", ");
-            EmitExpressionConverted(assignment.Right, leftType);
-            _w.Write(")");
-            return;
-        }
-
-        // Property setter with a [Template] (e.g. StringBuilder.Length → setLength({0})).
-        if (op == "=" && _model.GetSymbolInfo(assignment.Left).Symbol is IPropertySymbol { SetMethod: { } setter } setProp
-            && !setProp.IsIndexer
-            && TransposeNaming.GetTemplate(setter.OriginalDefinition) is { } setTemplate)
-        {
-            var recv = setProp.IsStatic ? TypeRef(setProp.ContainingType)
-                : assignment.Left is MemberAccessExpressionSyntax sma ? Capture(() => EmitExpression(sma.Expression))
-                : "this";
-            var val = Capture(() => EmitExpressionConverted(assignment.Right, leftType));
-            WriteTemplate(setTemplate, setProp.IsStatic, isExtension: false, recv,
-                new() { ["value"] = val }, new() { val });
+            EmitSimpleAssignmentTo(assignment.Left, () => EmitExpressionConverted(assignment.Right, leftType));
             return;
         }
 
@@ -2183,6 +2111,96 @@ public sealed partial class Emitter
         EmitExpression(assignment.Left);
         _w.Write($" {op} ");
         EmitExpressionConverted(assignment.Right, leftType);
+    }
+
+    /// <summary>
+    /// Emits a simple (<c>=</c>) assignment of a value written by <paramref name="emitValue"/> to any
+    /// assignable expression. Deconstruction targets bind through here too, so every lvalue form
+    /// behaves the same whether it is written by <c>x = v</c> or by <c>(x, y) = t</c>.
+    /// </summary>
+    private void EmitSimpleAssignmentTo(ExpressionSyntax left, Action emitValue)
+    {
+        // Discard assignment: _ = expr → evaluate expr for its side effects only.
+        if (_model.GetSymbolInfo(left).Symbol is IDiscardSymbol)
+        {
+            emitValue();
+            return;
+        }
+
+        // `this = expr` inside a struct member (JS cannot assign `this`): copy the value's fields
+        // onto the current instance, matching C# struct value-replacement semantics.
+        if (left is ThisExpressionSyntax)
+        {
+            _w.Write("Object.assign(this, ");
+            emitValue();
+            _w.Write(")");
+            return;
+        }
+
+        // Multi-dimensional array element write grid[i, j] = v → System.Array.set(grid, v, i, j).
+        if (left is ElementAccessExpressionSyntax mdea
+            && mdea.ArgumentList.Arguments.Count > 1
+            && _model.GetTypeInfo(mdea.Expression).Type is IArrayTypeSymbol { Rank: > 1 })
+        {
+            _w.Write("System.Array.set(");
+            EmitExpression(mdea.Expression);
+            _w.Write(", ");
+            emitValue();
+            foreach (var a in mdea.ArgumentList.Arguments) { _w.Write(", "); EmitExpression(a.Expression); }
+            _w.Write(")");
+            return;
+        }
+
+        // Indexer set on a collection: coll[i] = v → coll.setItem(i, v)
+        if (left is ElementAccessExpressionSyntax ea
+            && _model.GetSymbolInfo(ea).Symbol is IPropertySymbol { IsIndexer: true } idx
+            && idx.ContainingType.SpecialType != SpecialType.System_String)
+        {
+            // Indexer setter [Template].
+            if (idx.SetMethod is { } setIdx && TransposeNaming.GetTemplate(setIdx.OriginalDefinition) is { } setIdxTpl)
+            {
+                var recv = Capture(() => EmitExpression(ea.Expression));
+                var args = ea.ArgumentList.Arguments.Select(a => Capture(() => EmitExpression(a.Expression))).ToList();
+                args.Add(Capture(emitValue));
+                WriteTemplate(setIdxTpl, idx.IsStatic, isExtension: false, recv, new(), args);
+                return;
+            }
+            // An [External] type's plain indexer sets via native bracket access (domElement["name"] = v).
+            if (TransposeNaming.IsNativeIndexer(idx))
+            {
+                EmitExpression(ea.Expression);
+                _w.Write("[");
+                EmitArgumentList(ea.ArgumentList);
+                _w.Write("] = ");
+                emitValue();
+                return;
+            }
+            EmitExpression(ea.Expression);
+            _w.Write("." + TransposeNaming.IndexerAccessorName(idx, isGet: false) + "(");
+            EmitArgumentList(ea.ArgumentList);
+            _w.Write(", ");
+            emitValue();
+            _w.Write(")");
+            return;
+        }
+
+        // Property setter with a [Template] (e.g. StringBuilder.Length → setLength({0})).
+        if (_model.GetSymbolInfo(left).Symbol is IPropertySymbol { SetMethod: { } setter } setProp
+            && !setProp.IsIndexer
+            && TransposeNaming.GetTemplate(setter.OriginalDefinition) is { } setTemplate)
+        {
+            var recv = setProp.IsStatic ? TypeRef(setProp.ContainingType)
+                : left is MemberAccessExpressionSyntax sma ? Capture(() => EmitExpression(sma.Expression))
+                : "this";
+            var val = Capture(emitValue);
+            WriteTemplate(setTemplate, setProp.IsStatic, isExtension: false, recv,
+                new() { ["value"] = val }, new() { val });
+            return;
+        }
+
+        EmitExpression(left);
+        _w.Write(" = ");
+        emitValue();
     }
 
     /// <summary>The Int64/UInt64 or Decimal instance-method name for a compound-assignment operator
