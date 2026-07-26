@@ -517,7 +517,8 @@ public sealed partial class Emitter
     private void EmitForEachVariable(ForEachVariableStatementSyntax forEach)
     {
         var enumVar = EmitEnumeratorInit(forEach, forEach.Expression);
-        var elementIsTuple = _model.GetForEachStatementInfo(forEach).ElementType is { IsTupleType: true };
+        var elementType = _model.GetForEachStatementInfo(forEach).ElementType;
+        var elementIsTuple = elementType is { IsTupleType: true };
         var targets = CollectDeconstructionTargets(forEach.Variable).ToList();
         _w.Write("try ");
         _w.Block(() =>
@@ -529,7 +530,7 @@ public sealed partial class Emitter
             {
                 var cur = enumVar + "c";
                 _w.WriteLine($"let {cur} = {enumVar}.current;");
-                EmitDeconstructionBindings(targets, cur, elementIsTuple);
+                EmitDeconstructionBindings(targets, cur, elementIsTuple, elementType);
                 EmitForEachBody(forEach.Statement);
             });
             _loopDepth--;
@@ -760,7 +761,12 @@ public sealed partial class Emitter
             }
             else if (usingStmt.Expression is not null)
             {
-                resourceVar = "$using" + Math.Abs(usingStmt.GetHashCode() % 10000);
+                // Name the resource from the statement's source position, not from
+                // SyntaxNode.GetHashCode() — a node's hash code is reference-based, so it varies
+                // between runs and made the emitted bundle differ byte-for-byte on every compile of
+                // unchanged sources. Same reasoning (and format) as the enumerator in
+                // EmitEnumeratorInit.
+                resourceVar = "$using" + usingStmt.SpanStart.ToString("x4");
                 _w.Write($"let {resourceVar} = ");
                 EmitExpression(usingStmt.Expression);
                 _w.WriteLine(";");

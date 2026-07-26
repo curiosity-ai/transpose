@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -422,24 +423,45 @@ public sealed partial class Emitter
 
         var rhsType = _model.GetTypeInfo(assign.Right).Type;
         var isTuple = rhsType is { IsTupleType: true } || assign.Right is TupleExpressionSyntax;
-        EmitDeconstructionBindings(targets, temp, isTuple);
+        EmitDeconstructionBindings(targets, temp, isTuple, rhsType);
+    }
+
+    /// <summary>
+    /// One position of a deconstruction's left-hand side: a newly declared local
+    /// (<c>DeclaredName</c>), an existing lvalue to assign (<c>Assignee</c>), a nested group
+    /// (<c>Nested</c>), or — all three null — a discard.
+    /// </summary>
+    private readonly record struct DeconstructionTarget(
+        string?                        DeclaredName,
+        ExpressionSyntax?              Assignee,
+        List<DeconstructionTarget>?    Nested)
+    {
+        public static readonly DeconstructionTarget Discard = new(null, null, null);
+
+        public static DeconstructionTarget Declare(string name)               => new(name, null, null);
+        public static DeconstructionTarget Assign(ExpressionSyntax lvalue)    => new(null, lvalue, null);
+        public static DeconstructionTarget Group(List<DeconstructionTarget> t) => new(null, null, t);
+
+        public bool IsDiscard => DeclaredName is null && Assignee is null && Nested is null;
     }
 
     /// <summary>
     /// Binds deconstruction targets from an already-evaluated value <paramref name="temp"/>:
     /// tuple elements read <c>temp.Item{n}</c>, otherwise the value's Deconstruct(out …) runs.
+    /// A target that is not a fresh local is written through <see cref="EmitSimpleAssignmentTo"/>, so
+    /// a field, property, indexer or array element is qualified and stored the same way a plain
+    /// assignment to it would be — emitting the bare source name would produce an undeclared global.
     /// </summary>
     private void EmitDeconstructionBindings(
-        System.Collections.Generic.List<(string? name, bool isNew, bool isDiscard)> targets,
-        string temp, bool isTuple)
+        List<DeconstructionTarget> targets, string temp, bool isTuple, ITypeSymbol? valueType)
     {
+        var elementTypes = DeconstructionElementTypes(valueType, targets.Count);
+
         if (isTuple)
         {
             for (var i = 0; i < targets.Count; i++)
             {
-                var (name, isNew, isDiscard) = targets[i];
-                if (isDiscard) continue; // position preserved, no binding
-                _w.WriteLine($"{(isNew ? "let " : "")}{NameMangler.JsIdentifier(name!)} = {temp}.Item{i + 1};");
+                EmitDeconstructionBinding(targets[i], $"{temp}.Item{i + 1}", elementTypes[i], declare: true);
             }
             return;
         }
@@ -448,50 +470,94 @@ public sealed partial class Emitter
         var holders = targets.Select((_, i) => $"{temp}_h{i}").ToList();
         for (var i = 0; i < targets.Count; i++)
         {
-            if (targets[i].isNew && !targets[i].isDiscard) _w.WriteLine($"let {NameMangler.JsIdentifier(targets[i].name!)};");
+            if (targets[i].DeclaredName is { } name) _w.WriteLine($"let {NameMangler.JsIdentifier(name)};");
             _w.WriteLine($"let {holders[i]} = {{ v: null }};");
         }
+
         _w.WriteLine($"{temp}.Deconstruct({string.Join(", ", holders)});");
+
         for (var i = 0; i < targets.Count; i++)
         {
-            if (targets[i].isDiscard) continue;
-            _w.WriteLine($"{NameMangler.JsIdentifier(targets[i].name!)} = {holders[i]}.v;");
+            EmitDeconstructionBinding(targets[i], $"{holders[i]}.v", elementTypes[i], declare: false);
         }
     }
 
-    private System.Collections.Generic.IEnumerable<(string? name, bool isNew, bool isDiscard)> CollectDeconstructionTargets(ExpressionSyntax left)
+    /// <summary>Binds one deconstruction position to the JavaScript expression <paramref name="value"/>.
+    /// <paramref name="declare"/> is false on the Deconstruct path, where fresh locals were already
+    /// declared ahead of the call.</summary>
+    private void EmitDeconstructionBinding(DeconstructionTarget target, string value, ITypeSymbol? valueType, bool declare)
+    {
+        if (target.IsDiscard) return; // position preserved, no binding
+
+        if (target.Nested is { } nested)
+        {
+            var sub = NextTemp("$dc");
+            _w.WriteLine($"let {sub} = {value};");
+            EmitDeconstructionBindings(nested, sub, valueType is { IsTupleType: true }, valueType);
+            return;
+        }
+
+        if (target.DeclaredName is { } name)
+        {
+            _w.WriteLine($"{(declare ? "let " : "")}{NameMangler.JsIdentifier(name)} = {value};");
+            return;
+        }
+
+        EmitSimpleAssignmentTo(target.Assignee!, () => _w.Write(value));
+        _w.WriteLine(";");
+    }
+
+    /// <summary>The element types a value of <paramref name="valueType"/> deconstructs into — needed to
+    /// type a nested group. Nulls where the shape cannot be resolved.</summary>
+    private static ITypeSymbol?[] DeconstructionElementTypes(ITypeSymbol? valueType, int count)
+    {
+        if (valueType is INamedTypeSymbol { IsTupleType: true } tuple && tuple.TupleElements.Length == count)
+            return tuple.TupleElements.Select(e => (ITypeSymbol?)e.Type).ToArray();
+
+        var deconstruct = valueType?.GetMembers("Deconstruct").OfType<IMethodSymbol>()
+            .FirstOrDefault(m => m.Parameters.Length == count && m.Parameters.All(p => p.RefKind == RefKind.Out));
+
+        if (deconstruct is not null) return deconstruct.Parameters.Select(p => (ITypeSymbol?)p.Type).ToArray();
+
+        return new ITypeSymbol?[count];
+    }
+
+    private IEnumerable<DeconstructionTarget> CollectDeconstructionTargets(ExpressionSyntax left)
     {
         switch (left)
         {
             case TupleExpressionSyntax tuple:
-                foreach (var arg in tuple.Arguments)
-                {
-                    switch (arg.Expression)
-                    {
-                        case DeclarationExpressionSyntax { Designation: SingleVariableDesignationSyntax d }:
-                            yield return (d.Identifier.Text, true, false);
-                            break;
-                        case DeclarationExpressionSyntax { Designation: DiscardDesignationSyntax }:
-                            yield return (null, false, true);
-                            break;
-                        case IdentifierNameSyntax { Identifier.Text: "_" } when _model.GetSymbolInfo(arg.Expression).Symbol is IDiscardSymbol:
-                            yield return (null, false, true);
-                            break;
-                        case IdentifierNameSyntax id:
-                            yield return (id.Identifier.Text, false, false);
-                            break;
-                    }
-                }
+                foreach (var arg in tuple.Arguments) yield return TargetForExpression(arg.Expression);
                 break;
-            case DeclarationExpressionSyntax { Designation: ParenthesizedVariableDesignationSyntax paren }:
-                foreach (var v in paren.Variables)
-                {
-                    if (v is SingleVariableDesignationSyntax single)
-                        yield return (single.Identifier.Text, true, false);
-                    else if (v is DiscardDesignationSyntax)
-                        yield return (null, false, true);
-                }
+            case DeclarationExpressionSyntax { Designation: { } designation }:
+                foreach (var t in TargetsForDesignation(designation)) yield return t;
                 break;
         }
     }
+
+    private DeconstructionTarget TargetForExpression(ExpressionSyntax expression)
+    {
+        switch (expression)
+        {
+            case DeclarationExpressionSyntax decl:
+                return TargetForDesignation(decl.Designation);
+            case TupleExpressionSyntax nested:
+                return DeconstructionTarget.Group(CollectDeconstructionTargets(nested).ToList());
+            default:
+                if (_model.GetSymbolInfo(expression).Symbol is IDiscardSymbol) return DeconstructionTarget.Discard;
+                return DeconstructionTarget.Assign(expression);
+        }
+    }
+
+    private DeconstructionTarget TargetForDesignation(VariableDesignationSyntax designation) => designation switch
+    {
+        SingleVariableDesignationSyntax single => DeconstructionTarget.Declare(single.Identifier.Text),
+        ParenthesizedVariableDesignationSyntax => DeconstructionTarget.Group(TargetsForDesignation(designation).ToList()),
+        _                                      => DeconstructionTarget.Discard,
+    };
+
+    private IEnumerable<DeconstructionTarget> TargetsForDesignation(VariableDesignationSyntax designation)
+        => designation is ParenthesizedVariableDesignationSyntax paren
+            ? paren.Variables.Select(TargetForDesignation)
+            : Enumerable.Empty<DeconstructionTarget>();
 }
