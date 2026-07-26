@@ -41,8 +41,16 @@ namespace System
         /// <summary>
         /// Gets a string representation of the immediate frames on the call stack.
         /// </summary>
+        /// <remarks>
+        /// Read through a helper rather than the plain member: a value caught by
+        /// <c>catch (Exception)</c> is either a real <see cref="Exception"/> — which carries the
+        /// <c>errorStack</c> captured in its constructor — or a raw JavaScript error thrown by interop
+        /// or a rejected promise, which has a native <c>stack</c> and no <c>errorStack</c>. C# matches
+        /// both, so reading the member directly returned undefined for the raw-error case.
+        /// </remarks>
         public virtual extern string StackTrace
         {
+            [Transpose.Template("TransposeR.stackTrace({this})")]
             get;
         }
 
