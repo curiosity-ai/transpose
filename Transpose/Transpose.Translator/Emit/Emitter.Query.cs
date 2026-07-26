@@ -38,7 +38,7 @@ public sealed partial class Emitter
                     emit = () =>
                     {
                         inner();
-                        _w.Write($".where(function ({range}) {{ return ");
+                        _w.Write(".where("); OpenQueryLambda(range);
                         EmitExpression(where.Condition);
                         _w.Write("; })");
                     };
@@ -67,7 +67,7 @@ public sealed partial class Emitter
                     result = () =>
                     {
                         inner();
-                        _w.Write($".select(function ({range}) {{ return ");
+                        _w.Write(".select("); OpenQueryLambda(range);
                         EmitExpression(select.Expression);
                         _w.Write("; })");
                     };
@@ -79,12 +79,12 @@ public sealed partial class Emitter
                     result = () =>
                     {
                         inner();
-                        _w.Write($".groupBy(function ({range}) {{ return ");
+                        _w.Write(".groupBy("); OpenQueryLambda(range);
                         EmitExpression(group.ByExpression);
                         _w.Write("; }");
                         if (!(group.GroupExpression is IdentifierNameSyntax gid && gid.Identifier.Text == range))
                         {
-                            _w.Write($", function ({range}) {{ return ");
+                            _w.Write(", "); OpenQueryLambda(range);
                             EmitExpression(group.GroupExpression);
                             _w.Write("; }");
                         }
@@ -117,9 +117,19 @@ public sealed partial class Emitter
             var method = i == 0
                 ? (descending ? "orderByDescending" : "orderBy")
                 : (descending ? "thenByDescending" : "thenBy");
-            _w.Write($".{method}(function ({range}) {{ return ");
+            _w.Write($".{method}("); OpenQueryLambda(range);
             EmitExpression(orderBy.Orderings[i].Expression);
             _w.Write("; })");
         }
     }
+
+    /// <summary>
+    /// Opens a query-clause lambda: <c>(range) =&gt; { return </c>. An ARROW, never a <c>function</c> —
+    /// a query clause's expression is user code that may read <c>this</c> (e.g.
+    /// <c>where x.Id == this._id</c> inside an instance method), and a plain function rebinds
+    /// <c>this</c> to undefined under the bundle's "use strict", so such a clause threw
+    /// "Cannot read properties of undefined". C# forbids <c>await</c> in a query clause, so the
+    /// arrow never needs the async form.
+    /// </summary>
+    private void OpenQueryLambda(string range) => _w.Write($"({range}) => {{ return ");
 }

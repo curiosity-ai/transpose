@@ -27,7 +27,19 @@ public sealed partial class Emitter
     private void EmitSwitchExpression(SwitchExpressionSyntax switchExpr)
     {
         var subject = NextTemp("$sw");
-        _w.Write($"(function ({subject}) {{ ");
+
+        // Route through the shared IIFE helper rather than a hand-rolled `function (subject) { … }`,
+        // which got both of its properties wrong: a plain function is not async, so an `await` in an
+        // arm was a bare await in a non-async function — a SyntaxError that breaks the WHOLE bundle;
+        // and it rebinds `this` to undefined under "use strict", so an arm reading an instance member
+        // threw "Cannot read properties of undefined". An arrow fixes `this`, and OpenIife picks the
+        // async form when anything in the switch awaits. The subject moves from a parameter to a
+        // `let` inside, which evaluates at the same point (nothing else is emitted outside).
+        var hasAwait = OpenIife(switchExpr);
+
+        _w.Write($"let {subject} = ");
+        EmitExpression(switchExpr.GoverningExpression);
+        _w.Write("; ");
 
         // Pre-declare pattern variables bound in the arms (e.g. `int i` in `> 0 and int i`).
         var patternVars = new List<string>();
@@ -53,9 +65,8 @@ public sealed partial class Emitter
             EmitExpression(arm.Expression);
             _w.Write("; } ");
         }
-        _w.Write("throw new System.InvalidOperationException(\"No matching switch arm\"); })(");
-        EmitExpression(switchExpr.GoverningExpression);
-        _w.Write(")");
+        _w.Write("throw new System.InvalidOperationException(\"No matching switch arm\"); ");
+        CloseIife(hasAwait);
     }
 
     // ---- pattern test emission ---------------------------------------------
