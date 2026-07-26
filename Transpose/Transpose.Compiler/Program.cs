@@ -234,7 +234,10 @@ public static class Program
         // embed its JS (+ tps.json resources) so another project can reference it and extract them.
         if (emitPackage)
         {
-            var (dllPath, items) = WritePackage(project, config, configuration, result);
+            var written = TryWritePackage(project, config, configuration, result);
+            if (written is null) return 2;
+
+            var (dllPath, items) = written.Value;
             Console.WriteLine($"\nOK — built package {project.AssemblyName}.dll ({result.AssemblyBytes!.Length:N0} bytes) with {items.Count} embedded resource(s) in {sw.ElapsedMilliseconds} ms.");
             Console.WriteLine($"  dll:      {dllPath}");
             Console.WriteLine($"  embedded: {string.Join(", ", items.Take(6).Select(i => i.Name))}{(items.Count > 6 ? ", …" : "")}");
@@ -251,7 +254,11 @@ public static class Program
             // one and the SDK finds the <Assembly>.dll it declares as the build output.
             string? dllPath = null;
             if (result.AssemblyBytes is not null)
-                (dllPath, _) = WritePackage(project, config, configuration, result);
+            {
+                var package = TryWritePackage(project, config, configuration, result);
+                if (package is null) return 2;
+                dllPath = package.Value.dllPath;
+            }
 
             var outDir = siteDir ?? ResolveOutputDir(config, project.ProjectDir, configuration);
             var siteResult = PhaseTimings.Measure("write site (minify + resources + html)", () =>
@@ -543,8 +550,22 @@ public static class Program
             return false;
         }
 
-        WritePackage(project, tpscfg, configuration, result);
-        return true;
+        return TryWritePackage(project, tpscfg, configuration, result) is not null;
+    }
+
+    /// <summary>Writes a project's package DLL, turning a failure into a reported diagnostic (rather
+    /// than an unhandled exception) and a null result. Embedding the resources re-serializes the
+    /// assembly's metadata through Mono.Cecil, which resolves referenced assemblies as it goes — a
+    /// step that can fail on its own, after a clean compile.</summary>
+    private static (string dllPath, List<EmbeddedItem> items)? TryWritePackage(
+        ResolvedProject project, TransposeJson? config, string configuration, AssemblyBuildResult result)
+    {
+        try { return WritePackage(project, config, configuration, result); }
+        catch (Exception ex)
+        {
+            ReportCrash($"Writing the package for '{Path.GetFileName(project.CsprojPath)}'", ex);
+            return null;
+        }
     }
 
     /// <summary>Writes a project's emitted assembly and embeds its JS + resources, returning the DLL
