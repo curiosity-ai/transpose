@@ -155,8 +155,10 @@ tps --project <proj.csproj> --configuration <cfg> --assembly-version <v>
 `tps` reads the csproj directly (no MSBuild evaluation), globs `**/*.cs`, resolves
 `PackageReference`s from the NuGet cache, synthesizes `[assembly: ...]` from `<AssemblyAttribute>`
 items, transpiles, and writes the site (runtime + bundle + resources + `index.html`) or a package
-DLL (`--emit-package`). **There is no compilation server and no cache** — the new compiler is a
-plain CLI, by design.
+DLL (`--emit-package`). **There is no compilation server** — the new compiler is a plain CLI, by
+design. There *is* an opt-in build cache (`--incremental`, off by default) — see
+**`TODO.incremental.md`** for what it reuses, why that is sound, and what it measures; a build with
+the cache disabled behaves exactly as it always did.
 
 Because there is no MSBuild evaluation, `ProjectXml` does the one bit of evaluation that changes
 which files compile: it follows `<Import Project="…"/>` transitively and flattens the result, so a
@@ -171,6 +173,7 @@ property is not guessed at: such an import or item is skipped, which is why SDK-
 `--out/-o`, `--site-dir`, `--configuration/-c`, `--emit-package`, `--separate-assemblies`,
 `--with-runtime`, `--reference/-r <dll>` (extra assemblies not in the NuGet cache),
 `--define/-D <SYM>`, `--assembly-version <v>`, `--project/-p`, `--quiet/-q`,
+`--incremental` / `--no-incremental` / `--cache-dir <dir>` (reuse the previous build; off by default),
 `--timing` (per-phase time + allocations), `--timing-json <file>`,
 `--metadata-only-assembly` / `--no-metadata-only-assembly`,
 `--max-errors <n>` (a cap; by default **every** error is reported, ordered by file and line).
@@ -264,8 +267,16 @@ The short version:
 - **MSBuild evaluation** stays deliberately shallow: `<Import>` is followed (see above) but
   conditions, arbitrary properties, `Directory.Build.props` and item metadata are not evaluated.
 - **Wider `tps.json` surface** (outputBy, module formats, locales, before/after build, etc.).
+- **Incremental compilation (prototype, opt-in).** `--incremental` reuses the previous build of a
+  project: nothing at all is compiled when every input hashes the same (20× on tesserae), and an edit
+  confined to method/accessor bodies keeps the cached JavaScript of every untouched type, the
+  reflection metadata and (in Debug) the metadata-only assembly (~2×). Output is byte-identical either
+  way. Still to decide: making it the default, and re-emitting only the *dependent* types when a
+  declaration changes. See **`TODO.incremental.md`**.
 
-Caching and the compilation server are intentionally **out of scope**.
+A compilation server is still intentionally **out of scope** — though the measurements in
+`TODO.incremental.md` say what it would be worth (the residual cost of an incremental build is almost
+entirely Roslyn re-importing `Transpose.dll`'s metadata in a fresh process).
 
 ## Debugging, testing & auditing skills
 

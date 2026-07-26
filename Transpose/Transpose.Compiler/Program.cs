@@ -37,6 +37,11 @@ public static class Program
         // Overrides the project's <TransposeMetadataOnlyAssembly>, which in turn overrides the
         // per-configuration default. Null = nothing on the command line expressed a preference.
         bool? metadataOnlyAssembly = null;
+        // Incremental builds are opt-in: reusing a previous build's output is only correct while the
+        // rules in BuildCache/IncrementalPlan hold, and a stale cache is a silently wrong build rather
+        // than a failed one. TRANSPOSE_INCREMENTAL=1 turns it on for a whole session.
+        var incremental = Environment.GetEnvironmentVariable("TRANSPOSE_INCREMENTAL") is "1" or "true";
+        string? cacheDir = null;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -55,6 +60,9 @@ public static class Program
                 case "--define" or "-D": extraDefines.Add(args[++i]); break;
                 case "--timing": PhaseTimings.Enabled = true; break;
                 case "--timing-json": _timingJsonPath = args[++i]; PhaseTimings.Enabled = true; break;
+                case "--incremental": incremental = true; break;
+                case "--no-incremental": incremental = false; break;
+                case "--cache-dir": cacheDir = args[++i]; incremental = true; break;
                 case "--metadata-only-assembly": metadataOnlyAssembly = true; break;
                 case "--no-metadata-only-assembly": metadataOnlyAssembly = false; break;
                 case "--assembly-version": assemblyVersion = args[++i]; break;
@@ -182,7 +190,7 @@ public static class Program
         // separate-assembly / package mode this project binds against its dependencies' built DLLs
         // and extracts their embedded JS, so each must be compiled — in dependency order — before
         // this one. Up-to-date packages are skipped.
-        if (separateAssemblies && !EnsureReferencedProjectsBuilt(csproj, configuration, maxErrors, metadataOnlyAssembly))
+        if (separateAssemblies && !EnsureReferencedProjectsBuilt(csproj, configuration, maxErrors, metadataOnlyAssembly, incremental, cacheDir))
         {
             Console.Error.WriteLine("\nFAILED building referenced projects.");
             return 1;
@@ -193,11 +201,52 @@ public static class Program
         // references this one. Emitting the DLL (with the compiled JS embedded, like a package) means
         // every project — app or library — produces the DLL the SDK/consumers expect.
         var isSiteBuild = !emitPackage && !buildRuntime && outPath is null && tpscfg is not null;
+
+        // Incremental build (--incremental): consult the cache written by the previous build of this
+        // project. This happens *after* the referenced projects were rebuilt above, so a dependency's
+        // freshly written DLL is part of what gets fingerprinted.
+        BuildCache? cache = null;
+        var verdict = BuildCache.Verdict.FullBuild;
+        var changedSources = new List<string>();
+        if (incremental)
+        {
+            cache = BuildCache.Open(project, configuration,
+                BuildSettingsFingerprint(project, configuration, tpscfg, reflectionEnabled, metadataTarget,
+                    metadataOnly, emitPackage, isSiteBuild, separateAssemblies, withRuntime, outPath, siteDir,
+                    assemblyVersion),
+                BuildContentFingerprint(project),
+                cacheDir);
+            (verdict, changedSources, var reason) = cache.Decide();
+
+            if (verdict == BuildCache.Verdict.UpToDate)
+            {
+                Console.WriteLine($"\nOK — everything up to date, nothing to compile ({sw.ElapsedMilliseconds} ms).");
+                foreach (var output in cache.PreviousOutputs.Take(4)) Console.WriteLine($"  output:   {output}");
+                if (cache.PreviousOutputs.Count > 4)
+                    Console.WriteLine($"            … and {cache.PreviousOutputs.Count - 4} more");
+                PrintTimings(sw.ElapsedMilliseconds);
+                return 0;
+            }
+            Console.WriteLine(verdict == BuildCache.Verdict.BodyOnlyChange
+                ? $"  cache:      {changedSources.Count} file(s) changed, method bodies only — reusing cached declarations"
+                : $"  cache:      full build ({reason})");
+        }
+        // Nothing in this project changed — only a referenced package's content did (its declarations
+        // are identical). The compilation would reproduce the cached bundle byte for byte, so skip it
+        // and go straight to writing the outputs, which do have to be rewritten.
+        var replayed = incremental && verdict == BuildCache.Verdict.BodyOnlyChange && changedSources.Count == 0
+            ? cache!.TryReplayCompilation(canReuseAssembly: metadataOnly)
+            : null;
+        if (replayed is not null)
+            Console.WriteLine("  cache:      reusing the previous compilation in full — writing outputs only");
+
+        var plan = replayed is not null ? null : cache?.CreatePlan(verdict, changedSources, canReuseAssembly: metadataOnly);
+
         var translator = new RoslynTranslator();
         AssemblyBuildResult result;
         try
         {
-            result = translator.BuildAssembly(
+            result = replayed ?? translator.BuildAssembly(
                 project.Sources,
                 project.AssemblyName,
                 project.ReferencePaths,
@@ -208,7 +257,8 @@ public static class Program
                 emitAssembly: emitPackage || isSiteBuild,
                 assemblyVersion: assemblyVersion,
                 emitDebugInformation: project.EmitDebugInformation,
-                metadataOnlyAssembly: metadataOnly);
+                metadataOnlyAssembly: metadataOnly,
+                incremental: plan);
         }
         catch (Exception ex)
         {
@@ -238,6 +288,7 @@ public static class Program
             if (written is null) return 2;
 
             var (dllPath, items) = written.Value;
+            SaveCache(cache, plan, result, new[] { dllPath });
             Console.WriteLine($"\nOK — built package {project.AssemblyName}.dll ({result.AssemblyBytes!.Length:N0} bytes) with {items.Count} embedded resource(s) in {sw.ElapsedMilliseconds} ms.");
             Console.WriteLine($"  dll:      {dllPath}");
             Console.WriteLine($"  embedded: {string.Join(", ", items.Take(6).Select(i => i.Name))}{(items.Count > 6 ? ", …" : "")}");
@@ -263,6 +314,9 @@ public static class Program
             var outDir = siteDir ?? ResolveOutputDir(config, project.ProjectDir, configuration);
             var siteResult = PhaseTimings.Measure("write site (minify + resources + html)", () =>
                 OutputBuilder.Build(project, config, js, outDir, configuration, result.MetadataJavascript));
+            // Every file in the site counts as an output: a rebuild must notice if any of them was
+            // deleted or edited, otherwise "up to date" would leave a broken site in place.
+            SaveCache(cache, plan, result, SiteOutputs(outDir, dllPath));
             Console.WriteLine($"\nOK — built site in {outDir} ({js.Length:N0} bytes of {config.FileName}) in {sw.ElapsedMilliseconds} ms.");
             Console.WriteLine($"  index.html: {(config.HtmlDisabled ? "disabled" : "generated")}");
             if (dllPath is not null) Console.WriteLine($"  dll:        {dllPath}");
@@ -281,9 +335,98 @@ public static class Program
         outPath ??= Path.Combine(project.ProjectDir, "bin", project.AssemblyName + ".js");
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outPath))!);
         File.WriteAllText(outPath, js);
+        SaveCache(cache, plan, result, new[] { Path.GetFullPath(outPath) });
         Console.WriteLine($"\nOK — wrote {js.Length:N0} bytes to {outPath} in {sw.ElapsedMilliseconds} ms.");
         PrintTimings(sw.ElapsedMilliseconds);
         return 0;
+    }
+
+    /// <summary>
+    /// Persists the cache after a successful build. A build that reused the previous compilation whole
+    /// (no plan) has nothing new to record but its new output files; any other build writes the lot.
+    /// </summary>
+    private static void SaveCache(BuildCache? cache, IncrementalPlan? plan, AssemblyBuildResult result,
+        IEnumerable<string> outputs)
+    {
+        if (cache is null) return;
+        if (plan is null) cache.SaveOutputsOnly(outputs);
+        else cache.Save(plan, result, outputs);
+    }
+
+    /// <summary>Every file under the assembled site, plus the emitted DLL — the outputs an incremental
+    /// build has to find unchanged before it may declare the project up to date.</summary>
+    private static IEnumerable<string> SiteOutputs(string outDir, string? dllPath)
+    {
+        if (dllPath is not null) yield return dllPath;
+        if (!Directory.Exists(outDir)) yield break;
+        foreach (var file in Directory.EnumerateFiles(outDir, "*", SearchOption.AllDirectories))
+            yield return file;
+    }
+
+    /// <summary>
+    /// Everything about a build other than its source files: the settings, the output shape, and a
+    /// fingerprint of every referenced assembly and config file. A change to any of these can change
+    /// every byte of the output, so it invalidates the whole cache rather than any part of it.
+    ///
+    /// Anything the compiler starts to read in future has to be added here. That is the one
+    /// maintenance obligation the cache imposes: an input nobody fingerprints is an input whose change
+    /// goes unnoticed.
+    /// </summary>
+    private static IEnumerable<string> BuildSettingsFingerprint(
+        ResolvedProject project, string configuration, TransposeJson? tpscfg, bool reflectionEnabled,
+        MetadataTarget metadataTarget, bool metadataOnly, bool emitPackage, bool isSiteBuild,
+        bool separateAssemblies, bool withRuntime, string? outPath, string? siteDir, string? assemblyVersion)
+    {
+        yield return $"configuration={configuration}";
+        yield return $"assembly={project.AssemblyName}";
+        yield return $"tfm={project.TargetFramework}";
+        yield return $"lang={project.LanguageVersion}";
+        yield return $"defines={string.Join(";", project.DefineConstants)}";
+        yield return $"reflection={reflectionEnabled}/{metadataTarget}";
+        yield return $"metadataOnly={metadataOnly}";
+        yield return $"debugInfo={project.EmitDebugInformation}";
+        yield return $"minifyLocals={project.MinifyLocalVariables}";
+        yield return $"assemblyVersion={assemblyVersion}";
+        yield return $"mode={(emitPackage ? "package" : isSiteBuild ? "site" : "bundle")}";
+        yield return $"separate={separateAssemblies};runtime={withRuntime}";
+        yield return $"out={outPath};siteDir={siteDir}";
+        yield return $"tpsjson={tpscfg is null}";
+
+        // The project file and its tps.json (plus the per-configuration overlay) by content: they
+        // decide which files compile, what gets embedded and how the site is laid out.
+        yield return "csproj=" + BuildCache.FileContentFingerprint(project.CsprojPath);
+        yield return "tps.json=" + BuildCache.FileContentFingerprint(Path.Combine(project.ProjectDir, "tps.json"));
+        yield return $"tps.{configuration}.json="
+            + BuildCache.FileContentFingerprint(Path.Combine(project.ProjectDir, $"tps.{configuration}.json"));
+
+        // Every referenced assembly, by the part of it this project's output depends on: its metadata.
+        // A package upgrade or a dependency whose declarations moved changes emitted names (overload
+        // numbering counts the reference's full member set), so it is a full-rebuild input; a dependency
+        // rebuilt from a body-only edit of its own is not (see ReferenceMetadataFingerprint).
+        foreach (var reference in project.ReferencePaths.OrderBy(p => p, StringComparer.Ordinal))
+            yield return "ref=" + BuildCache.ReferenceMetadataFingerprint(reference);
+
+        // The Transpose base assembly and the JS runtime it carries are injected by the translator, not
+        // by the project, so they have to be fingerprinted explicitly.
+        yield return "bcl=" + BuildCache.ReferenceFingerprint(TransposeAssemblies.TransposeDllPath);
+
+        // Resources the site/package build reads straight from disk (tps.json `resources`): tps.json's
+        // own hash covers *which* files are listed, but not what is in them.
+        if (tpscfg is not null)
+            foreach (var file in tpscfg.Resources.SelectMany(g => g.Files).OrderBy(n => n, StringComparer.Ordinal))
+                yield return "res=" + file + "=" + BuildCache.FileContentFingerprint(Path.Combine(project.ProjectDir, file));
+    }
+
+    /// <summary>
+    /// The inputs that cannot change a byte this project *emits*, but do change what it has to *write*:
+    /// the full content of every referenced assembly, whose embedded JavaScript and resources are copied
+    /// into the site and re-embedded into this project's own DLL. A change here means "rebuild the
+    /// outputs, keep the compilation" — see <see cref="BuildCache.Open"/>.
+    /// </summary>
+    private static IEnumerable<string> BuildContentFingerprint(ResolvedProject project)
+    {
+        foreach (var reference in project.ReferencePaths.OrderBy(p => p, StringComparer.Ordinal))
+            yield return "refbytes=" + BuildCache.ReferenceFingerprint(reference);
     }
 
     /// <summary>
@@ -489,7 +632,8 @@ public static class Program
     /// which builds project references (each producing a DLL with its JS embedded) before the
     /// project that consumes them.
     /// </summary>
-    private static bool EnsureReferencedProjectsBuilt(string rootCsproj, string configuration, int maxErrors, bool? metadataOnlyAssembly)
+    private static bool EnsureReferencedProjectsBuilt(string rootCsproj, string configuration, int maxErrors,
+        bool? metadataOnlyAssembly, bool incremental, string? cacheDir)
     {
         foreach (var dep in ProjectResolver.ReferencedProjectsInBuildOrder(rootCsproj))
         {
@@ -500,7 +644,7 @@ public static class Program
                 continue;
             }
             Console.WriteLine($"  building dependency: {name}");
-            if (!BuildPackage(dep, configuration, maxErrors, metadataOnlyAssembly))
+            if (!BuildPackage(dep, configuration, maxErrors, metadataOnlyAssembly, incremental, cacheDir))
             {
                 MsBuildDiagnostic.WriteError(MsBuildDiagnostic.CodeDependencyBuildFailed,
                     $"Failed to build referenced project '{name}'.");
@@ -513,7 +657,8 @@ public static class Program
     /// <summary>Compiles one project into its Transpose package DLL (the .NET assembly with the compiled JS
     /// and tps.json resources embedded). Its own project references are consumed as their built DLLs,
     /// so they must already have been built (this is called in dependency order).</summary>
-    private static bool BuildPackage(string csproj, string configuration, int maxErrors, bool? metadataOnlyAssembly)
+    private static bool BuildPackage(string csproj, string configuration, int maxErrors, bool? metadataOnlyAssembly,
+        bool incremental, string? cacheDir)
     {
         ResolvedProject project;
         try { project = ProjectResolver.Resolve(csproj, configuration, separateAssemblies: true); }
@@ -526,21 +671,52 @@ public static class Program
 
         var tpscfg = TransposeJson.TryLoad(project.ProjectDir, configuration);
         var (reflectionEnabled, metadataTarget) = ReflectionSettings(tpscfg);
+        var assemblyVersion = ProjectResolver.ReadAssemblyVersion(csproj);
+        // Each dependency reads its own csproj property, but a command-line override applies to the
+        // whole invocation.
+        var metadataOnly = metadataOnlyAssembly
+                           ?? project.MetadataOnlyAssembly
+                           ?? ResolvedProject.MetadataOnlyAssemblyDefault(configuration);
+
+        // A dependency gets the same treatment as the root project: its own cache, in its own obj/.
+        // Without this, editing a method body in a referenced library — the common case in a
+        // solution — would still cost that library a full rebuild.
+        BuildCache? cache = null;
+        var verdict = BuildCache.Verdict.FullBuild;
+        var changedSources = new List<string>();
+        if (incremental)
+        {
+            cache = BuildCache.Open(project, configuration,
+                BuildSettingsFingerprint(project, configuration, tpscfg, reflectionEnabled, metadataTarget,
+                    metadataOnly, emitPackage: true, isSiteBuild: false, separateAssemblies: true,
+                    withRuntime: false, outPath: null, siteDir: null, assemblyVersion: assemblyVersion),
+                BuildContentFingerprint(project),
+                cacheDir);
+            (verdict, changedSources, var reason) = cache.Decide();
+            // "Up to date" cannot happen here: ProjectResolver.IsPackageUpToDate already screened that
+            // out by timestamp before this project was queued for a build. If the cache disagrees (a
+            // touched-but-identical file), treat it as a body-only build with nothing changed.
+            Console.WriteLine(verdict == BuildCache.Verdict.FullBuild
+                ? $"    cache: full build ({reason})"
+                : $"    cache: {changedSources.Count} file(s) changed, method bodies only");
+            if (verdict == BuildCache.Verdict.UpToDate) verdict = BuildCache.Verdict.BodyOnlyChange;
+        }
+        var replayed = incremental && verdict == BuildCache.Verdict.BodyOnlyChange && changedSources.Count == 0
+            ? cache!.TryReplayCompilation(canReuseAssembly: metadataOnly)
+            : null;
+        var plan = replayed is not null ? null : cache?.CreatePlan(verdict, changedSources, canReuseAssembly: metadataOnly);
 
         AssemblyBuildResult result;
         try
         {
-            result = new RoslynTranslator().BuildAssembly(
+            result = replayed ?? new RoslynTranslator().BuildAssembly(
                 project.Sources, project.AssemblyName, project.ReferencePaths,
                 project.DefineConstants, project.LanguageVersion,
                 reflectionEnabled, metadataTarget, emitAssembly: true,
-                assemblyVersion: ProjectResolver.ReadAssemblyVersion(csproj),
+                assemblyVersion: assemblyVersion,
                 emitDebugInformation: project.EmitDebugInformation,
-                // Each dependency reads its own csproj property, but a command-line override applies
-                // to the whole invocation.
-                metadataOnlyAssembly: metadataOnlyAssembly
-                                      ?? project.MetadataOnlyAssembly
-                                      ?? ResolvedProject.MetadataOnlyAssemblyDefault(configuration));
+                metadataOnlyAssembly: metadataOnly,
+                incremental: plan);
         }
         catch (Exception ex) { ReportCrash($"Translator on '{Path.GetFileName(csproj)}'", ex); return false; }
 
@@ -550,7 +726,10 @@ public static class Program
             return false;
         }
 
-        return TryWritePackage(project, tpscfg, configuration, result) is not null;
+        var written = TryWritePackage(project, tpscfg, configuration, result);
+        if (written is null) return false;
+        SaveCache(cache, plan, result, new[] { written.Value.dllPath });
+        return true;
     }
 
     /// <summary>Writes a project's package DLL, turning a failure into a reported diagnostic (rather
@@ -589,6 +768,10 @@ public static class Program
         // Writes the DLL — the emitted assembly plus the embedded resources — in one pass.
         PhaseTimings.Measure("embed resources into DLL (Cecil)",
             () => ResourceEmbedder.Embed(dllPath, result.AssemblyBytes!, items, project.ReferencePaths));
+        // Record what a consumer's compilation actually depends on — this assembly's metadata — so a
+        // rebuild of this project does not force a rebuild of everything referencing it when only its
+        // method bodies moved. Cecil restamps the DLL's MVID on every embed, so its bytes cannot serve.
+        BuildCache.WriteMetadataSidecar(dllPath, result.AssemblyBytes);
         return (dllPath, items);
     }
 
@@ -734,6 +917,19 @@ public static class Program
                                     can pin it with <TransposeMetadataOnlyAssembly>. The Transpose SDK
                                     refuses to pack a Debug build, so a metadata-only assembly cannot
                                     reach a NuGet feed.
+              --incremental, --no-incremental
+                                    Reuse the previous build of this project where its inputs are
+                                    unchanged (off by default). A build whose files all hash the same
+                                    does nothing at all; one whose edits are confined to method and
+                                    accessor bodies keeps the cached JavaScript of every type it did
+                                    not touch, the reflection metadata, and — in a metadata-only
+                                    configuration — the .NET assembly. Anything else (a changed
+                                    declaration, a new or deleted file, a different reference or
+                                    setting) is a full build. Emitted output is byte-identical either
+                                    way; the cache lives in the project's obj/tps-cache/.
+              --cache-dir <dir>     Put the incremental cache under <dir> instead of the project's
+                                    obj/ (implies --incremental). A temp directory is fine — losing
+                                    the cache only costs a full build.
               --timing              Print a per-phase timing/allocation breakdown of the build
               --timing-json <file>  Also write that breakdown (plus GC/memory totals) as JSON
               -q, --quiet           Suppress warning output

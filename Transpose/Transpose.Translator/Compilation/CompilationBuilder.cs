@@ -23,10 +23,7 @@ public static class CompilationBuilder
         IEnumerable<string>? preprocessorSymbols = null,
         bool selfContainedBcl = false)
     {
-        var parseOptions = new CSharpParseOptions(languageVersion)
-            .WithFeatures(new[] { new KeyValuePair<string, string>("strict", "false") });
-        if (preprocessorSymbols is not null)
-            parseOptions = parseOptions.WithPreprocessorSymbols(preprocessorSymbols);
+        var parseOptions = ParseOptionsFor(languageVersion, preprocessorSymbols);
 
         // Give each source text an explicit encoding: emitting the assembly with embedded debug
         // information (as the package build does) requires it — Roslyn otherwise reports CS8055
@@ -44,6 +41,7 @@ public static class CompilationBuilder
                 Microsoft.CodeAnalysis.Text.SourceText.From(text, System.Text.Encoding.UTF8),
                 parseOptions, path: path);
         });
+
         var trees = treeArray;
 
         // Nullable reference types only exist from C# 8; enabling the annotations context
@@ -80,6 +78,27 @@ public static class CompilationBuilder
             references: references,
             options: options);
     }
+
+    /// <summary>
+    /// The parse options a build uses. Exposed so anything that has to re-parse a single file
+    /// *outside* a compilation — the incremental cache, hashing one file's declaration surface —
+    /// produces the same tree this would, and therefore the same hash.
+    /// </summary>
+    public static CSharpParseOptions ParseOptionsFor(LanguageVersion languageVersion, IEnumerable<string>? preprocessorSymbols)
+    {
+        var parseOptions = new CSharpParseOptions(languageVersion)
+            .WithFeatures(new[] { new KeyValuePair<string, string>("strict", "false") });
+        if (preprocessorSymbols is not null)
+            parseOptions = parseOptions.WithPreprocessorSymbols(preprocessorSymbols);
+        return parseOptions;
+    }
+
+    /// <summary>Parses one source file exactly as <see cref="Build"/> would.</summary>
+    public static SyntaxTree ParseOne(string path, string text, LanguageVersion languageVersion,
+        IEnumerable<string>? preprocessorSymbols)
+        => CSharpSyntaxTree.ParseText(
+            Microsoft.CodeAnalysis.Text.SourceText.From(text, System.Text.Encoding.UTF8),
+            ParseOptionsFor(languageVersion, preprocessorSymbols), path: path);
 
     /// <summary>
     /// References the Transpose assembly (Transpose.dll) as the sole BCL, exactly like the Transpose

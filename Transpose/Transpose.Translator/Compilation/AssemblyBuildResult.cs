@@ -25,6 +25,13 @@ public sealed class AssemblyBuildResult
     public byte[]? AssemblyBytes { get; }
     public IReadOnlyList<Diagnostic> Diagnostics { get; }
 
+    /// <summary>
+    /// Per source file, a hash of everything in it except method/accessor bodies — the input the next
+    /// build's incremental check compares against to decide whether an edit touched declarations. Null
+    /// unless the build was given an <see cref="IncrementalPlan"/> (i.e. caching is on).
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? DeclarationHashes { get; init; }
+
     public IEnumerable<Diagnostic> Errors => Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error);
     public bool Success => Javascript is not null && !Errors.Any();
 }

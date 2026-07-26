@@ -57,6 +57,7 @@ internal static class MsBuildDiagnostic
     public const string CodeReferenceNotFound      = "TPS0100";
     public const string CodeMissingRuntimeBundle   = "TPS0101";
     public const string CodeTimingJsonNotWritten   = "TPS0102";
+    public const string CodeCacheNotWritten        = "TPS0103";
 
     /// <summary>Formats a Roslyn diagnostic, pointing at its source location when it has one.</summary>
     public static string Format(Diagnostic d)

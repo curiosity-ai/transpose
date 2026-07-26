@@ -14,9 +14,19 @@ description: >-
 
 # Optimizing Transpose compilation
 
-`tps` is a plain CLI with no cache and no compile server (deliberately — see CLAUDE.md), so a build's
-cost is whatever one process does from scratch. This skill is the loop for measuring that and making
-it smaller without changing a byte of emitted JavaScript.
+`tps` is a plain CLI with no compile server (deliberately — see CLAUDE.md), so a build's cost is
+whatever one process does from scratch. This skill is the loop for measuring that and making it
+smaller without changing a byte of emitted JavaScript.
+
+**Not doing the build at all** is the other lever: `tps --incremental` (opt-in) reuses the previous
+build's output where its inputs are unchanged. Read [`TODO.incremental.md`](../../../TODO.incremental.md)
+for what it reuses and why that is sound. Two consequences for measuring:
+
+- Benchmark with the cache **off** unless you are measuring the cache. `tps-bench`'s clean-slate
+  scenarios wipe `bin/obj` (and therefore `obj/tps-cache`), so they are unaffected — but an ad-hoc
+  repeat run of `tps --incremental` on an unchanged project takes 0.4 s and means nothing.
+- The correctness gate for a cache change is `scripts/verify-incremental.sh` (incremental output vs. a
+  from-scratch build, over several edit shapes) on top of the usual `compare-site.sh`.
 
 **Read [`TODO.optimization.md`](../../../TODO.optimization.md) first.** It is the running log of every
 optimization tried, with measurements — including the ones that *did not work*, which is most of the
@@ -189,6 +199,16 @@ A compiler optimization that changes output is a bug, not an optimization. Befor
 3. **Touching `UnsupportedFeatureScanner`**: also diff the diagnostics of a file exercising every rule
    (pointers, `unsafe`, `checked`, `nint`, P/Invoke, `System.IO`/`System.Threading` types, a using
    alias and a static import) — see the scanner section of `TODO.optimization.md`.
+4. **Touching the incremental cache** (`BuildCache`, `IncrementalPlan`, or anything the emitter caches
+   per type): run the edit-shape gate, which builds the site incrementally and from scratch for each
+   kind of edit and byte-compares them. An incremental build that is wrong emits plausible output
+   rather than failing, so this is the check that matters:
+   ```bash
+   TPS=$TPS REPO=benchmarks/tesserae \
+     .claude/skills/transpose-performance/scripts/verify-incremental.sh
+   ```
+   Also bump `BuildCache.FormatVersion` whenever the cache layout or the reuse rules change, or a
+   developer's existing cache will be read under the new rules.
 
 ## What the cost structure actually looks like
 

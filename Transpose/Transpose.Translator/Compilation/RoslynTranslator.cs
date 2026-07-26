@@ -83,7 +83,8 @@ public sealed class RoslynTranslator
         bool emitAssembly = true,
         string? assemblyVersion = null,
         bool emitDebugInformation = true,
-        bool metadataOnlyAssembly = false)
+        bool metadataOnlyAssembly = false,
+        IncrementalPlan? incremental = null)
     {
         CompileProgress.Report("parsing sources + resolving references");
         var compilation = PhaseTimings.Measure("build compilation (parse + references)", () =>
@@ -91,6 +92,19 @@ public sealed class RoslynTranslator
                 sources, assemblyName, languageVersion,
                 extraReferencePaths: extraReferencePaths,
                 preprocessorSymbols: preprocessorSymbols));
+
+        // The declaration-surface hash of every file, for the *next* build's cache. Computed from the
+        // trees this build already parsed, so it costs one extra walk rather than a second parse.
+        var declarationHashes = incremental is null
+            ? null
+            : PhaseTimings.Measure("hash declaration surface", () => IncrementalPlan.DeclarationHashes(compilation.SyntaxTrees, incremental));
+
+        // An incremental build only rescans and re-diagnoses the files whose text changed: a method
+        // body cannot produce a diagnostic in another file, and the plan is only ever populated when
+        // the declaration surface of every file is unchanged (see IncrementalPlan).
+        var changedTrees = incremental is null
+            ? null
+            : compilation.SyntaxTrees.Where(incremental.IsChanged).ToList();
 
         var diagnostics = new List<Diagnostic>();
 
@@ -109,7 +123,7 @@ public sealed class RoslynTranslator
         // missing symbols), but an unexpected throw must never lose the Roslyn errors.
         CompileProgress.Report("scanning for unsupported features");
         IReadOnlyList<Diagnostic> unsupported;
-        try { unsupported = PhaseTimings.Measure("scan unsupported features", () => UnsupportedFeatureScanner.Scan(compilation, models)); }
+        try { unsupported = PhaseTimings.Measure("scan unsupported features", () => UnsupportedFeatureScanner.Scan(compilation, models, changedTrees, incremental)); }
         catch { unsupported = System.Array.Empty<Diagnostic>(); }
 
         // Binding the whole compilation is the single most expensive thing a build does, and
@@ -123,7 +137,16 @@ public sealed class RoslynTranslator
         byte[]? assemblyBytes = null;
         List<Diagnostic> roslynErrors;
 
-        if (emitAssembly)
+        // A metadata-only assembly is a function of the declarations alone (it has no method bodies at
+        // all — see ResolvedProject.MetadataOnlyAssembly), so an incremental build over a body-only
+        // edit reuses the previous one byte for byte and skips the single most expensive Roslyn call a
+        // build makes. The caller only ever supplies these bytes for a metadata-only emit.
+        if (emitAssembly && incremental?.AssemblyBytes is { } reusedAssembly)
+        {
+            assemblyBytes = reusedAssembly;
+            roslynErrors = new List<Diagnostic>();
+        }
+        else if (emitAssembly)
         {
             var asmCompilation = compilation.WithOptions(
                 compilation.Options.WithOutputKind(OutputKind.DynamicallyLinkedLibrary));
@@ -185,7 +208,7 @@ public sealed class RoslynTranslator
         TranslationException? emitterFailure = null;
         try
         {
-            var emitter = new Emitter(compilation, assemblyName, models)
+            var emitter = new Emitter(compilation, assemblyName, models, incremental)
             {
                 ReflectionEnabled = reflectionEnabled,
                 MetadataTarget = metadataTarget,
@@ -211,7 +234,10 @@ public sealed class RoslynTranslator
             var bodyErrors = PhaseTimings.Measure("body diagnostics (semantic models)", () =>
             {
                 var found = new System.Collections.Concurrent.ConcurrentBag<Diagnostic>();
-                Parallel.ForEach(compilation.SyntaxTrees, tree =>
+                // On an incremental build only the changed files' bodies can have new diagnostics: an
+                // unchanged body binds against an unchanged declaration surface, so its verdict from
+                // the cached build still stands (and that build succeeded, or nothing was cached).
+                Parallel.ForEach(changedTrees ?? (IEnumerable<SyntaxTree>)compilation.SyntaxTrees, tree =>
                 {
                     foreach (var d in models.SemanticModelFor(tree).GetDiagnostics())
                         if (d.Severity == DiagnosticSeverity.Error && !BenignForJs.Contains(d.Id))
@@ -234,7 +260,10 @@ public sealed class RoslynTranslator
             return new AssemblyBuildResult(null, null, null, diagnostics);
         }
 
-        return new AssemblyBuildResult(js, metadataJs, assemblyBytes, diagnostics);
+        return new AssemblyBuildResult(js, metadataJs, assemblyBytes, diagnostics)
+        {
+            DeclarationHashes = declarationHashes,
+        };
     }
 
     /// <summary>

@@ -48,13 +48,23 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
     /// resolve, say, the inferred type of a <c>var</c>) is already bound when the emitter reaches it.
     /// Pass null to scan against throw-away models — only useful when there is no emit to follow.
     /// </summary>
-    public static IReadOnlyList<Diagnostic> Scan(CSharpCompilation compilation, TreeModel? models = null)
+    /// <param name="trees">The trees to scan; null scans the whole compilation. An incremental build
+    /// passes only the files whose text changed — an unsupported construct is a property of the file it
+    /// appears in, so an unchanged file's verdict from the cached build still holds.</param>
+    /// <param name="incremental">The build's incremental plan, if any: supplies the cached
+    /// denied-name filter (whose inputs — the references and the declaration surface — are fixed on a
+    /// body-only edit) and receives the one this build used, for the next build to reuse.</param>
+    public static IReadOnlyList<Diagnostic> Scan(CSharpCompilation compilation, TreeModel? models = null,
+        IEnumerable<SyntaxTree>? trees = null, IncrementalPlan? incremental = null)
     {
-        var deniedSimpleNames = CollectDeniedSimpleNames(compilation);
+        var deniedSimpleNames = incremental?.DeniedSimpleNames is { } cachedNames
+            ? new HashSet<string>(cachedNames, StringComparer.Ordinal)
+            : PhaseTimings.Measure("  ├ collect denied type names", () => CollectDeniedSimpleNames(compilation));
+        if (incremental is not null) incremental.FinalDeniedSimpleNames = deniedSimpleNames;
         models ??= new TreeModel(compilation);
 
         var allDiagnostics = new List<List<Diagnostic>>();
-        Parallel.ForEach(compilation.SyntaxTrees, tree =>
+        Parallel.ForEach(trees ?? compilation.SyntaxTrees, tree =>
         {
             var diagnostics = new List<Diagnostic>();
 
