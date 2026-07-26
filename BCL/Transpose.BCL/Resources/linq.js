@@ -1898,7 +1898,15 @@
             throw new System.InvalidOperationException.$ctor1("Sequence contains no elements");
         }
 
-        return (sum instanceof System.Decimal || System.Int64.is64Bit(sum)) ? sum.div(count) : (sum / count);
+        // Average(decimal) returns decimal, so Decimal.div (exact) is right there. Average(long) and
+        // Average(ulong) return DOUBLE in .NET — Int64.div would truncate (avg of 3,1,2,1 came out 1
+        // instead of 1.75), so read the sum's magnitude and divide as a float, matching .NET's
+        // `(double)sum / count`.
+        if (sum instanceof System.Decimal) {
+            return sum.div(count);
+        }
+
+        return System.Int64.is64Bit(sum) ? (sum.toNumber() / count) : (sum / count);
     };
 
     Enumerable.prototype.nullableAverage = function (selector, def) {

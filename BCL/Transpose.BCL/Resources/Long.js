@@ -306,11 +306,30 @@
     };
 
     System.Int64.prototype.div = function (l) {
-        return new this.T(this.value.div(this.T.getValue(l)));
+        var divisor = this.T.getValue(l);
+
+        // The underlying long library throws a bare JS Error("division by zero"), which no
+        // `catch (DivideByZeroException)` can see — the program just died. Mirror what the 32-bit
+        // Transpose.Int.div does. long.MinValue / -1 overflows in .NET rather than wrapping.
+        if (divisor.isZero()) {
+            throw new System.DivideByZeroException();
+        }
+
+        if (this.T === System.Int64 && this.eq(System.Int64.MinValue) && divisor.eq(System.Int64(-1).value)) {
+            throw new System.OverflowException();
+        }
+
+        return new this.T(this.value.div(divisor));
     };
 
     System.Int64.prototype.mod = function (l) {
-        return new this.T(this.value.mod(this.T.getValue(l)));
+        var divisor = this.T.getValue(l);
+
+        if (divisor.isZero()) {
+            throw new System.DivideByZeroException();
+        }
+
+        return new this.T(this.value.mod(divisor));
     };
 
     System.Int64.prototype.neg = function (overflow) {

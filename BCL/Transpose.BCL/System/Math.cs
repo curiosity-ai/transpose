@@ -277,6 +277,16 @@ namespace System
 
         public static extern double Pow(int x, int y);
 
+        // .NET has only Pow(double, double), so `Math.Pow(someLong, 2L)` resolves there. The extra
+        // decimal overload above makes that call ambiguous here (long converts implicitly to both
+        // double and decimal, neither better), so a long argument needs its own overload — the same
+        // reason Pow(int, int) exists.
+        [Transpose.Template("Math.pow(({x}).toNumber(), ({y}).toNumber())")]
+        public static extern double Pow(long x, long y);
+
+        [Transpose.Template("Math.pow(({x}).toNumber(), ({y}).toNumber())")]
+        public static extern double Pow(ulong x, ulong y);
+
         public static extern double Acos(double x);
 
         public static extern double Asin(double x);
@@ -302,6 +312,23 @@ namespace System
 
         [Transpose.Template("{value}.sign()")]
         public static extern int Sign(decimal value);
+
+        // .NET has Sign(long)/Sign(int)/…; without them an integer argument is ambiguous between
+        // Sign(double) and Sign(decimal). (There is deliberately no Sign(ulong) — .NET has none
+        // either, since a ulong is never negative.)
+        [Transpose.Template("({value}).sign()")]
+        public static extern int Sign(long value);
+
+        [Transpose.Template("Transpose.Int.sign({value})")]
+        public static extern int Sign(int value);
+
+        // The full 64-bit product of two 32-bit values — the point being that it does NOT wrap the
+        // way `a * b` in int arithmetic would.
+        [Transpose.Template("System.Int64({a}).mul(System.Int64({b}))")]
+        public static extern long BigMul(int a, int b);
+
+        [Transpose.Template("System.UInt64({a}).mul(System.UInt64({b}))")]
+        public static extern ulong BigMul(uint a, uint b);
 
         [Transpose.Template("Transpose.Math.divRem({a}, {b}, {result})")]
         public static extern int DivRem(int a, int b, out int result);

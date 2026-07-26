@@ -1377,6 +1377,36 @@ public sealed partial class Emitter
         // is / as
         if (binary.IsKind(SyntaxKind.IsExpression))
         {
+            // `x is Foo.Bar` parses as an is-EXPRESSION — a type test — whenever the right side looks
+            // syntactically like a type name, even when it actually binds to a *constant*. An enum
+            // member is exactly that, and GetTypeInfo only reports the constant's type (the enum), so
+            // this used to emit `TransposeR.is(x, Small)`: true for every value of Small, making
+            // `s is Small.A` true when s was Small.B. (The nested forms — `is not Small.A`,
+            // `is Small.A or Small.B` — parse as real patterns and were always compared by value.)
+            if (_model.GetSymbolInfo(binary.Right).Symbol is IFieldSymbol constantField)
+            {
+                // binary.Right is type-NAME syntax (a QualifiedName), which EmitExpression cannot emit,
+                // so render the constant from its symbol the way a member access would.
+                var constantJs = constantField switch
+                {
+                    { ContainingType.TypeKind: TypeKind.Enum } enumField => Capture(() => EmitEnumMemberAccess(enumField)),
+                    { IsConst: true } c => ConstantLiteral(c.ConstantValue, c.Type),
+                    _ => null,
+                };
+
+                if (constantJs is not null)
+                {
+                    // The subject is repeated by the value-equality test, so bind it once.
+                    var subject = NextTemp("$is");
+                    _w.Write($"(function ({subject}) {{ return ");
+                    EmitConstantEqualityAgainst(subject, constantJs, constantField.Type);
+                    _w.Write("; })(");
+                    EmitExpression(binary.Left);
+                    _w.Write(")");
+                    return;
+                }
+            }
+
             var t = _model.GetTypeInfo(binary.Right).Type;
             _w.Write("TransposeR.is(");
             EmitExpression(binary.Left);
@@ -1450,6 +1480,42 @@ public sealed partial class Emitter
             return;
         }
 
+        // Lifted operators on Nullable<T>: a null operand makes an arithmetic result null
+        // and a relational result false (C# semantics). (Equality is fine with ===/!== since
+        // nullable is represented as value-or-null.)
+        //
+        // This is tested BEFORE the 64-bit and decimal branches below, which match on the operand
+        // types with Nullable stripped and so used to claim `long? + 1L` first, emitting
+        // `System.Int64(null).add(1)` — 1 rather than null, while `int? + 1` propagated correctly.
+        var arith = op is "+" or "-" or "*" or "/" or "%" or "&" or "|" or "^" or "<<" or ">>";
+        var relational = op is "<" or ">" or "<=" or ">=";
+        if ((arith || relational) && (IsNullableValueType(leftType) || IsNullableValueType(rightType)))
+        {
+            var l = Capture(() => EmitExpression(binary.Left));
+            var r = Capture(() => EmitExpression(binary.Right));
+            _w.Write($"({l} == null || {r} == null ? {(relational ? "false" : "null")} : ");
+            EmitLiftedInnerOperation(binary, l, r, op, leftType, rightType);
+            _w.Write(")");
+            return;
+        }
+
+        // Lifted == / != where the underlying type is a runtime OBJECT (long/ulong/decimal). A plain
+        // `===` compares object identity, so two `long?`s holding the same value were unequal.
+        // System.Nullable.equals is exactly C#'s lifted equality: null equals only null, otherwise
+        // value equality. (For plain-number underlying types `===` is already correct, null included.)
+        if (op is "==" or "!="
+            && (IsNullableValueType(leftType) || IsNullableValueType(rightType))
+            && (IsRuntimeObjectNumeric(leftType) || IsRuntimeObjectNumeric(rightType)))
+        {
+            if (op == "!=") _w.Write("!");
+            _w.Write("System.Nullable.equals(");
+            EmitExpression(binary.Left);
+            _w.Write(", ");
+            EmitExpression(binary.Right);
+            _w.Write(")");
+            return;
+        }
+
         // 64-bit integer arithmetic/comparison → System.Int64/UInt64 method calls. Decide on the
         // operands' DECLARED types, not the converted ones: `int >= uint` is promoted to `long` by
         // C#, but int/uint are plain JS numbers (only actual long/ulong are boxed Int64/UInt64
@@ -1460,6 +1526,18 @@ public sealed partial class Emitter
         // (`visualIndex.lt is not a function` in LogsView.ValidateVisibleRowHeights).
         var leftDeclared = _model.GetTypeInfo(binary.Left).Type ?? leftType;
         var rightDeclared = _model.GetTypeInfo(binary.Right).Type ?? rightType;
+        // `long op double` (and float, and vice-versa) is promoted to floating point by C#, so it
+        // must NOT go through the Int64 path: that lifts the FLOATING operand with System.Int64(…),
+        // truncating it. `Sample() * range` in Random.Next(min, max) became
+        // `System.Int64(Sample()).mul(range)` — the 0..1 sample truncated to 0, so the overload
+        // always returned minValue. Read the 64-bit operand's magnitude and use plain JS arithmetic.
+        if ((Is64BitInteger(leftDeclared) || Is64BitInteger(rightDeclared))
+            && (IsFloatingType(leftDeclared) || IsFloatingType(rightDeclared))
+            && Long64Op(binary) is not null)
+        {
+            EmitFloatingWith64BitOperand(binary, leftDeclared, rightDeclared);
+            return;
+        }
         // `long op decimal` (and vice-versa) is promoted to decimal by C#, so it must go through the
         // decimal path below — not Int64 (which would do integer division etc.). Guard against a
         // decimal operand here.
@@ -1542,19 +1620,6 @@ public sealed partial class Emitter
             return;
         }
 
-        // Lifted operators on Nullable<T>: a null operand makes an arithmetic result null
-        // and a relational result false (C# semantics). (Equality is fine with ===/!== since
-        // nullable is represented as value-or-null.)
-        var arith = op is "+" or "-" or "*" or "%";
-        var relational = op is "<" or ">" or "<=" or ">=";
-        if ((arith || relational) && (IsNullableValueType(leftType) || IsNullableValueType(rightType)))
-        {
-            var l = Capture(() => EmitExpression(binary.Left));
-            var r = Capture(() => EmitExpression(binary.Right));
-            _w.Write($"({l} == null || {r} == null ? {(relational ? "false" : "null")} : {l} {op} {r})");
-            return;
-        }
-
         // Managed (H5-parity) 32-bit integer arithmetic: wrap results that overflow / need
         // unsigned reinterpretation, so `int + int`, `uint << n`, etc. match .NET's unchecked
         // semantics rather than JS Number arithmetic.
@@ -1628,6 +1693,100 @@ public sealed partial class Emitter
 
     private static bool IsNullableValueType(ITypeSymbol? t)
         => t is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T };
+
+    /// <summary><c>T</c> for a <c>Nullable&lt;T&gt;</c>, otherwise the type unchanged.</summary>
+    private static ITypeSymbol? UnwrapNullable(ITypeSymbol? t)
+        => t is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T, TypeArguments.Length: 1 } n
+            ? n.TypeArguments[0]
+            : t;
+
+    /// <summary>
+    /// The non-null half of a lifted <c>Nullable&lt;T&gt;</c> operator. The operands arrive as
+    /// already-emitted JS snippets (they are evaluated twice — once for the null test, once here —
+    /// so the caller captures them), and the operation is chosen by T's runtime representation:
+    /// long/ulong and decimal are objects with method arithmetic, integer division truncates, and
+    /// everything else is the plain JS operator.
+    /// </summary>
+    private void EmitLiftedInnerOperation(BinaryExpressionSyntax binary, string left, string right,
+        string op, ITypeSymbol? leftType, ITypeSymbol? rightType)
+    {
+        // Decide on the operands' DECLARED types, as the non-nullable 64-bit path does: `long? * 0.5`
+        // converts the left operand to double?, but at runtime it is still an Int64 instance.
+        var lu = UnwrapNullable(_model.GetTypeInfo(binary.Left).Type ?? leftType);
+        var ru = UnwrapNullable(_model.GetTypeInfo(binary.Right).Type ?? rightType);
+        var resultType = UnwrapNullable(_model.GetTypeInfo(binary).Type);
+
+        // Promoted to floating point despite a 64-bit operand (`long? * 0.5`): read the 64-bit
+        // side's magnitude and use plain JS arithmetic, as the non-nullable path does.
+        if ((Is64BitInteger(lu) || Is64BitInteger(ru)) && (IsFloatingType(lu) || IsFloatingType(ru)))
+        {
+            _w.Write(Is64BitInteger(lu) ? $"({left}).toNumber()" : left);
+            _w.Write($" {op} ");
+            _w.Write(Is64BitInteger(ru) ? $"({right}).toNumber()" : right);
+            return;
+        }
+
+        if ((Is64BitInteger(lu) || Is64BitInteger(ru)) && Long64Op(binary) is { } longOp)
+        {
+            var unsigned = Is64BitUnsigned(lu) || Is64BitUnsigned(ru);
+            if (longOp == "shr" && unsigned) longOp = "shru";
+
+            // The receiver must be a 64-bit instance; lift a plain-number left operand.
+            if (Is64BitInteger(lu)) _w.Write(left);
+            else { _w.Write(unsigned ? "System.UInt64(" : "System.Int64("); _w.Write(left); _w.Write(")"); }
+
+            _w.Write($".{longOp}({right})");
+            return;
+        }
+
+        if ((IsDecimalType(lu) || IsDecimalType(ru)) && DecimalOp(binary) is { } decOp)
+        {
+            if (IsDecimalType(lu)) _w.Write(left);
+            else { _w.Write("System.Decimal("); _w.Write(left); _w.Write(")"); }
+
+            _w.Write($".{decOp}(");
+
+            if (IsDecimalType(ru)) _w.Write(right);
+            else { _w.Write("System.Decimal("); _w.Write(right); _w.Write(")"); }
+
+            _w.Write(")");
+            return;
+        }
+
+        var clip = Integer32Clip(resultType);
+
+        // Integer division truncates toward zero; JS `/` does not.
+        if (op == "/" && IsIntegerType(lu) && IsIntegerType(ru))
+        {
+            if (clip is not null) { _w.Write(clip); _w.Write("("); }
+            _w.Write($"TransposeR.idiv({left}, {right})");
+            if (clip is not null) _w.Write(")");
+            return;
+        }
+
+        // 32-bit multiplication wraps; route through Math.imul as the non-nullable path does.
+        if (op == "*" && clip is not null)
+        {
+            _w.Write(resultType!.SpecialType == SpecialType.System_UInt32 ? "Transpose.Int.umul(" : "Transpose.Int.mul(");
+            _w.Write($"{left}, {right})");
+            return;
+        }
+
+        // A uint32 result needs unsigned reinterpretation (JS `+`/bitwise yield a signed int32),
+        // and `uint >>` is a logical shift — the same wrapping TryEmitInteger32Binary applies.
+        var unsigned32 = resultType?.SpecialType == SpecialType.System_UInt32;
+        var jsOp = op == ">>" && unsigned32 ? ">>>" : op;
+        var needsClip = clip is not null && op switch
+        {
+            "+" or "-" => true,
+            "&" or "|" or "^" or "<<" => unsigned32,
+            _ => false,
+        };
+
+        if (needsClip) { _w.Write(clip!); _w.Write("("); }
+        _w.Write($"{left} {jsOp} {right}");
+        if (needsClip) _w.Write(")");
+    }
 
     /// <summary>
     /// A type whose == / != is value equality rather than JS reference identity: records and
@@ -1705,6 +1864,63 @@ public sealed partial class Emitter
         _w.Write($".{op}(");
         EmitExpression(binary.Right);
         _w.Write(")");
+    }
+
+    /// <summary>
+    /// Emits a binary operator whose operands C# promoted to <c>double</c>/<c>float</c> even though one
+    /// of them is a <c>long</c>/<c>ulong</c> (an Int64/UInt64 object at runtime, not a JS number).
+    /// The 64-bit side is read with <c>.toNumber()</c> — the same magnitude read an explicit
+    /// <c>(double)someLong</c> cast emits — and the operator itself is plain JS, so the arithmetic is
+    /// floating point as .NET does it.
+    /// </summary>
+    private void EmitFloatingWith64BitOperand(BinaryExpressionSyntax binary, ITypeSymbol? leftType, ITypeSymbol? rightType)
+    {
+        var jsOp = binary.Kind() switch
+        {
+            SyntaxKind.EqualsExpression => "===",
+            SyntaxKind.NotEqualsExpression => "!==",
+            _ => binary.OperatorToken.Text,
+        };
+
+        EmitOperandAsNumber(binary.Left, leftType);
+        _w.Write($" {jsOp} ");
+        EmitOperandAsNumber(binary.Right, rightType);
+
+        void EmitOperandAsNumber(ExpressionSyntax operand, ITypeSymbol? type)
+        {
+            if (!Is64BitInteger(type) || EmitsAsPlainJsNumber(operand)) { EmitExpression(operand); return; }
+            _w.Write("(");
+            EmitExpression(operand);
+            _w.Write(").toNumber()");
+        }
+    }
+
+    /// <summary>
+    /// True if a <c>long</c>/<c>ulong</c>-typed operand is nevertheless emitted as a plain JS number,
+    /// so it must not be given a <c>.toNumber()</c> call. A numeric literal follows its CONVERTED type
+    /// (see <c>EmitLiteral</c>): in <c>0.5 &gt; 0L</c> the literal is converted to double and emitted
+    /// as <c>0</c>. A long-typed *identifier* in the same position is not — it stays an Int64 object.
+    /// </summary>
+    private bool EmitsAsPlainJsNumber(ExpressionSyntax operand)
+    {
+        var e = operand;
+        while (true)
+        {
+            switch (e)
+            {
+                case ParenthesizedExpressionSyntax paren:
+                    e = paren.Expression;
+                    continue;
+                // `-1L` / `+1L`: the sign is emitted around the literal, which folds the same way.
+                case PrefixUnaryExpressionSyntax { RawKind: (int)SyntaxKind.UnaryMinusExpression or (int)SyntaxKind.UnaryPlusExpression } unary:
+                    e = unary.Operand;
+                    continue;
+            }
+            break;
+        }
+
+        return e.IsKind(SyntaxKind.NumericLiteralExpression)
+            && !Is64BitInteger(_model.GetTypeInfo(e).ConvertedType);
     }
 
     /// <summary>True if a string-typed concat operand can never be null, so it needs no <c>?? ""</c>
@@ -2318,6 +2534,16 @@ public sealed partial class Emitter
 
         // --- from 64-bit to floating: read the numeric magnitude. ---
         if (Is64BitInteger(sourceType) && IsFloatingType(targetType))
+        {
+            _w.Write("("); EmitExpression(expr); _w.Write(").toNumber()");
+            return;
+        }
+
+        // --- from 64-bit to an enum: enum ordinals are emitted as plain JS numbers even when the
+        // enum's underlying type is long/ulong, so `(SomeLongEnum)someLong` must read the magnitude.
+        // Leaving the Int64 instance in place made System.Enum.toString fail to match any member and
+        // print the raw number instead of the member name. ---
+        if (Is64BitInteger(sourceType) && targetType is { TypeKind: TypeKind.Enum })
         {
             _w.Write("("); EmitExpression(expr); _w.Write(").toNumber()");
             return;
@@ -2961,9 +3187,9 @@ public sealed partial class Emitter
     private string EnumConstantLiteral(INamedTypeSymbol enumType, object value)
     {
         var mode = TransposeNaming.EnumEmitMode(enumType);
-        var v = Convert.ToInt64(value);
+        var v = EnumOrdinalText(value);
         var field = enumType.GetMembers().OfType<IFieldSymbol>()
-            .FirstOrDefault(f => f.HasConstantValue && Convert.ToInt64(f.ConstantValue) == v);
+            .FirstOrDefault(f => f.HasConstantValue && EnumOrdinalText(f.ConstantValue) == v);
         return field is not null ? JsString(TransposeNaming.EnumStringName(field, mode)) : "null";
     }
 

@@ -56,7 +56,21 @@
         },
 
         equals: function (a, b, fn) {
-            return !Transpose.hasValue(a) ? !Transpose.hasValue(b) : (fn ? fn(a, b) : Transpose.equals(a, b));
+            // Both sides need the null guard, not just `a`: with a value on the left and null on the
+            // right this fell through to Transpose.equals(someInt64, null), which reads `.low` off the
+            // null and throws. Lifted equality is "null equals only null, otherwise compare values".
+            if (!Transpose.hasValue(a) || !Transpose.hasValue(b)) {
+                return Transpose.hasValue(a) === Transpose.hasValue(b);
+            }
+
+            return fn ? fn(a, b) : Transpose.equals(a, b);
+        },
+
+        // `Nullable<T>.Equals(T other)` — the strongly-typed IEquatable<T> overload. The BCL templates
+        // it as equalsT (the same name a record's synthesized IEquatable<T>.Equals gets), and without
+        // it every `someNullable.Equals(value)` threw "equalsT is not a function".
+        equalsT: function (a, b) {
+            return System.Nullable.equals(a, b);
         },
 
         toString: function (a, fn) {

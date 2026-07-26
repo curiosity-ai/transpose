@@ -294,6 +294,62 @@ public class Program
             await RunTest(code);
         }
 
+        /// <summary>
+        /// C# promotes <c>long op double</c> (and float) to floating point. long/ulong are Int64/UInt64
+        /// objects at runtime, so the emitter used to route these through Int64's methods and lift the
+        /// FLOATING operand with <c>System.Int64(…)</c> — truncating it. That made
+        /// <c>Random.Next(min, max)</c> (which computes <c>Sample() * range</c> with a long range)
+        /// always return <c>minValue</c>.
+        /// </summary>
+        [TestMethod]
+        public async Task MixedFloatingAndInt64Arithmetic_Tests()
+        {
+            var code = """
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        double d = 0.5;
+        float f = 0.25f;
+        long l = 100L;
+        ulong ul = 40UL;
+
+        // Arithmetic: the sample must NOT be truncated to an integer.
+        Console.WriteLine(d * l);
+        Console.WriteLine(l * d);
+        Console.WriteLine(d + l);
+        Console.WriteLine(d - l);
+        Console.WriteLine(d / l);
+        Console.WriteLine(l / d);
+        Console.WriteLine(l % 3.0);
+        Console.WriteLine(d * ul);
+        Console.WriteLine(f * l);
+        Console.WriteLine((int)(d * l));
+
+        // Comparisons are promoted the same way.
+        Console.WriteLine(d < l);
+        Console.WriteLine(d > l);
+        Console.WriteLine(d <= l);
+        Console.WriteLine(d >= l);
+        Console.WriteLine(d == l);
+        Console.WriteLine(d != l);
+        Console.WriteLine(0.5 > 0L);
+        Console.WriteLine(1.5 < 1L);
+
+        // A long that only round-trips exactly as a double.
+        long big = 1234567890123L;
+        Console.WriteLine(big * 0.5);
+        Console.WriteLine(big / 1000.0);
+
+        // Pure-long arithmetic must still go through Int64 (integer division, no float promotion).
+        Console.WriteLine(l / 3L);
+    }
+}
+""";
+            await RunTest(code);
+        }
+
         [TestMethod]
         public async Task Single_Tests()
         {

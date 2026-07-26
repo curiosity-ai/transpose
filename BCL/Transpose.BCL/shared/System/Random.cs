@@ -35,11 +35,29 @@ namespace System
         private int[] SeedArray = new int[56];
 
         /// <summary>
-        /// Initializes a new instance of the Random class, using a time-dependent default seed value.
+        /// Initializes a new instance of the Random class, using a default seed value.
         /// </summary>
         public Random()
-          : this((int)DateTime.Now.Ticks)
+          : this(GenerateSeed())
         {
+        }
+
+        /// <summary>
+        /// A fresh seed for the parameterless constructor, drawn from the platform's
+        /// <c>Math.random()</c>.
+        /// </summary>
+        /// <remarks>
+        /// This replaces a <c>(int)DateTime.Now.Ticks</c> seed. Ticks are effectively
+        /// millisecond-resolution in JavaScript (they come from <c>Date</c>), so every
+        /// <c>new Random()</c> constructed within the same millisecond — a loop, or a handful of
+        /// objects built together — got the *same* seed and therefore produced the identical
+        /// sequence. <c>Math.random()</c> is independent per call.
+        /// </remarks>
+        private static int GenerateSeed()
+        {
+            // getRndInteger(0, int.MaxValue): Math.floor(Math.random() * (max - min)) + min.
+            // Math.random() is in [0, 1), so the result is a non-negative int < int.MaxValue.
+            return (int)(Math.Random() * int.MaxValue);
         }
 
         /// <summary>
@@ -231,11 +249,43 @@ namespace System
             }
         }
 
-        public virtual long NextInt64()
+        /// <summary>
+        /// Produces a value in the range [0, ulong.MaxValue] by stitching together three draws of
+        /// 22 + 22 + 20 bits. This is exactly how .NET composes 64 random bits out of
+        /// <see cref="Next(int)"/>, and matching it is what makes a seeded sequence of
+        /// <see cref="NextInt64()"/> agree with .NET value-for-value.
+        /// </summary>
+        private ulong NextUInt64()
         {
-            return NextInt64(long.MaxValue);
+            return ((ulong)(uint)Next(1 << 22))
+                 | (((ulong)(uint)Next(1 << 22)) << 22)
+                 | (((ulong)(uint)Next(1 << 20)) << 44);
         }
 
+        /// <summary>
+        /// Returns a non-negative random integer.
+        /// </summary>
+        /// <returns>A 64-bit signed integer that is greater than or equal to 0 and less than Int64.MaxValue.</returns>
+        public virtual long NextInt64()
+        {
+            while (true)
+            {
+                // Take the top 63 bits for a value in [0, long.MaxValue], and retry on the one
+                // excluded value so the result is in [0, long.MaxValue).
+                ulong result = NextUInt64() >> 1;
+
+                if (result != long.MaxValue)
+                {
+                    return (long)result;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Returns a non-negative random integer that is less than the specified maximum.
+        /// </summary>
+        /// <param name="maxValue">The exclusive upper bound of the random number to be generated. maxValue must be greater than or equal to 0.</param>
+        /// <returns>A 64-bit signed integer that is greater than or equal to 0, and less than maxValue.</returns>
         public virtual long NextInt64(long maxValue)
         {
             if (maxValue < 0)
@@ -246,6 +296,12 @@ namespace System
             return NextInt64(0, maxValue);
         }
 
+        /// <summary>
+        /// Returns a random 64-bit integer that is within a specified range.
+        /// </summary>
+        /// <param name="minValue">The inclusive lower bound of the random number returned.</param>
+        /// <param name="maxValue">The exclusive upper bound of the random number returned. maxValue must be greater than or equal to minValue.</param>
+        /// <returns>A 64-bit signed integer greater than or equal to minValue and less than maxValue. If minValue equals maxValue, minValue is returned.</returns>
         public virtual long NextInt64(long minValue, long maxValue)
         {
             if (minValue > maxValue)
@@ -253,48 +309,81 @@ namespace System
                 throw new ArgumentOutOfRangeException("minValue", "minValue must be less than or equal to maxValue");
             }
 
-            ulong range = (ulong)(maxValue - minValue);
+            ulong exclusiveRange = (ulong)(maxValue - minValue);
 
-            if (range == 0)
+            if (exclusiveRange > 1)
             {
-                return minValue;
+                // Narrow to the smallest range [0, 2^bitsNeeded) that contains exclusiveRange, then
+                // redraw until the value falls inside the inner range (rejection sampling — an
+                // unbiased modulo would need a division on a 64-bit value).
+                int bitsNeeded = BitsNeeded(exclusiveRange);
+
+                while (true)
+                {
+                    ulong result = NextUInt64() >> (64 - bitsNeeded);
+
+                    if (result < exclusiveRange)
+                    {
+                        return (long)result + minValue;
+                    }
+                }
             }
 
-            if (range <= (ulong)int.MaxValue)
-            {
-                return (long)Next((int)range) + minValue;
-            }
-
-            byte[] buffer = new byte[8];
-            ulong result;
-            ulong limit = ulong.MaxValue - (ulong.MaxValue % range);
-
-            do
-            {
-                NextBytes(buffer);
-                result = BitConverter.ToUInt64(buffer, 0);
-            } while (result >= limit);
-
-            return (long)(result % range) + minValue;
+            // exclusiveRange is 0 or 1, so minValue is the only possible answer.
+            return minValue;
         }
 
+        /// <summary>The position of <paramref name="value"/>'s highest set bit, i.e.
+        /// <c>64 - BitOperations.LeadingZeroCount(value)</c> (which this BCL does not have).</summary>
+        private static int BitsNeeded(ulong value)
+        {
+            int bits = 0;
+
+            while (value != 0)
+            {
+                bits++;
+                value = value >> 1;
+            }
+
+            return bits;
+        }
+
+        /// <summary>
+        /// Returns a random floating-point number that is greater than or equal to 0.0, and less than 1.0.
+        /// </summary>
+        /// <returns>A single-precision floating point number that is greater than or equal to 0.0, and less than 1.0.</returns>
         public virtual float NextSingle()
         {
-            return (float)Sample();
+            while (true)
+            {
+                // Narrowing a double sample to float rounds, and rounding up from just under 1.0
+                // would break the exclusive upper bound — so redraw in that case, as .NET does.
+                float f = (float)Sample();
+
+                if (f < 1.0f)
+                {
+                    return f;
+                }
+            }
         }
 
-        private static Random t_shared;
+        private static Random s_shared;
 
+        /// <summary>
+        /// Provides a shared instance for use by any code that needs random numbers but has no need
+        /// for its own sequence. On .NET this instance is thread-safe; JavaScript is single-threaded,
+        /// so a plain instance suffices here.
+        /// </summary>
         public static Random Shared
         {
             get
             {
-                if (t_shared == null)
+                if (s_shared == null)
                 {
-                    t_shared = new Random();
+                    s_shared = new Random();
                 }
 
-                return t_shared;
+                return s_shared;
             }
         }
     }

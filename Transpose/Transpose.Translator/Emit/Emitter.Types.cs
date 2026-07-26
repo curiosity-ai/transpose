@@ -236,11 +236,25 @@ public sealed partial class Emitter
         if (mode is 3 or 4 or 5 or 6)
         {
             var zero = enumType.GetMembers().OfType<IFieldSymbol>()
-                .FirstOrDefault(f => f.HasConstantValue && Convert.ToInt64(f.ConstantValue) == 0);
+                .FirstOrDefault(f => f.HasConstantValue && EnumOrdinalText(f.ConstantValue) == "0");
             return zero is not null ? JsString(TransposeNaming.EnumStringName(zero, mode)) : "null";
         }
         return "0";
     }
+
+    /// <summary>
+    /// An enum member's underlying constant as an invariant decimal string, used both to emit the
+    /// ordinal and to match members by value. Deliberately not <c>Convert.ToInt64</c>: a
+    /// <c>ulong</c>-backed enum can hold values above <c>long.MaxValue</c>, and
+    /// <c>ulong.MaxValue</c> made the translator itself throw "Value was either too large or too
+    /// small for an Int64".
+    /// </summary>
+    internal static string EnumOrdinalText(object? constantValue) => constantValue switch
+    {
+        null => "0",
+        ulong u => u.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        _ => Convert.ToInt64(constantValue).ToString(System.Globalization.CultureInfo.InvariantCulture),
+    };
 
     private void EmitEnum(INamedTypeSymbol type)
     {
@@ -268,7 +282,7 @@ public sealed partial class Emitter
                     {
                         var value = stringMode
                             ? JsString(TransposeNaming.EnumStringName(fields[i], mode))
-                            : Convert.ToInt64(fields[i].ConstantValue).ToString(System.Globalization.CultureInfo.InvariantCulture);
+                            : EnumOrdinalText(fields[i].ConstantValue);
                         _w.Write($"{NameMangler.JsPropertyKey(TransposeNaming.MemberJsName(fields[i]))}: {value}");
                         _w.WriteLine(i < fields.Count - 1 ? "," : "");
                     }
