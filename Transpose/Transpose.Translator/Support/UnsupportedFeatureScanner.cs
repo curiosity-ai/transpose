@@ -426,6 +426,23 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
         base.VisitIsPatternExpression(node);
     }
 
+    // An enum's members are emitted as plain JS numbers, so a 64-bit underlying type cannot be
+    // represented: JavaScript numbers hold integers exactly only up to 2^53, and the runtime matches a
+    // value to its member by that number. `enum E : long { X = long.MaxValue }` silently produced a
+    // different ordinal (long.MaxValue round-tripped to long.MinValue), and members far apart above
+    // 2^53 could collide onto one value. int/uint and narrower are safe and unaffected.
+    public override void VisitEnumDeclaration(EnumDeclarationSyntax node)
+    {
+        if (node.BaseList?.Types.FirstOrDefault()?.Type is { } baseType
+            && _model.GetTypeInfo(baseType).Type?.SpecialType
+                is SpecialType.System_Int64 or SpecialType.System_UInt64)
+        {
+            Report(node, $"An enum with a 64-bit underlying type ('{baseType}') is not supported in the browser environment; enum members are JavaScript numbers, which represent integers exactly only up to 2^53.");
+        }
+
+        base.VisitEnumDeclaration(node);
+    }
+
     // Inline arrays ([InlineArray] structs, C# 12) have no JS representation.
     public override void VisitStructDeclaration(StructDeclarationSyntax node)
     {

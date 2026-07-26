@@ -623,6 +623,132 @@ public class Program
             await RunTest(code);
         }
 
+        /// <summary>
+        /// <c>Convert.ToInt64</c>/<c>ToUInt64</c> ROUND (half to even) like every other integral
+        /// target — they are not a truncating cast. The 64-bit branch returned before the rounding the
+        /// narrower type codes get, so <c>Convert.ToInt64(42.7)</c> came out 42 instead of 43.
+        /// </summary>
+        [TestMethod]
+        public async Task ConvertToInt64Rounds_Tests()
+        {
+            var code = """
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        Console.WriteLine(Convert.ToInt64(42.7));
+        Console.WriteLine(Convert.ToInt64(42.2));
+        Console.WriteLine(Convert.ToInt64(-42.7));
+        Console.WriteLine(Convert.ToInt64(-42.2));
+
+        // Midpoints round to EVEN, not away from zero.
+        Console.WriteLine(Convert.ToInt64(42.5));
+        Console.WriteLine(Convert.ToInt64(43.5));
+        Console.WriteLine(Convert.ToInt64(-42.5));
+        Console.WriteLine(Convert.ToInt64(-43.5));
+
+        Console.WriteLine(Convert.ToUInt64(42.7));
+        Console.WriteLine(Convert.ToUInt64(42.5));
+        Console.WriteLine(Convert.ToUInt64(43.5));
+
+        // From float and decimal, not just double.
+        Console.WriteLine(Convert.ToInt64(42.7f));
+        Console.WriteLine(Convert.ToInt64(42.7m));
+        Console.WriteLine(Convert.ToInt64(43.5m));
+
+        // Already-integral values and other sources are untouched.
+        Console.WriteLine(Convert.ToInt64(42.0));
+        Console.WriteLine(Convert.ToInt64(42));
+        Console.WriteLine(Convert.ToInt64("42"));
+        Console.WriteLine(Convert.ToInt64(true));
+        Console.WriteLine(Convert.ToInt64(9007199254740993L));
+
+        // The narrower targets, which already rounded — kept here so the two stay consistent.
+        Console.WriteLine(Convert.ToInt32(42.7) + " " + Convert.ToInt32(42.5) + " " + Convert.ToInt32(43.5));
+        Console.WriteLine(Convert.ToUInt32(42.7) + " " + Convert.ToInt16(42.7) + " " + Convert.ToByte(42.7));
+
+        // A genuine cast still truncates — that is the difference being pinned down.
+        double d = 42.7;
+        Console.WriteLine((long)d);
+        Console.WriteLine((long)-42.7);
+    }
+}
+""";
+            await RunTest(code);
+        }
+
+        /// <summary>
+        /// LINQ aggregates over a <c>Nullable&lt;T&gt;</c> sequence SKIP the nulls; they neither
+        /// propagate null nor throw. The runtime's rule was "if any element is null the result is
+        /// null", so <c>new long?[] { 1, 2, null, 3 }.Sum()</c> was null instead of 6 — and
+        /// <c>Average</c> on an all-null sequence threw instead of returning null.
+        /// </summary>
+        [TestMethod]
+        public async Task NullableLinqAggregatesSkipNulls_Tests()
+        {
+            var code = """
+using System;
+using System.Collections.Generic;
+using System.Linq;
+public class Program
+{
+    public static void Main()
+    {
+        var withNull = new long?[] { 1L, 2L, null, 3L };
+        var allNull = new long?[] { null, null };
+        var empty = new long?[] { };
+
+        // Nulls are skipped, and the count Average divides by excludes them: (1+2+3)/3 == 2.
+        Console.WriteLine(withNull.Sum());
+        Console.WriteLine(withNull.Average());
+        Console.WriteLine(withNull.Min());
+        Console.WriteLine(withNull.Max());
+        Console.WriteLine(withNull.Count());
+
+        // With no non-null value: Sum is 0, Average/Min/Max are null. Nothing throws.
+        Console.WriteLine(allNull.Sum());
+        Console.WriteLine(allNull.Average() == null);
+        Console.WriteLine(allNull.Min() == null);
+        Console.WriteLine(allNull.Max() == null);
+        Console.WriteLine(empty.Sum());
+        Console.WriteLine(empty.Average() == null);
+        Console.WriteLine(empty.Min() == null);
+
+        // The selector overloads drop nulls from the PROJECTED values.
+        Console.WriteLine(withNull.Sum(x => x));
+        Console.WriteLine(withNull.Average(x => x));
+        Console.WriteLine(withNull.Min(x => x));
+        Console.WriteLine(withNull.Max(x => x));
+        Console.WriteLine(new[] { 1, 2, 3 }.Sum(x => x == 2 ? (long?)null : x));
+        Console.WriteLine(new[] { 1, 2, 3 }.Average(x => x == 2 ? (long?)null : x));
+
+        // Every nullable numeric type, not just long?.
+        Console.WriteLine(new int?[] { 1, null, 3 }.Sum());
+        Console.WriteLine(new int?[] { 1, null, 3 }.Average());
+        Console.WriteLine(new long?[] { 1L, null, 3L }.Sum());
+        Console.WriteLine(new double?[] { 1.0, null, 3.0 }.Sum());
+        Console.WriteLine(new double?[] { 1.0, null, 3.0 }.Average());
+        Console.WriteLine(new decimal?[] { 1m, null, 3m }.Sum());
+        Console.WriteLine(new decimal?[] { 1m, null, 3m }.Average());
+        Console.WriteLine(new float?[] { 1f, null, 3f }.Sum());
+        Console.WriteLine(new int?[] { null, null }.Sum());
+        Console.WriteLine(new decimal?[] { null, null }.Sum());
+
+        // A sequence with no nulls is unchanged.
+        Console.WriteLine(new long?[] { 1L, 2L, 3L }.Sum());
+        Console.WriteLine(new long?[] { 1L, 2L, 3L }.Average());
+
+        // The NON-nullable overloads keep their own contract: Sum is 0 on empty, Average throws.
+        Console.WriteLine(new long[] { }.Sum());
+        try { Console.WriteLine(new long[] { }.Average()); }
+        catch (InvalidOperationException) { Console.WriteLine("InvalidOperationException"); }
+    }
+}
+""";
+            await RunTest(code);
+        }
+
         /// <summary>Collections and LINQ keyed on / aggregating long values.</summary>
         [TestMethod]
         public async Task CollectionsAndLinq_Tests()
@@ -696,56 +822,76 @@ public class Program
         }
 
         /// <summary>
-        /// An enum with a 64-bit backing type. Its ordinals are emitted as plain JS numbers, so a
-        /// <c>(Big)someLong</c> cast has to read the magnitude out of the Int64 instance — otherwise
-        /// no member matched and ToString() printed the raw number.
-        ///
-        /// Ordinals are limited to JavaScript's exact-integer range (2^53); a member above that loses
-        /// precision, which is why <c>long.MaxValue</c> is not used here.
+        /// An enum with a 64-bit underlying type is rejected: enum members are emitted as plain JS
+        /// numbers, which hold integers exactly only up to 2^53, so a member above that got a
+        /// different ordinal (<c>long.MaxValue</c> round-tripped to <c>long.MinValue</c>) and members
+        /// far apart could collide onto one value.
         /// </summary>
         [TestMethod]
-        public async Task Int64BackedEnum_Tests()
+        public async Task Int64BackedEnumIsUnsupported_Tests()
+        {
+            await RunTestExpectingError("""
+using System;
+
+public enum Big : long { A = 1L, B = 5000000000L }
+
+public class Program
+{
+    public static void Main() { Console.WriteLine(Big.B); }
+}
+""", "enum with a 64-bit underlying type");
+
+            await RunTestExpectingError("""
+using System;
+
+public enum UBig : ulong { X = 1UL, Y = 18446744073709551615UL }
+
+public class Program
+{
+    public static void Main() { Console.WriteLine(UBig.Y); }
+}
+""", "enum with a 64-bit underlying type");
+        }
+
+        /// <summary>Every underlying type narrower than 64 bits stays supported.</summary>
+        [TestMethod]
+        public async Task NarrowerBackedEnums_Tests()
         {
             var code = """
 using System;
 
-public enum Big : long { A = 1L, B = 5000000000L }
-public enum UBig : ulong { X = 1UL, Y = 5000000000UL }
+public enum Implicit { A = 1, B = 2 }
+public enum AsInt : int { A = 1, B = 2000000000 }
+public enum AsUInt : uint { A = 1, B = 4000000000 }
+public enum AsByte : byte { A = 1, B = 255 }
+public enum AsSByte : sbyte { A = 1, B = 127 }
+public enum AsShort : short { A = 1, B = 32767 }
+public enum AsUShort : ushort { A = 1, B = 65535 }
 
 public class Program
 {
     public static void Main()
     {
-        Console.WriteLine(Big.B);
-        Console.WriteLine((long)Big.B);
-        Console.WriteLine(Big.B.ToString());
-        Console.WriteLine((Big)5000000000L);
-        Console.WriteLine(Enum.Parse<Big>("B"));
-        Console.WriteLine(UBig.Y);
-        Console.WriteLine((ulong)UBig.Y);
+        Console.WriteLine(Implicit.B + " " + (int)Implicit.B);
+        Console.WriteLine(AsInt.B + " " + (int)AsInt.B);
+        Console.WriteLine(AsUInt.B + " " + (uint)AsUInt.B);
+        Console.WriteLine(AsByte.B + " " + (byte)AsByte.B);
+        Console.WriteLine(AsSByte.B + " " + (sbyte)AsSByte.B);
+        Console.WriteLine(AsShort.B + " " + (short)AsShort.B);
+        Console.WriteLine(AsUShort.B + " " + (ushort)AsUShort.B);
 
-        long raw = 5000000000L;
-        Console.WriteLine((Big)raw);
-        Console.WriteLine((Big)raw == Big.B);
+        // Widening an enum member to long still works — that is a cast, not a 64-bit backing.
+        Console.WriteLine((long)AsInt.B + 1L);
 
-        Big v = Big.B;
+        AsUInt v = AsUInt.B;
         switch (v)
         {
-            case Big.A: Console.WriteLine("A"); break;
-            case Big.B: Console.WriteLine("B"); break;
-            default: Console.WriteLine("other"); break;
+            case AsUInt.A: Console.WriteLine("A"); break;
+            case AsUInt.B: Console.WriteLine("B"); break;
         }
 
-        Console.WriteLine(v == Big.B);
-        Console.WriteLine(v is Big.B);
-        Console.WriteLine(v is Big.A);
-        Console.WriteLine(v is not Big.A);
-        Console.WriteLine(v is Big.A or Big.B);
-        Console.WriteLine(v switch { Big.A => "A", Big.B => "B", _ => "?" });
-
-        object boxed = Big.B;
-        Console.WriteLine(boxed.GetType().Name + " " + boxed);
-        Console.WriteLine(boxed is Big);
+        Console.WriteLine(v is AsUInt.B);
+        Console.WriteLine(v is AsUInt.A);
     }
 }
 """;
@@ -764,7 +910,7 @@ public class Program
 using System;
 
 public enum Small { A = 1, B = 2 }
-public enum Big : long { A = 1L, B = 5000000000L }
+public enum Big : uint { A = 1u, B = 4000000000u }
 
 public static class Limits
 {
