@@ -1898,15 +1898,44 @@
             throw new System.InvalidOperationException.$ctor1("Sequence contains no elements");
         }
 
-        return (sum instanceof System.Decimal || System.Int64.is64Bit(sum)) ? sum.div(count) : (sum / count);
+        // Average(decimal) returns decimal, so Decimal.div (exact) is right there. Average(long) and
+        // Average(ulong) return DOUBLE in .NET — Int64.div would truncate (avg of 3,1,2,1 came out 1
+        // instead of 1.75), so read the sum's magnitude and divide as a float, matching .NET's
+        // `(double)sum / count`.
+        if (sum instanceof System.Decimal) {
+            return sum.div(count);
+        }
+
+        return System.Int64.is64Bit(sum) ? (sum.toNumber() / count) : (sum / count);
+    };
+
+    // .NET's aggregates over a Nullable<T> sequence SKIP the null elements rather than propagating
+    // null. The rule used to be "if any element is null the result is null", which made
+    // `new long?[] { 1, 2, null, 3 }.Sum()` null instead of 6. Correct behaviour:
+    //   Sum          — total of the non-null values, 0 when there are none (never null).
+    //   Average      — null when there is no non-null value (it does NOT throw, unlike the
+    //                  non-nullable overload on an empty sequence).
+    //   Min / Max    — null when there is no non-null value.
+    // The selector is applied FIRST and nulls are dropped from its results, so
+    // `items.Sum(x => x.MaybeNull)` skips the projected nulls.
+
+    /// The non-null projected values of this sequence.
+    Enumerable.prototype.nonNullValues = function (selector) {
+        var seq = selector == null ? this : this.select(Utils.createLambda(selector));
+
+        return seq.where(function (x) { return !Transpose.isNull(x); });
     };
 
     Enumerable.prototype.nullableAverage = function (selector, def) {
-        if (this.any(Transpose.isNull)) {
-            return null;
+        // The (selector, def) pair is overloaded the same way average() overloads it.
+        if (selector && !def && !Transpose.isFunction(selector)) {
+            def = selector;
+            selector = null;
         }
 
-        return this.average(selector, def);
+        var values = this.nonNullValues(selector);
+
+        return values.any() ? values.average(null, def) : null;
     };
 
     // Overload:function ()
@@ -1931,11 +1960,9 @@
     };
 
     Enumerable.prototype.nullableMax = function (selector) {
-        if (this.any(Transpose.isNull)) {
-            return null;
-        }
+        var values = this.nonNullValues(selector);
 
-        return this.max(selector);
+        return values.any() ? values.max() : null;
     };
 
     // Overload:function ()
@@ -1948,11 +1975,9 @@
     };
 
     Enumerable.prototype.nullableMin = function (selector) {
-        if (this.any(Transpose.isNull)) {
-            return null;
-        }
+        var values = this.nonNullValues(selector);
 
-        return this.min(selector);
+        return values.any() ? values.min() : null;
     };
 
     Enumerable.prototype.maxBy = function (keySelector) {
@@ -1996,11 +2021,15 @@
     };
 
     Enumerable.prototype.nullableSum = function (selector, def) {
-        if (this.any(Transpose.isNull)) {
-            return null;
+        // The (selector, def) pair is overloaded the same way sum() overloads it.
+        if (selector && !def && !Transpose.isFunction(selector)) {
+            def = selector;
+            selector = null;
         }
 
-        return this.sum(selector, def);
+        // No null result here: an all-null or empty sequence sums to zero. `def` carries the
+        // zero in the representation the element type needs (System.Int64.Zero, Decimal.Zero).
+        return this.nonNullValues(selector).sum(null, def);
     };
 
     /* Paging Methods */

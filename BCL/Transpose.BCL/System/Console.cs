@@ -107,7 +107,10 @@ namespace System
 
             if (con && con.log)
             {
-                if (!Transpose.Script.IsDefined(value))
+                // `null` as well as `undefined`: .NET writes an empty line for a null object, and
+                // Transpose.isDefined(null) is true (it only tests for undefined), so a null fell
+                // through to the dereference below and threw "Cannot read properties of null".
+                if (value == null || !Transpose.Script.IsDefined(value))
                 {
                     con.log("");
                     return;
@@ -295,7 +298,10 @@ namespace System
 
             if (con && con.log)
             {
-                if (!Transpose.Script.IsDefined(value))
+                // `null` as well as `undefined`: .NET writes an empty line for a null object, and
+                // Transpose.isDefined(null) is true (it only tests for undefined), so a null fell
+                // through to the dereference below and threw "Cannot read properties of null".
+                if (value == null || !Transpose.Script.IsDefined(value))
                 {
                     con.log("");
                     return;
@@ -429,12 +435,12 @@ namespace System
         [Transpose.Template("System.Console.WriteLine(System.Console.TransformChars({buffer}, 0, {index}, {count}))")]
         public static extern void WriteLine(char[] buffer, int index, int count);
 
-        /// <summary>
-        /// Writes the text representation of the specified nullable decimal, followed by the current line terminator, to the standard output stream.
-        /// </summary>
-        /// <param name="value">The value to write.</param>
-        [Transpose.Template("System.Console.WriteLine({value} && {value}.toString(\"G\"))")]
-        public static extern void WriteLine(decimal? value);
+        // NOTE: there is deliberately no WriteLine(decimal?) overload. .NET has none, and adding one
+        // hijacked every nullable numeric: `int?`/`long?`/`short?` all convert implicitly to `decimal?`,
+        // which beats the boxing conversion to WriteLine(object), so `Console.WriteLine(someNullableInt)`
+        // bound here and its `{value}.toString("G")` template threw
+        // "RangeError: toString() radix argument must be between 2 and 36" on a plain JS number.
+        // WriteLine(object) handles null and every boxed numeric representation already.
 
         #endregion WriteLine
 

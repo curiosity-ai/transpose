@@ -1217,16 +1217,23 @@
                         return new System.Decimal(value, formatProvider);
                     }
 
-                    if (typeCode === typeCodes.Int64) {
+                    if (typeCode === typeCodes.Int64 || typeCode === typeCodes.UInt64) {
                         scope.internal.validateNumberRange(value, typeCode, true);
 
-                        return new System.Int64(value);
-                    }
+                        // Convert.ToInt64/ToUInt64 ROUND (half to even) like every other integral
+                        // target — they are not a truncating cast, which is what `(long)42.7` would be.
+                        // System.Int64/UInt64 truncate what they are handed, and this branch returned
+                        // before the rounding the narrower type codes get further down, so
+                        // Convert.ToInt64(42.7) came out 42 instead of 43.
+                        if (!System.Int64.is64Bit(value)) {
+                            var asFloat = value instanceof System.Decimal ? value.toFloat() : value;
 
-                    if (typeCode === typeCodes.UInt64) {
-                        scope.internal.validateNumberRange(value, typeCode, true);
+                            if (asFloat % 1 !== 0) {
+                                value = scope.internal.roundHalfToEven(asFloat);
+                            }
+                        }
 
-                        return new System.UInt64(value);
+                        return typeCode === typeCodes.Int64 ? new System.Int64(value) : new System.UInt64(value);
                     }
 
                     if (System.Int64.is64Bit(value)) {
@@ -1395,6 +1402,31 @@
 
         throwOverflow: function (typeName) {
             throw new System.OverflowException.$ctor1("Value was either too large or too small for '" + typeName + "'.");
+        },
+
+        // Round-half-to-even on a plain JS number, with no target-range check — the 64-bit variant of
+        // roundToInt below. roundToInt cannot serve the Int64/UInt64 type codes because their
+        // typeRanges entries are System.Int64/UInt64 *objects*, so its `maxValue + 0.5` would
+        // string-concatenate. A value with a fractional part is necessarily within +/-2^53, i.e. well
+        // inside the 64-bit range, so the caller's validateNumberRange is the only check needed.
+        roundHalfToEven: function (value) {
+            if (value % 1 === 0) {
+                return value;
+            }
+
+            var intPart = value >= 0 ? Math.floor(value) : -1 * Math.floor(-value),
+                floatPart = value - intPart;
+
+            // `% 2` rather than `& 1`: a bitwise op truncates to 32 bits, and intPart can exceed that.
+            if (value >= 0) {
+                if (floatPart > 0.5 || (floatPart === 0.5 && (intPart % 2) !== 0)) {
+                    ++intPart;
+                }
+            } else if (floatPart < -0.5 || (floatPart === -0.5 && (intPart % 2) !== 0)) {
+                --intPart;
+            }
+
+            return intPart;
         },
 
         roundToInt: function (value, typeCode) {

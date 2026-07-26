@@ -79,8 +79,7 @@ public sealed partial class Emitter
                     EmitTypeTest(subject, typeSym);
                 else
                 {
-                    _w.Write($"{subject} === ");
-                    EmitExpression(constant.Expression);
+                    EmitConstantEqualityTest(subject, constant.Expression);
                 }
                 break;
 
@@ -106,8 +105,7 @@ public sealed partial class Emitter
                 break;
 
             case RelationalPatternSyntax rel:
-                _w.Write($"{subject} {rel.OperatorToken.Text} ");
-                EmitExpression(rel.Expression);
+                EmitRelationalPatternTest(subject, rel);
                 break;
 
             case ParenthesizedPatternSyntax paren:
@@ -279,6 +277,79 @@ public sealed partial class Emitter
         }
     }
 
+    /// <summary>
+    /// Emits a value-equality test between an already-emitted <paramref name="subject"/> and a
+    /// constant expression. long/ulong/decimal are System.Int64/UInt64/Decimal *instances* at
+    /// runtime, so JS <c>===</c> compares object identity and is never true for two separately
+    /// constructed values — <c>switch (someLong) { case 2L: }</c> and <c>x is 2L</c> silently fell
+    /// through to the default arm. Those go through <c>Transpose.equals</c>; everything else keeps
+    /// <c>===</c>.
+    /// </summary>
+    private void EmitConstantEqualityTest(string subject, ExpressionSyntax constant)
+    {
+        var info = _model.GetTypeInfo(constant);
+        EmitConstantEqualityAgainst(subject, Capture(() => EmitExpression(constant)), info.ConvertedType ?? info.Type);
+    }
+
+    /// <summary>
+    /// <see cref="EmitConstantEqualityTest"/> against an already-emitted constant (for callers whose
+    /// right-hand side is not an emittable expression node — see the is-expression path, where an enum
+    /// member arrives as type-name syntax).
+    /// </summary>
+    private void EmitConstantEqualityAgainst(string subject, string constantJs, ITypeSymbol? constantType)
+    {
+        if (IsRuntimeObjectNumeric(constantType))
+        {
+            // The null guard matters when the subject is a Nullable: `((long?)null) is 2L` is false in
+            // C#, but Transpose.equals would reach into the null's `.low` and throw.
+            _w.Write($"({subject} != null && Transpose.equals({subject}, {constantJs}))");
+            return;
+        }
+
+        _w.Write($"{subject} === {constantJs}");
+    }
+
+    /// <summary>
+    /// A relational pattern (<c>is &gt; 10L</c>). System.Int64/UInt64/Decimal instances have no
+    /// <c>valueOf</c>, so a JS <c>&gt;</c> coerces both operands to STRINGS and compares them
+    /// lexicographically — <c>9L is &gt; 10L</c> came out true ("9" &gt; "10"). Route those through the
+    /// type's own comparison method, as the binary-operator path already does.
+    /// </summary>
+    private void EmitRelationalPatternTest(string subject, RelationalPatternSyntax rel)
+    {
+        var info = _model.GetTypeInfo(rel.Expression);
+        var method = rel.OperatorToken.Text switch
+        {
+            ">" => "gt",
+            ">=" => "gte",
+            "<" => "lt",
+            "<=" => "lte",
+            _ => null,
+        };
+
+        if (method is not null && IsRuntimeObjectNumeric(info.ConvertedType ?? info.Type))
+        {
+            // A Nullable subject that is null matches no relational pattern.
+            _w.Write($"({subject} != null && {subject}.{method}(");
+            EmitExpression(rel.Expression);
+            _w.Write("))");
+            return;
+        }
+
+        _w.Write($"{subject} {rel.OperatorToken.Text} ");
+        EmitExpression(rel.Expression);
+    }
+
+    /// <summary>long / ulong / decimal, or the Nullable form of one — the numeric types tps.js models
+    /// as objects rather than plain JS numbers.</summary>
+    private static bool IsRuntimeObjectNumeric(ITypeSymbol? type)
+    {
+        if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T, TypeArguments.Length: 1 } nullable)
+            type = nullable.TypeArguments[0];
+
+        return Is64BitInteger(type) || IsDecimalType(type);
+    }
+
     private void EmitTypeTest(string subject, ITypeSymbol? type)
     {
         if (type is null) { _w.Write("true"); return; }
@@ -293,21 +364,24 @@ public sealed partial class Emitter
                 _w.Write($"typeof {subject} === \"boolean\"");
                 return;
             // Integer types: number AND integral (best-effort distinction from double).
-            case SpecialType.System_Int32 or SpecialType.System_Int64 or SpecialType.System_Int16
+            // long/ulong are excluded — see the note below.
+            case SpecialType.System_Int32 or SpecialType.System_Int16
                 or SpecialType.System_Byte or SpecialType.System_SByte or SpecialType.System_UInt16
-                or SpecialType.System_UInt32 or SpecialType.System_UInt64 or SpecialType.System_Char:
+                or SpecialType.System_UInt32 or SpecialType.System_Char:
                 _w.Write($"(typeof {subject} === \"number\" && Number.isInteger({subject}))");
                 return;
-            case SpecialType.System_Double or SpecialType.System_Single or SpecialType.System_Decimal:
+            case SpecialType.System_Double or SpecialType.System_Single:
                 _w.Write($"typeof {subject} === \"number\"");
                 return;
         }
 
-        // Note: enums fall through to the runtime type check below. They box to `object` as a
-        // Transpose.box carrying their enum type (so o.GetType()/o.ToString() stay correct), NOT a
-        // plain number — a `typeof === "number"` test would both miss the boxed form and fail to
-        // tell one enum type from another (or from int). TransposeR.is understands the boxed
-        // representation, matching the plain `x is EnumType` expression path.
+        // Note: enums, long/ulong and decimal fall through to the runtime type check below.
+        // Enums box to `object` as a Transpose.box carrying their enum type (so o.GetType()/
+        // o.ToString() stay correct) and long/ulong/decimal box as System.Int64/UInt64/Decimal
+        // instances — none of them a plain number. A `typeof === "number"` test would both miss the
+        // boxed form and fail to tell one such type from another (`case long l` matched a boxed int,
+        // then `l.gt(…)` threw "l.gt is not a function"). TransposeR.is understands the boxed
+        // representations, matching the plain `x is T` expression path.
         _w.Write($"TransposeR.is({subject}, {TypeRef(type)})");
     }
 

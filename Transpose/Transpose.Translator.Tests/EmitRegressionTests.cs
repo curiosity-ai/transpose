@@ -2313,7 +2313,7 @@ public class Program
             await RunTest(@"
 using System;
 [Flags] public enum Perm { None = 0, Read = 1, Write = 2, Exec = 4 }
-public enum Big : long { A = 1L, B = 5000000000L }
+public enum Big { A = 1, B = 50000000 }   // int-backed: a 64-bit underlying type is unsupported
 public class Program
 {
     public static void Main()

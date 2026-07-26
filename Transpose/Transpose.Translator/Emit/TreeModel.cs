@@ -43,6 +43,10 @@ internal sealed class TreeModel
     public ISymbol? GetDeclaredSymbol(SyntaxNode node) => For(node).GetDeclaredSymbol(node);
     public Optional<object?> GetConstantValue(SyntaxNode node) => For(node).GetConstantValue(node);
 
+    /// <summary>The conversion C# applies to an expression at its usage site — notably whether it is
+    /// a boxing conversion, which <see cref="GetTypeInfo"/> only reports as "converted to object".</summary>
+    public Conversion GetConversion(ExpressionSyntax node) => For(node).GetConversion(node);
+
     public ForEachStatementInfo GetForEachStatementInfo(CommonForEachStatementSyntax node)
         => For(node).GetForEachStatementInfo(node);
 

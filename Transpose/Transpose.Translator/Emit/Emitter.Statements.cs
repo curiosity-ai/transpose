@@ -794,7 +794,12 @@ public sealed partial class Emitter
             .SelectMany(s => s.Labels)
             .Any(l => l is CasePatternSwitchLabelSyntax);
 
-        if (hasPatterns)
+        // A long/ulong/decimal subject is a runtime object, so a JS `switch` — which matches with
+        // `===`, i.e. object identity — never hit any `case` and always fell through to `default`.
+        // The if/else chain compares by value.
+        var governingType = _model.GetTypeInfo(switchStmt.Expression).Type;
+
+        if (hasPatterns || IsRuntimeObjectNumeric(governingType))
         {
             EmitPatternSwitch(switchStmt);
             return;
@@ -876,8 +881,7 @@ public sealed partial class Emitter
                         }
                         break;
                     case CaseSwitchLabelSyntax constLabel:
-                        _w.Write($"{subject} === ");
-                        EmitExpression(constLabel.Value);
+                        EmitConstantEqualityTest(subject, constLabel.Value);
                         break;
                 }
                 _w.Write(")");

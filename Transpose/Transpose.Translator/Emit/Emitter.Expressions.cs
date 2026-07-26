@@ -313,6 +313,18 @@ public sealed partial class Emitter
             return;
         }
 
+        // Implicit widening of long/ulong to float/double → read the numeric magnitude. The 64-bit
+        // value is an Int64/UInt64 object at runtime, and leaving it raw means JS operates on the
+        // object: `d += someLong` string-concatenated ("42" + "4" → "424") because Int64 has no
+        // valueOf, and a `double` parameter received an Int64 instance.
+        if (IsFloatingType(targetType) && Is64BitInteger(sourceType) && !EmitsAsPlainJsNumber(expr))
+        {
+            _w.Write("(");
+            EmitExpression(expr);
+            _w.Write(").toNumber()");
+            return;
+        }
+
         // Implicit widening of a 32-bit integer to long/ulong → wrap as a 64-bit instance.
         // (Numeric literals already self-wrap via their converted type in EmitLiteral.)
         if (Is64BitInteger(targetType) && sourceType is not null && !Is64BitInteger(sourceType)
@@ -475,7 +487,15 @@ public sealed partial class Emitter
         switch (lit.Kind())
         {
             case SyntaxKind.NumericLiteralExpression:
-                var conv = _model.GetTypeInfo(lit).ConvertedType;
+                var litInfo = _model.GetTypeInfo(lit);
+                // The CONVERTED type decides the representation — `double d = 5L` emits the plain
+                // number 5. But a BOXING conversion (`object o = 5L`) converts to object, and the
+                // boxed value still has to be a real Int64/UInt64/Decimal instance: emitting a bare
+                // number made `o is long` false and `o.GetType()` report Int32.
+                // Nullable<T> is represented as the value or null, so `long? x = 7L` needs the same
+                // Int64 instance a plain `long` would get — otherwise x is a bare number and a later
+                // `x.add(…)` throws.
+                var conv = UnwrapNullable(_model.GetConversion(lit).IsBoxing ? litInfo.Type : litInfo.ConvertedType);
                 if (conv?.SpecialType is SpecialType.System_Int64 or SpecialType.System_UInt64
                     && lit.Token.Value is not double and not float and not decimal)
                     _w.Write(Long64Literal(lit.Token.Value!, conv.SpecialType == SpecialType.System_UInt64));
