@@ -141,10 +141,17 @@ the set of body-less (`extern`) methods so overload numbering matches the hand-w
 dotnet build Transpose.slnx
 ```
 
-This builds `Transpose.Translator`, the `tps` compiler, the tests, and the template. (The
-`Transpose.Build.Target` SDK and the BCL/Packages projects are **not** in the solution: their
-`Sdk="Transpose.Build.Target/..."` is not a resolvable NuGet package in a dev tree, and the BCL is
-compiled by `tps`, not `dotnet`.)
+This builds `Transpose.Translator`, the `tps` compiler, the tests, and the template.
+
+The `Transpose.Build.Target` SDK is listed in the solution so its targets are editable from the IDE,
+but it is marked `<Build Project="false" />` and is **never built** as part of a solution build: it
+is an MSBuild SDK package rather than code the toolchain compiles against, and building it inside
+the solution fails with `NETSDK1199` (`ArtifactsPath` cannot be set in a csproj). Release it on its
+own with `dotnet pack Transpose/Transpose.Build.Target`.
+
+The BCL/Packages projects *are* in the solution, but they build only when a `tps` is on `PATH`
+(their `Sdk="Transpose.Build.Target/…"` shells out to it) — the BCL is compiled by `tps`, not by
+`dotnet`. Use `./bootstrap.sh` for a dev tree.
 
 ### 2. Bootstrap the BCL/Packages
 
