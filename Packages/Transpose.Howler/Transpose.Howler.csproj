@@ -19,12 +19,14 @@
 
   <ItemGroup>
     <None Include="..\..\logo\transpose.png" Link="transpose.png" Pack="true" PackagePath="\" />
+    <None Include="..\..\README.md" Link="README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
   
   <PropertyGroup>
     <PackageOutputPath>./nupkg</PackageOutputPath>
     <IncludeSymbols>false</IncludeSymbols>
     <PackageIcon>transpose.png</PackageIcon>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
     <LangVersion>7.2</LangVersion>
     <PackageId>Transpose.Howler</PackageId>
     <Authors>Curiosity GmbH, Object.NET, Inc.</Authors>

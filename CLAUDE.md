@@ -72,8 +72,27 @@ benchmarks/tesserae/           # git submodule: the benchmark corpus (see Perfor
 docs/perf/                     # recorded tps-bench reports (baseline + current)
 .devops/                       # Azure DevOps pipelines (one per package, plus the benchmark)
 
-docs/, logo/, lib/, External-less # docs, transpose.png/svg, misc
+docs/, logo/, lib/, External-less # docs, brand assets (see below), misc
 ```
+
+### Brand assets (`logo/`)
+
+One artwork, three derived files — regenerate all three together if it ever changes:
+
+| File | Size | Used by |
+| --- | --- | --- |
+| `logo/transpose.png` | 256×256 RGBA | `PackageIcon` of **every** package (each packable csproj packs it to the package root) |
+| `logo/transpose-512.png` | 512×512 RGBA | the README header image (referenced by its `raw.githubusercontent.com` URL, so it also renders on nuget.org) |
+| `logo/transpose.ico` | 16/24/32/48/64/128/256 | `ApplicationIcon` of the `tps` and `tps-bench` executables (only the Windows apphost carries it; other platforms ignore it) |
+
+The corners are transparent, so the rounded icon reads correctly on nuget.org's white
+background and on a dark README. `logo/transpose.svg` is the retired pre-2026 mark, kept only so
+old absolute links do not 404.
+
+Every packable project also sets `PackageReadmeFile` and packs the repository `README.md`
+(`Transpose.Placeholders` packs its own, package-specific README instead). Because that README ships
+to nuget.org, links in it must be **absolute** — a relative `[x](FILE.md)` renders as a dead link
+there.
 
 ## Compilation pipeline
 
@@ -122,10 +141,17 @@ the set of body-less (`extern`) methods so overload numbering matches the hand-w
 dotnet build Transpose.slnx
 ```
 
-This builds `Transpose.Translator`, the `tps` compiler, the tests, and the template. (The
-`Transpose.Build.Target` SDK and the BCL/Packages projects are **not** in the solution: their
-`Sdk="Transpose.Build.Target/..."` is not a resolvable NuGet package in a dev tree, and the BCL is
-compiled by `tps`, not `dotnet`.)
+This builds `Transpose.Translator`, the `tps` compiler, the tests, and the template.
+
+The `Transpose.Build.Target` SDK is listed in the solution so its targets are editable from the IDE,
+but it is marked `<Build Project="false" />` and is **never built** as part of a solution build: it
+is an MSBuild SDK package rather than code the toolchain compiles against, and building it inside
+the solution fails with `NETSDK1199` (`ArtifactsPath` cannot be set in a csproj). Release it on its
+own with `dotnet pack Transpose/Transpose.Build.Target`.
+
+The BCL/Packages projects *are* in the solution, but they build only when a `tps` is on `PATH`
+(their `Sdk="Transpose.Build.Target/…"` shells out to it) — the BCL is compiled by `tps`, not by
+`dotnet`. Use `./bootstrap.sh` for a dev tree.
 
 ### 2. Bootstrap the BCL/Packages
 

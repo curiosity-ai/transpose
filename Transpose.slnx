@@ -1,7 +1,13 @@
 <Solution>
   <Folder Name="/Transpose/">
     <Project Path="Transpose/Transpose.Bench/Transpose.Bench.csproj" />
-    <Project Path="Transpose/Transpose.Build.Target/Transpose.Build.Target.csproj" />
+    <!-- Listed so the SDK's targets are editable from the IDE, but never built as part of the
+         solution: it is an MSBuild SDK package, not code the toolchain compiles against, and
+         building it here fails with NETSDK1199 (its ArtifactsPath cannot be set in a csproj).
+         Pack it on its own when releasing: dotnet pack Transpose/Transpose.Build.Target. -->
+    <Project Path="Transpose/Transpose.Build.Target/Transpose.Build.Target.csproj">
+      <Build Project="false" />
+    </Project>
     <Project Path="Transpose/Transpose.Compiler/Transpose.Compiler.csproj" />
     <Project Path="Transpose/Transpose.Template/Transpose.Template.csproj" />
     <Project Path="Transpose/Transpose.Translator/Transpose.Translator.csproj" />

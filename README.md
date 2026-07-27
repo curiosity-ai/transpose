@@ -1,6 +1,6 @@
 #  Transpose 🚀 - C# to JavaScript compiler
 
-<a href="https://github.com/curiosity-ai/transpose"><img src="https://raw.githubusercontent.com/curiosity-ai/transpose/master/logo/transpose.svg" width="120" height="120" align="right" /></a>
+<a href="https://github.com/curiosity-ai/transpose"><img src="https://raw.githubusercontent.com/curiosity-ai/transpose/master/logo/transpose-512.png" width="120" height="120" align="right" /></a>
 
 Transpose is a modern **C# → JavaScript** compiler built entirely on **Roslyn**.
 It is the next generation of the [h5](https://github.com/curiosity-ai/h5) project
@@ -13,7 +13,7 @@ The compiler runs on .NET 10.0; Transpose projects target .NET Standard 2.0/2.1.
 Transpose targets a fast, integrated development experience for C# web
 developers.
 
-> **Coming from h5?** See **[MIGRATION.md](MIGRATION.md)** for a step-by-step
+> **Coming from h5?** See **[MIGRATION.md](https://github.com/curiosity-ai/transpose/blob/master/MIGRATION.md)** for a step-by-step
 > guide to porting an existing h5 project.
 
 |  Package | NuGet           |
@@ -111,4 +111,4 @@ Package/SDK renames (h5 → Transpose):
 - `h5.WebGL2` → `Transpose.WebGL2`
 - `h5.template` → `Transpose.Template`
 
-See **[MIGRATION.md](MIGRATION.md)** for the full porting guide.
+See **[MIGRATION.md](https://github.com/curiosity-ai/transpose/blob/master/MIGRATION.md)** for the full porting guide.

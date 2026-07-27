@@ -44,7 +44,18 @@
     <Description>Transpose — Roslyn-based C# to JavaScript compiler.</Description>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/curiosity-ai/transpose</PackageProjectUrl>
+    <PackageIcon>transpose.png</PackageIcon>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+
+    <!-- Win32 icon for the `tps` executable itself. Only the Windows apphost carries an icon
+         resource; on Linux/macOS builds the SDK simply ignores this. -->
+    <ApplicationIcon>..\..\logo\transpose.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\logo\transpose.png" Link="transpose.png" Pack="true" PackagePath="\" />
+    <None Include="..\..\README.md" Link="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
   <!--
     ReadyToRun tool packaging (CI only; see .devops/build-transpose-compiler.yml).
