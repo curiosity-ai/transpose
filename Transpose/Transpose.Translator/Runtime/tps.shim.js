@@ -14,6 +14,24 @@
     // Box a char (a bare code-point number at runtime) so it stringifies / compares as its
     // character once widened to object — `object o = 'A'; o.ToString()` must be "A", not "65".
     TransposeR.boxChar = function (c) { return Transpose.box(c, System.Char, TransposeR.chr); };
+    // The value→string converter for a runtime type, or null when values of that type already
+    // stringify the way .NET's ToString() does. This resolves the {T:ToString} template slot when T
+    // is only bound at runtime (a generic method threading its type argument), so a char/bool/enum
+    // sequence renders the same inside `static string J<T>(IEnumerable<T> x) => string.Join("|", x)`
+    // as it does at a concrete call site. Callers treat null as "use your own fallback".
+    TransposeR.toStrFn = function (t) {
+        if (t === System.Char) { return TransposeR.chr; }
+        if (t === System.Boolean) { return function ($v) { return System.Boolean.toString($v); }; }
+        if (t && t.$kind === "enum") { return System.Enum.toStringFn(t); }
+        return null;
+    };
+    // Render a value whose static type was a type parameter — `T.ToString()`, `"" + t`, `$"{t}"`
+    // inside a generic method — using the converter for the type argument threaded at runtime.
+    TransposeR.toStrT = function (v, t) {
+        if (v === null || v === undefined) { return ""; }
+        var fn = TransposeR.toStrFn(t);
+        return fn ? fn(v) : TransposeR.toStr(v);
+    };
     // Exception.StackTrace. A value caught by `catch (Exception)` is either a real System.Exception,
     // which captured an Error into `errorStack` when it was constructed, or a raw JS error thrown by
     // interop / a rejected promise, which has a native `stack` and no `errorStack`. C# matches both,
@@ -69,7 +87,10 @@
         }
         return Object.assign(Object.create(Object.getPrototypeOf(o)), o);
     };
-    TransposeR.hash = function (v) { return Transpose.getHashCode ? Transpose.getHashCode(v) : 0; };
+    // Hash one member of a synthesized value-wise GetHashCode. `safe` is required: a null member
+    // contributes 0 in .NET, whereas the bare runtime helper throws "HashCode cannot be calculated
+    // for empty value" — which took out any struct/record with an unset reference field.
+    TransposeR.hash = function (v) { return Transpose.getHashCode ? Transpose.getHashCode(v, true) : 0; };
     TransposeR.getEnumerator = function (src) {
         // foreach over a null sequence throws NullReferenceException in .NET (the implicit
         // GetEnumerator call dereferences null), not a raw JS TypeError from a later .moveNext().
