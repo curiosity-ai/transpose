@@ -12,6 +12,7 @@
   <PropertyGroup>
     <IncludeSymbols>false</IncludeSymbols>
     <PackageIcon>transpose.png</PackageIcon>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageId>Transpose.BCL</PackageId>
     <LangVersion>7.2</LangVersion>
     <Authors>Curiosity GmbH, Object.NET, Inc.</Authors>
@@ -29,6 +30,7 @@
 
   <ItemGroup>
     <None Include="..\..\logo\transpose.png" Link="transpose.png" Pack="true" PackagePath="\" />
+    <None Include="..\..\README.md" Link="README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
   
   <ItemGroup>

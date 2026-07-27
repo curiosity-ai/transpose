@@ -72,8 +72,27 @@ benchmarks/tesserae/           # git submodule: the benchmark corpus (see Perfor
 docs/perf/                     # recorded tps-bench reports (baseline + current)
 .devops/                       # Azure DevOps pipelines (one per package, plus the benchmark)
 
-docs/, logo/, lib/, External-less # docs, transpose.png/svg, misc
+docs/, logo/, lib/, External-less # docs, brand assets (see below), misc
 ```
+
+### Brand assets (`logo/`)
+
+One artwork, three derived files — regenerate all three together if it ever changes:
+
+| File | Size | Used by |
+| --- | --- | --- |
+| `logo/transpose.png` | 256×256 RGBA | `PackageIcon` of **every** package (each packable csproj packs it to the package root) |
+| `logo/transpose-512.png` | 512×512 RGBA | the README header image (referenced by its `raw.githubusercontent.com` URL, so it also renders on nuget.org) |
+| `logo/transpose.ico` | 16/24/32/48/64/128/256 | `ApplicationIcon` of the `tps` and `tps-bench` executables (only the Windows apphost carries it; other platforms ignore it) |
+
+The corners are transparent, so the rounded icon reads correctly on nuget.org's white
+background and on a dark README. `logo/transpose.svg` is the retired pre-2026 mark, kept only so
+old absolute links do not 404.
+
+Every packable project also sets `PackageReadmeFile` and packs the repository `README.md`
+(`Transpose.Placeholders` packs its own, package-specific README instead). Because that README ships
+to nuget.org, links in it must be **absolute** — a relative `[x](FILE.md)` renders as a dead link
+there.
 
 ## Compilation pipeline
 

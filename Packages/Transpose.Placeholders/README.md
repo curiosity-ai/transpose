@@ -1,21 +1,21 @@
-# H5.Placeholders
+# Transpose.Placeholders
 
-This library provides placeholder attributes for H5 shared projects. It allows you to use H5-specific attributes (like `[ObjectLiteral]`, `[Module]`, `[Name]`, etc.) in your shared code (e.g., DTOs, ViewModels) without taking a dependency on the full H5 framework.
+This library provides placeholder attributes for Transpose shared projects. It allows you to use Transpose-specific attributes (like `[ObjectLiteral]`, `[Module]`, `[Name]`, etc.) in your shared code (e.g., DTOs, ViewModels) without taking a dependency on the full Transpose framework.
 
-These attributes are "empty" implementations that have no runtime effect in your backend .NET code but are recognized by the H5 compiler when the shared project is consumed by an H5 frontend project.
+These attributes are "empty" implementations that have no runtime effect in your backend .NET code but are recognized by the Transpose compiler when the shared project is consumed by a Transpose frontend project.
 
 ## Usage
 
-Add a reference to `H5.Placeholders` in your shared project:
+Add a reference to `Transpose.Placeholders` in your shared project:
 
 ```xml
-<PackageReference Include="H5.Placeholders" Version="1.0.0" />
+<PackageReference Include="Transpose.Placeholders" Version="1.0.0" />
 ```
 
-Then, you can use H5 attributes as usual:
+Then, you can use Transpose attributes as usual:
 
 ```csharp
-using H5;
+using Transpose;
 
 [ObjectLiteral]
 public class MyDto

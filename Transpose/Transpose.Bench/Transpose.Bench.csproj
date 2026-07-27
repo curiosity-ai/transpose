@@ -23,6 +23,16 @@
     <Description>Transpose — compiler performance benchmark harness (CPU-score-normalised).</Description>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/curiosity-ai/transpose</PackageProjectUrl>
+    <PackageIcon>transpose.png</PackageIcon>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+
+    <!-- Win32 icon for the `tps-bench` executable itself (Windows apphost only). -->
+    <ApplicationIcon>..\..\logo\transpose.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\logo\transpose.png" Link="transpose.png" Pack="true" PackagePath="\" />
+    <None Include="..\..\README.md" Link="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
 </Project>

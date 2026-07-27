@@ -16,10 +16,20 @@
     <IncludeContentInPack>true</IncludeContentInPack>
     <ContentTargetFolders>./</ContentTargetFolders>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/curiosity-ai/transpose</PackageProjectUrl>
+    <PackageIcon>transpose.png</PackageIcon>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
-  
+
   <ItemGroup>
     <Content Include="Sdk\**\*" Exclude="Sdk\**\bin\**;Sdk\**\obj\**" />
     <Compile Remove="**\*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The repository README is what ships as the package description on nuget.org; the local
+         README.md in this folder is the upstream Microsoft.Build.NoTargets one and is not packed. -->
+    <None Include="..\..\logo\transpose.png" Link="transpose.png" Pack="true" PackagePath="\" />
+    <None Include="..\..\README.md" Link="Transpose.README.md" Pack="true" PackagePath="\README.md" />
   </ItemGroup>
 </Project>
