@@ -113,6 +113,12 @@ dotnet /tmp/jsdumper/bin/Debug/net10.0/jsdumper.dll \
 Then `dotnet /tmp/jsonrunner/bin/Debug/net10.0/jsonrunner.dll /tmp/snippet.cs --run 2>&1 | node`
 (the runner prepends `/tmp/nsjjs/newtonsoft.json.js` + `generated.meta.js`).
 
+For a finding worth keeping, the same loop exists as a test suite:
+**`Packages/Transpose.Newtonsoft.Json.Tests`** runs a snippet natively against the real Json.NET
+*and* as translated JavaScript on Node and diffs the two (`RunAndCompare`), with `RunJs(code,
+expected, nativePrints)` for the documented divergences. Add the regression there rather than
+re-deriving the runner.
+
 ## Workflow per finding
 
 Investigate a batch and **record findings first** (repro + emitted JS + native/h5 comparison + root

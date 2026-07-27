@@ -62,6 +62,38 @@
                     Transpose.$jsonGuard && Transpose.$jsonGuard.pop();
                 },
 
+                // Json.NET's StringUtils.ToCamelCase: lowercase the leading run of capitals, not just
+                // the first character, so "ALLCAPS" -> "allcaps" and "HTTPRequest" -> "httpRequest"
+                // (a plain first-character lowercase would give "aLLCAPS" / "hTTPRequest", which a
+                // camel-casing .NET server would not recognise).
+                camelCase: function (name) {
+                    if (!name || name.charAt(0) !== name.charAt(0).toUpperCase() || name.charAt(0) === name.charAt(0).toLowerCase()) {
+                        return name;
+                    }
+
+                    var chars = name.split("");
+
+                    for (var i = 0; i < chars.length; i++) {
+                        var isLast = i === ((chars.length - 1) | 0),
+                            next = isLast ? "" : chars[((i + 1) | 0)],
+                            nextIsUpper = next !== "" && next === next.toUpperCase() && next !== next.toLowerCase();
+
+                        if (i > 0 && !isLast && !nextIsUpper) {
+                            break;
+                        }
+
+                        var lower = chars[i].toLowerCase();
+
+                        if (chars[i] === lower) {
+                            break;
+                        }
+
+                        chars[i] = lower;
+                    }
+
+                    return chars.join("");
+                },
+
                 getValue: function (obj, name) {
                     name = name.toLowerCase();
                     for (var key in obj) {
@@ -158,9 +190,12 @@
 
                     var x = Transpose.unbox(value, true),
                         y = cfg.defaultValue,
-                        oneNull = x == null || y == null && !(x == null && y == null);
+                        bothNull = x == null && y == null,
+                        // Exactly one side null: the two cannot be equal, so nothing is ignored.
+                        oneNull = (x == null) !== (y == null),
+                        isDefault = bothNull || (!oneNull && Transpose.equals(x, y));
 
-                    if (!oneNull && Transpose.equals(x, y) && (defaultValueHandling === Newtonsoft.Json.DefaultValueHandling.Ignore || defaultValueHandling === Newtonsoft.Json.DefaultValueHandling.IgnoreAndPopulate)) {
+                    if (isDefault && (defaultValueHandling === Newtonsoft.Json.DefaultValueHandling.Ignore || defaultValueHandling === Newtonsoft.Json.DefaultValueHandling.IgnoreAndPopulate)) {
                         return false;
                     }
 
@@ -248,7 +283,7 @@
                                 cfg = fields[i];
                                 f = cfg.member;
 
-                                mname = cfg.attr && cfg.attr.PropertyName || (camelCase ? (f.n.charAt(0).toLowerCase() + f.n.substr(1)) : f.n);
+                                mname = cfg.attr && cfg.attr.PropertyName || (camelCase ? Newtonsoft.Json.JsonConvert.camelCase(f.n) : f.n);
 
                                 value = raw[mname];
 
@@ -287,7 +322,7 @@
                                 cfg = properties[i];
                                 p = cfg.member;
 
-                                mname = cfg.attr && cfg.attr.PropertyName || (camelCase ? (p.n.charAt(0).toLowerCase() + p.n.substr(1)) : p.n);
+                                mname = cfg.attr && cfg.attr.PropertyName || (camelCase ? Newtonsoft.Json.JsonConvert.camelCase(p.n) : p.n);
 
                                 value = raw[mname];
 
@@ -358,7 +393,16 @@
                     return Transpose.Reflection.getTypeQName(type);
                 },
 
-                BindToType: function (settings, fullName, objectType) {
+                // Resolves a $type found in the payload, or returns null when the caller did not ask
+                // for type names at all (TypeNameHandling.None) and the name does not resolve here:
+                // Json.NET ignores $type entirely unless TypeNameHandling is set, so a payload that
+                // happens to carry one — a server that serializes with TypeNameHandling.Objects, say —
+                // must not break a client that reads it into a known type.
+                maybeBindToType: function (settings, fullName, objectType) {
+                    return Newtonsoft.Json.JsonConvert.BindToType(settings, fullName, objectType, !settings || !settings._typeNameHandling);
+                },
+
+                BindToType: function (settings, fullName, objectType, optional) {
                     var type,
                         binder = settings && settings.SerializationBinder,
                         bindToType = Newtonsoft.Json.JsonConvert.binderMethod(binder, "BindToType");
@@ -372,7 +416,11 @@
                     }
 
                     if (!type) {
-                        throw new Newtonsoft.Json.JsonSerializationException.$ctor1("Type specified in JSON '" + fullName + "' was not resolved."); 
+                        if (optional) {
+                            return null;
+                        }
+
+                        throw new Newtonsoft.Json.JsonSerializationException.$ctor1("Type specified in JSON '" + fullName + "' was not resolved.");
                     }
 
                     if (objectType && !Transpose.Reflection.isAssignableFrom(objectType, type)) {
@@ -459,6 +507,12 @@
 
                     var objType = Transpose.getType(obj);
 
+                    // The type the value is *declared* as (the member/element type), kept for the
+                    // TypeNameHandling.Auto test below: possibleType is cleared a few lines down
+                    // precisely when the runtime type is more derived than the declared one, which is
+                    // the case Auto exists to write a $type for.
+                    var declaredType = possibleType && possibleType.$nullable ? possibleType.$nullableType : possibleType;
+
                     if (possibleType && objType) {
                         if (possibleType.$kind === "interface" || Transpose.Reflection.isAssignableFrom(possibleType, objType)) {
                             possibleType = null;
@@ -497,6 +551,7 @@
                         if (type !== System.Globalization.CultureInfo &&
                             type !== System.Guid &&
                             type !== System.Uri &&
+                            type !== System.Version &&
                             type !== System.Int64 &&
                             type !== System.UInt64 &&
                             type !== System.Decimal &&
@@ -522,6 +577,12 @@
                             return returnRaw ? Transpose.toString(obj) : Newtonsoft.Json.JsonConvert.stringify(Transpose.toString(obj), formatting, settings);
                         } else if (type === System.Uri) {
                             return returnRaw ? obj.getAbsoluteUri() : Newtonsoft.Json.JsonConvert.stringify(obj.getAbsoluteUri(), formatting, settings);
+                        } else if (type === System.Version) {
+                            // Json.NET writes a Version as its "1.2.3.4" string; the type carries no
+                            // reflection metadata here, so without this it would be rejected as
+                            // not-reflectable by the contract walker below.
+                            var version = Transpose.toString(obj);
+                            return returnRaw ? version : Newtonsoft.Json.JsonConvert.stringify(version, formatting, settings);
                         } else if (type === System.Int64 || type === System.UInt64 || type === System.Decimal) {
                             return returnRaw ? obj.toJSON() : obj.toString();
                         } else if (type === System.DateTime) {
@@ -550,7 +611,7 @@
 
                             if (settings && settings._typeNameHandling) {
                                 var handling = settings._typeNameHandling,
-                                    writeType = handling == 2 || handling == 3 || (handling == 4 && possibleType && possibleType !== objType);
+                                    writeType = handling == 2 || handling == 3 || (handling == 4 && declaredType && declaredType !== objType);
 
                                 if (writeType) {
                                     obj = {
@@ -577,7 +638,7 @@
 
                             if (settings && settings._typeNameHandling) {
                                 var handling = settings._typeNameHandling,
-                                    writeType = handling == 1 || handling == 3 || (handling == 4 && possibleType && possibleType !== objType);
+                                    writeType = handling == 1 || handling == 3 || (handling == 4 && declaredType && declaredType !== objType);
 
                                 if (writeType) {
                                     dict["$type"] = Newtonsoft.Json.JsonConvert.BindToName(settings, type);
@@ -611,7 +672,7 @@
 
                             if (settings && settings._typeNameHandling) {
                                 var handling = settings._typeNameHandling,
-                                    writeType = handling == 2 || handling == 3 || (handling == 4 && possibleType && possibleType !== objType);
+                                    writeType = handling == 2 || handling == 3 || (handling == 4 && declaredType && declaredType !== objType);
 
                                 if (writeType) {
                                     obj = {
@@ -636,7 +697,7 @@
 
                             if (settings && settings._typeNameHandling) {
                                 var handling = settings._typeNameHandling,
-                                    writeType = handling == 2 || handling == 3 || (handling == 4 && possibleType && possibleType !== objType);
+                                    writeType = handling == 2 || handling == 3 || (handling == 4 && declaredType && declaredType !== objType);
 
                                 if (writeType) {
                                     obj = {
@@ -653,7 +714,7 @@
 
                             if (settings && settings._typeNameHandling) {
                                 var handling = settings._typeNameHandling,
-                                    writeType = handling == 1 || handling == 3 || (handling == 4 && possibleType && possibleType !== objType);
+                                    writeType = handling == 1 || handling == 3 || (handling == 4 && declaredType && declaredType !== objType);
 
                                 if (writeType) {
                                     raw["$type"] = Newtonsoft.Json.JsonConvert.BindToName(settings, type);
@@ -668,7 +729,7 @@
 
                                     for (var key in obj) {
                                         if (obj.hasOwnProperty(key)) {
-                                            var name = camelCase ? key.charAt(0).toLowerCase() + key.substr(1) : key;
+                                            var name = camelCase ? Newtonsoft.Json.JsonConvert.camelCase(key) : key;
                                             raw[name] = Newtonsoft.Json.JsonConvert.SerializeObject(obj[key], formatting, settings, true);
                                         }
                                     }
@@ -690,7 +751,7 @@
                                 for (i = 0; i < fields.length; i++) {
                                     var cfg = fields[i],
                                         f = cfg.member,
-                                        fname = cfg.attr && cfg.attr.PropertyName || (camelCase ? (f.n.charAt(0).toLowerCase() + f.n.substr(1)) : f.n),
+                                        fname = cfg.attr && cfg.attr.PropertyName || (camelCase ? Newtonsoft.Json.JsonConvert.camelCase(f.n) : f.n),
                                         value = Transpose.Reflection.fieldAccess(f, obj);
 
                                     var result = Newtonsoft.Json.JsonConvert.preProcess(cfg, obj, value, settings || {});
@@ -723,7 +784,7 @@
                                     var cfg = properties[i],
                                         p = cfg.member;
                                     if (!!p.g) {
-                                        var pname = cfg.attr && cfg.attr.PropertyName || (camelCase ? (p.n.charAt(0).toLowerCase() + p.n.substr(1)) : p.n),
+                                        var pname = cfg.attr && cfg.attr.PropertyName || (camelCase ? Newtonsoft.Json.JsonConvert.camelCase(p.n) : p.n),
                                             value = Transpose.Reflection.midel(p.g, obj)();
 
                                         var result = Newtonsoft.Json.JsonConvert.preProcess(cfg, obj, value, settings || {});
@@ -1071,10 +1132,17 @@
                         }
                     }
 
+                    // An empty (or whitespace-only) document deserializes to the target's default
+                    // rather than throwing out of JSON.parse — Json.NET returns default(T) too, and a
+                    // client reading a never-written local-storage slot relies on it.
+                    if (!field && typeof raw === "string" && raw.trim().length === 0) {
+                        return Transpose.getDefaultValue(type);
+                    }
+
                     if (!field && typeof raw === "string") {
                         var obj = Newtonsoft.Json.JsonConvert.parse(raw);
 
-                        if (typeof obj === "object" || Transpose.isArray(obj) || type === System.Array.type(System.Byte, 1) || type === Function || type == System.Type || type === System.Guid || type === System.Globalization.CultureInfo || type === System.Uri || type === System.DateTime || type === System.DateTimeOffset || type === System.Char || Transpose.Reflection.isEnum(type)) {
+                        if (typeof obj === "object" || Transpose.isArray(obj) || type === System.Array.type(System.Byte, 1) || type === Function || type == System.Type || type === System.Guid || type === System.Globalization.CultureInfo || type === System.Uri || type === System.Version || type === System.DateTime || type === System.DateTimeOffset || type === System.Char || Transpose.Reflection.isEnum(type)) {
                             raw = obj;
                         }
                     }
@@ -1084,10 +1152,12 @@
 
 
                     if (isObject && fromObject && raw && raw.$type) {
-                        var realType = Newtonsoft.Json.JsonConvert.BindToType(settings, raw.$type, type);
+                        var realType = Newtonsoft.Json.JsonConvert.maybeBindToType(settings, raw.$type, type);
 
-                        type = realType;
-                        isObject = false;
+                        if (realType) {
+                            type = realType;
+                            isObject = false;
+                        }
                     }
 
                     // An [ObjectLiteral] type ($literal) is a plain JS object with no runtime identity —
@@ -1234,6 +1304,8 @@
                             return new System.Globalization.CultureInfo(raw);
                         } else if (type === System.Uri) {
                             return new System.Uri(raw);
+                        } else if (type === System.Version) {
+                            return System.Version.parse(raw);
                         } else if (type === System.Guid) {
                             return System.Guid.Parse(raw);
                         } else if (type === System.Boolean) {
@@ -1327,8 +1399,11 @@
                             var typeName = raw["$type"];
 
                             if (typeName != null) {
-                                type = Newtonsoft.Json.JsonConvert.BindToType(settings, typeName, type);
-                                raw = raw["$values"];
+                                type = Newtonsoft.Json.JsonConvert.maybeBindToType(settings, typeName, type) || type;
+
+                                if (raw["$values"] !== undefined) {
+                                    raw = raw["$values"];
+                                }
                             }
 
                             if (raw.length === undefined) {
@@ -1347,8 +1422,11 @@
                             var typeName = raw["$type"];
 
                             if (typeName != null) {
-                                type = Newtonsoft.Json.JsonConvert.BindToType(settings, typeName, type);
-                                raw = raw["$values"];
+                                type = Newtonsoft.Json.JsonConvert.maybeBindToType(settings, typeName, type) || type;
+
+                                if (raw["$values"] !== undefined) {
+                                    raw = raw["$values"];
+                                }
                             }
 
                             var typeElement = System.Collections.Generic.List$1.getElementType(type) || System.Object;
@@ -1379,7 +1457,7 @@
                                 handling = false;
 
                             if (typeName != null) {
-                                type = Newtonsoft.Json.JsonConvert.BindToType(settings, typeName, type);
+                                type = Newtonsoft.Json.JsonConvert.maybeBindToType(settings, typeName, type) || type;
                                 handling = true;
                             }
 
@@ -1405,8 +1483,11 @@
                             var typeName = raw["$type"];
 
                             if (typeName != null) {
-                                type = Newtonsoft.Json.JsonConvert.BindToType(settings, typeName, type);
-                                raw = raw["$values"];
+                                type = Newtonsoft.Json.JsonConvert.maybeBindToType(settings, typeName, type) || type;
+
+                                if (raw["$values"] !== undefined) {
+                                    raw = raw["$values"];
+                                }
                             }
 
                             var typeElement = Transpose.Reflection.getGenericArguments(type)[0] || System.Object;
@@ -1438,8 +1519,11 @@
                             var typeName = raw["$type"];
 
                             if (typeName != null) {
-                                type = Newtonsoft.Json.JsonConvert.BindToType(settings, typeName, type);
-                                raw = raw["$values"];
+                                type = Newtonsoft.Json.JsonConvert.maybeBindToType(settings, typeName, type) || type;
+
+                                if (raw["$values"] !== undefined) {
+                                    raw = raw["$values"];
+                                }
                             }
 
                             if (raw == null || raw.length === undefined) {
@@ -1458,7 +1542,7 @@
                             var typeName = raw["$type"];
 
                             if (typeName != null) {
-                                type = Newtonsoft.Json.JsonConvert.BindToType(settings, typeName, type);
+                                type = Newtonsoft.Json.JsonConvert.maybeBindToType(settings, typeName, type) || type;
                             }
 
                             if (!Transpose.getMetadata(type)) {
@@ -1497,7 +1581,7 @@
                                 cfg = fields[i];
                                 f = cfg.member;
 
-                                mname = cfg.attr && cfg.attr.PropertyName || (camelCase ? (f.n.charAt(0).toLowerCase() + f.n.substr(1)) : f.n);
+                                mname = cfg.attr && cfg.attr.PropertyName || (camelCase ? Newtonsoft.Json.JsonConvert.camelCase(f.n) : f.n);
 
                                 if (names.indexOf(mname) > -1) {
                                     continue;
@@ -1561,7 +1645,7 @@
                                 cfg = properties[i];
                                 p = cfg.member;
 
-                                mname = cfg.attr && cfg.attr.PropertyName || (camelCase ? (p.n.charAt(0).toLowerCase() + p.n.substr(1)) : p.n);
+                                mname = cfg.attr && cfg.attr.PropertyName || (camelCase ? Newtonsoft.Json.JsonConvert.camelCase(p.n) : p.n);
 
                                 if (names.indexOf(mname) > -1) {
                                     continue;

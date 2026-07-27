@@ -810,9 +810,7 @@
 
                             idx += ff.length;
 
-                            if (ff.length > 3) {
-                                ff = ff.substring(0, 3);
-                            }
+                            ff = System.DateTime.fractionToMilliseconds(ff);
                         } else if (token.match(/f{1,7}/) !== null) {
                             ff = this.subparseInt(str, idx, token.length, 7);
 
@@ -824,18 +822,14 @@
 
                             idx += ff.length;
 
-                            if (ff.length > 3) {
-                                ff = ff.substring(0, 3);
-                            }
+                            ff = System.DateTime.fractionToMilliseconds(ff);
                         } else if (token.match(/F{1,7}/) !== null) {
                             ff = this.subparseInt(str, idx, 0, 7);
 
                             if (ff !== null) {
                                 idx += ff.length;
 
-                                if (ff.length > 3) {
-                                    ff = ff.substring(0, 3);
-                                }
+                                ff = System.DateTime.fractionToMilliseconds(ff);
                             }
                         } else if (token === "t") {
                             if (str.substring(idx, idx + 1).toLowerCase() === am.charAt(0).toLowerCase()) {
@@ -1062,6 +1056,18 @@
                 }
 
                 return d;
+            },
+
+            // The digits after the decimal separator are a FRACTION of a second, so they are padded
+            // out to milliseconds before being truncated: ".25" is 250 ms and ".5" is 500 ms. (They
+            // used to be truncated only, which read ".25" as 25 ms — a timestamp did not survive its
+            // own round trip whenever the formatter trimmed trailing zeros, as "FFF" does.)
+            fractionToMilliseconds: function (digits) {
+                if (digits == null) {
+                    return digits;
+                }
+
+                return (digits + "000").substring(0, 3);
             },
 
             subparseInt: function (str, index, min, max) {

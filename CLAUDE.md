@@ -62,6 +62,9 @@ BCL/                           # The base runtime libraries
 
 Packages/                      # Additional binding libraries (all [assembly: External])
 ├── Transpose.Newtonsoft.Json/ #   package Transpose.Newtonsoft.Json
+├── Transpose.Newtonsoft.Json.Tests/ # MSTest suite for it: every snippet runs natively against the
+│                              #   real Json.NET *and* as translated JS on Node, and the outputs are
+│                              #   diffed (see its README for the documented divergences)
 ├── Transpose.Howler/          #   package Transpose.Howler
 ├── Transpose.WebGL2/          #   package Transpose.WebGL2
 ├── Transpose.P2/              #   package Transpose.P2
