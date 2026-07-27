@@ -54,6 +54,47 @@ public class Program
             await RunTest(code);
         }
 
+        /// <summary>
+        /// == / != on DateTime (and DateTime?) compare the instant, not the identity of the
+        /// underlying JS Date object. DateTime is a Roslyn *special* type, so it used to skip the
+        /// value-equality path in the emitter and render as `a === b`, which was false for any two
+        /// separately-constructed values — including a value and its own round trip through JSON.
+        /// </summary>
+        [TestMethod]
+        public async Task DateTimeEqualityComparesTheInstant()
+        {
+            var code = """
+using System;
+
+public class Program
+{
+    public static void Main()
+    {
+        var a = new DateTime(2024, 3, 17, 14, 5, 6, DateTimeKind.Utc);
+        var b = new DateTime(2024, 3, 17, 14, 5, 6, DateTimeKind.Utc);
+        var c = new DateTime(2024, 3, 17, 14, 5, 7, DateTimeKind.Utc);
+
+        Console.WriteLine(a == b);
+        Console.WriteLine(a != b);
+        Console.WriteLine(a == c);
+        Console.WriteLine(a != c);
+        Console.WriteLine(a == a);
+
+        DateTime? na = a, nb = b, nc = c, nn = null;
+        Console.WriteLine(na == nb);
+        Console.WriteLine(na == nc);
+        Console.WriteLine(na == nn);
+        Console.WriteLine(nn == null);
+        Console.WriteLine(na != nb);
+
+        var parsed = DateTime.Parse("2024-03-17T14:05:06Z");
+        Console.WriteLine(parsed.ToUniversalTime() == a);
+    }
+}
+""";
+            await RunTest(code);
+        }
+
         [TestMethod]
         public async Task DateTimeOffset_Tests()
         {

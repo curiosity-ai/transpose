@@ -1534,13 +1534,14 @@ public sealed partial class Emitter
             return;
         }
 
-        // Lifted == / != where the underlying type is a runtime OBJECT (long/ulong/decimal). A plain
-        // `===` compares object identity, so two `long?`s holding the same value were unequal.
+        // Lifted == / != where the underlying type is a runtime OBJECT (long/ulong/decimal, or a
+        // struct compared by value such as DateTime). A plain `===` compares object identity, so two
+        // `long?`s — or two `DateTime?`s — holding the same value were unequal.
         // System.Nullable.equals is exactly C#'s lifted equality: null equals only null, otherwise
         // value equality. (For plain-number underlying types `===` is already correct, null included.)
         if (op is "==" or "!="
             && (IsNullableValueType(leftType) || IsNullableValueType(rightType))
-            && (IsRuntimeObjectNumeric(leftType) || IsRuntimeObjectNumeric(rightType)))
+            && (IsRuntimeObjectNullableValue(leftType) || IsRuntimeObjectNullableValue(rightType)))
         {
             if (op == "!=") _w.Write("!");
             _w.Write("System.Nullable.equals(");
@@ -1832,10 +1833,30 @@ public sealed partial class Emitter
     {
         if (t is { IsRecord: true }) return true;
         if (t is not { TypeKind: TypeKind.Struct }) return false;
+        // DateTime is a special type to Roslyn but NOT a primitive at runtime: it is a JS Date
+        // object, so `===` compares identity and two DateTimes built from the same instant compared
+        // unequal (`new DateTime(2024,1,1) == new DateTime(2024,1,1)` was false, while .Equals and
+        // CompareTo were both right). It needs the value-equality path like any other struct.
+        if (t.SpecialType == SpecialType.System_DateTime) return true;
         if (t.SpecialType != SpecialType.None) return false; // primitive value types
         if (Is64BitInteger(t) || IsDecimalType(t)) return false; // handled by their own ops
         if (t is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T }) return false;
         return true;
+    }
+
+    /// <summary>
+    /// A <c>Nullable&lt;T&gt;</c> (or bare T) whose underlying value is a runtime object rather than a
+    /// JS primitive, so lifted <c>==</c>/<c>!=</c> must compare by value: long/ulong/decimal, plus the
+    /// structs handled by <see cref="IsValueEqualityType"/> (DateTime, Guid, user structs, …).
+    /// </summary>
+    private static bool IsRuntimeObjectNullableValue(ITypeSymbol? type)
+    {
+        if (IsRuntimeObjectNumeric(type)) return true;
+
+        if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T, TypeArguments.Length: 1 } nullable)
+            type = nullable.TypeArguments[0];
+
+        return IsValueEqualityType(type);
     }
 
     /// <summary>The System.Int64/UInt64 method name for a binary operator, or null.</summary>

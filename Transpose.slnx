@@ -21,6 +21,7 @@
     <Project Path="Packages/Transpose.Howler/Transpose.Howler.csproj" />
     <Project Path="Packages/Transpose.HttpClient/Transpose.HttpClient.csproj" />
     <Project Path="Packages/Transpose.Newtonsoft.Json/Transpose.Newtonsoft.Json.csproj" />
+    <Project Path="Packages/Transpose.Newtonsoft.Json.Tests/Transpose.Newtonsoft.Json.Tests.csproj" />
     <Project Path="Packages/Transpose.P2/Transpose.P2.csproj" />
     <Project Path="Packages/Transpose.Placeholders/Transpose.Placeholders.csproj" />
     <Project Path="Packages/Transpose.WebGL2/Transpose.WebGL2.csproj" />
