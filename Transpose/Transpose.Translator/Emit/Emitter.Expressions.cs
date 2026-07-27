@@ -98,8 +98,11 @@ public sealed partial class Emitter
             case LiteralExpressionSyntax lit:
                 EmitLiteral(lit);
                 break;
-            case IdentifierNameSyntax id:
-                EmitIdentifier(id);
+            // GenericNameSyntax shares this path: in expression position it is either an explicitly
+            // instantiated method group (`Func<Colour> g = Def<Colour>;`) or a constructed type used
+            // as a static-member receiver — both of which EmitIdentifier's symbol switch resolves.
+            case IdentifierNameSyntax or GenericNameSyntax:
+                EmitIdentifier((SimpleNameSyntax)expr);
                 break;
             case MemberAccessExpressionSyntax member:
                 EmitMemberAccess(member);
@@ -601,7 +604,7 @@ public sealed partial class Emitter
 
     // ---- identifiers & member access ---------------------------------------
 
-    private void EmitIdentifier(IdentifierNameSyntax id)
+    private void EmitIdentifier(SimpleNameSyntax id)
     {
         var symbol = _model.GetSymbolInfo(id).Symbol;
         switch (symbol)
@@ -773,19 +776,43 @@ public sealed partial class Emitter
         // of its define. Anything else — a parameter inherited from an enclosing generic type — is
         // not in scope, and drops out as before. Mirrors DefaultValueLiteral's scoping rule.
         if (t is ITypeParameterSymbol tp)
-        {
-            var inScope = tp.TypeParameterKind == TypeParameterKind.Method
-                ? tp.DeclaringMethod is { } dm && ThreadsTypeArgs(dm)
-                : _currentEmitType is not null && EffectiveTypeParameters(_currentEmitType)
-                    .Any(p => SymbolEqualityComparer.Default.Equals(p, tp));
-            return inScope ? $"TransposeR.toStrFn({TypeRef(t)})" : null;
-        }
+            return TypeParamInScope(tp) ? $"TransposeR.toStrFn({TypeRef(t)})" : null;
         return t.SpecialType switch
         {
             SpecialType.System_Boolean => "function ($v) { return System.Boolean.toString($v); }",
             SpecialType.System_Char    => "function ($v) { return String.fromCharCode($v); }",
             _                          => null,
         };
+    }
+
+    /// <summary>
+    /// True if <paramref name="tp"/> is bound to a JS value in the current emit scope: a method type
+    /// parameter is threaded as a leading argument of the emitted function (unless [IgnoreGeneric]
+    /// drops them), a type's own parameter is a parameter of its <c>define</c>. A parameter from any
+    /// other scope — one inherited from an enclosing generic type — is not available. Mirrors the
+    /// scoping rule <see cref="DefaultValueLiteral"/> applies to <c>default(T)</c>.
+    /// </summary>
+    private bool TypeParamInScope(ITypeParameterSymbol tp)
+        => tp.TypeParameterKind == TypeParameterKind.Method
+            ? tp.DeclaringMethod is { } dm && ThreadsTypeArgs(dm)
+            : _currentEmitType is not null && EffectiveTypeParameters(_currentEmitType)
+                .Any(p => SymbolEqualityComparer.Default.Equals(p, tp));
+
+    /// <summary>
+    /// Emits <paramref name="operand"/> rendered as its .NET <c>ToString()</c> form when its static
+    /// type is a type parameter only bound at runtime, letting the runtime pick the converter from the
+    /// threaded type argument — so `T.ToString()` / `"" + t` inside a generic method renders an enum's
+    /// name and a char's character rather than the underlying number, as a concrete call site does.
+    /// Returns false for a concrete type (the caller's own char/enum/fallback branches handle those)
+    /// and for a type parameter that is not in scope.
+    /// </summary>
+    private bool TryEmitTypeParamToString(ExpressionSyntax operand, ITypeSymbol? type)
+    {
+        if (type is not ITypeParameterSymbol tp || !TypeParamInScope(tp)) return false;
+        _w.Write("TransposeR.toStrT(");
+        EmitExpression(operand);
+        _w.Write($", {TypeRef(type)})");
+        return true;
     }
 
     private void EmitMethodGroup(IMethodSymbol method, ExpressionSyntax? thisTarget)
@@ -816,9 +843,18 @@ public sealed partial class Emitter
             return;
         }
 
+        // A generic method that threads its type arguments takes them as LEADING parameters, so a
+        // method group has to bind them into the delegate. Without this the delegate's first VALUE
+        // argument landed in the T slot: `new[]{1,2}.Select(Show)` called Show(1, undefined), so
+        // `typeof(T).Name` read "Number" and every T-typed parameter was undefined.
+        var boundTypeArgs = ThreadsTypeArgs(method)
+            ? string.Concat(method.TypeArguments.Select(t => ", " + TypeRef(t)))
+            : "";
+
         if (method.IsStatic)
         {
             _w.Write(StaticMemberAccess(method));
+            if (boundTypeArgs.Length > 0) _w.Write($".bind(null{boundTypeArgs})");
         }
         else
         {
@@ -826,7 +862,7 @@ public sealed partial class Emitter
             EmitReceiverExpr(thisTarget);
             _w.Write($").{TransposeNaming.MemberJsName(method)}.bind(");
             EmitReceiverExpr(thisTarget);
-            _w.Write(")");
+            _w.Write($"{boundTypeArgs})");
         }
     }
 

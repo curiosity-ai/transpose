@@ -139,6 +139,17 @@ public sealed partial class Emitter
             return;
         }
 
+        // T.ToString() where T is a type parameter only bound at runtime: the three branches above
+        // cannot fire (the static type is neither enum, char nor bool), and a bare .toString() renders
+        // an enum's ordinal and a char's code point. The runtime picks the converter from the type
+        // argument the generic method threads.
+        if (symbol is { Name: "ToString", Parameters.Length: 0 }
+            && invocation.Expression is MemberAccessExpressionSyntax { Expression: { } tpRecv }
+            && TryEmitTypeParamToString(tpRecv, _model.GetTypeInfo(tpRecv).Type))
+        {
+            return;
+        }
+
         // Transpose.Script.Write(code, args) — inject raw JavaScript, substituting {0},{1}… with args.
         if (TryEmitScriptWrite(invocation, symbol)) return;
 
@@ -1203,6 +1214,19 @@ public sealed partial class Emitter
         {
             switch (expr)
             {
+                // A member initializer whose value is itself a braced initializer:
+                // `Home = { City = "x" }`, `Tags = { "a", "b" }`, `Scores = { ["k"] = 7 }`. C# applies
+                // these to the member's CURRENT value — there is no assignment and no `new` — so
+                // recurse with the member access as the target. Falling through to the plain
+                // `X = value` case below emitted the braces as an ARRAY literal, which overwrote a
+                // getter-only collection with a JS array and crashed outright on an index element.
+                case AssignmentExpressionSyntax { Left: IdentifierNameSyntax nestedName, Right: InitializerExpressionSyntax nestedMember }:
+                    var nestedSym = _model.GetSymbolInfo(nestedName).Symbol;
+                    var nestedJs = nestedSym is not null
+                        ? TransposeNaming.MemberJsName(nestedSym)
+                        : NameMangler.JsIdentifier(nestedName.Identifier.Text);
+                    EmitInitializer($"{target}.{nestedJs}", nestedMember);
+                    break;
                 // Object initializer member: X = value
                 case AssignmentExpressionSyntax { Left: IdentifierNameSyntax name } assign:
                     var memberSym = _model.GetSymbolInfo(name).Symbol;
@@ -1977,6 +2001,11 @@ public sealed partial class Emitter
             _w.Write($"System.Enum.toString({TypeRef(type)}, ");
             EmitExpression(operand);
             _w.Write(")");
+        }
+        // A type parameter only bound at runtime: same reason as the char/enum branches above, but the
+        // choice between them can only be made once the threaded type argument is known.
+        else if (TryEmitTypeParamToString(operand, type))
+        {
         }
         else
         {
@@ -2761,6 +2790,11 @@ public sealed partial class Emitter
                         _w.Write($"System.Enum.toString({TypeRef(enumT)}, ");
                         EmitExpression(interpolation.Expression);
                         _w.Write(")");
+                    }
+                    // A type parameter only bound at runtime — see EmitConcatOperand.
+                    else if (TryEmitTypeParamToString(interpolation.Expression,
+                                                      _model.GetTypeInfo(interpolation.Expression).Type))
+                    {
                     }
                     else
                     {

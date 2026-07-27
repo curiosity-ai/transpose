@@ -2745,5 +2745,146 @@ public class Program
     static string Describe<T>(IEnumerable<T> items) => string.Join(""|"", items);
 }", waitForOutput: "<<DONE>>");
         }
+
+        // ---- a T-typed value renders with .NET's ToString() ---------------------------------
+        //
+        // Same root cause as the Join bug above, on the other three paths that stringify a value:
+        // `v.ToString()`, `"" + v` and `$"{v}"` each have an explicit char branch and enum branch,
+        // neither of which can fire when the static type is a type parameter — so an enum printed its
+        // ordinal and a char its code point inside a generic method, while a concrete call site printed
+        // the name and the character. The type argument IS threaded at runtime, so the converter is
+        // now chosen from it.
+
+        [TestMethod]
+        public async Task GenericToStringRendersEnumAndCharLikeNative()
+        {
+            await RunTest(@"
+using System;
+using System.Linq;
+public enum Colour { Red, Green }
+public class Program
+{
+    public static void Main()
+    {
+        var arr = new[] { Colour.Green, Colour.Red };
+        Console.WriteLine(arr[0].ToString());                                   // concrete enum
+        Console.WriteLine(string.Join("","", arr.Select(x => x.ToString())));
+        Console.WriteLine(Show(arr[0]));                                        // T.ToString()
+        Console.WriteLine(string.Join("","", arr.Select(Show)));
+        Console.WriteLine(Show('x') + Show(true) + Show(3) + Show(""s""));
+        Console.WriteLine(Concat(arr[0]) + Concat('x') + Concat(true));         // """" + t
+        Console.WriteLine(Interp(arr[0]) + Interp('x') + Interp(true));         // $""{t}""
+        Console.WriteLine(""<<DONE>>"");
+    }
+    static string Show<T>(T v) => v.ToString();
+    static string Concat<T>(T v) => """" + v;
+    static string Interp<T>(T v) => $""{v}"";
+}", waitForOutput: "<<DONE>>");
+        }
+
+        // ---- a method group of a generic method binds its type argument ---------------------
+        //
+        // A generic method that threads its type arguments takes them as LEADING parameters. A method
+        // group did not bind them, so the delegate's first VALUE argument landed in the T slot:
+        // `new[]{1,2}.Select(Show)` called Show(1, undefined) — typeof(T).Name read "Number" and the
+        // real parameter was undefined. An explicitly instantiated group (`Func<int> f = Def<int>;`)
+        // did not translate at all ("not supported: GenericName").
+
+        [TestMethod]
+        public async Task GenericMethodGroupBindsItsTypeArgument()
+        {
+            await RunTest(@"
+using System;
+using System.Linq;
+public enum Colour { Red, Green }
+public class Box
+{
+    private readonly int _n;
+    public Box(int n) { _n = n; }
+    public string Tag<T>(T v) => _n + typeof(T).Name + v;
+}
+public class Program
+{
+    public static void Main()
+    {
+        Func<int, string> f = Show;                                   // implicitly instantiated group
+        Console.WriteLine(f(3) + ""/"" + Show(3));
+        Console.WriteLine(string.Join("","", new[] { 1, 2 }.Select(Show)));
+        Console.WriteLine(string.Join("","", new[] { 1, 2 }.Select(x => Show(x))));
+        Func<Colour> g = Def<Colour>;                                 // explicitly instantiated group
+        Console.WriteLine(Def<Colour>() + ""/"" + g());
+        var inst = new Box(7);
+        Func<int, string> h = inst.Tag;                               // instance generic method group
+        Console.WriteLine(h(1) + ""/"" + inst.Tag(2));
+        Console.WriteLine(string.Join("","", new[] { Colour.Green }.Select(Show)));
+        Console.WriteLine(""<<DONE>>"");
+    }
+    static string Show<T>(T v) => ""<"" + typeof(T).Name + "":"" + v + "">"";
+    static T Def<T>() => default(T);
+}", waitForOutput: "<<DONE>>");
+        }
+
+        // ---- a plain struct has value equality and value hashing ----------------------------
+        //
+        // .NET gives every value type field-wise Equals/GetHashCode via ValueType, which is what makes
+        // a struct usable as a Dictionary/HashSet key. Only records synthesized them, so a plain struct
+        // fell back to JS reference identity: `d[new Key { A = 1 }]` threw KeyNotFoundException for a
+        // key that had just been added. A null member also has to hash as 0 rather than throwing
+        // "HashCode cannot be calculated for empty value".
+
+        [TestMethod]
+        public async Task StructsHaveValueEqualityAndHashing()
+        {
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+public struct Key2 { public int A; public string B; }
+public struct Key1 { public int A; }
+public struct Nested { public Key2 K; public double D; }
+public struct Own { public int A; public override bool Equals(object o) => true; public override int GetHashCode() => 42; }
+public record struct KeyR(int A, string B);
+public class RefKey
+{
+    public string Name;
+    public override bool Equals(object o) => o is RefKey r && r.Name == Name;
+    public override int GetHashCode() => Name == null ? 0 : Name.GetHashCode();
+}
+public class Program
+{
+    public static void Main()
+    {
+        var a = new Key2 { A = 1, B = ""b"" };
+        var b = new Key2 { A = 1, B = ""b"" };
+        Console.WriteLine(a.Equals(b) + ""/"" + (a.GetHashCode() == b.GetHashCode()));
+        Console.WriteLine(new Dictionary<Key2, string> { { a, ""s"" } }.ContainsKey(b));
+        Console.WriteLine(new Dictionary<Key1, string> { { new Key1 { A = 1 }, ""s"" } }.ContainsKey(new Key1 { A = 1 }));
+        Console.WriteLine(new Dictionary<KeyR, string> { { new KeyR(1, ""b""), ""s"" } }.ContainsKey(new KeyR(1, ""b"")));
+        Console.WriteLine(new Dictionary<RefKey, string> { { new RefKey { Name = ""n"" }, ""r"" } }.ContainsKey(new RefKey { Name = ""n"" }));
+        Console.WriteLine(new Dictionary<(int, string), string> { { (1, ""a""), ""t"" } }.ContainsKey((1, ""a"")));
+        Console.WriteLine(new HashSet<Key2> { a }.Contains(b));
+
+        // a null member hashes as 0 rather than throwing
+        var d = new Dictionary<Key2, string>();
+        d[default(Key2)] = ""def"";
+        Console.WriteLine(d[new Key2 { A = 0, B = null }]);
+        Console.WriteLine(default(Key2).GetHashCode() == new Key2().GetHashCode());
+        Console.WriteLine(default(Key2).Equals(new Key2 { A = 0 }) + ""/"" + new Key2 { A = 1 }.Equals(new Key2 { A = 2 }));
+
+        // nested struct members compare by value too
+        var dn = new Dictionary<Nested, int> { { new Nested { K = new Key2 { A = 1 }, D = 1.5 }, 9 } };
+        Console.WriteLine(dn[new Nested { K = new Key2 { A = 1 }, D = 1.5 }]);
+
+        // a non-struct argument, and a boxed struct
+        Console.WriteLine(new Key2 { A = 1 }.Equals(""not a struct""));
+        object boxed = new Key2 { A = 3 };
+        Console.WriteLine(boxed.Equals(new Key2 { A = 3 }));
+        Console.WriteLine(new HashSet<Key2> { default, new Key2 { A = 1 }, default }.Count);
+
+        // a struct that declares its own members keeps them
+        Console.WriteLine(new Own { A = 1 }.Equals(new Own { A = 2 }) + ""/"" + new Own { A = 1 }.GetHashCode());
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
     }
 }

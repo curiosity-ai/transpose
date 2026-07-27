@@ -37,6 +37,12 @@ public sealed partial class Emitter
         return names;
     }
 
+    /// <summary>True if the type itself declares an instance method with this name and arity — i.e. a
+    /// hand-written Equals/GetHashCode that must win over the synthesized value-wise one.</summary>
+    private static bool DeclaresOwn(INamedTypeSymbol type, string name, int parameterCount)
+        => type.GetMembers(name).OfType<IMethodSymbol>()
+            .Any(m => !m.IsStatic && !m.IsImplicitlyDeclared && m.Parameters.Length == parameterCount);
+
     /// <summary>Appends synthesized value-type methods (struct $clone/equals, record members).</summary>
     private void AddValueTypeMethodEntries(INamedTypeSymbol type, List<Action> entries)
     {
@@ -63,6 +69,44 @@ public sealed partial class Emitter
                     _w.WriteLine("return s;");
                 });
             });
+        }
+
+        // A plain (non-record) struct: .NET gives every value type field-wise Equals/GetHashCode via
+        // ValueType, so two structs with equal fields are equal and hash alike — that is what makes a
+        // struct usable as a Dictionary/HashSet key. Without these the JS object fell back to
+        // reference identity, so `d[new Key { A = 1 }]` threw KeyNotFoundException for a key that was
+        // just added. Records already synthesize their own (over properties) below; a struct that
+        // declares either member keeps it.
+        if (type is { TypeKind: TypeKind.Struct, IsRecord: false })
+        {
+            if (!DeclaresOwn(type, "Equals", 1))
+            {
+                entries.Add(() =>
+                {
+                    _w.Write("equals: function (o) ");
+                    _w.Block(() =>
+                    {
+                        _w.WriteLine("if (o == null || o.constructor !== this.constructor) { return false; }");
+                        _w.Write("return ");
+                        _w.Write(fields.Count == 0 ? "true"
+                            : string.Join(" && ", fields.Select(f => $"TransposeR.equals(this.{f}, o.{f})")));
+                        _w.WriteLine(";");
+                    });
+                });
+            }
+            if (!DeclaresOwn(type, "GetHashCode", 0))
+            {
+                entries.Add(() =>
+                {
+                    _w.Write("getHashCode: function () ");
+                    _w.Block(() =>
+                    {
+                        _w.WriteLine("var h = 17;");
+                        foreach (var f in fields) _w.WriteLine($"h = (h * 31 + TransposeR.hash(this.{f})) | 0;");
+                        _w.WriteLine("return h;");
+                    });
+                });
+            }
         }
 
         if (type.IsRecord)
