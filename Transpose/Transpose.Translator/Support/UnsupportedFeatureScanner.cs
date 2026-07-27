@@ -48,13 +48,30 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
     /// resolve, say, the inferred type of a <c>var</c>) is already bound when the emitter reaches it.
     /// Pass null to scan against throw-away models — only useful when there is no emit to follow.
     /// </summary>
-    public static IReadOnlyList<Diagnostic> Scan(CSharpCompilation compilation, TreeModel? models = null)
+    /// <param name="trees">The trees to scan; null scans the whole compilation. An incremental build
+    /// passes only the files whose text changed — an unsupported construct is a property of the file it
+    /// appears in, so an unchanged file's verdict from the cached build still holds.</param>
+    /// <param name="incremental">The build's incremental plan, if any: supplies the cached
+    /// denied-name filter (whose inputs — the references and the declaration surface — are fixed on a
+    /// body-only edit) and receives the one this build used, for the next build to reuse.</param>
+    public static IReadOnlyList<Diagnostic> Scan(CSharpCompilation compilation, TreeModel? models = null,
+        IEnumerable<SyntaxTree>? trees = null, IncrementalPlan? incremental = null)
     {
-        var deniedSimpleNames = CollectDeniedSimpleNames(compilation);
+        var deniedSimpleNames = incremental?.DeniedSimpleNames is { } cachedNames
+            ? new HashSet<string>(cachedNames, StringComparer.Ordinal)
+            : PhaseTimings.Measure("  ├ collect denied type names", () => CollectDeniedSimpleNames(compilation));
+        if (incremental is not null) incremental.FinalDeniedSimpleNames = deniedSimpleNames;
         models ??= new TreeModel(compilation);
 
         var allDiagnostics = new List<List<Diagnostic>>();
-        Parallel.ForEach(compilation.SyntaxTrees, tree =>
+        // Measured separately from the enclosing phase, because the two are wildly different things and
+        // the difference is the most useful number in an incremental build's timing table: this walk is
+        // proportional to the files actually being scanned (a few ms for one file), while whatever is
+        // left over in the parent phase is Roslyn building the compilation's symbol tables and importing
+        // the reference metadata — a fixed per-process cost that lands on whichever phase binds first,
+        // and the floor no on-disk cache can get under. See TODO.incremental.md.
+        PhaseTimings.Measure("  ├ walk files", () =>
+        Parallel.ForEach(trees ?? compilation.SyntaxTrees, tree =>
         {
             var diagnostics = new List<Diagnostic>();
 
@@ -69,7 +86,7 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
                     allDiagnostics.Add(diagnostics);
                 }
             }
-        });
+        }));
         return allDiagnostics.SelectMany(d => d).ToArray();
     }
 

@@ -60,14 +60,19 @@ public sealed partial class Emitter
     /// script (a full Transpose.assembly wrapper) produced by the last <see cref="Emit"/>; else null.</summary>
     public string? MetadataScript { get; private set; }
 
+    /// <summary>What this build may reuse from the previous one (null = emit everything). Only the
+    /// top-level emitter consults it; the per-type clones never see it.</summary>
+    private IncrementalPlan? _plan;
+
     /// <param name="models">A semantic-model cache to reuse. Passing the one the
     /// unsupported-feature scan already populated means every member that scan bound is bound
     /// once for the whole build instead of twice.</param>
-    internal Emitter(CSharpCompilation compilation, string assemblyName, TreeModel? models)
+    internal Emitter(CSharpCompilation compilation, string assemblyName, TreeModel? models, IncrementalPlan? plan = null)
     {
         _compilation = compilation;
         _assemblyName = assemblyName;
         _model = models ?? new TreeModel(compilation);
+        _plan = plan;
     }
 
     public Emitter(CSharpCompilation compilation, string assemblyName = CompilationBuilder.DefaultAssemblyName)
@@ -113,7 +118,7 @@ public sealed partial class Emitter
             long done = 0;
 
 #pragma warning disable RS1024 // Symbols should be compared for equality - we don't the symbol comparer here as we want the actual object to define the order, not the "kind" of symbol
-            var results = new ConcurrentDictionary<INamedTypeSymbol, JsWriter>();
+            var results = new ConcurrentDictionary<INamedTypeSymbol, string>();
 #pragma warning restore RS1024 // Symbols should be compared for equality
 
             // Parallel.ForEach aggregates any thrown exception into an AggregateException. The
@@ -126,7 +131,19 @@ public sealed partial class Emitter
                 PhaseTimings.Measure("  ├ emit type bodies (parallel)", () =>
                     Parallel.ForEach(types, type =>
                     {
-                        results[type] = EmitOnlyType(this, type);
+                        // An incremental build splices in the previous build's JavaScript for every
+                        // type none of whose declaring files changed. The text is reused verbatim, so
+                        // the bundle is byte-identical to the one a full build would have produced.
+                        if (_plan?.TryReuse(type) is { } cached)
+                        {
+                            results[type] = cached;
+                            _plan.RecordReused();
+                        }
+                        else
+                        {
+                            results[type] = EmitOnlyType(this, type).ToString();
+                            _plan?.RecordReemitted();
+                        }
                         var count = Interlocked.Increment(ref done);
                         CompileProgress.ReportStep("emitting JavaScript", count, types.Count);
                     }));
@@ -140,8 +157,15 @@ public sealed partial class Emitter
             {
                 foreach (var type in types)
                 {
-                    _w.Write(results[type]);
+                    var js = results[type];
+                    _w.WriteRaw(js);
                     _w.WriteLine();
+                    if (_plan is not null)
+                    {
+                        var key = IncrementalPlan.TypeKey(type);
+                        _plan.FinalTypeJs[key] = js;
+                        _plan.FinalOrder.Add(key);
+                    }
                 }
             });
 
@@ -157,11 +181,30 @@ public sealed partial class Emitter
             //    CompileProgress.ReportStep("emitting JavaScript", ++done, types.Count);
             //}
 
-            if (inlineMeta) PhaseTimings.Measure("  ├ reflection metadata (inline)", () => EmitReflectionMetadata(types));
+            // The reflection metadata describes declarations only — types, members, signatures and
+            // attributes — so an incremental build over a body-only edit reuses it wholesale. That is
+            // worth having: on a large project building the metadata block is ~12% of a build.
+            if (inlineMeta)
+            {
+                if (_plan?.InlineMetadata is { } cachedInline)
+                {
+                    _w.WriteRaw(cachedInline);
+                    if (_plan is not null) _plan.FinalInlineMetadata = cachedInline;
+                }
+                else
+                {
+                    var block = PhaseTimings.Measure("  ├ reflection metadata (inline)",
+                        () => CaptureAtCurrentIndent(() => EmitReflectionMetadata(types)));
+                    _w.WriteRaw(block);
+                    if (_plan is not null) _plan.FinalInlineMetadata = block;
+                }
+            }
         });
         _w.WriteLine(");");
 
-        MetadataScript = fileMeta ? PhaseTimings.Measure("  └ reflection metadata (file)", () => BuildMetadataFile(types)) : null;
+        MetadataScript = fileMeta
+            ? _plan?.MetadataScript ?? PhaseTimings.Measure("  └ reflection metadata (file)", () => BuildMetadataFile(types))
+            : null;
         return _w.ToString();
     }
 
@@ -230,6 +273,27 @@ public sealed partial class Emitter
         parts.AddRange(containing);
         parts.Add(type.Name);
         return string.Join("/", parts) + ".js";
+    }
+
+    /// <summary>
+    /// Runs <paramref name="emit"/> against a temporary writer that starts at the *current*
+    /// indentation depth, and returns its text. Splicing the result back with
+    /// <see cref="JsWriter.WriteRaw"/> then reproduces exactly what emitting in place would have
+    /// written — which is what lets the block be cached and restored verbatim.
+    /// </summary>
+    private string CaptureAtCurrentIndent(Action emit)
+    {
+        var saved = _w;
+        _w = new JsWriter(saved.IndentLevel);
+        try
+        {
+            emit();
+            return _w.ToString();
+        }
+        finally
+        {
+            _w = saved;
+        }
     }
 
     /// <summary>Runs <paramref name="emit"/> against a temporary writer and returns its text.</summary>

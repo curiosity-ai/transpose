@@ -1,4 +1,9 @@
-# Compiler performance benchmark.
+# Compiler performance benchmark, plus the incremental-build correctness gate.
+#
+# The gate lives here rather than in build-transpose-compiler.yml because this is the pipeline that
+# already checks out the tesserae corpus and publishes the compiler the way it ships. Unlike the
+# benchmark below it *does* fail the build: whether an incremental build reproduces a from-scratch one
+# byte for byte is a deterministic question, so there is no noise to tolerate.
 #
 # Compiles a real project — the tesserae submodule under benchmarks/tesserae, 263 files / ~69k lines,
 # plus a second project that depends on it — with the ReadyToRun-published compiler, and records
@@ -86,6 +91,20 @@ steps:
     dotnet publish "$(compiler)" -c $(buildConfiguration) -r $(benchRid) --self-contained false \
       -p:PublishReadyToRun=true -o "$(publishDir)"
   displayName: 'publish the compiler (ReadyToRun, $(benchRid))'
+
+# The correctness gate for `tps --incremental`, before anything is measured: an incremental build that
+# is wrong emits plausible output rather than failing, so nothing downstream would notice. For each
+# shape of edit — a body in the app, a body in the referenced library, both, a new method, a changed
+# field initializer, a const the app consumes — it builds the site incrementally and from scratch and
+# byte-compares the two.
+#
+# It edits and `git checkout --`s files inside the corpus submodule, so it runs before the benchmark
+# (which wants a clean slate anyway) and leaves the working tree as it found it.
+- script: |
+    set -euo pipefail
+    TPS="$(publishDir)/tps" REPO="$(corpus)" \
+      "$(Build.SourcesDirectory)/.claude/skills/transpose-performance/scripts/verify-incremental.sh"
+  displayName: 'verify incremental builds are byte-identical to full builds'
 
 - task: DotNetCoreCLI@2
   displayName: 'build bench'

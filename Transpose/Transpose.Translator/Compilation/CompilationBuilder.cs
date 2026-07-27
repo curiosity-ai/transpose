@@ -23,10 +23,7 @@ public static class CompilationBuilder
         IEnumerable<string>? preprocessorSymbols = null,
         bool selfContainedBcl = false)
     {
-        var parseOptions = new CSharpParseOptions(languageVersion)
-            .WithFeatures(new[] { new KeyValuePair<string, string>("strict", "false") });
-        if (preprocessorSymbols is not null)
-            parseOptions = parseOptions.WithPreprocessorSymbols(preprocessorSymbols);
+        var parseOptions = ParseOptionsFor(languageVersion, preprocessorSymbols);
 
         // Give each source text an explicit encoding: emitting the assembly with embedded debug
         // information (as the package build does) requires it — Roslyn otherwise reports CS8055
@@ -44,6 +41,7 @@ public static class CompilationBuilder
                 Microsoft.CodeAnalysis.Text.SourceText.From(text, System.Text.Encoding.UTF8),
                 parseOptions, path: path);
         });
+
         var trees = treeArray;
 
         // Nullable reference types only exist from C# 8; enabling the annotations context
@@ -62,7 +60,15 @@ public static class CompilationBuilder
             // (built with --emit-package) numbers its overloads (e.g. $ctorN) over its FULL member
             // set including private ones; the consumer must see the same set for its call sites to
             // resolve to the same JS names.
-            metadataImportOptions: MetadataImportOptions.All);
+            metadataImportOptions: MetadataImportOptions.All,
+            // Emit the assembly reproducibly: without this Roslyn stamps a fresh module MVID and a
+            // wall-clock PE timestamp on every emit, so two compiles of identical sources produced
+            // assemblies differing in 16 bytes. The emitted *JavaScript* was already reproducible; this
+            // extends that to the DLL — which makes it diffable as a correctness gate, and means an
+            // incremental build that reuses a cached assembly is indistinguishable from one that
+            // re-emitted it. (Mono.Cecil preserves both stamps through the resource embed, so the
+            // shipped DLL is byte-identical across builds; measured.)
+            deterministic: true);
         
         // The base runtime library (Transpose.BCL) *defines* the BCL (System.Object, …), so it is
         // compiled self-contained with no base reference — like compiling corlib. Every other
@@ -80,6 +86,27 @@ public static class CompilationBuilder
             references: references,
             options: options);
     }
+
+    /// <summary>
+    /// The parse options a build uses. Exposed so anything that has to re-parse a single file
+    /// *outside* a compilation — the incremental cache, hashing one file's declaration surface —
+    /// produces the same tree this would, and therefore the same hash.
+    /// </summary>
+    public static CSharpParseOptions ParseOptionsFor(LanguageVersion languageVersion, IEnumerable<string>? preprocessorSymbols)
+    {
+        var parseOptions = new CSharpParseOptions(languageVersion)
+            .WithFeatures(new[] { new KeyValuePair<string, string>("strict", "false") });
+        if (preprocessorSymbols is not null)
+            parseOptions = parseOptions.WithPreprocessorSymbols(preprocessorSymbols);
+        return parseOptions;
+    }
+
+    /// <summary>Parses one source file exactly as <see cref="Build"/> would.</summary>
+    public static SyntaxTree ParseOne(string path, string text, LanguageVersion languageVersion,
+        IEnumerable<string>? preprocessorSymbols)
+        => CSharpSyntaxTree.ParseText(
+            Microsoft.CodeAnalysis.Text.SourceText.From(text, System.Text.Encoding.UTF8),
+            ParseOptionsFor(languageVersion, preprocessorSymbols), path: path);
 
     /// <summary>
     /// References the Transpose assembly (Transpose.dll) as the sole BCL, exactly like the Transpose

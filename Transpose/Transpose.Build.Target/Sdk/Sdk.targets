@@ -123,6 +123,25 @@
     <UpdateTranspose Condition="'$(UpdateTranspose)' == ''">false</UpdateTranspose>
     <UseLocalTranspose Condition="'$(UseLocalTranspose)' == ''">false</UseLocalTranspose>
     <SkipOnlineCheck Condition="'$(SkipOnlineCheck)' == ''">false</SkipOnlineCheck>
+
+    <!-- Reuse the previous build of this project where its inputs are unchanged: nothing is compiled
+         when every source file and reference hashes the same, and an edit confined to method or
+         accessor bodies keeps the cached JavaScript of every type it did not touch. Emitted output is
+         byte-identical either way, and the cache lives in the project's obj/ so `dotnet clean` drops
+         it. See TODO.incremental.md in the Transpose repository for the reuse rules.
+
+         Set <TransposeIncremental>false</TransposeIncremental> in the .csproj to turn it off — for a
+         release build that should always compile from scratch, or to rule the cache out while
+         diagnosing a build problem. -->
+    <TransposeIncremental Condition="'$(TransposeIncremental)' == ''">true</TransposeIncremental>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- The tps command line, shared by the global-tool and local-tool invocations below so the two
+         cannot drift apart. -->
+    <_TransposeArgs>--project "$(ProjectPath)" --configuration "$(Configuration)" --assembly-version "$(AssemblyVersion)"</_TransposeArgs>
+    <_TransposeArgs Condition="'$(TransposeIncremental)' == 'true'">$(_TransposeArgs) --incremental</_TransposeArgs>
+    <_TransposeArgs Condition="'$(TransposeIncremental)' != 'true'">$(_TransposeArgs) --no-incremental</_TransposeArgs>
   </PropertyGroup>
 
 
@@ -470,18 +489,47 @@
     <Message Importance="high" Text="Deleting previous assembly: $(ProjectDir)$(OutputPath)$(TargetName)$(TargetExt)"/>
     <Delete Files="$(ProjectDir)$(OutputPath)$(TargetName)$(TargetExt)"/>
 
-    <!-- This is where tps is finally called to compile the C# to JavaScript. -->
+    <!-- This is where tps is finally called to compile the C# to JavaScript.
+
+         A note on why you may not see any of the compiler's output. MSBuild's **terminal logger** —
+         the default for `dotnet build` since .NET 9 whenever stdout is a terminal — renders only
+         errors, warnings and a per-project summary. Every `Message`, and every line an `Exec`ed tool
+         writes, is dropped at default verbosity and at `-v:normal`, whatever its importance and
+         regardless of ConsoleToMsBuild; only `-v:detailed`/`-v:diagnostic` or `-tl:false` bring them
+         back. (Verified against MSBuild directly; the classic console logger still shows everything,
+         which is why a piped or CI build looks fine and an interactive one looks silent.)
+
+         So `tps` compile errors and warnings do reach the terminal — that is what the canonical
+         `file(line,col): error CS….` / `tps : warning TPS….` form in MsBuildDiagnostic buys — but the
+         progress lines, the "OK — built …" summary and the per-phase timing table cannot be surfaced
+         by any means available to this file. Rather than leave the build's own account of itself
+         unrecoverable, the captured output always goes to obj/tps.log, and the failure error says so. -->
     <Message Importance="high" Text="Transpose compilation begins now... " />
 
-    <Exec Command="tps --project &quot;$(ProjectPath)&quot; --configuration &quot;$(Configuration)&quot; --assembly-version &quot;$(AssemblyVersion)&quot;" ConsoleToMsBuild="True" WorkingDirectory="$(ProjectDir)" ContinueOnError="ErrorAndStop" IgnoreExitCode="false" Condition="!$(UseLocalTranspose)">
+    <Exec Command="tps $(_TransposeArgs)" ConsoleToMsBuild="True" WorkingDirectory="$(ProjectDir)" ContinueOnError="ErrorAndStop" IgnoreExitCode="false" Condition="!$(UseLocalTranspose)">
       <Output TaskParameter="ExitCode" PropertyName="ExitCode" />
+      <Output TaskParameter="ConsoleOutput" ItemName="_TransposeConsoleOutput" />
     </Exec>
 
-    <Exec Command="dotnet tool run tps --project &quot;$(ProjectPath)&quot; --configuration &quot;$(Configuration)&quot; --assembly-version &quot;$(AssemblyVersion)&quot;" ConsoleToMsBuild="True" WorkingDirectory="$(ProjectDir)" ContinueOnError="ErrorAndStop" IgnoreExitCode="false" Condition="$(UseLocalTranspose)">
+    <Exec Command="dotnet tool run tps $(_TransposeArgs)" ConsoleToMsBuild="True" WorkingDirectory="$(ProjectDir)" ContinueOnError="ErrorAndStop" IgnoreExitCode="false" Condition="$(UseLocalTranspose)">
       <Output TaskParameter="ExitCode" PropertyName="ExitCode" />
+      <Output TaskParameter="ConsoleOutput" ItemName="_TransposeConsoleOutput" />
     </Exec>
 
-    <Error Text="Transpose compilation failed, see logs for error message" Condition="'$(ExitCode)' != '0'"/>
+    <!-- The compiler's full output, always on disk whatever logger the build is using. Written on
+         success too: "why did this build take 12 seconds" and "what did it actually emit" are questions
+         the terminal logger cannot answer. -->
+    <MakeDir Directories="$(ProjectDir)$(IntermediateOutputPath)" Condition="'@(_TransposeConsoleOutput)' != ''" />
+    <WriteLinesToFile File="$(ProjectDir)$(IntermediateOutputPath)tps.log"
+                      Lines="@(_TransposeConsoleOutput)"
+                      Overwrite="true" Encoding="UTF-8"
+                      Condition="'@(_TransposeConsoleOutput)' != ''" />
+    <ItemGroup>
+      <FileWrites Include="$(ProjectDir)$(IntermediateOutputPath)tps.log" />
+    </ItemGroup>
+
+    <Error Code="TPS1002" Condition="'$(ExitCode)' != '0'"
+           Text="The Transpose compiler failed (exit code $(ExitCode)). Its errors are listed above; if none are shown, MSBuild's terminal logger has hidden them — the compiler's full output is in $(IntermediateOutputPath)tps.log, or re-run with `dotnet build -tl:false` (or -v:detailed)." />
 
     <Message Importance="high" Text="... Transpose compilation finished!" />
   </Target>

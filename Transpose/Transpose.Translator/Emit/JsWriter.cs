@@ -41,6 +41,27 @@ public sealed class JsWriter
         return this;
     }
 
+    /// <summary>
+    /// Appends already-formatted JavaScript verbatim — no indentation is inserted and the
+    /// line-start state is left alone, exactly as appending another writer's buffer does. This is how
+    /// a block that was written by a nested writer (a per-type emit, or one restored from the
+    /// incremental cache) is spliced in without disturbing its own indentation.
+    /// </summary>
+    internal JsWriter WriteRaw(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return this;
+        _sb.Append(text);
+        return this;
+    }
+
+    /// <summary>The current indentation depth, so a capture buffer can start at the same level and
+    /// produce text that splices back in unchanged.</summary>
+    internal int IndentLevel => _indent;
+
+    public JsWriter() { }
+
+    internal JsWriter(int indent) => _indent = indent;
+
 
     public JsWriter Write(string text)
     {
