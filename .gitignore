@@ -190,6 +190,10 @@ PublishScripts/
 **/[Pp]ackages/*
 # except build/, which is used as an MSBuild target.
 !**/[Pp]ackages/build/
+# ...and except THIS repository's own /Packages folder, which holds the binding-library source
+# projects rather than restored NuGet packages. Without this, a newly added project under it is
+# silently invisible to `git add` (their bin/obj stay ignored via the [Bb]in//[Oo]bj/ rules above).
+!/Packages/*
 # Uncomment if necessary however generally it will be regenerated when needed
 #!**/[Pp]ackages/repositories.config
 # NuGet v3's project.json files produces more ignorable files

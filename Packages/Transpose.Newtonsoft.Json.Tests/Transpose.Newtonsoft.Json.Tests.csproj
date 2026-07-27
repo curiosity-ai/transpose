@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <InvariantTimezone>true</InvariantTimezone>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.6.0" />
+    <PackageReference Include="MSTest" Version="4.3.2" />
+    <!-- The oracle: the real Json.NET. A test snippet is compiled and run natively against this
+         package and as translated JavaScript against the binding library, then the two console
+         outputs are diffed. It is never referenced by the translated code. -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
+    <Using Include="Transpose.Translator" />
+    <!-- The namespace of the linked NodeJsRunner below. -->
+    <Using Include="Transpose.Translator.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Transpose\Transpose.Translator\Transpose.Translator.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Shared with the translator test suite so both resolve Node the same way. -->
+    <Compile Include="..\..\Transpose\Transpose.Translator.Tests\Infrastructure\NodeJsRunner.cs"
+             Link="Infrastructure\NodeJsRunner.cs" />
+  </ItemGroup>
+
+</Project>
