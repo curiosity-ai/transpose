@@ -54,10 +54,12 @@ internal static class MsBuildDiagnostic
     public const string CodeInternalError          = "TPS0004";
     public const string CodeDependencyBuildFailed  = "TPS0005";
     public const string CodeAssemblyEmitFailed     = "TPS0006";
+    public const string CodeWatchRequiresSiteBuild = "TPS0007";
     public const string CodeReferenceNotFound      = "TPS0100";
     public const string CodeMissingRuntimeBundle   = "TPS0101";
     public const string CodeTimingJsonNotWritten   = "TPS0102";
     public const string CodeCacheNotWritten        = "TPS0103";
+    public const string CodeWatchServerFailed      = "TPS0104";
 
     /// <summary>Formats a Roslyn diagnostic, pointing at its source location when it has one.</summary>
     public static string Format(Diagnostic d)

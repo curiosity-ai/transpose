@@ -208,7 +208,11 @@ property is not guessed at: such an import or item is skipped, which is why SDK-
 `--incremental` / `--no-incremental` / `--cache-dir <dir>` (reuse the previous build; off by default),
 `--timing` (per-phase time + allocations), `--timing-json <file>`,
 `--metadata-only-assembly` / `--no-metadata-only-assembly`,
-`--max-errors <n>` (a cap; by default **every** error is reported, ordered by file and line).
+`--max-errors <n>` (a cap; by default **every** error is reported, ordered by file and line),
+`--watch` / `--watch-port <n>` (rebuild a site on every source change — root project and every
+referenced project — and serve it over Kestrel on localhost; the served index.html carries an
+injected script that reconnects over a websocket and reloads the page after each rebuild; see
+`Transpose.Compiler/WatchMode.cs`).
 
 ### Diagnostics are in MSBuild's canonical format
 
@@ -328,6 +332,19 @@ The short version:
   a consumer actually binds against. Output is byte-identical either way, gated in CI over eight edit
   shapes. The `tps` CLI still defaults to off; the SDK opts in. Remaining: re-emitting only the
   *dependent* types when a declaration changes. See **`TODO.incremental.md`**.
+- **Watch mode (done).** `tps --watch` (`Transpose.Compiler/WatchMode.cs`) rebuilds a site whenever a
+  source file changes — the root project's own sources and every project it transitively references
+  (via `ProjectResolver.ReferencedProjectsInBuildOrder`), debounced so one save triggers one rebuild —
+  and serves the assembled site over a Kestrel dev server (`--watch-port`, default 4300) started with
+  `Microsoft.AspNetCore.App` as a `FrameworkReference` (no `Sdk.Web` switch needed). `OutputBuilder`
+  gets an optional `liveReloadScript` inlined before `</body>`; it opens a websocket to
+  `/__tps-livereload` and reloads on any message, and a monotonic build version embedded in the script
+  lets a reconnecting client (e.g. one whose reload navigation overlapped a second rebuild) catch up
+  immediately instead of waiting on a broadcast it could otherwise miss. `Program.RunOnce` is the
+  extracted single-build path both a plain invocation and every watch rebuild call. Covered end to end
+  by `WatchModeTests` (a real `tps --watch` subprocess + headless Chromium via Playwright, editing both
+  the root and a referenced project and asserting the page reloads itself — never calling
+  `page.ReloadAsync()`).
 
 A compilation server is still intentionally **out of scope** — though the measurements in
 `TODO.incremental.md` say what it would be worth (the residual cost of an incremental build is almost

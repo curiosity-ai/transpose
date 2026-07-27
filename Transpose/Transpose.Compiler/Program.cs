@@ -3,6 +3,13 @@ using Microsoft.CodeAnalysis;
 
 namespace Transpose.Compiler;
 
+/// <summary>The outcome of one build pass (<see cref="Program.RunOnce"/>): the process exit code, plus
+/// — only for a successful site build — the directory it was written to and whether index.html
+/// generation is disabled. <see cref="OutDir"/> is null for every other outcome (a failure, or a
+/// package/bundle/runtime build with nothing to serve), which is what <see cref="WatchMode"/> uses to
+/// tell "this build resolves to a servable site" from "there is nothing here to watch".</summary>
+internal readonly record struct BuildRunResult(int ExitCode, string? OutDir, bool HtmlDisabled);
+
 /// <summary>
 /// A small command-line front-end for the Roslyn-only C# → JavaScript translator, in the
 /// spirit of the existing <c>tps</c> compiler: point it at a project and it resolves the
@@ -42,6 +49,8 @@ public static class Program
         // than a failed one. TRANSPOSE_INCREMENTAL=1 turns it on for a whole session.
         var incremental = Environment.GetEnvironmentVariable("TRANSPOSE_INCREMENTAL") is "1" or "true";
         string? cacheDir = null;
+        var watch = false;
+        var watchPort = 4300;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -63,6 +72,8 @@ public static class Program
                 case "--incremental": incremental = true; break;
                 case "--no-incremental": incremental = false; break;
                 case "--cache-dir": cacheDir = args[++i]; incremental = true; break;
+                case "--watch": watch = true; break;
+                case "--watch-port": watchPort = int.Parse(args[++i]); break;
                 case "--metadata-only-assembly": metadataOnlyAssembly = true; break;
                 case "--no-metadata-only-assembly": metadataOnlyAssembly = false; break;
                 case "--assembly-version": assemblyVersion = args[++i]; break;
@@ -116,6 +127,44 @@ public static class Program
             separateAssemblies = true;
         }
 
+        // --watch rebuilds this same project over and over as its sources change, serving the result
+        // from a directory it can keep pointing a browser at — only a site build (a tps.json project,
+        // no --emit-package/--build-runtime/--out) produces that. Reject the combination up front
+        // rather than starting a server for a build that will never populate an outDir.
+        if (watch && (emitPackage || buildRuntime || outPath is not null))
+        {
+            MsBuildDiagnostic.WriteError(MsBuildDiagnostic.CodeWatchRequiresSiteBuild,
+                "--watch requires a site build: the project must have a tps.json and not use --emit-package, --build-runtime, or --out.");
+            return 1;
+        }
+
+        if (watch)
+        {
+            return WatchMode.Run(csproj, watchPort, liveReloadScript => RunOnce(
+                csproj, outPath, siteDir, configuration, withRuntime, quiet, maxErrors, emitPackage,
+                separateAssemblies, buildRuntime, extraReferences, extraDefines, assemblyVersion,
+                metadataOnlyAssembly, incremental, cacheDir, liveReloadScript));
+        }
+
+        return RunOnce(csproj, outPath, siteDir, configuration, withRuntime, quiet, maxErrors, emitPackage,
+            separateAssemblies, buildRuntime, extraReferences, extraDefines, assemblyVersion,
+            metadataOnlyAssembly, incremental, cacheDir, liveReloadScript: null).ExitCode;
+    }
+
+    /// <summary>
+    /// Runs one build of <paramref name="csproj"/> end to end — resolve, translate, write outputs —
+    /// exactly what a plain <c>tps</c> invocation always did. Watch mode calls this repeatedly (once
+    /// per detected change) with a fresh <see cref="BuildRunResult"/> each time; a normal invocation
+    /// calls it once. <paramref name="liveReloadScript"/>, when not null, is inlined into the generated
+    /// index.html right before <c>&lt;/body&gt;</c> so the served page reconnects to the watch server
+    /// and reloads after each rebuild — a normal build always passes null, so its output is unaffected.
+    /// </summary>
+    private static BuildRunResult RunOnce(
+        string csproj, string? outPath, string? siteDir, string configuration, bool withRuntime, bool quiet,
+        int maxErrors, bool emitPackage, bool separateAssemblies, bool buildRuntime, List<string> extraReferences,
+        List<string> extraDefines, string? assemblyVersion, bool? metadataOnlyAssembly, bool incremental,
+        string? cacheDir, string? liveReloadScript)
+    {
         Console.WriteLine($"tps: compiling {Path.GetFileName(csproj)}");
         // Surface the translator's phase/step progress (binding, scanning, JS emit) so the long
         // silent phases show visible movement. Quiet mode suppresses it.
@@ -132,7 +181,7 @@ public static class Program
         {
             MsBuildDiagnostic.WriteError(MsBuildDiagnostic.CodeProjectResolveFailed,
                 $"Failed to resolve project '{Path.GetFileName(csproj)}': {ex.Message}");
-            return 1;
+            return new BuildRunResult(1, null, false);
         }
 
         // Extra references (--reference) and defines (--define) from the command line. --reference
@@ -181,7 +230,7 @@ public static class Program
             string.Equals(Path.GetFileNameWithoutExtension(p), "Transpose", StringComparison.OrdinalIgnoreCase));
         if (buildRuntime
             || (string.Equals(tpscfg?.OutputBy, "ClassPath", StringComparison.OrdinalIgnoreCase) && !referencesTransposeBcl))
-            return BuildRuntime(project, configuration, sw, outPath, maxErrors);
+            return new BuildRunResult(BuildRuntime(project, configuration, sw, outPath, maxErrors), null, false);
 
         // Reflection settings come from the project's tps.json (target inline vs a .meta.js file).
         var (reflectionEnabled, metadataTarget) = ReflectionSettings(tpscfg);
@@ -193,7 +242,7 @@ public static class Program
         if (separateAssemblies && !EnsureReferencedProjectsBuilt(csproj, configuration, maxErrors, metadataOnlyAssembly, incremental, cacheDir))
         {
             Console.Error.WriteLine("\nFAILED building referenced projects.");
-            return 1;
+            return new BuildRunResult(1, null, false);
         }
 
         // A site build still emits the .NET assembly: the Transpose.Build.Target SDK declares the
@@ -212,9 +261,12 @@ public static class Program
         {
             cache = BuildCache.Open(project, configuration,
                 OutputMode(emitPackage, isSiteBuild),
+                // "watch={..}" so switching --watch on/off across builds sharing a cache dir invalidates
+                // it — the injected live-reload script changes the written index.html even when nothing
+                // else about the build did, and an "up to date" verdict skips writing it altogether.
                 BuildSettingsFingerprint(project, configuration, tpscfg, reflectionEnabled, metadataTarget,
                     metadataOnly, emitPackage, isSiteBuild, separateAssemblies, withRuntime, outPath, siteDir,
-                    assemblyVersion),
+                    assemblyVersion).Append($"watch={liveReloadScript is not null}"),
                 BuildContentFingerprint(project),
                 cacheDir);
             (verdict, changedSources, var reason) = cache.Decide();
@@ -226,7 +278,7 @@ public static class Program
                 if (cache.PreviousOutputs.Count > 4)
                     Console.WriteLine($"            … and {cache.PreviousOutputs.Count - 4} more");
                 PrintTimings(sw.ElapsedMilliseconds);
-                return 0;
+                return new BuildRunResult(0, null, false);
             }
             Console.WriteLine(verdict == BuildCache.Verdict.BodyOnlyChange
                 ? $"  cache:      {changedSources.Count} file(s) changed, method bodies only — reusing cached declarations"
@@ -264,7 +316,7 @@ public static class Program
         catch (Exception ex)
         {
             ReportCrash("Translator", ex);
-            return 2;
+            return new BuildRunResult(2, null, false);
         }
 
         // The stopwatch keeps running: writing the package (minifying the embedded JS, the Cecil
@@ -274,7 +326,7 @@ public static class Program
         {
             ReportDiagnostics(result.Diagnostics, maxErrors);
             Console.Error.WriteLine($"\nFAILED in {sw.ElapsedMilliseconds} ms.");
-            return 1;
+            return new BuildRunResult(1, null, false);
         }
 
         var js = result.Javascript!;
@@ -286,7 +338,7 @@ public static class Program
         if (emitPackage)
         {
             var written = TryWritePackage(project, config, configuration, result);
-            if (written is null) return 2;
+            if (written is null) return new BuildRunResult(2, null, false);
 
             var (dllPath, items) = written.Value;
             SaveCache(cache, plan, result, new[] { dllPath });
@@ -294,7 +346,7 @@ public static class Program
             Console.WriteLine($"  dll:      {dllPath}");
             Console.WriteLine($"  embedded: {string.Join(", ", items.Take(6).Select(i => i.Name))}{(items.Count > 6 ? ", …" : "")}");
             PrintTimings(sw.ElapsedMilliseconds);
-            return 0;
+            return new BuildRunResult(0, null, false);
         }
 
         // Site build: when the project has an tps.json and no single-file --out was requested,
@@ -308,13 +360,13 @@ public static class Program
             if (result.AssemblyBytes is not null)
             {
                 var package = TryWritePackage(project, config, configuration, result);
-                if (package is null) return 2;
+                if (package is null) return new BuildRunResult(2, null, false);
                 dllPath = package.Value.dllPath;
             }
 
             var outDir = siteDir ?? ResolveOutputDir(config, project.ProjectDir, configuration);
             var siteResult = PhaseTimings.Measure("write site (minify + resources + html)", () =>
-                OutputBuilder.Build(project, config, js, outDir, configuration, result.MetadataJavascript));
+                OutputBuilder.Build(project, config, js, outDir, configuration, result.MetadataJavascript, liveReloadScript));
             // Every file in the site counts as an output: a rebuild must notice if any of them was
             // deleted or edited, otherwise "up to date" would leave a broken site in place.
             SaveCache(cache, plan, result, SiteOutputs(outDir, dllPath));
@@ -329,7 +381,7 @@ public static class Program
                 if (stale.Count > 10) Console.WriteLine($"                … and {stale.Count - 10} more");
             }
             PrintTimings(sw.ElapsedMilliseconds);
-            return 0;
+            return new BuildRunResult(0, outDir, config.HtmlDisabled);
         }
 
         if (withRuntime) js = RoslynTranslator.LoadRuntime() + "\n" + js;
@@ -339,7 +391,7 @@ public static class Program
         SaveCache(cache, plan, result, new[] { Path.GetFullPath(outPath) });
         Console.WriteLine($"\nOK — wrote {js.Length:N0} bytes to {outPath} in {sw.ElapsedMilliseconds} ms.");
         PrintTimings(sw.ElapsedMilliseconds);
-        return 0;
+        return new BuildRunResult(0, null, false);
     }
 
     /// <summary>
@@ -949,6 +1001,13 @@ public static class Program
               --cache-dir <dir>     Put the incremental cache under <dir> instead of the project's
                                     obj/ (implies --incremental). A temp directory is fine — losing
                                     the cache only costs a full build.
+              --watch               Rebuild whenever a source file changes — the root project's and
+                                    every referenced project's — and serve the assembled site over
+                                    HTTP on localhost. The served index.html carries a small injected
+                                    script that reconnects over a websocket and reloads the page after
+                                    each successful rebuild. Requires a site build (a project with
+                                    tps.json; incompatible with --emit-package, --build-runtime, --out).
+              --watch-port <n>      Port for --watch's HTTP server and websocket (default 4300)
               --timing              Print a per-phase timing/allocation breakdown of the build
               --timing-json <file>  Also write that breakdown (plus GC/memory totals) as JSON
               -q, --quiet           Suppress warning output
