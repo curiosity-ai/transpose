@@ -152,6 +152,9 @@ A user project references the `Transpose.Build.Target` SDK, which runs `tps` onc
 tps --project <proj.csproj> --configuration <cfg> --assembly-version <v>
 ```
 
+The SDK passes `--incremental` by default; a project turns it off with
+`<TransposeIncremental>false</TransposeIncremental>`.
+
 `tps` reads the csproj directly (no MSBuild evaluation), globs `**/*.cs`, resolves
 `PackageReference`s from the NuGet cache, synthesizes `[assembly: ...]` from `<AssemblyAttribute>`
 items, transpiles, and writes the site (runtime + bundle + resources + `index.html`) or a package
@@ -205,6 +208,25 @@ to the file and line, instead of scrolling past as console text. Three rules fol
   match, or a build grows errors nobody wrote. `MsBuildDiagnosticFormatTests` guards both directions
   against MSBuild's own regex.
 
+#### Why `dotnet build` looks silent (and why that is not fixable here)
+
+Since .NET 9, `dotnet build` defaults to MSBuild's **terminal logger** whenever stdout is a terminal.
+It renders *only* errors, warnings and a per-project summary: every `Message` and every line an
+`Exec`ed tool writes is dropped at default verbosity **and** at `-v:normal`, whatever its importance
+and regardless of `ConsoleToMsBuild`. Only `-v:detailed`/`-v:diagnostic` or `-tl:false` bring them
+back — measured across all four channels (`Message` high/normal, `Exec` stdout, `Exec` stderr).
+
+So the canonical diagnostic form above is exactly what makes a `tps` error visible; the progress
+lines, the `OK — built …` summary and the timing table cannot be surfaced from a targets file at all.
+This is **not** a regression against h5: an h5 project built with the real `h5` toolchain shows all of
+its `[info] …` lines under `-tl:false` and **none** under `-tl:true`, identically — the two SDKs'
+`Exec` invocations are the same shape. If you remember h5 printing them, that was the classic logger
+(pre-.NET 9, a pipe, or CI).
+
+What the SDK does about it: `_TransposeBuild` writes the compiler's full captured output to
+`obj/<Configuration>/<tfm>/tps.log` on every build, and the failure error (`TPS1002`) points there.
+For an interactive build that should show its work, use `dotnet build -tl:false`.
+
 ## Performance
 
 A clean build's cost, and how to measure it, is documented in **`TODO.optimization.md`** (the running
@@ -220,7 +242,8 @@ The short version:
   in `Transpose.Compiler.csproj` (plus `runtimeconfig.template.json`) are together worth ~40% of a
   build. Do not "tidy them away".
 - Any change here must keep the emitted site **byte-identical** — output is reproducible, so
-  `diff -r` against a baseline compiler is the gate. The 499-test suite is the other gate.
+  `diff -r` against a baseline compiler is the gate. The emitted **assembly** is reproducible as well
+  (`deterministic: true`), so the DLL is diffable too. The test suite is the other gate.
 - The benchmark corpus is the **tesserae** submodule at `benchmarks/tesserae`
   (`git submodule update --init benchmarks/tesserae`). Recorded reports live in `docs/perf/`.
 - **Debug and Release are structurally different builds.** Debug emits a *metadata-only* assembly
@@ -267,12 +290,15 @@ The short version:
 - **MSBuild evaluation** stays deliberately shallow: `<Import>` is followed (see above) but
   conditions, arbitrary properties, `Directory.Build.props` and item metadata are not evaluated.
 - **Wider `tps.json` surface** (outputBy, module formats, locales, before/after build, etc.).
-- **Incremental compilation (prototype, opt-in).** `--incremental` reuses the previous build of a
-  project: nothing at all is compiled when every input hashes the same (20× on tesserae), and an edit
-  confined to method/accessor bodies keeps the cached JavaScript of every untouched type, the
-  reflection metadata and (in Debug) the metadata-only assembly (~2×). Output is byte-identical either
-  way. Still to decide: making it the default, and re-emitting only the *dependent* types when a
-  declaration changes. See **`TODO.incremental.md`**.
+- **Incremental compilation (done for body-level edits; on by default via the SDK).** `--incremental`
+  reuses the previous build of a project: nothing at all is compiled when every input hashes the same
+  (19× on tesserae), and an edit confined to method/accessor bodies keeps the cached JavaScript of every
+  untouched type, the reflection metadata, the scanner's denied-name filter and (in Debug) the
+  metadata-only assembly (~2×). A body-only edit in a referenced library leaves its consumers'
+  compilation cached too, because a package DLL now carries a `.tpsmeta` sidecar hashing the *metadata*
+  a consumer actually binds against. Output is byte-identical either way, gated in CI over eight edit
+  shapes. The `tps` CLI still defaults to off; the SDK opts in. Remaining: re-emitting only the
+  *dependent* types when a declaration changes. See **`TODO.incremental.md`**.
 
 A compilation server is still intentionally **out of scope** — though the measurements in
 `TODO.incremental.md` say what it would be worth (the residual cost of an incremental build is almost

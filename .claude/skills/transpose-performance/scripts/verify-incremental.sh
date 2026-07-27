@@ -6,6 +6,9 @@
 #
 #   TPS=<tps> [REPO=<tesserae checkout>] verify-incremental.sh
 #
+# Run by .devops/benchmark-transpose-compiler.yml, where it *fails* the build: unlike a performance
+# comparison this is a deterministic question, so there is no noise to tolerate.
+#
 # The line numbers the edits target are specific to the tesserae corpus at the time of writing; if an
 # edit stops applying (the script says so), re-point it at any method body / declaration.
 set -uo pipefail
@@ -22,13 +25,16 @@ fail=0
 clean() { rm -rf "$REPO"/Tesserae/bin "$REPO"/Tesserae/obj "$REPO"/Tesserae.Tests/bin "$REPO"/Tesserae.Tests/obj; }
 reset_sources() { (cd "$REPO" && git checkout -- Tesserae/src/Components/Toast.cs Tesserae.Tests/src/App.cs); }
 
-# check <name> <edit-command>
+# check <name> <edit-command> [setup-command]
+# The setup command, when given, is applied *before* the cold build — for scenarios where the edit has
+# to change something that already existed (e.g. the value of a const the app already consumes).
 check() {
-  local name=$1; shift
+  local name=$1 edit=$2 setup=${3:-}
   echo "───────── $name"
   reset_sources; clean
+  [ -n "$setup" ] && eval "$setup"
   "$TPS" --project "$APP" -c Debug --incremental >/dev/null 2>&1 || { echo "  cold build FAILED"; fail=1; return; }
-  eval "$@"
+  eval "$edit"
   "$TPS" --project "$APP" -c Debug --incremental > /tmp/v-inc.log 2>&1 || { echo "  incremental FAILED"; tail -20 /tmp/v-inc.log; fail=1; return; }
   grep -E "cache:" /tmp/v-inc.log | sed 's/^/  /'
   rm -rf /tmp/v-site-inc; cp -r "$SITE" /tmp/v-site-inc
@@ -62,6 +68,18 @@ check "library: field initializer changed (declaration surface)" \
 
 check "library: whole file untouched, only whitespace in a body" \
   "sed -i '411s/^            /                /' $LIB"
+
+# The sharpest test of the metadata fingerprint (BuildCache.ReferenceMetadataFingerprint), which is what
+# lets a consumer reuse its compilation when a referenced library's *metadata* is unchanged: a const the
+# app consumes. Constants live in metadata, so changing one has to invalidate the app — and it does.
+# (Worth knowing while reading this: Transpose does not fold a cross-assembly const into the consumer's
+# bundle, it emits `tss.Toast.VerifyConstProbe` and lets the runtime read it, so the value itself only
+# ever lives in the library's bundle. The comparison holds either way — which is the point of comparing
+# bytes rather than reasoning about them.)
+check "library: const the app consumes changes value" \
+  "sed -i 's/VerifyConstProbe = \"AAA\"/VerifyConstProbe = \"BBB\"/' $LIB" \
+  "sed -i '20a\\        public const string VerifyConstProbe = \"AAA\";' $LIB;
+   sed -i '21a\\            System.Console.WriteLine(Tesserae.Toast.VerifyConstProbe);' $APPSRC"
 
 reset_sources
 echo "───────── result"

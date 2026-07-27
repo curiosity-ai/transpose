@@ -60,7 +60,15 @@ public static class CompilationBuilder
             // (built with --emit-package) numbers its overloads (e.g. $ctorN) over its FULL member
             // set including private ones; the consumer must see the same set for its call sites to
             // resolve to the same JS names.
-            metadataImportOptions: MetadataImportOptions.All);
+            metadataImportOptions: MetadataImportOptions.All,
+            // Emit the assembly reproducibly: without this Roslyn stamps a fresh module MVID and a
+            // wall-clock PE timestamp on every emit, so two compiles of identical sources produced
+            // assemblies differing in 16 bytes. The emitted *JavaScript* was already reproducible; this
+            // extends that to the DLL — which makes it diffable as a correctness gate, and means an
+            // incremental build that reuses a cached assembly is indistinguishable from one that
+            // re-emitted it. (Mono.Cecil preserves both stamps through the resource embed, so the
+            // shipped DLL is byte-identical across builds; measured.)
+            deterministic: true);
         
         // The base runtime library (Transpose.BCL) *defines* the BCL (System.Object, …), so it is
         // compiled self-contained with no base reference — like compiling corlib. Every other

@@ -95,21 +95,23 @@ internal sealed class BuildCache
     /// project emits, but it does mean the outputs are stale, so the build must run and rewrite them
     /// while still reusing everything it emitted last time.
     /// </summary>
-    public static BuildCache Open(ResolvedProject project, string configuration, IEnumerable<string> settings,
-        IEnumerable<string> contentExtras, string? cacheDirOverride)
+    /// <param name="mode">The output shape this build produces (<c>package</c>, <c>site</c>,
+    /// <c>bundle</c>). It is part of the cache's *path*, not just its key: a project built both ways
+    /// would otherwise have the two builds take turns invalidating and overwriting one cache, and
+    /// neither would ever hit.</param>
+    public static BuildCache Open(ResolvedProject project, string configuration, string mode,
+        IEnumerable<string> settings, IEnumerable<string> contentExtras, string? cacheDirOverride)
     {
         var settingsKey = HashStrings(settings.Prepend($"format={FormatVersion}").Prepend($"compiler={CompilerId()}"));
         var contentKey = HashStrings(contentExtras.Prepend(settingsKey));
 
-        // A cache is per project *and* per configuration: Debug and Release are structurally different
-        // builds (metadata-only vs full IL, formatted vs minified bundles).
-        var root = cacheDirOverride
-                   ?? Environment.GetEnvironmentVariable("TRANSPOSE_CACHE_DIR")
-                   ?? Path.Combine(project.ProjectDir, "obj", "tps-cache");
-        var dir = cacheDirOverride is null && Environment.GetEnvironmentVariable("TRANSPOSE_CACHE_DIR") is null
-            ? Path.Combine(root, configuration)
+        // A cache is per project, per configuration and per output mode: Debug and Release are
+        // structurally different builds (metadata-only vs full IL, formatted vs minified bundles).
+        var explicitRoot = cacheDirOverride ?? Environment.GetEnvironmentVariable("TRANSPOSE_CACHE_DIR");
+        var dir = explicitRoot is null
+            ? Path.Combine(project.ProjectDir, "obj", "tps-cache", configuration, mode)
             // An explicit shared cache root (e.g. a temp folder) has to keep projects apart itself.
-            : Path.Combine(root, ProjectSlug(project.CsprojPath), configuration);
+            : Path.Combine(explicitRoot, ProjectSlug(project.CsprojPath), configuration, mode);
 
         var textHashes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var (path, text) in project.Sources) textHashes[path] = HashString(text);

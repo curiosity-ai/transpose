@@ -16,28 +16,41 @@ already did.
 
 ## Where things stand
 
-`tps --incremental` (off by default; `--cache-dir <dir>` / `TRANSPOSE_CACHE_DIR` to relocate the
-cache, `TRANSPOSE_INCREMENTAL=1` to enable it for a session). Measured on the tesserae corpus,
-`-c Debug`, medians of 3 interleaved runs, 4-core container:
+`tps --incremental`. The **SDK turns it on** (`<TransposeIncremental>false</TransposeIncremental>` in
+the .csproj to opt out); the bare CLI still defaults to off. `--cache-dir <dir>` /
+`TRANSPOSE_CACHE_DIR` relocate the cache, `TRANSPOSE_INCREMENTAL=1` enables it for a session.
+
+Measured on the tesserae corpus, `-c Debug`, medians of 3 interleaved runs, 4-core container:
 
 | scenario | today | `--incremental` | speedup |
 |---|--:|--:|--:|
-| library (263 files → package DLL), nothing changed | 7.98 s | **0.40 s** | **20×** |
-| library, one method body edited | 7.98 s | **4.09 s** | **1.95×** |
-| library, clean build (cache written) | 7.98 s | 8.06 s | −1% |
-| app (site build, library up to date), nothing changed | 4.27 s | **0.41 s** | **10×** |
-| app, one method body edited in the app | 4.27 s | **3.46 s** | 1.23× |
-| app, one method body edited in the **library** | 8.82 s | **4.44 s** | **2.0×** |
+| library (263 files → package DLL), nothing changed | 7.31 s | **0.38 s** | **19×** |
+| library, one method body edited | 7.31 s | **3.88 s** | **1.9×** |
+| library, clean build (cache written) | 7.31 s | 7.50 s | −1% |
+| app (site build, library up to date), nothing changed | 4.15 s | **0.45 s** | **9×** |
+| app, one method body edited in the app | 4.15 s | **3.58 s** | 1.16× |
+| app, one method body edited in the **library** | 8.99 s | **4.35 s** | **2.1×** |
+
+Through `dotnet build` (which is what a developer actually types) the same library body edit goes from
+**10.4 s to 5.0 s**.
 
 Every one of those outputs is **byte-identical** to a from-scratch build of the same sources,
-verified with `compare-site.sh` over the whole `Tesserae.Tests` site across seven edit shapes
-(app body, library body, both, a new public method, a statement added to a body, a changed field
-initializer, whitespace in a body). The 584-test suite stays green, plus 8 new tests in
-`IncrementalEmitTests.cs`.
+verified with `compare-site.sh` over the whole `Tesserae.Tests` site across eight edit shapes (app
+body, library body, both, a new public method, a statement added to a body, a changed field
+initializer, whitespace in a body, and a `const` the app consumes). That gate now runs in CI —
+`.devops/benchmark-transpose-compiler.yml` fails on a mismatch. The 584-test suite stays green, plus 8
+new tests in `IncrementalEmitTests.cs`.
 
 The ~1% cold-build cost is the price of admission: hashing every file's declaration surface (~150 ms
 on 270 files) and writing ~5 MB of cache. Measured by an interleaved A/B of four clean-build pairs
 (7.19 s vs 7.26 s) — i.e. inside the noise.
+
+The emitted **assembly is now reproducible** too (`deterministic: true` in `CompilationBuilder`).
+Before that, two compiles of identical sources produced DLLs differing in 16 bytes (a fresh module
+MVID and a wall-clock PE timestamp); Mono.Cecil preserves both through the resource embed, so the
+shipped DLL is now byte-identical across builds and `diff -r` is a usable gate on it. That change was
+made for the cache — an incremental build reusing a cached assembly must be indistinguishable from one
+that re-emitted it — but it is worth having on its own.
 
 ---
 
@@ -76,11 +89,11 @@ It is the coarsest condition under which each phase's output provably cannot mov
   a function of the declarations. This is the single biggest win available (~19% of a build) and the
   claim most worth distrusting, so it was tested rather than argued: a body edit adding a closure, a
   local function, an 8-case string switch and an iterator local function to one method produces a
-  fresh metadata-only assembly that differs from the reused one in exactly **16 bytes** — the module
-  MVID and the PE timestamp — with identical length and identical metadata. (Those 16 bytes already
-  differ between any two full builds; Roslyn's emit here is not deterministic, and neither is
-  Mono.Cecil's resource embed, which restamps 17–18 bytes of the final DLL every time.) In Release the
-  assembly is full IL and is *not* reused.
+  fresh metadata-only assembly that differed from the reused one in exactly **16 bytes** — the module
+  MVID and the PE timestamp — with identical length and identical metadata. Those 16 bytes differed
+  between any two full builds as well, which is what prompted turning on `deterministic: true`; with it
+  the two are now *identical*, so the test is a plain `cmp`. In Release the assembly is full IL and is
+  *not* reused.
 
 `IncrementalPlan.DeclarationHash` establishes the condition: a SHA-256 of each file's text with every
 method/accessor/operator/constructor body and expression-body cut out and replaced by a marker. Field
@@ -155,32 +168,81 @@ second, and the no-op case is already there without one.
 
 Roughly in expected-value order.
 
-- **Decide the default.** It is opt-in, because a stale cache is a *silently wrong* build rather than a
-  failed one. Before flipping it on: put the `compare-site.sh` gate for the seven edit shapes into CI
-  (the script in `.claude/skills/transpose-performance/scripts/` plus
-  `/tmp/.../verify-incremental.sh`, which should move into the repo), and have the
-  `Transpose.Build.Target` SDK pass `--incremental` so a normal `dotnet build` benefits.
 - **Declaration-level dependency tracking**, so a changed *declaration* re-emits only the types that
-  bind to it instead of everything. This is the big remaining tier: adding a method is at least as
-  common an edit as changing a body, and today it costs a full build. It needs the emitter to record,
-  per type, which other types' member sets it consulted — feasible (every symbol query already goes
-  through `TreeModel`) but invasive, and the reverse-dependency closure has to include overload
-  numbering, which makes *any* member added to a type invalidate every caller of that type. Worth
-  prototyping against real edit traces before committing to it.
-- **Reuse across `--emit-package` and site modes.** The cache is keyed on output mode, so a project
-  built both ways caches twice. Harmless but wasteful.
+  bind to it instead of everything. This is the whole remaining tier: adding a method is at least as
+  common an edit as changing a body, and today it costs a full build.
+
+  It needs the emitter to record, per type, which other types' member sets it consulted. **Do not
+  reach for the cheap approximation** — invalidating "every type in a file that mentions the changed
+  type's name" is *unsound*, because a type's emitted JavaScript can depend on another type without
+  ever naming it: `var x = Factory.Create();` followed by `x.Foo()` bakes in `Foo`'s overload-numbered
+  JS name with neither the type's name nor the file's text mentioning it. Extension methods, implicit
+  conversions and inherited members do the same. The dependency set has to come from the symbols the
+  emitter actually asked about (every query already goes through `TreeModel`, which is the natural
+  place to record them), and the closure has to include overload numbering — which means *any* member
+  added to a type invalidates every caller of that type. Prototype it against real edit traces before
+  committing to it.
+- **Turn it on for the bare CLI too.** The SDK already opts in, so the exposure is the same either
+  way; what is left is deciding whether `tps` on its own should default to on. The argument for
+  waiting is that a stale cache is a silently wrong build rather than a failed one, and the CI gate has
+  only just started running.
 - **The runtime build (`--build-runtime`) has no cache.** It is a maintainer-only operation, so the
   risk/benefit is worse; but it binds the BCL three times over and would benefit most.
-- **`ProjectResolver.IsPackageUpToDate` and the cache now answer overlapping questions** by different
-  means (timestamps vs. content hashes). The timestamp check runs first and can send a project into a
-  build the cache then declares up to date — harmless (it becomes a "0 files changed" replay) but it
-  should be one mechanism, not two.
-- **Cache eviction.** Nothing prunes `obj/tps-cache`; it is one generation per configuration, so it
-  cannot grow, but a `--cache-dir` shared across many projects accumulates directories forever.
-- **Make the emitted assembly deterministic** (`CSharpCompilationOptions.WithDeterministic(true)`) and
-  stop Cecil restamping the MVID. Then a body-only edit would produce a byte-identical DLL, the
-  content/metadata key split would be unnecessary, and `diff -r` would become a usable gate on the DLL
-  as well as the site.
-- **`--incremental --timing` reports a phase that no longer does what its name says.** "scan
-  unsupported features" is now mostly metadata import; splitting that out would make the floor visible
-  in the timing table instead of only in this document.
+- **Cache eviction.** Nothing prunes `obj/tps-cache`; it holds one generation per configuration and
+  output mode, so it cannot grow, but a `--cache-dir` shared across many projects accumulates
+  directories forever.
+- **`--timing`'s phase names now understate what they measure.** "scan unsupported features" is mostly
+  reference-metadata import on an incremental build; the `├ walk files` sub-phase makes the split
+  visible (parent minus sub-phases = the fixed cost), but the parent's name is still misleading. Any
+  rename churns the phase names in `docs/perf/*.json`, which `tps-bench --baseline` matches on.
+- **A compilation server** remains out of scope, but the numbers above say what it would be worth: the
+  residual ~1.5 s of a body-only build is almost entirely Roslyn re-importing `Transpose.dll`'s
+  metadata in a fresh process, and a server is the only thing that can remove it.
+
+## Done since the first draft
+
+- **The SDK opts in** (`<TransposeIncremental>`, default true) — `Transpose.Build.Target/Sdk/Sdk.targets`.
+- **The CI gate** — `.devops/benchmark-transpose-compiler.yml` runs
+  `scripts/verify-incremental.sh` and fails the build on a mismatch.
+- **Dependency projects are cached too**, and the timestamp up-to-date screen is no longer layered in
+  front of the cache: with `--incremental`, `ProjectResolver.IsPackageUpToDate` is skipped and
+  `BuildPackage` decides by content hash, which also closes the hole where a checkout moving an mtime
+  backwards left a dirty project looking clean.
+- **Reproducible assembly emit** (`deterministic: true`) — see above.
+- **The cache is scoped by output mode** as well as configuration, so a project built both as a package
+  and as a site no longer has the two builds take turns overwriting one cache.
+- **`obj/.../tps.log`** — the compiler's full output, on disk on every build, because MSBuild's
+  terminal logger discards it (see below).
+
+## The compiler's output under `dotnet build`
+
+Worth writing down, because it looks like a bug in the SDK target and is not one.
+
+Since .NET 9, `dotnet build` uses MSBuild's **terminal logger** whenever stdout is a terminal, and it
+renders only errors, warnings and a per-project summary. Measured across every channel a targets file
+has — `Message` at high and normal importance, `Exec` stdout, `Exec` stderr, with and without
+`ConsoleToMsBuild`, with `StandardOutputImportance="high"` — **none** of them is displayed at default
+verbosity or at `-v:normal`. Only `-v:detailed`/`-v:diagnostic` or `-tl:false` bring them back. Lines
+that MSBuild's diagnostic regex promotes to a warning or error *are* shown, including the
+tool-attributed `tps : warning TPS0100: …` form, which is what makes `MsBuildDiagnostic`'s canonical
+output land in the terminal and the IDE error list.
+
+This is not a regression against h5. Built with the real `h5` toolchain, an h5 project prints all of
+its `[info] …` lines under `-tl:false` and **zero** under `-tl:true` — the same as `tps`. The two SDKs'
+`Exec` invocations are identical in shape (`ConsoleToMsBuild="True"`, `ContinueOnError="ErrorAndStop"`,
+no custom importance or error regex), and h5's compiler writes plain ZLogger lines with no
+MSBuild-parseable prefix. A memory of h5 printing its log during a build is a memory of the classic
+console logger: pre-.NET 9, a redirected stdout, or CI.
+
+Consequences, all of them already applied:
+
+- `_TransposeBuild` writes the captured output to `obj/<Configuration>/<tfm>/tps.log` on every build,
+  success included, and adds it to `FileWrites` so `dotnet clean` removes it.
+- The failure error is coded (`TPS1002`) and says where the log is and how to see the output live,
+  instead of "see logs for error message".
+- Nothing else can be done from a targets file. `dotnet build -tl:false` is the answer for an
+  interactive build that should show its work.
+
+One cosmetic gap left: the terminal logger's per-project line ends in an empty `→` for Transpose
+projects, because the SDK clears the intermediate-assembly items the logger derives that path from.
+Pointing it at the built site would be a nice touch and is unexplored.

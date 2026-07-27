@@ -64,6 +64,13 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
         models ??= new TreeModel(compilation);
 
         var allDiagnostics = new List<List<Diagnostic>>();
+        // Measured separately from the enclosing phase, because the two are wildly different things and
+        // the difference is the most useful number in an incremental build's timing table: this walk is
+        // proportional to the files actually being scanned (a few ms for one file), while whatever is
+        // left over in the parent phase is Roslyn building the compilation's symbol tables and importing
+        // the reference metadata — a fixed per-process cost that lands on whichever phase binds first,
+        // and the floor no on-disk cache can get under. See TODO.incremental.md.
+        PhaseTimings.Measure("  ├ walk files", () =>
         Parallel.ForEach(trees ?? compilation.SyntaxTrees, tree =>
         {
             var diagnostics = new List<Diagnostic>();
@@ -79,7 +86,7 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
                     allDiagnostics.Add(diagnostics);
                 }
             }
-        });
+        }));
         return allDiagnostics.SelectMany(d => d).ToArray();
     }
 

@@ -211,6 +211,7 @@ public static class Program
         if (incremental)
         {
             cache = BuildCache.Open(project, configuration,
+                OutputMode(emitPackage, isSiteBuild),
                 BuildSettingsFingerprint(project, configuration, tpscfg, reflectionEnabled, metadataTarget,
                     metadataOnly, emitPackage, isSiteBuild, separateAssemblies, withRuntime, outPath, siteDir,
                     assemblyVersion),
@@ -387,7 +388,7 @@ public static class Program
         yield return $"debugInfo={project.EmitDebugInformation}";
         yield return $"minifyLocals={project.MinifyLocalVariables}";
         yield return $"assemblyVersion={assemblyVersion}";
-        yield return $"mode={(emitPackage ? "package" : isSiteBuild ? "site" : "bundle")}";
+        yield return $"mode={OutputMode(emitPackage, isSiteBuild)}";
         yield return $"separate={separateAssemblies};runtime={withRuntime}";
         yield return $"out={outPath};siteDir={siteDir}";
         yield return $"tpsjson={tpscfg is null}";
@@ -416,6 +417,11 @@ public static class Program
             foreach (var file in tpscfg.Resources.SelectMany(g => g.Files).OrderBy(n => n, StringComparer.Ordinal))
                 yield return "res=" + file + "=" + BuildCache.FileContentFingerprint(Path.Combine(project.ProjectDir, file));
     }
+
+    /// <summary>What shape of output this build produces — the distributable package DLL, a runnable
+    /// site, or a single .js bundle. Each gets its own cache.</summary>
+    private static string OutputMode(bool emitPackage, bool isSiteBuild)
+        => emitPackage ? "package" : isSiteBuild ? "site" : "bundle";
 
     /// <summary>
     /// The inputs that cannot change a byte this project *emits*, but do change what it has to *write*:
@@ -638,7 +644,14 @@ public static class Program
         foreach (var dep in ProjectResolver.ReferencedProjectsInBuildOrder(rootCsproj))
         {
             var name = Path.GetFileNameWithoutExtension(dep);
-            if (ProjectResolver.IsPackageUpToDate(dep, configuration))
+            // Without the cache, a dependency's freshness is judged by timestamps. With it, that
+            // question is answered better inside BuildPackage — by hashing the content — so the
+            // timestamp screen is skipped rather than layered on top: it can only disagree by calling a
+            // project dirty when it is not (a touched file, a checkout that moved an mtime backwards),
+            // and the cache then resolves that to "nothing to do" for the price of hashing the sources.
+            // Two mechanisms answering the same question, weaker one first, is how a build ends up
+            // rebuilding for reasons nobody can explain.
+            if (!incremental && ProjectResolver.IsPackageUpToDate(dep, configuration))
             {
                 Console.WriteLine($"  dependency up-to-date: {name}");
                 continue;
@@ -687,19 +700,25 @@ public static class Program
         if (incremental)
         {
             cache = BuildCache.Open(project, configuration,
+                OutputMode(emitPackage: true, isSiteBuild: false),
                 BuildSettingsFingerprint(project, configuration, tpscfg, reflectionEnabled, metadataTarget,
                     metadataOnly, emitPackage: true, isSiteBuild: false, separateAssemblies: true,
                     withRuntime: false, outPath: null, siteDir: null, assemblyVersion: assemblyVersion),
                 BuildContentFingerprint(project),
                 cacheDir);
             (verdict, changedSources, var reason) = cache.Decide();
-            // "Up to date" cannot happen here: ProjectResolver.IsPackageUpToDate already screened that
-            // out by timestamp before this project was queued for a build. If the cache disagrees (a
-            // touched-but-identical file), treat it as a body-only build with nothing changed.
+            if (verdict == BuildCache.Verdict.UpToDate)
+            {
+                // Every input and output of the dependency is unchanged, so its package DLL is already
+                // the one this build wants. This is the incremental replacement for the timestamp screen
+                // in EnsureReferencedProjectsBuilt, and it is cheaper than the replay path below
+                // because it does not even rewrite the DLL.
+                Console.WriteLine("    cache: up to date, nothing to do");
+                return true;
+            }
             Console.WriteLine(verdict == BuildCache.Verdict.FullBuild
                 ? $"    cache: full build ({reason})"
                 : $"    cache: {changedSources.Count} file(s) changed, method bodies only");
-            if (verdict == BuildCache.Verdict.UpToDate) verdict = BuildCache.Verdict.BodyOnlyChange;
         }
         var replayed = incremental && verdict == BuildCache.Verdict.BodyOnlyChange && changedSources.Count == 0
             ? cache!.TryReplayCompilation(canReuseAssembly: metadataOnly)
