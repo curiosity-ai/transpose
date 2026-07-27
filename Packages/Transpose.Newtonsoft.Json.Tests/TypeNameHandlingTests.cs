@@ -126,6 +126,108 @@ public static class Settings
 }
 ";
 
+    /// <summary>
+    /// A reduction of Curiosity's <c>NodeRendererDefinition</c> graph, reusing the same
+    /// assembly-name-stripping <see cref="AllowListBinder"/>. Kept structurally faithful where it
+    /// matters: the narrowing interfaces, the interface-typed arrays, <c>TabContent</c> as a non-item
+    /// container, a member-less item, and outer types with no parameterless constructor.
+    /// </summary>
+    /// <remarks>Appended after <see cref="Model"/>, which supplies the usings and the binder.</remarks>
+    private const string RendererModel = @"
+namespace Repro.Render
+{
+    public interface IItem       { string Name { get; } }
+    public interface IHeaderItem : IItem { }
+    public interface IFooterItem : IItem { }
+
+    public enum FieldKind { Unknown, String, Number, Time }
+
+    public sealed class Field : IHeaderItem, IFooterItem
+    {
+        public Field() { }
+        public string    FieldName { get; set; }
+        public FieldKind Kind      { get; set; }
+        public string    Name      { get { return ""Field""; } }
+    }
+
+    public sealed class PlainText : IHeaderItem
+    {
+        public PlainText() { }
+        public string Text { get; set; }
+        public string Name { get { return ""Text""; } }
+    }
+
+    public sealed class LabelAndContent : IHeaderItem, IFooterItem
+    {
+        public LabelAndContent() { }
+        public string Text    { get; set; }
+        public IItem  Content { get; set; }
+        public string Name    { get { return ""Label""; } }
+    }
+
+    public sealed class Stack : IItem
+    {
+        public Stack() { }
+        public IItem[] Content { get; set; }
+        public string  Name    { get { return ""Stack""; } }
+    }
+
+    // Not an IItem itself, but carries a polymorphic member.
+    public sealed class TabContent
+    {
+        public TabContent() { }
+        public string Title   { get; set; }
+        public IItem  Content { get; set; }
+    }
+
+    public sealed class TabsContent : IItem
+    {
+        public TabsContent() { }
+        public TabContent[] Tabs { get; set; }
+        public string       Name { get { return ""Tabs""; } }
+    }
+
+    // No serializable members at all.
+    public sealed class SimilarSearch : IItem
+    {
+        public SimilarSearch() { }
+        public string Name { get { return ""Similar""; } }
+    }
+
+    // Only an argument-taking constructor, like NodeRendererDefinition.
+    public sealed class RendererDefinition
+    {
+        public RendererDefinition(IHeaderItem[] header, IItem contentCard, IItem contentView, IFooterItem[] footer)
+        {
+            Header      = header;
+            ContentCard = contentCard;
+            ContentView = contentView;
+            Footer      = footer;
+        }
+
+        public IHeaderItem[] Header      { get; set; }
+        public IItem         ContentCard { get; set; }
+        public IItem         ContentView { get; set; }
+        public IFooterItem[] Footer      { get; set; }
+    }
+}
+
+public static class RenderSettings
+{
+    public static readonly JsonSerializerSettings Objects = new JsonSerializerSettings
+    {
+        TypeNameHandling = TypeNameHandling.Objects,
+        SerializationBinder = AllowListBinder.ForTypes(
+            typeof(Repro.Render.IItem),
+            typeof(Repro.Render.IHeaderItem),
+            typeof(Repro.Render.IFooterItem),
+            typeof(Repro.Render.TabContent),
+            typeof(Repro.Render.RendererDefinition),
+            typeof(Dictionary<string, Repro.Render.RendererDefinition>)),
+    };
+}
+";
+
     [TestMethod]
     public async Task PolymorphicMemberRoundTripsThroughTheBinder()
     {
@@ -176,6 +278,67 @@ public class App
         Console.WriteLine(""Count: "" + back.Count);
         Console.WriteLine(""a.Name: "" + back[""a""].Name);
         Console.WriteLine(""b.Value: "" + back[""b""].Value);
+    }
+}";
+        await RunAndCompare(code);
+    }
+
+    /// <summary>
+    /// The full <c>GET api/schema/renderers</c> payload shape, which the flat-<c>Item</c> binder tests
+    /// above do not reach: a narrowing interface hierarchy (<c>IHeaderItem</c> / <c>IFooterItem</c> both
+    /// extending <c>INodeRendererItem</c>), interface-typed <b>arrays</b>, an interface-typed member
+    /// nested inside an element of one of those arrays, a container that is <b>not</b> itself an item
+    /// (<c>TabContent</c>) sitting in a polymorphic graph, a member-less item (<c>SimilarSearch</c>),
+    /// a null polymorphic slot, and outer types whose only constructor takes arguments. Every
+    /// <c>$type</c> names an assembly the client does not have, so all of it has to come back through
+    /// the binder.
+    /// </summary>
+    [TestMethod]
+    public async Task ServerProducedRendererDefinitionResolvesEveryPolymorphicSlot()
+    {
+        var code = Model + RendererModel + @"
+public class App
+{
+    public static void Main()
+    {
+        // $type values as the server writes them: assembly names the client cannot resolve.
+        var json =
+            ""{\""$type\"":\""System.Collections.Generic.Dictionary`2[[System.String, System.Private.CoreLib],[Repro.Render.RendererDefinition, ServerAsm]], System.Private.CoreLib\"","" +
+            ""\""_User\"":{\""$type\"":\""Repro.Render.RendererDefinition, ServerAsm\"","" +
+              ""\""Header\"":["" +
+                ""{\""$type\"":\""Repro.Render.PlainText, ServerAsm\"",\""Text\"":\""Title\""},"" +
+                ""{\""$type\"":\""Repro.Render.LabelAndContent, ServerAsm\"",\""Text\"":\""L\"",\""Content\"":{\""$type\"":\""Repro.Render.Field, ServerAsm\"",\""FieldName\"":\""nested\"",\""Kind\"":2}}"" +
+              ""],"" +
+              ""\""ContentCard\"":{\""$type\"":\""Repro.Render.Stack, ServerAsm\"",\""Content\"":["" +
+                ""{\""$type\"":\""Repro.Render.SimilarSearch, ServerAsm\""},"" +
+                ""{\""$type\"":\""Repro.Render.Stack, ServerAsm\"",\""Content\"":[{\""$type\"":\""Repro.Render.PlainText, ServerAsm\"",\""Text\"":\""deep\""}]}"" +
+              ""]},"" +
+              ""\""ContentView\"":{\""$type\"":\""Repro.Render.TabsContent, ServerAsm\"",\""Tabs\"":["" +
+                ""{\""$type\"":\""Repro.Render.TabContent, ServerAsm\"",\""Title\"":\""A\"",\""Content\"":{\""$type\"":\""Repro.Render.Field, ServerAsm\"",\""FieldName\"":\""tab\"",\""Kind\"":1}},"" +
+                ""{\""$type\"":\""Repro.Render.TabContent, ServerAsm\"",\""Title\"":\""B\"",\""Content\"":null}"" +
+              ""]},"" +
+              ""\""Footer\"":[{\""$type\"":\""Repro.Render.Field, ServerAsm\"",\""FieldName\"":\""when\"",\""Kind\"":3}]}}"";
+
+        var back = JsonConvert.DeserializeObject<Dictionary<string, Repro.Render.RendererDefinition>>(json, RenderSettings.Objects);
+        var def  = back[""_User""];
+
+        Console.WriteLine(""Count: "" + back.Count);
+        Console.WriteLine(""Header[0]: "" + def.Header[0].GetType().Name + "" "" + ((Repro.Render.PlainText)def.Header[0]).Text);
+        var lab = (Repro.Render.LabelAndContent)def.Header[1];
+        Console.WriteLine(""Header[1]: "" + lab.GetType().Name + "" -> "" + lab.Content.GetType().Name + "" "" + ((Repro.Render.Field)lab.Content).FieldName);
+
+        var card = (Repro.Render.Stack)def.ContentCard;
+        Console.WriteLine(""Card: "" + card.GetType().Name + "" len="" + card.Content.Length);
+        Console.WriteLine(""Card[0]: "" + card.Content[0].GetType().Name);
+        var inner = (Repro.Render.Stack)card.Content[1];
+        Console.WriteLine(""Card[1]: "" + inner.GetType().Name + "" -> "" + inner.Content[0].GetType().Name);
+
+        var tabs = (Repro.Render.TabsContent)def.ContentView;
+        Console.WriteLine(""Tabs len="" + tabs.Tabs.Length);
+        Console.WriteLine(""Tab0: "" + tabs.Tabs[0].GetType().Name + "" "" + tabs.Tabs[0].Title + "" -> "" + tabs.Tabs[0].Content.GetType().Name);
+        Console.WriteLine(""Tab1 content null: "" + (tabs.Tabs[1].Content == null));
+
+        Console.WriteLine(""Footer[0]: "" + def.Footer[0].GetType().Name + "" Kind="" + ((Repro.Render.Field)def.Footer[0]).Kind);
     }
 }";
         await RunAndCompare(code);
