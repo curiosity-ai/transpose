@@ -122,7 +122,7 @@ internal static class ProjectResolver
         // output. Separate-assembly mode: compile only this project's own sources and reference
         // each project dependency as its built DLL (its JS is embedded and extracted, not recompiled).
         var sources = new List<(string, string)>();
-        var references = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var references = new Dictionary<string, (string path, string version)>(StringComparer.OrdinalIgnoreCase);
         var visitedProjects = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var projectDirs = new List<string>();
         var projectDlls = new List<string>();
@@ -137,7 +137,7 @@ internal static class ProjectResolver
             AssemblyName = assemblyName,
             TargetFramework = targetFramework,
             Sources = sources,
-            ReferencePaths = references.Values.ToList(),
+            ReferencePaths = references.Values.Select(v => v.path).ToList(),
             DefineConstants = defines,
             LanguageVersion = lang,
             MinifyLocalVariables = string.Equals(doc.Property("MinifyLocalVariables")?.Trim(), "true", StringComparison.OrdinalIgnoreCase),
@@ -195,7 +195,7 @@ internal static class ProjectResolver
     private static void CollectProject(
         string csprojPath,
         List<(string, string)> sources,
-        Dictionary<string, string> references,
+        Dictionary<string, (string path, string version)> references,
         HashSet<string> visited,
         List<string> projectDirs,
         List<string> roots,
@@ -219,8 +219,8 @@ internal static class ProjectResolver
             var asmAttrs = SynthesizeAssemblyAttributes(doc);
             if (asmAttrs is not null) sources.Add(("__TransposeAssemblyAttributes.g.cs", asmAttrs));
         }
-        foreach (var (name, path) in ResolvePackageReferenceDlls(doc, roots))
-            references.TryAdd(name, path);
+        foreach (var (name, path, version) in ResolvePackageReferenceDlls(doc, roots))
+            MergePackageReference(references, name, path, version);
 
         foreach (var (pr, _) in doc.Elements("ProjectReference"))
         {
@@ -230,31 +230,9 @@ internal static class ProjectResolver
 
             if (separate)
             {
-                // Reference the dependency's built DLL; still gather its package refs (and its own
-                // project-ref DLLs) so types it exposes bind, but not its source or resources.
-                var dll = ProjectOutputDll(refPath, configuration);
-                if (dll is not null)
-                {
-                    references[Path.GetFileNameWithoutExtension(dll)] = dll;
-                    if (!projectDlls.Contains(dll)) projectDlls.Add(dll);
-                }
-                if (visited.Add(refPath) && ProjectXml.TryLoad(refPath) is { } refDoc)
-                {
-                    var refDir = Path.GetDirectoryName(refPath)!;
-                    foreach (var (name, path) in ResolvePackageReferenceDlls(refDoc, roots))
-                        references.TryAdd(name, path);
-                    foreach (var (nested, _) in refDoc.Elements("ProjectReference"))
-                    {
-                        var ninc = nested.Attribute("Include")?.Value;
-                        if (string.IsNullOrWhiteSpace(ninc)) continue;
-                        var ndll = ProjectOutputDll(Path.GetFullPath(Path.Combine(refDir, ninc!.Replace('\\', '/'))), configuration);
-                        if (ndll is not null)
-                        {
-                            references[Path.GetFileNameWithoutExtension(ndll)] = ndll;
-                            if (!projectDlls.Contains(ndll)) projectDlls.Add(ndll);
-                        }
-                    }
-                }
+                // Reference the dependency's built DLL (and, recursively, everything *it* references)
+                // so types it exposes bind, but not its source or resources.
+                CollectReferencedProjectPackages(refPath, references, visited, projectDlls, roots, configuration);
             }
             else
             {
@@ -262,6 +240,64 @@ internal static class ProjectResolver
                     separate, projectDlls, configuration, isRoot: false);
             }
         }
+    }
+
+    /// <summary>
+    /// Separate-assembly mode's ProjectReference walk: references a dependency's built DLL, merges its
+    /// package references into the shared <paramref name="references"/> map, and recurses into *its*
+    /// own ProjectReferences — so a package version required transitively (project B → project A →
+    /// package L 1.2) is reconciled against a version B might declare on L itself, exactly as within a
+    /// single project's own <see cref="ResolvePackageReferenceDlls"/> walk. Resolving only one
+    /// ProjectReference level (as a non-recursive version of this once did) silently dropped a deeper
+    /// dependency's package references, and merging with first-write-wins (<c>Dictionary.TryAdd</c>)
+    /// let a project's own lower declared version of a package beat a higher version required by a
+    /// project it also references — see <see cref="MergePackageReference"/>.
+    /// </summary>
+    private static void CollectReferencedProjectPackages(
+        string refPath,
+        Dictionary<string, (string path, string version)> references,
+        HashSet<string> visited,
+        List<string> projectDlls,
+        List<string> roots,
+        string configuration)
+    {
+        refPath = Path.GetFullPath(refPath);
+        var dll = ProjectOutputDll(refPath, configuration);
+        if (dll is not null)
+        {
+            references[Path.GetFileNameWithoutExtension(dll)] = (dll, string.Empty);
+            if (!projectDlls.Contains(dll)) projectDlls.Add(dll);
+        }
+
+        if (!visited.Add(refPath) || ProjectXml.TryLoad(refPath) is not { } refDoc) return;
+
+        foreach (var (name, path, version) in ResolvePackageReferenceDlls(refDoc, roots))
+            MergePackageReference(references, name, path, version);
+
+        var refDir = Path.GetDirectoryName(refPath)!;
+        foreach (var (nested, _) in refDoc.Elements("ProjectReference"))
+        {
+            var ninc = nested.Attribute("Include")?.Value;
+            if (string.IsNullOrWhiteSpace(ninc)) continue;
+            CollectReferencedProjectPackages(Path.GetFullPath(Path.Combine(refDir, ninc!.Replace('\\', '/'))),
+                references, visited, projectDlls, roots, configuration);
+        }
+    }
+
+    /// <summary>
+    /// Merges one more resolved package assembly into the build-wide reference map, keeping the higher
+    /// version when the same assembly is reached from two different projects in a ProjectReference
+    /// closure — e.g. project B directly declares <c>PackageReference L 1.1</c> while also referencing
+    /// project A, which declares <c>L 1.2</c>: B's build must resolve <c>L 1.2</c> too, matching how
+    /// NuGet reconciles a solution-wide package graph (the higher floor version wins). Each project's
+    /// *own* <see cref="ResolvePackageReferenceDlls"/> call already picks the right version among its
+    /// own direct and transitive (nuspec) dependencies; this only reconciles across separate calls.
+    /// </summary>
+    private static void MergePackageReference(
+        Dictionary<string, (string path, string version)> references, string name, string path, string version)
+    {
+        if (!references.TryGetValue(name, out var current) || CompareVersions(version, current.version) > 0)
+            references[name] = (path, version);
     }
 
     /// <summary>
@@ -518,7 +554,7 @@ internal static class ProjectResolver
     /// Tesserae that GraphKit's nuspec declares, ignoring the version written right there in the
     /// csproj.
     /// </summary>
-    private static IEnumerable<(string name, string path)> ResolvePackageReferenceDlls(ProjectXml doc, List<string> roots)
+    private static IEnumerable<(string name, string path, string version)> ResolvePackageReferenceDlls(ProjectXml doc, List<string> roots)
     {
         // pkgId → the version the project declares (highest, if it declares one id twice).
         var declared = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -580,7 +616,7 @@ internal static class ProjectResolver
             catch { /* best-effort transitive resolution */ }
         }
 
-        return resolved.Select(kv => (kv.Key, kv.Value.path));
+        return resolved.Select(kv => (kv.Key, kv.Value.path, kv.Value.version));
 
         bool Wins(string name, string version, bool isDeclared)
         {

@@ -83,6 +83,78 @@ public sealed class PackageReferenceResolutionTests
     private static string Reference(ResolvedProject project, string assemblyName)
         => project.ReferencePaths.Single(p => Path.GetFileNameWithoutExtension(p).Equals(assemblyName, StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>Writes a csproj under <c>_root/relativeDir/fileName</c> with the given raw items
+    /// (<c>&lt;PackageReference&gt;</c>/<c>&lt;ProjectReference&gt;</c>) and returns its path — used to
+    /// build a small multi-project closure (unlike <see cref="Csproj"/>, which always writes a single
+    /// "app" project).</summary>
+    private string CsprojAt(string relativeDir, string fileName, params string[] items)
+    {
+        var path = Path.Combine(_root, relativeDir, fileName);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var itemsXml = string.Join("\n", items.Select(i => "    " + i));
+        File.WriteAllText(path, $@"<Project>
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+{itemsXml}
+  </ItemGroup>
+</Project>");
+        return path;
+    }
+
+    [TestMethod]
+    public void AVersionRequiredThroughAProjectReferenceWinsOverTheConsumersOwnLowerDeclaration_Bundle()
+    {
+        Package("Lib", "1.1.0", new[] { "lib" });
+        Package("Lib", "1.2.0", new[] { "lib" });
+
+        CsprojAt("ProjectA", "ProjectA.csproj", @"<PackageReference Include=""Lib"" Version=""1.2.0"" />");
+        var projectB = CsprojAt("ProjectB", "ProjectB.csproj",
+            @"<PackageReference Include=""Lib"" Version=""1.1.0"" />",
+            @"<ProjectReference Include=""..\ProjectA\ProjectA.csproj"" />");
+
+        var project = ProjectResolver.Resolve(projectB); // default: bundle mode
+
+        StringAssert.Contains(Reference(project, "lib"), "1.2.0",
+            "a version required transitively through a ProjectReference must win over the consumer's own lower declared version");
+    }
+
+    [TestMethod]
+    public void AVersionRequiredThroughAProjectReferenceWinsOverTheConsumersOwnLowerDeclaration_SeparateAssemblies()
+    {
+        Package("Lib", "1.1.0", new[] { "lib" });
+        Package("Lib", "1.2.0", new[] { "lib" });
+
+        CsprojAt("ProjectA", "ProjectA.csproj", @"<PackageReference Include=""Lib"" Version=""1.2.0"" />");
+        var projectB = CsprojAt("ProjectB", "ProjectB.csproj",
+            @"<PackageReference Include=""Lib"" Version=""1.1.0"" />",
+            @"<ProjectReference Include=""..\ProjectA\ProjectA.csproj"" />");
+
+        var project = ProjectResolver.Resolve(projectB, separateAssemblies: true);
+
+        StringAssert.Contains(Reference(project, "lib"), "1.2.0",
+            "separate-assembly mode must reconcile the ProjectReference closure the same way bundle mode does");
+    }
+
+    [TestMethod]
+    public void AVersionRequiredThroughATransitiveProjectReferenceStillWins_SeparateAssemblies()
+    {
+        // B -> A -> C, where only C declares Lib. Separate-assembly mode used to gather package
+        // references only one ProjectReference level deep, silently dropping C's.
+        Package("Lib", "1.2.0", new[] { "lib" });
+
+        CsprojAt("ProjectC", "ProjectC.csproj", @"<PackageReference Include=""Lib"" Version=""1.2.0"" />");
+        CsprojAt("ProjectA", "ProjectA.csproj", @"<ProjectReference Include=""..\ProjectC\ProjectC.csproj"" />");
+        var projectB = CsprojAt("ProjectB", "ProjectB.csproj",
+            @"<ProjectReference Include=""..\ProjectA\ProjectA.csproj"" />");
+
+        var project = ProjectResolver.Resolve(projectB, separateAssemblies: true);
+
+        StringAssert.Contains(Reference(project, "lib"), "1.2.0",
+            "a package declared two ProjectReference levels away must still resolve in separate-assembly mode");
+    }
+
     [TestMethod]
     public void TheDeclaredVersionWinsOverATransitiveDependencyOnAnOlderOne()
     {
