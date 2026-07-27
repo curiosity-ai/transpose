@@ -2694,5 +2694,56 @@ public class Program
             Assert.IsTrue(js.Contains("midel(f, f)(3, 4)") || js.Contains(")(3, 4)"),
                 "an expanded MethodInfo.Invoke must spread the individual args\n" + js);
         }
+
+        // ---- string.Join / string.Concat render members with .NET's ToString() -------------
+        //
+        // Reported as `string.Join("", name.Split(' ').Select(p => p[0]))` producing "97108107"
+        // instead of "alk". The templates delegated to JavaScript's Array.prototype.join, which
+        // stringifies with String(v) — but several runtime representations do not match .NET's
+        // ToString(): a char is a bare code-point number, a bool gives "true"/"false" rather than
+        // "True"/"False", an enum its ordinal rather than its name, and an object without a
+        // ToString() override "[object Object]" rather than its type's full name. They now go
+        // through System.String.join, which takes the {T:ToString} converter for the member type.
+
+        [TestMethod]
+        public async Task JoinAndConcatRenderMembersLikeNative()
+        {
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+using System.Linq;
+public enum Suit { Hearts, Spades }
+public class Plain { }
+public class Program
+{
+    public static void Main()
+    {
+        var name = ""ada lovelace  king"";
+        Console.WriteLine(string.Join("""", name.Split(' ').Where(p => p.Length > 0).Select(p => p[0])).ToUpper());
+        Console.WriteLine(string.Join(""-"", new List<char> { 'a', 'b', 'c' }));
+        Console.WriteLine(string.Join("""", new char[] { 'x', 'y' }));
+        Console.WriteLine(string.Concat(new List<char> { 'q', 'r' }));
+        Console.WriteLine(string.Join("","", new List<bool> { true, false }));
+        Console.WriteLine(string.Join("","", new List<Suit> { Suit.Hearts, Suit.Spades }));
+        Console.WriteLine(string.Join("","", new List<int> { 1, 2 }));
+        Console.WriteLine(string.Join("","", new List<string> { ""a"", null, ""b"" }));
+        Console.WriteLine(string.Join(""|"", new object[] { 1, 'z', true, null, ""s"", Suit.Spades }));
+        Console.WriteLine(string.Join(""|"", new object[] { new Plain() }));
+        // A scattered params call: every element needs its conversion, not just the first —
+        // `string.Join(""|"", 'p', 'q')` used to emit [TransposeR.boxChar(112), 113] → ""p|113"".
+        Console.WriteLine(string.Join(""|"", 'p', 'q'));
+        Console.WriteLine(string.Join(""|"", new[] { ""a"", ""b"", ""c"", ""d"" }, 1, 2));
+        // T unbound at emit time: the converter is chosen at runtime from the threaded type argument.
+        Console.WriteLine(Describe(new[] { 'g', 'h' }));
+        Console.WriteLine(Describe(new[] { Suit.Spades, Suit.Hearts }));
+        Console.WriteLine(Describe(new[] { 1, 2 }));
+        try { Console.WriteLine(string.Join(""|"", (IEnumerable<char>)null)); }
+        catch (ArgumentNullException) { Console.WriteLine(""ArgumentNullException""); }
+        Console.WriteLine(""<<DONE>>"");
+    }
+
+    static string Describe<T>(IEnumerable<T> items) => string.Join(""|"", items);
+}", waitForOutput: "<<DONE>>");
+        }
     }
 }

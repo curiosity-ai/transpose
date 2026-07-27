@@ -354,9 +354,20 @@ public sealed partial class Emitter
         var byPos = new List<string>();
         var args = argList.Arguments;
 
+        // An argument in the trailing params region converts to the params ELEMENT type. Taking the
+        // parameter type by position gave the last *declared* parameter — the params ARRAY type — to
+        // the first scattered element and nothing at all to the rest (they outnumber the parameters),
+        // so every element after the first skipped its conversion: `string.Join("|", 'p', 'q')`
+        // captured [TransposeR.boxChar(112), 113] and rendered the second char as its code point.
+        var lastIdx = method.Parameters.Length - 1;
+        var expandedParams = lastIdx >= 0 && method.Parameters[lastIdx].IsParams
+            && !IsNonExpandedParamsCall(argList, method);
+
         for (var i = 0; i < args.Count; i++)
         {
-            var pType = i < method.Parameters.Length ? method.Parameters[i].Type : null;
+            var pType = expandedParams && i >= lastIdx
+                ? ParamsElementType(method.Parameters[lastIdx].Type)
+                : i < method.Parameters.Length ? method.Parameters[i].Type : null;
             var idx = i;
             byPos.Add(Capture(() => EmitExpressionConverted(args[idx].Expression, pType)));
         }

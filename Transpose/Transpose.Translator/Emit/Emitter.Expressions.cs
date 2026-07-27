@@ -765,6 +765,21 @@ public sealed partial class Emitter
     {
         if (t.TypeKind == TypeKind.Enum)
             return $"System.Enum.toStringFn({TypeRef(t)})";
+        // A type parameter still unbound at emit time (a generic method calling string.Join over its
+        // own IEnumerable<T>): defer the choice to the runtime, which hands back a converter only for
+        // the types that need one and null otherwise — the same fallback the dropped slot produces.
+        // Only emitted where the type parameter is in scope as a JS value: a method's parameters are
+        // threaded as leading arguments (unless [IgnoreGeneric] drops them), a type's are parameters
+        // of its define. Anything else — a parameter inherited from an enclosing generic type — is
+        // not in scope, and drops out as before. Mirrors DefaultValueLiteral's scoping rule.
+        if (t is ITypeParameterSymbol tp)
+        {
+            var inScope = tp.TypeParameterKind == TypeParameterKind.Method
+                ? tp.DeclaringMethod is { } dm && ThreadsTypeArgs(dm)
+                : _currentEmitType is not null && EffectiveTypeParameters(_currentEmitType)
+                    .Any(p => SymbolEqualityComparer.Default.Equals(p, tp));
+            return inScope ? $"TransposeR.toStrFn({TypeRef(t)})" : null;
+        }
         return t.SpecialType switch
         {
             SpecialType.System_Boolean => "function ($v) { return System.Boolean.toString($v); }",

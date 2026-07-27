@@ -211,7 +211,9 @@ namespace System
         /// <typeparam name="T">The type of the members of values.</typeparam>
         /// <param name="values">A collection object that implements the IEnumerable&lt;T&gt; interface.</param>
         /// <returns>The concatenated members in values.</returns>
-        [Transpose.Template("System.String.concat(Transpose.toArray({values}))")]
+        // Joined with an empty separator rather than through System.String.concat, because only
+        // System.String.join takes the {T:ToString} converter that char/bool/enum members need.
+        [Transpose.Template("System.String.join(\"\", {values}, {T:ToString})")]
         public static extern string Concat<T>(IEnumerable<T> values);
 
         /// <summary>
@@ -879,7 +881,7 @@ namespace System
         /// <param name="separator">The string to use as a separator.separator is included in the returned string only if values has more than one element.</param>
         /// <param name="values">A collection that contains the strings to concatenate.</param>
         /// <returns>A string that consists of the members of values delimited by the separator string. If values has no members, the method returns String.Empty.</returns>
-        [Transpose.Template("Transpose.toArray({values}).join({separator})")]
+        [Transpose.Template("System.String.join({separator}, {values})")]
         public static extern string Join(string separator, IEnumerable<string> values);
 
         /// <summary>
@@ -888,7 +890,7 @@ namespace System
         /// <param name="separator">The string to use as a separator. separator is included in the returned string only if values has more than one element.</param>
         /// <param name="values">An array that contains the elements to concatenate.</param>
         /// <returns>A string that consists of the elements of values delimited by the separator string. If values is an empty array, the method returns String.Empty.</returns>
-        [Transpose.Template("({values:array}).join({separator})")]
+        [Transpose.Template("System.String.join({separator}, {values:array})")]
         [Transpose.Unbox(false)]
         public static extern string Join(string separator, params object[] values);
 
@@ -898,7 +900,7 @@ namespace System
         /// <param name="separator">The string to use as a separator. separator is included in the returned string only if value has more than one element.</param>
         /// <param name="value">An array that contains the elements to concatenate.</param>
         /// <returns>A string that consists of the elements in value delimited by the separator string. If value is an empty array, the method returns String.Empty.</returns>
-        [Transpose.Template("({value:array}).join({separator})")]
+        [Transpose.Template("System.String.join({separator}, {value:array})")]
         public static extern string Join(string separator, params string[] value);
 
         /// <summary>
@@ -909,7 +911,7 @@ namespace System
         /// <param name="startIndex">The first element in value to use.</param>
         /// <param name="count">The number of elements of value to use.</param>
         /// <returns>A string that consists of the strings in value delimited by the separator string. -or- String.Empty if count is zero, value has no elements, or separator and all the elements of value are String.Empty.</returns>
-        [Transpose.Template("({value}).slice({startIndex}, {startIndex} + {count}).join({separator})")]
+        [Transpose.Template("System.String.join({separator}, ({value}).slice({startIndex}, {startIndex} + {count}))")]
         public static extern string Join(string separator, string[] value, int startIndex, int count);
 
         /// <summary>
@@ -919,7 +921,10 @@ namespace System
         /// <param name="separator">The string to use as a separator.separator is included in the returned string only if values has more than one element.</param>
         /// <param name="values">A collection that contains the objects to concatenate.</param>
         /// <returns>A string that consists of the members of values delimited by the separator string. If values has no members, the method returns String.Empty.</returns>
-        [Transpose.Template("Transpose.toArray({values}).join({separator})")]
+        // {T:ToString} resolves to a per-element converter for the types whose runtime value does not
+        // stringify the way .NET's ToString() does — char (a bare code-point number), bool and enum —
+        // and drops out for every other T. Without it a char sequence joined to "97108107", not "alk".
+        [Transpose.Template("System.String.join({separator}, {values}, {T:ToString})")]
         [Transpose.Unbox(false)]
         public static extern string Join<T>(string separator, IEnumerable<T> values);
 

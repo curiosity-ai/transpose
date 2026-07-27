@@ -584,6 +584,49 @@
                 return s;
             },
 
+            // string.Join, and the generic string.Concat. Array.prototype.join cannot be used for
+            // this: .NET renders every member with its own ToString(), and a runtime value does not
+            // always stringify that way on its own — a char is a bare code-point number (join would
+            // give "97" for 'a'), a bool gives "true"/"false" rather than .NET's "True"/"False",
+            // an enum its numeric value rather than its name, and an object with no ToString()
+            // override its type's full name rather than "[object Object]". `fn` is the per-element
+            // converter the emitter supplies for the types whose native toString diverges (the
+            // {T:ToString} template slot); it is absent for every other type, which then goes
+            // through Transpose.toString. A null separator is String.Empty in .NET, and a null
+            // member contributes nothing.
+            join: function (separator, values, fn) {
+                if (values == null) {
+                    throw new System.ArgumentNullException.$ctor1("values");
+                }
+
+                // The IEnumerable overloads hand the sequence over as-is (rather than pre-applying
+                // Transpose.toArray in the template) so that a null one raises ArgumentNullException
+                // here, the way .NET does, instead of failing inside toArray with a TypeError.
+                if (!Transpose.isArray(values)) {
+                    values = Transpose.toArray(values);
+                }
+
+                if (separator == null) {
+                    separator = "";
+                }
+
+                var s = "";
+
+                for (var i = 0; i < values.length; i++) {
+                    if (i > 0) {
+                        s += separator;
+                    }
+
+                    var value = values[i];
+
+                    if (value != null) {
+                        s += fn ? fn(value) : Transpose.toString(value);
+                    }
+                }
+
+                return s;
+            },
+
             copyTo: function (str, sourceIndex, destination, destinationIndex, count) {
                 if (destination == null) {
                     throw new System.ArgumentNullException.$ctor1("destination");

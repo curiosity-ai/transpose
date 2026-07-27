@@ -14,6 +14,17 @@
     // Box a char (a bare code-point number at runtime) so it stringifies / compares as its
     // character once widened to object — `object o = 'A'; o.ToString()` must be "A", not "65".
     TransposeR.boxChar = function (c) { return Transpose.box(c, System.Char, TransposeR.chr); };
+    // The value→string converter for a runtime type, or null when values of that type already
+    // stringify the way .NET's ToString() does. This resolves the {T:ToString} template slot when T
+    // is only bound at runtime (a generic method threading its type argument), so a char/bool/enum
+    // sequence renders the same inside `static string J<T>(IEnumerable<T> x) => string.Join("|", x)`
+    // as it does at a concrete call site. Callers treat null as "use your own fallback".
+    TransposeR.toStrFn = function (t) {
+        if (t === System.Char) { return TransposeR.chr; }
+        if (t === System.Boolean) { return function ($v) { return System.Boolean.toString($v); }; }
+        if (t && t.$kind === "enum") { return System.Enum.toStringFn(t); }
+        return null;
+    };
     // Exception.StackTrace. A value caught by `catch (Exception)` is either a real System.Exception,
     // which captured an Error into `errorStack` when it was constructed, or a raw JS error thrown by
     // interop / a rejected promise, which has a native `stack` and no `errorStack`. C# matches both,
