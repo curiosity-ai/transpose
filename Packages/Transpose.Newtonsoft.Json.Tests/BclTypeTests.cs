@@ -96,8 +96,10 @@ public class App
         {
             Assert.Inconclusive(
                 "The resolved Transpose runtime predates the DateTime fractional-seconds fix " +
-                "(BCL/Transpose.BCL/Resources/Date.js). Rebuild it (tps --project BCL/Transpose.BCL) " +
-                "and point TRANSPOSE_DLL_PATH at the result, or wait for the next Transpose.BCL release.");
+                "(BCL/Transpose.BCL/Resources/Date.js, shipped in Transpose.BCL 26.7.3064): " +
+                $"'{TransposeAssemblies.TransposeDllPath}'. Point TRANSPOSE_DLL_PATH at a newer " +
+                "Transpose.dll — a released one, or one rebuilt from this repo with " +
+                "`tps --project BCL/Transpose.BCL/Transpose.BCL.csproj --build-runtime`.");
         }
 
         await RunAndCompare(code);
