@@ -69,4 +69,9 @@ Each is asserted by the test named beside it, so this list stays true.
 
 `FractionalSecondsRoundTrip` reports **inconclusive** against a runtime that predates the
 `fractionToMilliseconds` fix in `BCL/Transpose.BCL/Resources/Date.js` (a `.25` fraction read as 25 ms
-instead of 250 ms) — that fix ships with the runtime, not with this package.
+instead of 250 ms) — that fix ships with the runtime, not with this package, and reached NuGet in
+**`Transpose.BCL 26.7.3064`**. So it is the one test here that can come out non-green without anything
+being wrong with the package: it means the resolved `Transpose.dll` is stale, not that the bug is back.
+Which runtime gets resolved is `TRANSPOSE_DLL_PATH` if set, else the **highest-versioned**
+`Transpose.BCL` in the NuGet cache — so an old cached package is enough to trigger it, and the
+inconclusive message names the DLL it actually used.

@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Watch mode's end-to-end coverage lives in its own project rather than in
+       Transpose.Translator.Tests. It is the only suite here that drives a real browser against a real
+       tps watch-mode subprocess, so it waits on wall-clock events (a rebuild, a websocket broadcast, a
+       page reload) instead of computing an answer. Sharing a test host with several hundred
+       Roslyn-heavy compile/diff tests starved the headless Chromium of CPU often enough to time out a
+       wait that takes ~2s when the box is idle: a failure with nothing actually wrong.
+       [DoNotParallelize] only orders the classes within one host; a separate project gets its own. -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <InvariantTimezone>true</InvariantTimezone>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MSTest" Version="4.3.2" />
+    <!-- Drives a real browser against tps's watch-mode served site. Pinned to match the Chromium
+         revision already installed in dev/CI images, so the suite never needs its own browser
+         download. -->
+    <PackageReference Include="Microsoft.Playwright" Version="1.56.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- tps.dll (the AssemblyName of Transpose.Compiler) is copied next to the test binary: the tests
+         spawn a real tps process in watch mode, so no separate build or publish step is needed. -->
+    <ProjectReference Include="..\Transpose.Compiler\Transpose.Compiler.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -48,16 +48,66 @@ public static class TransposeAssemblies
             from versionDir in Directory.GetDirectories(pkg)
             let dll = Path.Combine(versionDir, "lib", "netstandard2.0", "Transpose.dll")
             where File.Exists(dll)
-            orderby Path.GetFileName(versionDir)
-            select dll;
+            select (version: Path.GetFileName(versionDir), dll);
 
-        var found = candidates.LastOrDefault();
+        // Newest wins — by version, not by folder name. The versions are CalVer (yy.M.buildId), so an
+        // ordinal sort of the folder names silently prefers a *stale* runtime as soon as a component's
+        // digit count changes ("26.7.999" over "26.7.3104", "26.7.x" over "26.10.x"). A stale runtime
+        // does not fail loudly: it compiles fine and only misbehaves at runtime.
+        var found = candidates
+            .OrderBy(c => c.version, PackageVersionOrder.Instance)
+            .Select(c => c.dll)
+            .LastOrDefault();
         if (found is null)
         {
             throw new InvalidOperationException(
                 "Could not locate Transpose.dll in the NuGet packages cache. Set the TRANSPOSE_DLL_PATH environment variable.");
         }
         return found;
+    }
+
+    /// <summary>
+    /// Orders NuGet version-folder names by their numeric segments, with a release ranking above any
+    /// prerelease of the same segments (<c>1.0.0</c> &gt; <c>1.0.0-beta</c>) — enough to pick between
+    /// the versions of one package in the cache, like <c>ProjectResolver.CompareVersions</c> does for
+    /// package references (a full NuGet.Versioning dependency would buy nothing here). A folder name
+    /// that is not a version sorts below every real one.
+    /// </summary>
+    internal sealed class PackageVersionOrder : IComparer<string>
+    {
+        public static readonly PackageVersionOrder Instance = new();
+
+        public int Compare(string? x, string? y)
+        {
+            var (left,  leftPre)  = Parse(x);
+            var (right, rightPre) = Parse(y);
+
+            for (var i = 0; i < Math.Max(left.Length, right.Length); i++)
+            {
+                var a = i < left.Length  ? left[i]  : 0;
+                var b = i < right.Length ? right[i] : 0;
+                if (a != b) return a.CompareTo(b);
+            }
+
+            if (leftPre.Length == 0 && rightPre.Length == 0) return 0;
+            if (leftPre.Length == 0) return 1;   // release > prerelease
+            if (rightPre.Length == 0) return -1;
+            return string.CompareOrdinal(leftPre, rightPre);
+        }
+
+        private static (int[] segments, string prerelease) Parse(string? version)
+        {
+            if (string.IsNullOrWhiteSpace(version)) return (Array.Empty<int>(), "");
+
+            var core = version!.Trim().Split('+')[0];          // drop build metadata
+            var dash = core.IndexOf('-');
+            var prerelease = dash < 0 ? "" : core.Substring(dash + 1);
+            if (dash >= 0) core = core.Substring(0, dash);
+
+            // A non-numeric segment yields -1, so a junk folder name sorts below any real version.
+            var segments = core.Split('.').Select(s => int.TryParse(s, out var n) ? n : -1).ToArray();
+            return (segments, prerelease);
+        }
     }
 
     /// <summary>

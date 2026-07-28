@@ -63,7 +63,11 @@ Transpose/                     # The compiler toolchain
 │   └── ab.sh                  #   interleaved A/B of two tps binaries on one project
 ├── Transpose.Build.Target/    # MSBuild SDK (package id Transpose.Build.Target) that invokes `tps`
 ├── Transpose.Template/        # `dotnet new` template (package id Transpose.Template)
-└── Transpose.Translator.Tests/# MSTest suite; transpiles snippets and diffs vs native .NET via Playwright
+├── Transpose.Translator.Tests/# MSTest suite; transpiles snippets and diffs vs native .NET on Node
+└── Transpose.WatchMode.Tests/ # MSTest suite for `tps --watch`: a real tps subprocess + headless
+                               #   Chromium (Playwright). Separate project on purpose — it waits on
+                               #   wall-clock events, so sharing a host with the Roslyn-heavy suite
+                               #   above starved the browser and timed the waits out spuriously.
 
 BCL/                           # The base runtime libraries
 ├── Transpose.BCL/             # Base library. AssemblyName Transpose, package id `Transpose.BCL`, namespace Transpose
@@ -86,7 +90,9 @@ Packages/                      # Additional binding libraries (all [assembly: Ex
 
 benchmarks/tesserae/           # git submodule: the benchmark corpus (see Performance below)
 docs/perf/                     # recorded tps-bench reports (baseline + current)
-.devops/                       # Azure DevOps pipelines (one per package, plus the benchmark)
+.devops/                       # Azure DevOps pipelines (one per package, plus the benchmark).
+                               #   Two of them run tests before publishing: build-transpose-compiler
+                               #   (the translator + watch-mode suites) and build-transpose-json.
 
 docs/, logo/, lib/, External-less # docs, brand assets (see below), misc
 ```
@@ -402,9 +408,9 @@ The short version:
   lets a reconnecting client (e.g. one whose reload navigation overlapped a second rebuild) catch up
   immediately instead of waiting on a broadcast it could otherwise miss. `Program.RunOnce` is the
   extracted single-build path both a plain invocation and every watch rebuild call. Covered end to end
-  by `WatchModeTests` (a real `tps --watch` subprocess + headless Chromium via Playwright, editing both
-  the root and a referenced project and asserting the page reloads itself — never calling
-  `page.ReloadAsync()`).
+  by `WatchModeTests` in its own **`Transpose.WatchMode.Tests`** project (a real `tps --watch` subprocess
+  + headless Chromium via Playwright, editing both the root and a referenced project and asserting the
+  page reloads itself — never calling `page.ReloadAsync()`).
 
 A compilation server is still intentionally **out of scope** — though the measurements in
 `TODO.incremental.md` say what it would be worth (the residual cost of an incremental build is almost

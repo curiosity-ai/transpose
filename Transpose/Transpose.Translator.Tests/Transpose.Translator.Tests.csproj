@@ -13,10 +13,6 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.6.0" />
     <PackageReference Include="MSTest" Version="4.3.2" />
-    <!-- Drives a real browser against tps's watch-mode served site (WatchModeTests.cs). Pinned to
-         match the Chromium revision already installed in dev/CI images, so the test suite never
-         needs its own browser download. -->
-    <PackageReference Include="Microsoft.Playwright" Version="1.56.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -25,8 +21,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Transpose.Translator\Transpose.Translator.csproj" />
-    <!-- tps.dll (AssemblyName of Transpose.Compiler) is copied next to the test binary for
-         WatchModeTests, which spawns a real tps watch-mode process. -->
+    <!-- For the CLI's own internals (Program.OrderErrorsForReport — see its InternalsVisibleTo).
+         The browser-driven watch-mode suite that used to spawn tps.dll from here now lives in
+         Transpose.WatchMode.Tests. -->
     <ProjectReference Include="..\Transpose.Compiler\Transpose.Compiler.csproj" />
     <!-- ProjectResolver/TransposeJson/OutputBuilder/BuildCache/ResourceEmbedder/JsMinifier/… now live
          here (see Transpose.Compiler.Core), shared with Transpose.Compiler.Library. -->
