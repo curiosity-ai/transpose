@@ -59,7 +59,7 @@ internal static class OutputBuilder
     /// stale.</summary>
     public readonly record struct SiteBuildResult(string OutputDir, IReadOnlyList<string> RemovedStaleFiles);
 
-    public static SiteBuildResult Build(ResolvedProject project, TransposeJson config, string javascript, string outputDir, string configuration, string? metadataJavascript = null)
+    public static SiteBuildResult Build(ResolvedProject project, TransposeJson config, string javascript, string outputDir, string configuration, string? metadataJavascript = null, string? liveReloadScript = null)
     {
         Directory.CreateDirectory(outputDir);
 
@@ -205,7 +205,7 @@ internal static class OutputBuilder
 
         // 4. index.html (and index.min.html when both variants exist).
         if (!config.HtmlDisabled)
-            WriteHtml(project, config, outputDir, jsOuts, cssLinks, configuration, utf8, written);
+            WriteHtml(project, config, outputDir, jsOuts, cssLinks, configuration, utf8, written, liveReloadScript);
 
         // 5. Prune only files THIS project authored in an earlier build and no longer writes — read
         //    from its own manifest — then persist the current file list as the next manifest. Files
@@ -670,7 +670,8 @@ internal static class OutputBuilder
     /// </summary>
     private static void WriteHtml(
         ResolvedProject project, TransposeJson config, string outputDir,
-        List<JsOut> jsOuts, List<string> cssLinks, string configuration, UTF8Encoding utf8, HashSet<string> written)
+        List<JsOut> jsOuts, List<string> cssLinks, string configuration, UTF8Encoding utf8, HashSet<string> written,
+        string? liveReloadScript = null)
     {
         var css = new StringBuilder();
         foreach (var link in cssLinks)
@@ -717,13 +718,21 @@ internal static class OutputBuilder
             if (htmlMinName is not null && htmlName is not null) htmlMinName = null;
         }
 
-        string Render(string scripts) => HtmlTemplate
-            .Replace("{META}", config.HtmlMeta)
-            .Replace("{TITLE}", config.HtmlTitle ?? project.AssemblyName)
-            .Replace("{CSS}", css.ToString().TrimStart())
-            .Replace("{SCRIPT}", scripts.TrimStart())
-            .Replace("{HEAD}", config.HtmlHead)
-            .Replace("{BODY}", config.HtmlBody);
+        // Watch mode (--watch) passes a small inline script that opens a websocket back to the tps
+        // dev server and reloads the page when a rebuild completes. Appended right before </body> so
+        // it runs after everything else on the page, and left out entirely for a normal build (the
+        // parameter is null), so ordinary output is unaffected.
+        string Render(string scripts)
+        {
+            var html = HtmlTemplate
+                .Replace("{META}", config.HtmlMeta)
+                .Replace("{TITLE}", config.HtmlTitle ?? project.AssemblyName)
+                .Replace("{CSS}", css.ToString().TrimStart())
+                .Replace("{SCRIPT}", scripts.TrimStart())
+                .Replace("{HEAD}", config.HtmlHead)
+                .Replace("{BODY}", config.HtmlBody);
+            return liveReloadScript is null ? html : html.Replace("</body>", liveReloadScript + "\n</body>");
+        }
 
         if (htmlName is not null)
         {

@@ -101,6 +101,13 @@
     <InternalsVisibleTo Include="Transpose.Translator.Tests" />
   </ItemGroup>
 
+  <!-- Kestrel + minimal-hosting APIs for the watch-mode local dev server (WatchMode.cs). A
+       FrameworkReference under the plain Sdk keeps this a normal console app / packable dotnet
+       tool — switching to Microsoft.NET.Sdk.Web would change far more than watch mode needs. -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Transpose.Translator\Transpose.Translator.csproj" />
     <PackageReference Include="Mono.Cecil" Version="0.11.6" />
