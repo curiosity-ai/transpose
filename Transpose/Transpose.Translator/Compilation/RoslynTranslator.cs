@@ -126,17 +126,6 @@ public sealed class RoslynTranslator
         try { unsupported = PhaseTimings.Measure("scan unsupported features", () => UnsupportedFeatureScanner.Scan(compilation, models, changedTrees, incremental)); }
         catch { unsupported = System.Array.Empty<Diagnostic>(); }
 
-        // Two members emitted under one JavaScript name silently lose one of them, so it is an error
-        // rather than something the emitter quietly resolves. Same tolerance as the scan above: never
-        // let an unexpected throw here discard the Roslyn errors.
-        try
-        {
-            var duplicates = PhaseTimings.Measure("scan duplicate JS names",
-                () => DuplicateJsNameScanner.Scan(models, changedTrees ?? (IEnumerable<SyntaxTree>)compilation.SyntaxTrees));
-            if (duplicates.Count > 0) unsupported = unsupported.Concat(duplicates).ToArray();
-        }
-        catch { /* keep the diagnostics gathered so far */ }
-
         // Binding the whole compilation is the single most expensive thing a build does, and
         // Compilation.Emit already does it — its result carries every declaration and method-body
         // diagnostic GetDiagnostics would have produced. So when an assembly is being emitted we take
