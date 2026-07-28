@@ -87,6 +87,15 @@
         }
         return Object.assign(Object.create(Object.getPrototypeOf(o)), o);
     };
+    // Copies one slot of a struct's $clone whose declared type is a TYPE PARAMETER, where only the
+    // runtime value can say whether a value copy is due: `struct Wrap<T> { public T Value; }` must
+    // clone Value for Wrap<SomeStruct> (C# copies the whole value) and must NOT clone it for
+    // Wrap<SomeClass> (the copy shares the same reference). Transpose.define stamps $kind on every
+    // emitted type, so a struct instance is recognisable; everything else is copied as-is.
+    TransposeR.cloneValue = function (v) {
+        if (v && typeof v === 'object' && v.constructor && v.constructor.$kind === 'struct') { return TransposeR.clone(v); }
+        return v;
+    };
     // Hash one member of a synthesized value-wise GetHashCode. `safe` is required: a null member
     // contributes 0 in .NET, whereas the bare runtime helper throws "HashCode cannot be calculated
     // for empty value" — which took out any struct/record with an unset reference field.

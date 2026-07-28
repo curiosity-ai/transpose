@@ -332,6 +332,20 @@ The short version:
   `index.html` (formatted) and `index.min.html` (minified) and collapses them per build configuration
   (Release keeps the minified one as `index.html`, Debug the formatted one) — a port of the legacy
   `HtmlGenerator`. **Source maps** for the emitted bundle are still remaining.
+- **Value-copy semantics are scoped to in-source structs.** A struct copy (assignment, by-value
+  argument/return, array fill, boxing, a collection insert, `with`) clones the value — including,
+  since `StructAndClassInitializerTests`, its struct-typed slots recursively — but only for a struct
+  **declared in the compilation being translated** (`IsSourceStruct` in `Emitter.Expressions.cs`).
+  A struct from a referenced library, a BCL struct and a **ValueTuple** are copied by reference, so
+  `var b = a; b.Inner.V = 9;` still writes through `a` for those. Widening it would make every
+  `DateTime`/tuple assignment allocate, so it is a deliberate trade-off rather than an oversight.
+- **`Span<T>` does not accept the implicit array conversion** — `Span<int> s = new int[3];` emits
+  the bare array, so `s[0] = 1` throws "setItem is not a function". Unrelated to `stackalloc`;
+  the conversion itself is simply not modelled.
+- **A positional pattern only resolves members for tuples and records** — `x is Foo(1, 2)` against a
+  type with a hand-written `Deconstruct(out …)` still reads `Item1`/`Item2` (see
+  `PositionalPatternMemberNames`), because a pattern test is emitted as a single JS expression and
+  cannot call `Deconstruct` with out-holders.
 - **Reference resolution beyond the NuGet cache** — `<Reference HintPath>` and `tps.json`
   `references`/`referencesPath` (partially covered by `--reference`).
 - **MSBuild evaluation** stays deliberately shallow: `<Import>` is followed (see above) but

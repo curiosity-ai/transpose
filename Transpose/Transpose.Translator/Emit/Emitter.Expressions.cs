@@ -480,6 +480,10 @@ public sealed partial class Emitter
         ElementAccessExpressionSyntax => true,
         ThisExpressionSyntax => true,
         ParenthesizedExpressionSyntax paren => IsReferencingExpression(paren.Expression),
+        // A cast aliases whatever the operand aliases: unboxing (`(S)o`) hands back the very object
+        // the box holds, so `var c = (S)o; c.X = 1;` wrote through to the boxed value. Casting a
+        // freshly produced value (a call, `new`) still needs no copy — the operand decides.
+        CastExpressionSyntax cast => IsReferencingExpression(cast.Expression),
         _ => false,
     };
 

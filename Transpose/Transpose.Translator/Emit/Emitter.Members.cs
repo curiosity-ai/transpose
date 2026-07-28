@@ -338,6 +338,24 @@ public sealed partial class Emitter
             }
 
             var all = type.InstanceConstructors.Where(c => c.DeclaringSyntaxReferences.Length > 0).ToList();
+
+            // A struct always has a parameterless constructor, even when every declared one takes
+            // arguments — `new S()` and `: this()` both reach it, and CtorName already reserves the
+            // plain "ctor" name for it. It has no syntax of its own, so it is absent from `all`;
+            // without an entry here those call sites fell through to the runtime's synthesized
+            // default, which does not zero the struct-typed slots (`new S().Inner` was null, so
+            // reading through it threw "Cannot read properties of null").
+            if (NeedsSynthesizedStructDefaultCtor(type, all))
+            {
+                _w.Write("ctor: function () ");
+                _w.Block(() =>
+                {
+                    _w.WriteLine("this.$initialize();");
+                    EmitInstanceFieldInitializers(type);
+                });
+                _w.WriteLine(all.Count > 0 ? "," : "");
+            }
+
             for (var i = 0; i < all.Count; i++)
             {
                 var ctor = all[i];
@@ -376,6 +394,15 @@ public sealed partial class Emitter
             }
         });
     }
+
+    /// <summary>True when a struct's implicit parameterless constructor has to be emitted: it is
+    /// reachable (`new S()`, `: this()`, a `$clone` target) but, being implicitly declared, carries no
+    /// syntax and so never appears among the constructors walked from the declaration.</summary>
+    private static bool NeedsSynthesizedStructDefaultCtor(INamedTypeSymbol type, List<IMethodSymbol> emitted)
+        => type.TypeKind == TypeKind.Struct
+           && !type.IsRecord
+           && emitted.Count > 0
+           && emitted.All(c => c.Parameters.Length > 0);
 
     private void EmitConstructorChain(IMethodSymbol ctor, ConstructorDeclarationSyntax decl, INamedTypeSymbol type)
     {
