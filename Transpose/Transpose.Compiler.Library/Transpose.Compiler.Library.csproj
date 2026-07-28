@@ -5,13 +5,13 @@
     <LangVersion>latest</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <RootNamespace>Transpose.Compiler.Service</RootNamespace>
-    <AssemblyName>Transpose.Compiler.Service</AssemblyName>
+    <RootNamespace>Transpose.Compiler.Library</RootNamespace>
+    <AssemblyName>Transpose.Compiler.Library</AssemblyName>
     <InvariantGlobalization>true</InvariantGlobalization>
     <InvariantTimezone>true</InvariantTimezone>
 
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
-    <PackageId>Transpose.Compiler.Service</PackageId>
+    <PackageId>Transpose.Compiler.Library</PackageId>
     <Version>0.1.0</Version>
     <Authors>Curiosity GmbH</Authors>
     <Company>Curiosity GmbH</Company>

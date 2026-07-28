@@ -1,5 +1,5 @@
 variables:
-  project: '$(Build.SourcesDirectory)/Transpose/Transpose.Compiler.Service/Transpose.Compiler.Service.csproj'
+  project: '$(Build.SourcesDirectory)/Transpose/Transpose.Compiler.Library/Transpose.Compiler.Library.csproj'
   buildConfiguration: 'Release'
   targetVersion: yy.M.$(build.buildId)
 
@@ -12,10 +12,10 @@ trigger:
     - master
   paths:
     include:
-    - Transpose/Transpose.Compiler.Service/*
+    - Transpose/Transpose.Compiler.Library/*
     - Transpose/Transpose.Compiler.Core/*
     - Transpose/Transpose.Translator/*
-    - .devops/build-transpose-compiler-service.yml
+    - .devops/build-transpose-compiler-library.yml
 
 pr: none
 
@@ -71,6 +71,6 @@ steps:
   displayName: 'push nuget'
   inputs:
     command: 'push'
-    packagesToPush: '**/Transpose.Compiler.Service.$(targetVersion).nupkg'
+    packagesToPush: '**/Transpose.Compiler.Library.$(targetVersion).nupkg'
     nuGetFeedType: 'external'
     publishFeedCredentials: 'nuget-curiosity-org'

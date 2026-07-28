@@ -1,12 +1,12 @@
 using Microsoft.CodeAnalysis.CSharp;
 
-namespace Transpose.Compiler.Service;
+namespace Transpose.Compiler.Library;
 
 /// <summary>
 /// A compile-to-JavaScript request built up in memory: source files plus the reference assemblies
 /// and settings they need, with no <c>.csproj</c> or on-disk project involved. Build one with the
-/// fluent <c>With…</c> methods and hand it to <see cref="TransposeCompilerService.Compile"/> (or
-/// <see cref="TransposeCompilerService.CompileAsync"/>).
+/// fluent <c>With…</c> methods and hand it to <see cref="TransposeCompilerLibrary.Compile"/> (or
+/// <see cref="TransposeCompilerLibrary.CompileAsync"/>).
 ///
 /// <c>Transpose.dll</c> (the base library) is referenced automatically — every Transpose
 /// compilation binds against it, exactly like a normal <c>tps</c> project (see

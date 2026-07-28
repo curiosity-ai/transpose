@@ -29,7 +29,7 @@
          WatchModeTests, which spawns a real tps watch-mode process. -->
     <ProjectReference Include="..\Transpose.Compiler\Transpose.Compiler.csproj" />
     <!-- ProjectResolver/TransposeJson/OutputBuilder/BuildCache/ResourceEmbedder/JsMinifier/… now live
-         here (see Transpose.Compiler.Core), shared with Transpose.Compiler.Service. -->
+         here (see Transpose.Compiler.Core), shared with Transpose.Compiler.Library. -->
     <ProjectReference Include="..\Transpose.Compiler.Core\Transpose.Compiler.Core.csproj" />
   </ItemGroup>
 

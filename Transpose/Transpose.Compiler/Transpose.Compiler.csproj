@@ -112,7 +112,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Transpose.Translator\Transpose.Translator.csproj" />
     <!-- Project/package resolution, tps.json, site/package assembly (OutputBuilder, ResourceEmbedder,
-         BuildCache, JsMinifier, …) — shared with Transpose.Compiler.Service. -->
+         BuildCache, JsMinifier, …) — shared with Transpose.Compiler.Library. -->
     <ProjectReference Include="..\Transpose.Compiler.Core\Transpose.Compiler.Core.csproj" />
   </ItemGroup>
 

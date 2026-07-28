@@ -38,7 +38,7 @@ Transpose/                     # The compiler toolchain
 ├── Transpose.Compiler/        # The CLI compiler.  AssemblyName + tool command: `tps`
 │   ├── Program.cs             #   arg parsing, orchestration, output modes
 │   └── WatchMode.cs           #   `tps --watch`: rebuild on change, serve over Kestrel + live reload
-├── Transpose.Compiler.Core/   # Shared engine behind the CLI and Transpose.Compiler.Service — not itself
+├── Transpose.Compiler.Core/   # Shared engine behind the CLI and Transpose.Compiler.Library — not itself
 │   │                          #   packaged, like Transpose.Translator above. Namespace Transpose.Compiler.
 │   ├── ProjectResolver.cs     #   reads the .csproj (raw XML), globs sources, resolves references
 │   ├── ProjectXml.cs          #   csproj + <Import> flattening (shared projects' .projitems)
@@ -49,10 +49,10 @@ Transpose/                     # The compiler toolchain
 │   ├── JsMinifier.cs          #   NUglify-based bundle minification
 │   ├── TransposeJson.cs       #   reads tps.json (output/fileName/html/resources/reflection)
 │   └── MsBuildDiagnostic.cs   #   canonical MSBuild diagnostic formatting (Origin : Category Code : Text)
-├── Transpose.Compiler.Service/# Compiler-as-a-library. Package id + AssemblyName Transpose.Compiler.Service
+├── Transpose.Compiler.Library/# Compiler-as-a-library. Package id + AssemblyName Transpose.Compiler.Library
 │   ├── CompilationRequest.cs  #   fluent request: in-memory sources, package/reference assemblies, settings
 │   ├── CompilationResult.cs   #   JS/assembly bytes + diagnostics on success, formatted errors on failure
-│   └── TransposeCompilerService.cs # Compile/CompileAsync — serialized (CompileProgress/PhaseTimings are
+│   └── TransposeCompilerLibrary.cs # Compile/CompileAsync — serialized (CompileProgress/PhaseTimings are
 │                              #   process-wide mutable state, so concurrent compiles are queued, not parallel)
 ├── Transpose.Bench/           # Benchmark harness. AssemblyName + tool command: `tps-bench`
 │   ├── MachineInfo.cs         #   CPU model / cores / RAM / SIMD-ISA detection
@@ -158,7 +158,7 @@ dotnet build Transpose.slnx
 ```
 
 This builds `Transpose.Translator`, `Transpose.Compiler.Core`, the `tps` compiler, the
-`Transpose.Compiler.Service` library, the tests, and the template.
+`Transpose.Compiler.Library` library, the tests, and the template.
 
 The `Transpose.Build.Target` SDK is listed in the solution so its targets are editable from the IDE,
 but it is marked `<Build Project="false" />` and is **never built** as part of a solution build: it

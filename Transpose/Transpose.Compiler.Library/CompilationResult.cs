@@ -1,6 +1,6 @@
 using Microsoft.CodeAnalysis;
 
-namespace Transpose.Compiler.Service;
+namespace Transpose.Compiler.Library;
 
 /// <summary>
 /// The outcome of a <see cref="CompilationRequest"/>: on success, the translated JavaScript (and

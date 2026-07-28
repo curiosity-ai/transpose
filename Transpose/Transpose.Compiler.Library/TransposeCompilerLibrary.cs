@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace Transpose.Compiler.Service;
+namespace Transpose.Compiler.Library;
 
 /// <summary>
 /// Compiles C# source held in memory to JavaScript, in process — the library form of the <c>tps</c>
@@ -9,7 +9,7 @@ namespace Transpose.Compiler.Service;
 /// <see cref="Compile"/> or <see cref="CompileAsync"/>.
 ///
 /// <code>
-/// var result = TransposeCompilerService.Compile(
+/// var result = TransposeCompilerLibrary.Compile(
 ///     new CompilationRequest("App")
 ///         .WithSourceFile("Program.cs", "System.Console.WriteLine(\"Hello!\");"));
 ///
@@ -25,7 +25,7 @@ namespace Transpose.Compiler.Service;
 /// them instead. A single compilation is still fully synchronous/CPU-bound — concurrent *callers*
 /// just queue behind whichever one runs first.
 /// </summary>
-public static class TransposeCompilerService
+public static class TransposeCompilerLibrary
 {
     private static readonly object Gate = new();
 

@@ -49,7 +49,7 @@ internal static class ResourceEmbedder
     /// <summary>
     /// Same as <see cref="Embed(string, byte[], IReadOnlyList{EmbeddedItem}, IEnumerable{string}?)"/>,
     /// but writes the resulting assembly to <paramref name="output"/> instead of a file on disk — used
-    /// by <c>Transpose.Compiler.Service</c>, which compiles fully in memory and hands the caller the
+    /// by <c>Transpose.Compiler.Library</c>, which compiles fully in memory and hands the caller the
     /// package assembly's bytes rather than writing them anywhere. <paramref name="contextDirectory"/>
     /// stands in for the assembly-file directory the file-based overload adds to the resolver's search
     /// path (a copy-local referenced assembly can sit there); pass null when there is no such directory.

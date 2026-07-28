@@ -573,7 +573,7 @@ internal static class ProjectResolver
     /// <summary>
     /// Resolves a single package (and its transitive dependencies) from the NuGet global-packages
     /// cache, exactly as one <c>&lt;PackageReference&gt;</c> in a csproj would — for a caller that has
-    /// a package id and version but no project file (<c>Transpose.Compiler.Service</c>'s
+    /// a package id and version but no project file (<c>Transpose.Compiler.Library</c>'s
     /// <c>CompilationRequest.WithPackageReference</c>).
     /// </summary>
     public static IEnumerable<(string name, string path, string version)> ResolvePackage(string packageId, string version)
