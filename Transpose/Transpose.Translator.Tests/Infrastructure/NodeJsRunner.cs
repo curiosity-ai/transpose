@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 using System.Threading.Tasks;
 
 namespace Transpose.Translator.Tests;
@@ -13,6 +14,16 @@ namespace Transpose.Translator.Tests;
 /// </summary>
 public static class NodeJsRunner
 {
+    /// <summary>
+    /// Node always writes UTF-8 to its stdout, but <see cref="Process"/> decodes a redirected stream
+    /// with <see cref="Console.OutputEncoding"/> unless told otherwise — which on Windows is the
+    /// console's OEM code page, not UTF-8. Left unset, every non-ASCII character a test prints came back
+    /// mojibake on a Windows agent while passing on Linux (where that encoding is already UTF-8): the
+    /// JSON suite's StringsAreEscaped read "é 中" as "├⌐ Σ╕¡", the exact CP437 reading of those UTF-8
+    /// bytes. Pin the decoding to what Node actually emits, on every platform.
+    /// </summary>
+    private static readonly Encoding NodeOutputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+
     public static async Task<string> RunAsync(string jsCode)
     {
         var tempFile = Path.Combine(Path.GetTempPath(), "tps_" + Guid.NewGuid().ToString("N") + ".js");
@@ -26,6 +37,8 @@ public static class NodeJsRunner
                 Arguments = "\"" + tempFile + "\"",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
+                StandardOutputEncoding = NodeOutputEncoding,
+                StandardErrorEncoding = NodeOutputEncoding,
                 UseShellExecute = false,
                 CreateNoWindow = true,
             };
