@@ -19,11 +19,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="MSTest" Version="4.3.2" />
+    <PackageReference Include="MSTest" Version="4.3.3" />
     <!-- Drives a real browser against tps's watch-mode served site. Pinned to match the Chromium
          revision already installed in dev/CI images, so the suite never needs its own browser
          download. -->
-    <PackageReference Include="Microsoft.Playwright" Version="1.56.0" />
+    <PackageReference Include="Microsoft.Playwright" Version="1.61.0" />
   </ItemGroup>
 
   <ItemGroup>

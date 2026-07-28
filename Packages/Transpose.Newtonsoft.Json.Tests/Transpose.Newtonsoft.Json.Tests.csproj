@@ -12,7 +12,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.6.0" />
-    <PackageReference Include="MSTest" Version="4.3.2" />
+    <PackageReference Include="MSTest" Version="4.3.3" />
     <!-- The oracle: the real Json.NET. A test snippet is compiled and run natively against this
          package and as translated JavaScript against the binding library, then the two console
          outputs are diffed. It is never referenced by the translated code. -->
@@ -32,8 +32,7 @@
 
   <ItemGroup>
     <!-- Shared with the translator test suite so both resolve Node the same way. -->
-    <Compile Include="..\..\Transpose\Transpose.Translator.Tests\Infrastructure\NodeJsRunner.cs"
-             Link="Infrastructure\NodeJsRunner.cs" />
+    <Compile Include="..\..\Transpose\Transpose.Translator.Tests\Infrastructure\NodeJsRunner.cs" Link="Infrastructure\NodeJsRunner.cs" />
   </ItemGroup>
 
 </Project>
