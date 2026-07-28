@@ -38,6 +38,15 @@ internal static class Diagnostics
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true);
 
+    public static readonly DiagnosticDescriptor DuplicateJsName = new(
+        id: "TransposeR0003",
+        title: "Duplicate JavaScript member name",
+        messageFormat: "Two members of '{1}' are emitted as '{0}', which JavaScript cannot represent - "
+                     + "only the last would exist at runtime. Give one of them a different [Name], or remove the overload: {2}",
+        category: "Transpose.Translator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
     public static Diagnostic Create(DiagnosticDescriptor descriptor, Location? location, params object[] args) =>
         Diagnostic.Create(descriptor, location ?? Location.None, args);
 }

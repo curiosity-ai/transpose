@@ -32,11 +32,20 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
     /// down to a single set lookup for the overwhelming majority of files.</summary>
     private HashSet<string>? _aliasedNames;
 
-    private UnsupportedFeatureScanner(SemanticModel model, List<Diagnostic> diagnostics, HashSet<string> deniedSimpleNames)
+    /// <summary>The type symbols whose emitted member names have already been checked for collisions,
+    /// shared across the parallel walk. A partial type is declared in more than one file (and more
+    /// than once per file for nested partials), but <c>GetMembers()</c> already returns the union, so
+    /// it needs checking exactly once. Guarded by itself — contention is negligible, since it is
+    /// touched once per type declaration rather than per node.</summary>
+    private readonly HashSet<INamedTypeSymbol> _typesChecked;
+
+    private UnsupportedFeatureScanner(SemanticModel model, List<Diagnostic> diagnostics, HashSet<string> deniedSimpleNames,
+        HashSet<INamedTypeSymbol> typesChecked)
     {
         _model = model;
         _diagnostics = diagnostics;
         _deniedSimpleNames = deniedSimpleNames;
+        _typesChecked = typesChecked;
     }
 
     /// <summary>
@@ -63,6 +72,8 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
         if (incremental is not null) incremental.FinalDeniedSimpleNames = deniedSimpleNames;
         models ??= new TreeModel(compilation);
 
+        var typesChecked = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
+
         var allDiagnostics = new List<List<Diagnostic>>();
         // Measured separately from the enclosing phase, because the two are wildly different things and
         // the difference is the most useful number in an incremental build's timing table: this walk is
@@ -76,7 +87,7 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
             var diagnostics = new List<Diagnostic>();
 
             var model = models.SemanticModelFor(tree);
-            var scanner = new UnsupportedFeatureScanner(model, diagnostics, deniedSimpleNames);
+            var scanner = new UnsupportedFeatureScanner(model, diagnostics, deniedSimpleNames, typesChecked);
             scanner.Visit(tree.GetRoot());
 
             if (diagnostics.Count > 0)
@@ -297,7 +308,38 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
     public override void VisitClassDeclaration(ClassDeclarationSyntax node)
     {
         CheckUnsafeModifier(node.Modifiers, node);
+        CheckDuplicateJsNames(node);
         base.VisitClassDeclaration(node);
+    }
+
+    public override void VisitRecordDeclaration(RecordDeclarationSyntax node)
+    {
+        CheckDuplicateJsNames(node);
+        base.VisitRecordDeclaration(node);
+    }
+
+    public override void VisitInterfaceDeclaration(InterfaceDeclarationSyntax node)
+    {
+        // Reached for a default interface implementation, which has a body and so is emitted.
+        CheckDuplicateJsNames(node);
+        base.VisitInterfaceDeclaration(node);
+    }
+
+    /// <summary>
+    /// Reports members of this type that would be emitted under the same JavaScript name. Runs off the
+    /// walk the scanner is already doing, reusing its semantic model, so it costs one
+    /// <c>GetDeclaredSymbol</c> per type declaration rather than a second pass over the trees.
+    /// </summary>
+    private void CheckDuplicateJsNames(TypeDeclarationSyntax node)
+    {
+        if (_model.GetDeclaredSymbol(node) is not INamedTypeSymbol type) return;
+
+        lock (_typesChecked)
+        {
+            if (!_typesChecked.Add(type)) return;
+        }
+
+        DuplicateJsNameScanner.Report(type, _diagnostics);
     }
 
     public override void VisitFieldDeclaration(FieldDeclarationSyntax node)
@@ -471,6 +513,7 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
         {
             Report(node, "Inline arrays are not supported in the browser environment.");
         }
+        CheckDuplicateJsNames(node);
         base.VisitStructDeclaration(node);
     }
 
