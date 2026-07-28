@@ -490,7 +490,9 @@ public sealed partial class Emitter
 
     // ---- methods -----------------------------------------------------------
 
-    private bool IsEmittableMethod(IMethodSymbol m)
+    // Static so DuplicateJsNameScanner can ask the same question the emitter does — the scanner must
+    // flag exactly the members that end up as keys of one object literal, no more.
+    internal static bool IsEmittableMethod(IMethodSymbol m)
         => m.MethodKind is MethodKind.Ordinary or MethodKind.UserDefinedOperator or MethodKind.Conversion
                or MethodKind.ExplicitInterfaceImplementation
            && !m.IsAbstract
