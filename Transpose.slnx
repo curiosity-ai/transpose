@@ -14,6 +14,9 @@
     <Project Path="Transpose/Transpose.Template/Transpose.Template.csproj" />
     <Project Path="Transpose/Transpose.Translator/Transpose.Translator.csproj" />
     <Project Path="Transpose/Transpose.Translator.Tests/Transpose.Translator.Tests.csproj" />
+    <!-- The browser-driven watch-mode suite, kept out of Transpose.Translator.Tests so its
+         wall-clock waits do not compete with that suite's Roslyn compiles (see its csproj). -->
+    <Project Path="Transpose/Transpose.WatchMode.Tests/Transpose.WatchMode.Tests.csproj" />
   </Folder>
   <Folder Name="/BCL/">
     <Project Path="BCL/Transpose.BCL/Transpose.BCL.csproj" />

@@ -1,6 +1,10 @@
 variables:
   compiler: '$(Build.SourcesDirectory)/Transpose/Transpose.Compiler/Transpose.Compiler.csproj'
   bench: '$(Build.SourcesDirectory)/Transpose/Transpose.Bench/Transpose.Bench.csproj'
+  translatorTests: '$(Build.SourcesDirectory)/Transpose/Transpose.Translator.Tests/Transpose.Translator.Tests.csproj'
+  watchModeTests: '$(Build.SourcesDirectory)/Transpose/Transpose.WatchMode.Tests/Transpose.WatchMode.Tests.csproj'
+  bcl: '$(Build.SourcesDirectory)/BCL/Transpose.BCL/Transpose.BCL.csproj'
+  bclRuntimeDll: '$(Build.SourcesDirectory)/BCL/Transpose.BCL/bin/Release/netstandard2.0/Transpose.dll'
   buildConfiguration: 'Release'
   targetVersion: yy.M.$(build.buildId)
 
@@ -34,6 +38,8 @@ trigger:
     - Transpose/Transpose.Compiler/*
     - Transpose/Transpose.Translator/*
     - Transpose/Transpose.Bench/*
+    - Transpose/Transpose.Translator.Tests/*
+    - Transpose/Transpose.WatchMode.Tests/*
     - .devops/build-transpose-compiler.yml
 
 pr: none
@@ -82,6 +88,67 @@ steps:
     projects: '$(compiler)'
     arguments: '-c $(buildConfiguration) /p:Version=$(targetVersion)'
 
+# --- tests ------------------------------------------------------------------------------------
+# Everything below runs before the pack/push, so a red test never reaches nuget.org.
+#
+# Two suites, both needing something the compiler build alone does not provide:
+#   * Transpose.Translator.Tests transpiles snippets and runs them on Node, diffing the output against
+#     the same C# executed natively — so it needs Node, and a Transpose.dll to compile against.
+#   * Transpose.WatchMode.Tests drives a real headless Chromium against a real `tps --watch` server —
+#     so it needs the Playwright browser installed.
+
+- task: NodeTool@0
+  displayName: 'Use Node 22 (the translator tests run emitted JS on it)'
+  inputs:
+    versionSpec: '22.x'
+
+# Every compilation gets Transpose.dll as its sole BCL reference, and nothing in this pipeline restores
+# the published Transpose.BCL package. Build it here with the compiler just built, and point the tests
+# at it via TRANSPOSE_DLL_PATH: that both makes them runnable and means they exercise *this commit's*
+# BCL and runtime rather than whatever was last released.
+- script: |
+    set -euo pipefail
+    dotnet "$(Build.SourcesDirectory)/Transpose/Transpose.Compiler/bin/$(buildConfiguration)/net10.0/tps.dll" \
+      --project "$(bcl)" --build-runtime -c $(buildConfiguration) -o "$(bclRuntimeDll)"
+    test -f "$(bclRuntimeDll)"
+    echo "##vso[task.setvariable variable=TRANSPOSE_DLL_PATH;]$(bclRuntimeDll)"
+  displayName: 'build the Transpose.dll runtime the tests compile against'
+
+- task: DotNetCoreCLI@2
+  displayName: 'test translator'
+  inputs:
+    command: 'test'
+    projects: '$(translatorTests)'
+    arguments: '-c $(buildConfiguration)'
+
+# Built as its own step so the Playwright install script below exists before the tests run; the test
+# step then uses --no-build.
+- task: DotNetCoreCLI@2
+  displayName: 'build watch-mode tests'
+  inputs:
+    command: 'build'
+    projects: '$(watchModeTests)'
+    arguments: '-c $(buildConfiguration)'
+
+# playwright.ps1 ships in the test project's build output (Microsoft.Playwright) and is the supported
+# way to install browsers for the .NET binding. `--with-deps` also pulls the shared libraries headless
+# Chromium needs on a Linux agent. Run through PowerShell@2/pwsh, as the CalVer step above already does.
+- task: PowerShell@2
+  displayName: 'install the Chromium the watch-mode tests drive'
+  inputs:
+    targetType: 'filePath'
+    pwsh: true
+    filePath: '$(Build.SourcesDirectory)/Transpose/Transpose.WatchMode.Tests/bin/$(buildConfiguration)/net10.0/playwright.ps1'
+    arguments: 'install chromium --with-deps'
+
+- task: DotNetCoreCLI@2
+  displayName: 'test watch mode'
+  inputs:
+    command: 'test'
+    projects: '$(watchModeTests)'
+    arguments: '-c $(buildConfiguration) --no-build'
+
+# --- pack and push ----------------------------------------------------------------------------
 # One pack produces the outer selector package plus one ReadyToRun package per RID (~15 MB each).
 - task: DotNetCoreCLI@2
   displayName: 'pack nuget compiler (ReadyToRun, per RID)'

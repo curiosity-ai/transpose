@@ -3,7 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using Microsoft.Playwright;
 
-namespace Transpose.Translator.Tests;
+namespace Transpose.WatchMode.Tests;
 
 /// <summary>
 /// End-to-end coverage of <c>tps --watch</c>: a real <c>tps</c> process compiles a small fixture (a
@@ -17,13 +17,12 @@ namespace Transpose.Translator.Tests;
 /// separate project it references (<c>ProjectReference</c>) — the "referenced projects being
 /// imported" half of watch mode that a root-only glob would miss.
 ///
-/// <c>DoNotParallelize</c>: MSTest runs test classes in parallel by default, and every other class
-/// in this suite is a CPU-heavy Roslyn compile/diff. A real browser waiting on a real subprocess's
-/// websocket message is latency-sensitive in a way those aren't — under that contention the rebuild
-/// itself is still fast, but the headless Chromium process can be too CPU-starved to receive and act
-/// on the reload message within the wait window, which reads as a hang with nothing actually wrong.
-/// Running this class alone removes that contention instead of just papering over it with a longer
-/// timeout.
+/// This lives in its own test project, not in <c>Transpose.Translator.Tests</c>, because it is the one
+/// suite that waits on wall-clock events (a rebuild, a websocket broadcast, a page reload) rather than
+/// computing an answer. Sharing a test host with several hundred CPU-heavy Roslyn compile/diff tests
+/// starved the headless Chromium often enough to time out a wait that takes ~2s on an idle box, which
+/// reads as a hang with nothing actually wrong. <c>DoNotParallelize</c> only orders the classes inside
+/// one host, so it did not remove that contention; a separate project does.
 /// </summary>
 [TestClass]
 [DoNotParallelize]
@@ -280,13 +279,39 @@ public sealed class WatchModeTests
         }
         catch (TimeoutException)
         {
-            var actual = await page.EvaluateAsync<string>("() => document.body.innerHTML");
             Assert.Fail($"Timed out waiting for the browser to auto-reload with '{expected}' ({because}). "
-                + $"Last body content: '{actual}'.\n--- tps --watch log ---\n{string.Join('\n', SnapshotLog())}");
+                + $"Last body content: '{await ReadBodyAsync(page) ?? "<unreadable: the page was navigating>"}'."
+                + $"\n--- tps --watch log ---\n{string.Join('\n', SnapshotLog())}");
         }
 
-        var text = await page.EvaluateAsync<string>("() => document.body.innerHTML");
-        Assert.IsTrue(text.Contains(expected), $"expected '{expected}' in body ({because}), got '{text}'");
+        // WaitForFunctionAsync already observed the content, so this re-read only exists to quote the
+        // body if it somehow does not match. An unreadable body means another reload was in flight —
+        // that is the behaviour under test, not a failure, so let the wait's success stand.
+        var text = await ReadBodyAsync(page);
+        Assert.IsTrue(text is null || text.Contains(expected),
+            $"expected '{expected}' in body ({because}), got '{text}'");
+    }
+
+    /// <summary>
+    /// The page's body HTML, or null if it could not be read because the page was navigating. Reading
+    /// it races with the live reload this test is about: an evaluate that a reload interrupts throws
+    /// "Execution context was destroyed", which — thrown from the timeout handler above — used to
+    /// replace the real diagnostic (the body plus the watch log) with an opaque Playwright error.
+    /// </summary>
+    private static async Task<string?> ReadBodyAsync(IPage page)
+    {
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            try
+            {
+                return await page.EvaluateAsync<string>("() => document.body.innerHTML");
+            }
+            catch (PlaywrightException)
+            {
+                await Task.Delay(250);
+            }
+        }
+        return null;
     }
 
     private Process StartWatch(string appCsproj, string siteDir, int port)
