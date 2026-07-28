@@ -91,8 +91,11 @@ Packages/                      # Additional binding libraries (all [assembly: Ex
 benchmarks/tesserae/           # git submodule: the benchmark corpus (see Performance below)
 docs/perf/                     # recorded tps-bench reports (baseline + current)
 .devops/                       # Azure DevOps pipelines (one per package, plus the benchmark).
-                               #   Two of them run tests before publishing: build-transpose-compiler
-                               #   (the translator + watch-mode suites) and build-transpose-json.
+                               #   Two of them carry test steps — build-transpose-compiler (the
+                               #   translator + watch-mode suites) and build-transpose-json — but both
+                               #   are commented out: the DevOps agents are too resource-limited to
+                               #   run them, so the suites are run by hand for now. Keep them that
+                               #   way (and keep the steps in place) unless that changes.
 
 docs/, logo/, lib/, External-less # docs, brand assets (see below), misc
 ```
