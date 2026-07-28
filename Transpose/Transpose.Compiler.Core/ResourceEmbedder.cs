@@ -13,6 +13,11 @@ internal sealed record EmbeddedItem(string Name, byte[] Content, string? Output,
 /// manifest resources, alongside an <c>Transpose.Resources.json</c> manifest listing them — exactly the
 /// shape the existing compiler produces and that <see cref="OutputBuilder"/> extracts when the
 /// assembly is referenced. This is the "produce a distributable package" half of the protocol.
+///
+/// Every assembly written here also carries a <see cref="BuildStamp"/> (<c>Transpose.Build.json</c>):
+/// the compiler that built it, and therefore the oldest compiler allowed to consume it. It is embedded
+/// but *not* listed in the resource manifest — it is compiler metadata rather than a web resource, so
+/// no consumer extracts it into a site.
 /// </summary>
 internal static class ResourceEmbedder
 {
@@ -88,6 +93,11 @@ internal static class ResourceEmbedder
         }).ToArray();
         var json = JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true });
         Replace(ManifestName, Utf8NoBom.GetBytes(json));
+
+        // The minimum-compiler-version stamp: embedded, but never part of the manifest above (see the
+        // type-level remarks). Replace rather than add, so re-embedding an assembly that already
+        // carries one restamps it instead of leaving two.
+        Replace(BuildStamp.ResourceName, BuildStamp.ForCurrentCompiler().ToJsonBytes());
 
         asm.Write(output);
     }

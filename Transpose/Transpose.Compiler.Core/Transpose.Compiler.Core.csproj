@@ -10,6 +10,15 @@
     <InvariantGlobalization>true</InvariantGlobalization>
     <InvariantTimezone>true</InvariantTimezone>
 
+    <!-- The compiler's own version, which CompilerVersion reads back at runtime to decide whether an
+         assembly built by a *newer* Transpose may be consumed (see BuildStamp). CI passes
+         /p:Version=yy.M.<buildId>, and MSBuild propagates that global property into this project too;
+         a build from a dev tree passes nothing and lands on the 0.0.0 placeholder below, which turns
+         the check off — there is no meaningful version to compare, and the compiler is being worked
+         on. The SDK's own default (1.0.0) is set later, in Microsoft.NET.DefaultAssemblyInfo.targets,
+         so this condition sees an empty value unless a version was passed in. -->
+    <Version Condition="'$(Version)' == ''">0.0.0</Version>
+
     <!-- Not published as its own NuGet package (like Transpose.Translator, which it sits alongside):
          it exists so the `tps` CLI (Transpose.Compiler) and the compiler-as-a-library package
          (Transpose.Compiler.Library) share one implementation of project/package resolution, tps.json

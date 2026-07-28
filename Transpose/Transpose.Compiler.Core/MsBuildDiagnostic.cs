@@ -55,6 +55,7 @@ internal static class MsBuildDiagnostic
     public const string CodeDependencyBuildFailed  = "TPS0005";
     public const string CodeAssemblyEmitFailed     = "TPS0006";
     public const string CodeWatchRequiresSiteBuild = "TPS0007";
+    public const string CodeCompilerTooOld         = "TPS0008";
     public const string CodeReferenceNotFound      = "TPS0100";
     public const string CodeMissingRuntimeBundle   = "TPS0101";
     public const string CodeTimingJsonNotWritten   = "TPS0102";

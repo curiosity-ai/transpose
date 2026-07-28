@@ -232,6 +232,14 @@ public static class Program
             || (string.Equals(tpscfg?.OutputBy, "ClassPath", StringComparison.OrdinalIgnoreCase) && !referencesTransposeBcl))
             return new BuildRunResult(BuildRuntime(project, configuration, sw, outPath, maxErrors), null, false);
 
+        // Refuse to compile against assemblies built by a newer Transpose than this one (see
+        // BuildStamp). Checked before anything is compiled — and before the incremental cache can
+        // declare the project up to date — so the answer never depends on how much of a previous
+        // build survives. The base library is checked too: it is injected by the translator rather
+        // than listed as a project reference, and it is the assembly most likely to be ahead of the
+        // compiler in a NuGet cache.
+        if (!CompilerIsNewEnough(project.ReferencePaths)) return new BuildRunResult(1, null, false);
+
         // Reflection settings come from the project's tps.json (target inline vs a .meta.js file).
         var (reflectionEnabled, metadataTarget) = ReflectionSettings(tpscfg);
 
@@ -392,6 +400,30 @@ public static class Program
         Console.WriteLine($"\nOK — wrote {js.Length:N0} bytes to {outPath} in {sw.ElapsedMilliseconds} ms.");
         PrintTimings(sw.ElapsedMilliseconds);
         return new BuildRunResult(0, null, false);
+    }
+
+    /// <summary>
+    /// Whether this compiler is new enough for everything the project binds against — every referenced
+    /// assembly plus the injected base library (<c>Transpose.dll</c>). Reports the diagnostic and
+    /// returns false when it is not; see <see cref="BuildStamp"/> for what is being compared and
+    /// <see cref="CompilerVersion.EnforceMinimum"/> for when the check applies at all (never in a dev
+    /// build of the compiler, which carries no version).
+    /// </summary>
+    private static bool CompilerIsNewEnough(IEnumerable<string> referencePaths)
+    {
+        if (!CompilerVersion.EnforceMinimum) return true;
+
+        var toCheck = new List<string>(referencePaths);
+        // Discovering the base library can itself fail (no NuGet cache, no TRANSPOSE_DLL_PATH); that is
+        // the translator's error to report, not this check's.
+        try { toCheck.Add(TransposeAssemblies.TransposeDllPath); } catch { }
+
+        var outdated = BuildStamp.CheckReferences(toCheck);
+        if (outdated is null) return true;
+
+        Console.Error.WriteLine();
+        Console.Error.WriteLine(MsBuildDiagnostic.Format(outdated));
+        return false;
     }
 
     /// <summary>
@@ -575,8 +607,15 @@ public static class Program
         // Roslyn (not a Mono.Cecil post-process) so the DLL stays a clean core library — Cecil's
         // writer injects an mscorlib reference, which stops Roslyn from treating the runtime as the
         // corlib when compiling user code against it (every type would fail with CS0518).
+        //
+        // The base library gets the same minimum-compiler-version stamp as every other assembly tps
+        // builds — it is the reference every Transpose project binds against, so it is the one whose
+        // "you need a newer tps" is most worth saying. Appended here rather than to `bundles`: the
+        // bundles are also written to disk next to the DLL for reuse, and this belongs only inside it.
+        var embedded = bundles.Append((BuildStamp.ResourceName, BuildStamp.ForCurrentCompiler().ToJsonBytes())).ToList();
+
         byte[] assemblyBytes;
-        try { assemblyBytes = result.EmitAssembly!(bundles); }
+        try { assemblyBytes = result.EmitAssembly!(embedded); }
         catch (Exception ex)
         {
             MsBuildDiagnostic.WriteError(MsBuildDiagnostic.CodeAssemblyEmitFailed,
@@ -733,6 +772,9 @@ public static class Program
                 $"Failed to resolve project '{Path.GetFileName(csproj)}': {ex.Message}");
             return false;
         }
+
+        // A dependency can reference a package the root project does not, so it gets its own check.
+        if (!CompilerIsNewEnough(project.ReferencePaths)) return false;
 
         var tpscfg = TransposeJson.TryLoad(project.ProjectDir, configuration);
         var (reflectionEnabled, metadataTarget) = ReflectionSettings(tpscfg);
