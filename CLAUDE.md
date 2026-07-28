@@ -138,6 +138,38 @@ JS runtime `tps.js`. Generated code runs against that runtime.
 `TransposeAssemblies` also reads `tps.js` (embedded resource) for the output prelude, and computes
 the set of body-less (`extern`) methods so overload numbering matches the hand-written runtime.
 
+### The minimum compiler version (`Transpose.Build.json`)
+
+Every assembly `tps` produces — a package DLL, a site build's DLL, and `Transpose.dll` itself — carries
+a small embedded JSON stamp (`BuildStamp`, resource name `Transpose.Build.json`) recording the compiler
+that built it and, as `minimumCompilerVersion`, the oldest compiler allowed to consume it:
+
+```json
+{ "compilerVersion": "26.7.1234", "minimumCompilerVersion": "26.7.1234" }
+```
+
+The minimum is simply the version that built the assembly — nothing declares it by hand. A Transpose
+package's real payload is the JavaScript inside it, and how a consumer's own emitted JS binds to that
+payload (names, overload numbering, the `TransposeR` helpers it calls) is decided by the *consuming*
+compiler, so an older `tps` fed a newer package produces a subtly wrong bundle rather than an error.
+Before compiling, `tps` therefore reads the stamp of **every** assembly the project binds against —
+every reference plus the injected `Transpose.dll` — and fails with `TPS0008` if any of them needs a
+newer compiler, naming the version required and the `dotnet tool install --global Transpose.Compiler`
+command that installs it. The check runs before the incremental cache is consulted, so an up-to-date
+build cannot skip it.
+
+Two properties keep this out of the way of working *on* Transpose:
+
+- **It is only enforced by a versioned Release build of the compiler.** Versions are stamped by CI
+  (`/p:Version=yy.M.<buildId>`, propagated into `Transpose.Compiler.Core`, which is where
+  `CompilerVersion` reads it back); a dev tree has none and pins `0.0.0` instead, which turns the check
+  off. A Debug-built compiler — `bootstrap.sh`, the test suite — never enforces it either.
+- **An unstamped assembly is skipped**, so packages published before this existed keep working, and
+  assemblies built in a dev tree carry the `0.0.0` placeholder, which can never fail a check.
+
+The stamp is embedded but deliberately *not* listed in `Transpose.Resources.json` — it is compiler
+metadata, not a web resource, so `OutputBuilder` never extracts it into a site.
+
 ## Code-generation attributes (namespace `Transpose`)
 
 - `[External]` — type/member is defined in external JS (no body emitted). Can be applied at the

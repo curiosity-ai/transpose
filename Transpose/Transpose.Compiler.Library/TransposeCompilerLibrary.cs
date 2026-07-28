@@ -52,6 +52,12 @@ public static class TransposeCompilerLibrary
 
     private static CompilationResult CompileCore(CompilationRequest request)
     {
+        // The same gate the `tps` CLI applies: a reference built by a newer Transpose than this one
+        // cannot be consumed correctly, so it is an error rather than a subtly wrong bundle. Off unless
+        // this is a version-stamped Release build — see Transpose.Compiler.CompilerVersion.
+        if (BuildStamp.CheckReferences(request.ReferencePaths) is { } outdated)
+            return CompilationResult.Failed(new[] { outdated });
+
         var translator = new RoslynTranslator();
         var result = translator.BuildAssembly(
             request.Sources,
