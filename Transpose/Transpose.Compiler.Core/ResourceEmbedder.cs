@@ -42,10 +42,25 @@ internal static class ResourceEmbedder
     /// </summary>
     public static void Embed(string assemblyPath, byte[] assemblyBytes, IReadOnlyList<EmbeddedItem> items, IEnumerable<string>? referencePaths = null)
     {
+        using var output = File.Create(assemblyPath);
+        Embed(output, assemblyBytes, items, referencePaths, contextDirectory: Path.GetDirectoryName(Path.GetFullPath(assemblyPath)));
+    }
+
+    /// <summary>
+    /// Same as <see cref="Embed(string, byte[], IReadOnlyList{EmbeddedItem}, IEnumerable{string}?)"/>,
+    /// but writes the resulting assembly to <paramref name="output"/> instead of a file on disk — used
+    /// by <c>Transpose.Compiler.Library</c>, which compiles fully in memory and hands the caller the
+    /// package assembly's bytes rather than writing them anywhere. <paramref name="contextDirectory"/>
+    /// stands in for the assembly-file directory the file-based overload adds to the resolver's search
+    /// path (a copy-local referenced assembly can sit there); pass null when there is no such directory.
+    /// </summary>
+    public static void Embed(Stream output, byte[] assemblyBytes, IReadOnlyList<EmbeddedItem> items,
+        IEnumerable<string>? referencePaths = null, string? contextDirectory = null)
+    {
         // Cecil resolves referenced assemblies when it re-serializes metadata on Write() — e.g. to
         // determine the underlying type of a parameter's default value whose type is a referenced
         // enum. It must resolve to the very files the compilation bound to, hence the resolver below.
-        using var resolver = new ReferencePathResolver(assemblyPath, referencePaths);
+        using var resolver = new ReferencePathResolver(contextDirectory, referencePaths);
 
         using var source = new MemoryStream(assemblyBytes, writable: false);
         using var asm = AssemblyDefinition.ReadAssembly(source, new ReaderParameters { AssemblyResolver = resolver });
@@ -74,7 +89,7 @@ internal static class ResourceEmbedder
         var json = JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true });
         Replace(ManifestName, Utf8NoBom.GetBytes(json));
 
-        asm.Write(assemblyPath);
+        asm.Write(output);
     }
 
     /// <summary>
@@ -100,10 +115,10 @@ internal static class ResourceEmbedder
         private readonly Dictionary<string, AssemblyDefinition>  _opened  = new(StringComparer.OrdinalIgnoreCase);
         private readonly DefaultAssemblyResolver                 _byDirectory = new();
 
-        public ReferencePathResolver(string assemblyPath, IEnumerable<string>? referencePaths)
+        public ReferencePathResolver(string? contextDirectory, IEnumerable<string>? referencePaths)
         {
             _byName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            _byDirectory.AddSearchDirectory(Path.GetDirectoryName(Path.GetFullPath(assemblyPath))!);
+            if (contextDirectory is not null) _byDirectory.AddSearchDirectory(contextDirectory);
 
             foreach (var reference in referencePaths ?? Enumerable.Empty<string>())
             {

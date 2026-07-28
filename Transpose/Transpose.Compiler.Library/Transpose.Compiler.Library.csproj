@@ -1,0 +1,60 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Transpose.Compiler.Library</RootNamespace>
+    <AssemblyName>Transpose.Compiler.Library</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <InvariantTimezone>true</InvariantTimezone>
+
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <PackageId>Transpose.Compiler.Library</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>Curiosity GmbH</Authors>
+    <Company>Curiosity GmbH</Company>
+    <Description>Transpose C# to JavaScript compiler as a library: compile C# source held in memory to JavaScript from a .NET application, with no `tps` process or on-disk project required.</Description>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/curiosity-ai/transpose</PackageProjectUrl>
+    <PackageIcon>transpose.png</PackageIcon>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+
+    <!-- Transpose.Translator and Transpose.Compiler.Core are not themselves published as NuGet
+         packages (see their csproj files) — this package embeds their build output directly rather
+         than depending on them, via the CopyProjectReferencesToPackage target below. -->
+    <TargetsForTfmSpecificBuildOutput>$(TargetsForTfmSpecificBuildOutput);CopyProjectReferencesToPackage</TargetsForTfmSpecificBuildOutput>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\logo\transpose.png" Link="transpose.png" Pack="true" PackagePath="\" />
+    <None Include="..\..\README.md" Link="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Transpose.Translator" />
+    <!-- Transpose.Compiler.Core's internal engine (ResourceEmbedder, ProjectResolver, EmbeddedItem, …
+         — see its InternalsVisibleTo) lives in the same "Transpose.Compiler" namespace as the CLI. -->
+    <Using Include="Transpose.Compiler" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Transpose.Translator\Transpose.Translator.csproj" PrivateAssets="all" />
+    <ProjectReference Include="..\Transpose.Compiler.Core\Transpose.Compiler.Core.csproj" PrivateAssets="all" />
+    <!-- Restated directly (rather than relying purely on transitive flow through the two project
+         references above) so this package's own nuspec always declares them, regardless of how a
+         future refactor of Core/Translator's references shakes out. Versions match Transpose.Translator
+         and Transpose.Compiler.Core. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.6.0" />
+    <PackageReference Include="Mono.Cecil" Version="0.11.6" />
+    <PackageReference Include="NUglify" Version="1.21.15" />
+  </ItemGroup>
+
+  <Target Name="CopyProjectReferencesToPackage" DependsOnTargets="ResolveReferences">
+    <ItemGroup>
+      <BuildOutputInPackage Include="@(ReferenceCopyLocalPaths->WithMetadataValue('ReferenceSourceTarget', 'ProjectReference'))" />
+    </ItemGroup>
+  </Target>
+
+</Project>

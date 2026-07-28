@@ -9,6 +9,8 @@
       <Build Project="false" />
     </Project>
     <Project Path="Transpose/Transpose.Compiler/Transpose.Compiler.csproj" />
+    <Project Path="Transpose/Transpose.Compiler.Core/Transpose.Compiler.Core.csproj" />
+    <Project Path="Transpose/Transpose.Compiler.Library/Transpose.Compiler.Library.csproj" />
     <Project Path="Transpose/Transpose.Template/Transpose.Template.csproj" />
     <Project Path="Transpose/Transpose.Translator/Transpose.Translator.csproj" />
     <Project Path="Transpose/Transpose.Translator.Tests/Transpose.Translator.Tests.csproj" />

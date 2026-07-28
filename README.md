@@ -23,6 +23,7 @@ developers.
 | SDK Target | [![Nuget](https://img.shields.io/nuget/v/Transpose.Build.Target.svg?maxAge=0&colorB=brightgreen)](https://www.nuget.org/packages/Transpose.Build.Target/) |
 | Json Library | [![Nuget](https://img.shields.io/nuget/v/Transpose.Newtonsoft.Json.svg?maxAge=0&colorB=brightgreen)](https://www.nuget.org/packages/Transpose.Newtonsoft.Json/) |
 | Template | [![Nuget](https://img.shields.io/nuget/v/Transpose.Template.svg?maxAge=0&colorB=brightgreen)](https://www.nuget.org/packages/Transpose.Template/) |
+| Compiler as a Library | [![Nuget](https://img.shields.io/nuget/v/Transpose.Compiler.Library.svg?maxAge=0&colorB=brightgreen)](https://www.nuget.org/packages/Transpose.Compiler.Library/) |
 | UI Toolkit | [![Nuget](https://img.shields.io/nuget/v/tesserae.svg?maxAge=0&colorB=brightgreen)](https://www.nuget.org/packages/tesserae/)|
 
 > The base library's package id is **`Transpose.BCL`**, but its assembly is
@@ -80,6 +81,35 @@ Behavior is configured per project by a **`tps.json`** file (output path,
 When a project references another project, the site build consumes the
 referenced project's already-built package DLL (extracting its compiled JS)
 instead of recompiling its sources — so a dependency is compiled once and reused.
+
+### Compiling from your own .NET application
+
+`Transpose.Compiler.Library` lets a .NET application compile C# source held in
+memory to JavaScript in process, with no `tps` process, `.csproj`, or disk I/O
+involved:
+
+````xml
+<PackageReference Include="Transpose.Compiler.Library" Version="*" />
+````
+
+````csharp
+using Transpose.Compiler.Library;
+
+var result = TransposeCompilerLibrary.Compile(
+    new CompilationRequest("App")
+        .WithSourceFile("Program.cs", "System.Console.WriteLine(\"Hello!\");"));
+
+if (result.Success) Console.WriteLine(result.Javascript);
+else foreach (var error in result.Errors) Console.Error.WriteLine(error);
+````
+
+`CompilationRequest` also supports `.WithPackageReference(id, version)` (resolved
+from the local NuGet cache, exactly like a csproj `<PackageReference>`),
+`.WithReferenceAssembly(path)`, `.WithRuntime()` (prepend the `tps.js` runtime so
+the output is directly runnable), and `.AsPackageAssembly()` (also emit a .NET
+assembly with the JS embedded, like `tps --emit-package`). An async
+`CompileAsync` is available too; concurrent calls in one process are queued and
+run one at a time (see the type's XML docs for why).
 
 ## Samples
 

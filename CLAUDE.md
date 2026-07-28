@@ -37,10 +37,23 @@ Transpose/                     # The compiler toolchain
 │   └── Runtime/tps.shim.js    #   embedded TransposeR shim (language helpers over the tps.js runtime)
 ├── Transpose.Compiler/        # The CLI compiler.  AssemblyName + tool command: `tps`
 │   ├── Program.cs             #   arg parsing, orchestration, output modes
+│   └── WatchMode.cs           #   `tps --watch`: rebuild on change, serve over Kestrel + live reload
+├── Transpose.Compiler.Core/   # Shared engine behind the CLI and Transpose.Compiler.Library — not itself
+│   │                          #   packaged, like Transpose.Translator above. Namespace Transpose.Compiler.
 │   ├── ProjectResolver.cs     #   reads the .csproj (raw XML), globs sources, resolves references
+│   ├── ProjectXml.cs          #   csproj + <Import> flattening (shared projects' .projitems)
 │   ├── OutputBuilder.cs       #   site build (runtime + bundle + resources + index.html) + stale-output prune
 │   ├── ResourceEmbedder.cs    #   embeds JS + resources into the package DLL (Mono.Cecil)
-│   └── TransposeJson.cs       #   reads tps.json (output/fileName/html/resources/reflection)
+│   ├── RuntimeAssembler.cs    #   stitches Resources/*.js + generated ClassPath files into tps.js
+│   ├── BuildCache.cs          #   the --incremental on-disk cache
+│   ├── JsMinifier.cs          #   NUglify-based bundle minification
+│   ├── TransposeJson.cs       #   reads tps.json (output/fileName/html/resources/reflection)
+│   └── MsBuildDiagnostic.cs   #   canonical MSBuild diagnostic formatting (Origin : Category Code : Text)
+├── Transpose.Compiler.Library/# Compiler-as-a-library. Package id + AssemblyName Transpose.Compiler.Library
+│   ├── CompilationRequest.cs  #   fluent request: in-memory sources, package/reference assemblies, settings
+│   ├── CompilationResult.cs   #   JS/assembly bytes + diagnostics on success, formatted errors on failure
+│   └── TransposeCompilerLibrary.cs # Compile/CompileAsync — serialized (CompileProgress/PhaseTimings are
+│                              #   process-wide mutable state, so concurrent compiles are queued, not parallel)
 ├── Transpose.Bench/           # Benchmark harness. AssemblyName + tool command: `tps-bench`
 │   ├── MachineInfo.cs         #   CPU model / cores / RAM / SIMD-ISA detection
 │   ├── CpuScore.cs            #   short deterministic CPU+memory benchmark -> normalisation score
@@ -144,7 +157,8 @@ the set of body-less (`extern`) methods so overload numbering matches the hand-w
 dotnet build Transpose.slnx
 ```
 
-This builds `Transpose.Translator`, the `tps` compiler, the tests, and the template.
+This builds `Transpose.Translator`, `Transpose.Compiler.Core`, the `tps` compiler, the
+`Transpose.Compiler.Library` library, the tests, and the template.
 
 The `Transpose.Build.Target` SDK is listed in the solution so its targets are editable from the IDE,
 but it is marked `<Build Project="false" />` and is **never built** as part of a solution build: it

@@ -25,7 +25,12 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Transpose.Translator\Transpose.Translator.csproj" />
+    <!-- tps.dll (AssemblyName of Transpose.Compiler) is copied next to the test binary for
+         WatchModeTests, which spawns a real tps watch-mode process. -->
     <ProjectReference Include="..\Transpose.Compiler\Transpose.Compiler.csproj" />
+    <!-- ProjectResolver/TransposeJson/OutputBuilder/BuildCache/ResourceEmbedder/JsMinifier/… now live
+         here (see Transpose.Compiler.Core), shared with Transpose.Compiler.Library. -->
+    <ProjectReference Include="..\Transpose.Compiler.Core\Transpose.Compiler.Core.csproj" />
   </ItemGroup>
 
 </Project>
