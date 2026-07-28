@@ -81,7 +81,24 @@ internal static class WatchMode
             {
                 Console.WriteLine("\ntps: change detected, rebuilding...");
                 var nextVersion = Interlocked.Increment(ref version);
-                var result = build(LiveReloadScript(port, nextVersion));
+                BuildRunResult result;
+                try
+                {
+                    result = build(LiveReloadScript(port, nextVersion));
+                }
+                catch (Exception ex)
+                {
+                    // build() (RunOnce) already turns a compile failure into a clean exit code without
+                    // ever reaching OutputBuilder, so the site on disk is untouched for that, the common,
+                    // case. This catch is for the uncommon one — a genuine exception from the write phase
+                    // itself (a locked file, a full disk, a directory raced out from under it) — which
+                    // would otherwise be unhandled on this Timer callback's thread pool thread and take
+                    // the whole watch server down with it. Treat it exactly like a failed build: report,
+                    // keep whatever the previous successful build left on disk, and keep watching.
+                    MsBuildDiagnostic.WriteError(MsBuildDiagnostic.CodeInternalError, $"rebuild crashed: {ex.Message}");
+                    Console.Error.WriteLine(ex.StackTrace);
+                    result = new BuildRunResult(2, null, false);
+                }
                 if (result.ExitCode == 0)
                 {
                     Console.WriteLine("tps: rebuilt — reloading browser");
