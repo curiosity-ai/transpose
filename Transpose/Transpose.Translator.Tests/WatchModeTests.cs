@@ -16,8 +16,17 @@ namespace Transpose.Translator.Tests;
 /// Both watched inputs are exercised: editing the root project's own source, and editing the
 /// separate project it references (<c>ProjectReference</c>) — the "referenced projects being
 /// imported" half of watch mode that a root-only glob would miss.
+///
+/// <c>DoNotParallelize</c>: MSTest runs test classes in parallel by default, and every other class
+/// in this suite is a CPU-heavy Roslyn compile/diff. A real browser waiting on a real subprocess's
+/// websocket message is latency-sensitive in a way those aren't — under that contention the rebuild
+/// itself is still fast, but the headless Chromium process can be too CPU-starved to receive and act
+/// on the reload message within the wait window, which reads as a hang with nothing actually wrong.
+/// Running this class alone removes that contention instead of just papering over it with a longer
+/// timeout.
 /// </summary>
 [TestClass]
+[DoNotParallelize]
 public sealed class WatchModeTests
 {
     private static string RepoRoot = "";
@@ -95,7 +104,7 @@ public sealed class WatchModeTests
     }
 
     [TestMethod]
-    [Timeout(120_000)]
+    [Timeout(300_000)]
     public async Task EditingRootOrReferencedProjectAutoReloadsTheBrowser()
     {
         // Lib: the referenced project. App: the root site project (ProjectReference to Lib, a
@@ -177,6 +186,83 @@ public sealed class WatchModeTests
         }
     }
 
+    [TestMethod]
+    [Timeout(60_000)]
+    public async Task RebuildExceptionDoesNotCorruptOutputOrCrashTheWatchProcess()
+    {
+        Write("App/App.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <TargetFramework>netstandard2.0</TargetFramework>
+                <AssemblyName>App</AssemblyName>
+              </PropertyGroup>
+            </Project>
+            """);
+        Write("App/tps.json", """{ "fileName": "app.js" }""");
+        var programPath = Write("App/Program.cs", """
+            using Transpose;
+
+            public class Program
+            {
+                [Script("document.body.innerHTML = html;")]
+                public static extern void SetBody(string html);
+
+                public static void Main()
+                {
+                    SetBody("v1");
+                }
+            }
+            """);
+        var appCsproj = Path.Combine(_root, "App", "App.csproj");
+        var siteDir = Path.Combine(_root, "site");
+
+        var port = GetFreePort();
+        _watchProcess = StartWatch(appCsproj, siteDir, port);
+        await WaitForLogAsync(msg => msg.Contains("tps: serving http://localhost:"), TimeSpan.FromSeconds(60));
+
+        var appJsPath = Path.Combine(siteDir, "app.js");
+        Assert.IsTrue(File.Exists(appJsPath), "the initial build must have written app.js");
+
+        // Force an exception from the write phase itself (NOT a C# compile error): replace the site
+        // output directory with a plain file, so OutputBuilder.Build's Directory.CreateDirectory throws.
+        // This is exactly the scenario a full disk, a locked file, or a directory raced out from under
+        // the build would also produce — the site write phase can fail for reasons that have nothing to
+        // do with the C# compiling cleanly.
+        Directory.Delete(siteDir, recursive: true);
+        File.WriteAllText(siteDir, "not a directory");
+        try
+        {
+            File.WriteAllText(programPath, File.ReadAllText(programPath).Replace("v1", "SHOULD_NEVER_BE_WRITTEN"));
+            await WaitForLogAsync(msg => msg.Contains("rebuild crashed"), TimeSpan.FromSeconds(30));
+
+            Assert.IsFalse(_watchProcess.HasExited,
+                "an exception during the write phase must not crash the whole watch process.\n" + string.Join('\n', SnapshotLog()));
+
+            // The failed rebuild must not have touched the last successful build's output. Here that
+            // output no longer exists at all (we deleted the directory ourselves to force the
+            // exception), which is itself proof nothing was rewritten in its place — a real "erase the
+            // output" bug would show up as SOME file appearing at that path with the new content.
+            Assert.IsFalse(Directory.Exists(siteDir), "the corrupted path must be left exactly as this test put it, not silently fixed up or overwritten");
+            using (var stream = File.OpenRead(siteDir))
+                Assert.AreEqual("not a directory", new StreamReader(stream).ReadToEnd());
+        }
+        finally
+        {
+            File.Delete(siteDir);
+        }
+
+        // Recovery: once the output path is a real directory again, the very next edit must rebuild
+        // and write cleanly — the crash must not have left the watcher, debouncer, or server wedged.
+        Directory.CreateDirectory(siteDir);
+        File.WriteAllText(programPath, File.ReadAllText(programPath).Replace("SHOULD_NEVER_BE_WRITTEN", "v2"));
+        await WaitForLogAsync(msg => msg.Contains("tps: rebuilt"), TimeSpan.FromSeconds(30));
+
+        Assert.IsTrue(File.Exists(appJsPath), "the recovered build must have written app.js again");
+        var afterText = File.ReadAllText(appJsPath);
+        Assert.IsTrue(afterText.Contains("\"v2\""), $"expected the recovered build's app.js to contain v2, got:\n{afterText}");
+        Assert.IsFalse(afterText.Contains("SHOULD_NEVER_BE_WRITTEN"));
+    }
+
     /// <summary>Waits for the page's own auto-reload (never calls ReloadAsync) to bring the body's
     /// content in line with a rebuild — the reload is driven entirely by the websocket message
     /// WatchMode's ReloadHub broadcasts once the rebuild it triggered completes.</summary>
@@ -184,9 +270,13 @@ public sealed class WatchModeTests
     {
         try
         {
+            // Generous: on a loaded host (this sandbox's CPU/scheduling can drift significantly under
+            // contention from the rest of the suite's Roslyn-heavy tests) a rebuild that normally takes
+            // ~1-2s can occasionally take much longer, and this wait covers the whole round trip —
+            // debounce, recompile, rewrite the site, broadcast, and the browser actually reloading.
             await page.WaitForFunctionAsync(
                 "expected => document.body.innerHTML.includes(expected)", expected,
-                new PageWaitForFunctionOptions { Timeout = 30_000 });
+                new PageWaitForFunctionOptions { Timeout = 90_000 });
         }
         catch (TimeoutException)
         {
