@@ -567,6 +567,32 @@ internal static class ProjectResolver
                 declared[id!] = version!;
         }
 
+        return ResolveDeclaredPackages(declared, roots);
+    }
+
+    /// <summary>
+    /// Resolves a single package (and its transitive dependencies) from the NuGet global-packages
+    /// cache, exactly as one <c>&lt;PackageReference&gt;</c> in a csproj would — for a caller that has
+    /// a package id and version but no project file (<c>Transpose.Compiler.Service</c>'s
+    /// <c>CompilationRequest.WithPackageReference</c>).
+    /// </summary>
+    public static IEnumerable<(string name, string path, string version)> ResolvePackage(string packageId, string version)
+    {
+        var roots = NuGetRoots().Where(Directory.Exists).ToList();
+        var declared = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [packageId] = version };
+        return ResolveDeclaredPackages(declared, roots);
+    }
+
+    /// <summary>
+    /// The shared resolution core behind <see cref="ResolvePackageReferenceDlls"/> and
+    /// <see cref="ResolvePackage"/>: given the packages a caller declares directly (highest version
+    /// per id), walks their transitive nuspec dependencies and resolves every assembly they
+    /// contribute, applying NuGet's own precedence — a declared version always wins over one reached
+    /// transitively, and between two transitive candidates the higher version wins.
+    /// </summary>
+    private static IEnumerable<(string name, string path, string version)> ResolveDeclaredPackages(
+        Dictionary<string, string> declared, List<string> roots)
+    {
         var resolved = new Dictionary<string, (string path, string version, bool declared)>(StringComparer.OrdinalIgnoreCase);
         var visited  = new HashSet<string>(StringComparer.OrdinalIgnoreCase);                     // pkgId@version
         var queue    = new Queue<(string id, string version, bool isDeclared)>();

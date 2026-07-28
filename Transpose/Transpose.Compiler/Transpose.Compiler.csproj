@@ -96,8 +96,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The clean-output-folder prune logic (OutputBuilder.PruneStaleFiles) is exercised directly by
-         the translator test suite. -->
+    <!-- Program.OrderErrorsForReport (the error-sort order) is exercised directly by the translator
+         test suite. Most of the CLI's other internals now live in Transpose.Compiler.Core, which
+         grants its own InternalsVisibleTo to the test project. -->
     <InternalsVisibleTo Include="Transpose.Translator.Tests" />
   </ItemGroup>
 
@@ -110,13 +111,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Transpose.Translator\Transpose.Translator.csproj" />
-    <PackageReference Include="Mono.Cecil" Version="0.11.6" />
-    <!-- JS minifier for the "outputFormatting": "Minified"/"Both" bundle variants. The legacy
-         compiler used 1.20.7, but that version mis-parenthesised a `??` operand of `&&`/`||` and
-         emitted invalid JS (fixed in NUglify 1.21.14). Pinned to 1.21.15 rather than the newer
-         1.22.0, which regressed by inserting a stray empty statement when unwrapping a braced
-         if/else body (`for(...);;else` — invalid). See JsMinifier.cs. -->
-    <PackageReference Include="NUglify" Version="1.21.15" />
+    <!-- Project/package resolution, tps.json, site/package assembly (OutputBuilder, ResourceEmbedder,
+         BuildCache, JsMinifier, …) — shared with Transpose.Compiler.Service. -->
+    <ProjectReference Include="..\Transpose.Compiler.Core\Transpose.Compiler.Core.csproj" />
   </ItemGroup>
 
 </Project>

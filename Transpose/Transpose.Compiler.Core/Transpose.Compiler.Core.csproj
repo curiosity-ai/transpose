@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Transpose.Compiler</RootNamespace>
+    <AssemblyName>Transpose.Compiler.Core</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <InvariantTimezone>true</InvariantTimezone>
+
+    <!-- Not published as its own NuGet package (like Transpose.Translator, which it sits alongside):
+         it exists so the `tps` CLI (Transpose.Compiler) and the compiler-as-a-library package
+         (Transpose.Compiler.Service) share one implementation of project/package resolution, tps.json
+         handling, site/package assembly, and JS minification, instead of the CLI owning all of it and
+         the library package reaching into internals across a process boundary that was never meant to
+         be public API. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Everything in this project is `internal` — it was lifted out of Transpose.Compiler unchanged,
+         and neither consumer needs a public surface of its own: the CLI's Program.cs/WatchMode.cs and
+         the library package's public API are the only things meant to be called from outside this
+         project. Transpose.Translator.Tests exercises pieces of it directly (OutputBuilder's stale-file
+         prune, BuildCache, ResourceEmbedder, …). -->
+    <!-- The CLI's AssemblyName is "tps" (PackageId Transpose.Compiler; see Transpose.Compiler.csproj) -->
+    <InternalsVisibleTo Include="tps" />
+    <InternalsVisibleTo Include="Transpose.Compiler.Service" />
+    <InternalsVisibleTo Include="Transpose.Translator.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Transpose.Translator" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Transpose.Translator\Transpose.Translator.csproj" />
+    <PackageReference Include="Mono.Cecil" Version="0.11.6" />
+    <!-- JS minifier for the "outputFormatting": "Minified"/"Both" bundle variants. The legacy
+         compiler used 1.20.7, but that version mis-parenthesised a `??` operand of `&&`/`||` and
+         emitted invalid JS (fixed in NUglify 1.21.14). Pinned to 1.21.15 rather than the newer
+         1.22.0, which regressed by inserting a stray empty statement when unwrapping a braced
+         if/else body. See JsMinifier.cs. -->
+    <PackageReference Include="NUglify" Version="1.21.15" />
+  </ItemGroup>
+
+</Project>
