@@ -487,7 +487,7 @@ public sealed partial class Emitter
             if (m is IFieldSymbol f && !f.IsConst && f.AssociatedSymbol is null && f.CanBeReferencedByName)
                 yield return (TransposeNaming.MemberJsName(f), FieldDefaultLiteral(f.Type), f);
             else if (m is IPropertySymbol p && !p.IsAbstract && !p.IsIndexer
-                     && (IsAutoProperty(p) || (type.IsRecord && p.IsImplicitlyDeclared && p.Name != "EqualityContract")))
+                     && (IsAutoProperty(p) || IsRecordPositionalProperty(p)))
                 yield return (TransposeNaming.MemberJsName(p), FieldDefaultLiteral(p.Type), p);
             else if (m is IEventSymbol ev && IsFieldLikeEvent(ev))
                 yield return (TransposeNaming.MemberJsName(ev), "null", ev);

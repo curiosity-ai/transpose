@@ -418,13 +418,15 @@ public sealed partial class Emitter
     /// `let s;` leaves `s` undefined and the first field write throws "Cannot set properties of
     /// undefined". Primitives, enums and reference types are excluded: definite assignment means
     /// they are always written before they are read, so the extra initializer would be dead weight.
-    /// Nullable&lt;T&gt; is excluded for the same reason (its default is a bare `null`), and a ref
-    /// struct is left alone — it has its own emit path and never reaches JS as a plain object.
+    /// Nullable&lt;T&gt; is excluded for the same reason (its default is a bare `null`).
+    /// A <c>ref struct</c> is NOT excluded: a user-declared one is emitted as an ordinary struct
+    /// define, so `RS r; r.X = 1;` needs the same zeroed instance as any other struct — and for a
+    /// runtime ref struct the emitted default matches what `= default` already produces.
     /// </summary>
     private ITypeSymbol? UninitializedLocalStructType(VariableDeclaratorSyntax variable)
     {
         if (_model.GetDeclaredSymbol(variable) is not ILocalSymbol { Type: { } type }) return null;
-        if (type.TypeKind != TypeKind.Struct || type.IsRefLikeType) return null;
+        if (type.TypeKind != TypeKind.Struct) return null;
         if (IsPrimitiveNumericOrBool(type)) return null;
         if (type.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T) return null;
         return type;

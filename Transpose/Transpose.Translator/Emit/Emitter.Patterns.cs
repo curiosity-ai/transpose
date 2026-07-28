@@ -225,11 +225,17 @@ public sealed partial class Emitter
 
         if (recursive.PositionalPatternClause is not null)
         {
+            // A tuple's positions are Item1..ItemN. A record's are its positional members, which its
+            // synthesized Deconstruct assigns in declaration order — reading `.Item1` off a record
+            // matched nothing (`rc is RC(3, "b")` was always false). Any other type keeps the tuple
+            // shape: a hand-written Deconstruct cannot be resolved to members by position.
+            var positions = PositionalPatternMemberNames(recursive);
             var i = 0;
             foreach (var sub in recursive.PositionalPatternClause.Subpatterns)
             {
                 _w.Write(" && ");
-                EmitPatternTest($"{subject}.Item{i + 1}", sub.Pattern);
+                var member = i < positions.Count ? positions[i] : $"Item{i + 1}";
+                EmitPatternTest($"{subject}.{member}", sub.Pattern);
                 i++;
             }
         }
@@ -241,6 +247,16 @@ public sealed partial class Emitter
 
         _ = wroteCondition;
         _w.Write(")");
+    }
+
+    /// <summary>The JS members a positional pattern's positions read, when the matched type names them
+    /// (a record). Empty for a tuple — and for anything else — leaving the <c>Item{n}</c> shape.</summary>
+    private List<string> PositionalPatternMemberNames(RecursivePatternSyntax recursive)
+    {
+        if (recursive.Type is null) return new List<string>();
+        if (_model.GetTypeInfo(recursive.Type).Type is not INamedTypeSymbol { IsRecord: true, IsTupleType: false } type)
+            return new List<string>();
+        return RecordPositionalProps(type).Select(p => TransposeNaming.MemberJsName(p)).ToList();
     }
 
     /// <summary>

@@ -11,9 +11,24 @@ public sealed partial class Emitter
     /// <summary>Record positional properties, exposed as fields named after the parameter.</summary>
     private IEnumerable<IPropertySymbol> RecordPositionalProps(INamedTypeSymbol type)
         => type.IsRecord
-            ? type.GetMembers().OfType<IPropertySymbol>()
-                .Where(p => !p.IsStatic && !p.IsIndexer && p.IsImplicitlyDeclared && p.Name != "EqualityContract")
+            ? type.GetMembers().OfType<IPropertySymbol>().Where(IsRecordPositionalProperty)
             : Enumerable.Empty<IPropertySymbol>();
+
+    /// <summary>
+    /// The property a record synthesizes for one primary-constructor parameter. It is NOT
+    /// <see cref="ISymbol.IsImplicitlyDeclared"/> — Roslyn points its declaring syntax at the
+    /// parameter, which also hides it from <see cref="IsAutoProperty"/> (that looks for a
+    /// PropertyDeclarationSyntax). Testing IsImplicitlyDeclared therefore matched nothing, so a
+    /// record's positional members got no field slot (`default(RS).X` was `undefined`, not 0) and
+    /// its synthesized <c>Deconstruct</c> was never emitted (`var (x, y) = rs` threw
+    /// "Deconstruct is not a function").
+    /// </summary>
+    internal static bool IsRecordPositionalProperty(IPropertySymbol p)
+        => p.ContainingType is { IsRecord: true }
+           && !p.IsStatic && !p.IsIndexer
+           && p.Name != "EqualityContract"
+           && (p.IsImplicitlyDeclared
+               || p.DeclaringSyntaxReferences.Any(r => r.GetSyntax() is ParameterSyntax));
 
     /// <summary>All instance properties that participate in a record's value equality / ToString,
     /// ordered base-record members first — matching C#'s synthesized PrintMembers / Equals /
@@ -37,6 +52,71 @@ public sealed partial class Emitter
         return names;
     }
 
+    /// <summary>The declared type behind each emitted instance slot, keyed by its JS name.</summary>
+    private static Dictionary<string, ITypeSymbol> SlotTypesByName(
+        IEnumerable<(string name, string def, ISymbol symbol)> slots)
+    {
+        var map = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
+        foreach (var (name, _, symbol) in slots)
+        {
+            ITypeSymbol? t = symbol switch
+            {
+                IFieldSymbol f    => f.Type,
+                IPropertySymbol p => p.Type,
+                IEventSymbol e    => e.Type,
+                _                 => null,
+            };
+            if (t is not null) map[name] = t;
+        }
+        return map;
+    }
+
+    /// <summary>How one slot must be carried across a struct's value copy.</summary>
+    private enum ValueCopy
+    {
+        /// <summary>Copy the JS value as-is (a primitive, or a reference the struct genuinely shares).</summary>
+        Reference,
+        /// <summary>The slot is itself a struct: clone it, or the copy would share the same object.</summary>
+        Struct,
+        /// <summary>Statically a type parameter — only the runtime value can say whether it is a struct.</summary>
+        Dynamic,
+    }
+
+    /// <summary>
+    /// Whether copying a struct must also copy this slot. A struct assignment (and every implicit
+    /// copy: passing/returning by value, an array fill, boxing, storing into a collection, `with`)
+    /// is a VALUE copy in C#, so a slot that is itself a struct must be cloned — sharing the one JS
+    /// object made `var b = a; b.Inner.V = 9;` write through to `a.Inner.V`. Primitives, enums and
+    /// reference types are copied as-is: that IS their C# semantics. A <c>Nullable&lt;T&gt;</c>
+    /// follows T (a nullable struct is emitted as the struct object or null).
+    /// </summary>
+    private static ValueCopy ValueCopyKind(ITypeSymbol type)
+    {
+        // The runtime value decides for a type parameter: `struct Wrap<T> { public T Value; }` needs
+        // a clone for Wrap<SomeStruct> and must NOT clone for Wrap<SomeClass>.
+        if (type is ITypeParameterSymbol) return ValueCopy.Dynamic;
+        if (type.TypeKind != TypeKind.Struct) return ValueCopy.Reference;
+        // Emitted as a JS number/boolean (or an immutable Long/Decimal object) — nothing to alias.
+        if (IsPrimitiveNumericOrBool(type)) return ValueCopy.Reference;
+        if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T, TypeArguments.Length: 1 } n)
+            return ValueCopyKind(n.TypeArguments[0]);
+        return ValueCopy.Struct;
+    }
+
+    /// <summary>The right-hand side that copies one slot in a struct's <c>$clone</c>.</summary>
+    private static string CloneSlotExpression(string name, Dictionary<string, ITypeSymbol> slotTypes)
+    {
+        var source = $"this.{name}";
+        // A record's inherited/computed value property has no slot of its own; copy it verbatim.
+        if (!slotTypes.TryGetValue(name, out var type)) return source;
+        return ValueCopyKind(type) switch
+        {
+            ValueCopy.Struct  => $"TransposeR.clone({source})",
+            ValueCopy.Dynamic => $"TransposeR.cloneValue({source})",
+            _                 => source,
+        };
+    }
+
     /// <summary>True if the type itself declares an instance method with this name and arity — i.e. a
     /// hand-written Equals/GetHashCode that must win over the synthesized value-wise one.</summary>
     private static bool DeclaresOwn(INamedTypeSymbol type, string name, int parameterCount)
@@ -48,13 +128,15 @@ public sealed partial class Emitter
     {
         // Everything a value-copy must carry: backing fields/auto-props plus (for record
         // structs) the positional value properties, which are synthesized without slots.
-        var fields = InstanceFieldSlots(type).Select(f => f.name).ToList();
+        var slots = InstanceFieldSlots(type).ToList();
+        var fields = slots.Select(f => f.name).ToList();
         if (type.IsRecord)
             foreach (var p in RecordValuePropNames(type))
                 if (!fields.Contains(p)) fields.Add(p);
 
         if (type.TypeKind == TypeKind.Struct)
         {
+            var slotTypes = SlotTypesByName(slots);
             entries.Add(() =>
             {
                 _w.Write("$clone: function (to) ");
@@ -65,7 +147,7 @@ public sealed partial class Emitter
                     var typeRef = TypeRef(type);
                     var newTarget = typeRef.Contains('(') ? $"({typeRef})" : typeRef;
                     _w.WriteLine($"var s = to || new {newTarget}();");
-                    foreach (var f in fields) _w.WriteLine($"s.{f} = this.{f};");
+                    foreach (var f in fields) _w.WriteLine($"s.{f} = {CloneSlotExpression(f, slotTypes)};");
                     _w.WriteLine("return s;");
                 });
             });
@@ -192,6 +274,15 @@ public sealed partial class Emitter
             _w.Block(() =>
             {
                 _w.WriteLine("this.$initialize();");
+                // A record body may declare ordinary fields/auto-properties, with or without an
+                // initializer, and the positional constructor is the only one that runs — so it has
+                // to do what every other constructor does: run the initializers and zero-init the
+                // struct-typed slots. Without this a `record R(int X) { public int K = 7; }` left K
+                // at 0, a `public Nested N = new Nested();` stayed null, and a struct-typed field was
+                // null instead of default(T) (so `r.I.V = 1` threw "Cannot set properties of null").
+                // Emitted BEFORE the base call, matching C#: a derived record's initializers run
+                // first, then the base constructor (verified against native .NET).
+                EmitInstanceFieldInitializers(type);
                 var baseType = type.BaseType;
                 if (baseType is { } bt && bt.SpecialType != SpecialType.System_Object && bt.TypeKind != TypeKind.Error && bt.IsRecord)
                 {
