@@ -401,8 +401,33 @@ public sealed partial class Emitter
                 _w.Write(" = ");
                 EmitExpressionConverted(variable.Initializer.Value, _model.GetTypeInfo(variable.Initializer.Value).ConvertedType);
             }
+            else if (UninitializedLocalStructType(variable) is { } structType)
+            {
+                _w.Write(" = ");
+                _w.Write(DefaultValueLiteral(structType));
+            }
             _w.WriteLine(";");
         }
+    }
+
+    /// <summary>
+    /// The struct type of an initializer-less local that must still be emitted as a zeroed struct
+    /// instance, or null when a bare declaration is fine. C# lets `SomeStruct s;` be definitely
+    /// assigned field by field (`s.a = 1; s.b = 2;`) — the BCL's own
+    /// <c>HashSet&lt;T&gt;.CheckUniqueAndUnfoundElements</c> does exactly that — so emitting a bare
+    /// `let s;` leaves `s` undefined and the first field write throws "Cannot set properties of
+    /// undefined". Primitives, enums and reference types are excluded: definite assignment means
+    /// they are always written before they are read, so the extra initializer would be dead weight.
+    /// Nullable&lt;T&gt; is excluded for the same reason (its default is a bare `null`), and a ref
+    /// struct is left alone — it has its own emit path and never reaches JS as a plain object.
+    /// </summary>
+    private ITypeSymbol? UninitializedLocalStructType(VariableDeclaratorSyntax variable)
+    {
+        if (_model.GetDeclaredSymbol(variable) is not ILocalSymbol { Type: { } type }) return null;
+        if (type.TypeKind != TypeKind.Struct || type.IsRefLikeType) return null;
+        if (IsPrimitiveNumericOrBool(type)) return null;
+        if (type.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T) return null;
+        return type;
     }
 
     private void EmitIf(IfStatementSyntax ifStmt)
