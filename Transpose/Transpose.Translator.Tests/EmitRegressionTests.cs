@@ -2886,5 +2886,71 @@ public class Program
     }
 }", waitForOutput: "<<DONE>>");
         }
+
+        // ---- extension methods and a dynamic receiver ---------------------------
+
+        /// <summary>
+        /// Pins .NET's rule that an extension method is NOT offered on a <c>dynamic</c> receiver, which
+        /// is what the Curiosity Monaco providers hit: they take <c>dynamic model</c>, so an invocation
+        /// forwarding it is dynamic-typed and <c>task.AsPromise()</c> on the result is a late-bound
+        /// member access that never binds to the extension. Both sides must agree: native .NET raises
+        /// RuntimeBinderException, and the emitted JavaScript must likewise fail rather than silently
+        /// do something else. Pinned because it reads like a compiler bug ("the extension call emitted
+        /// as an instance call") and cost real time to diagnose once.
+        ///
+        /// The static-typed receiver in the same snippet is the control: it must bind normally and emit
+        /// the unreduced static call.
+        /// </summary>
+        [TestMethod]
+        public async Task ExtensionMethodIsNotOfferedOnADynamicReceiver()
+        {
+            await RunTest(@"
+using System;
+using System.Threading.Tasks;
+
+namespace Ns.One
+{
+    public static class NsExt
+    {
+        public static string Tag(this Task t) => ""tagged"";
+    }
+
+    public class Caller
+    {
+        private static async Task<object> WorkAsync(dynamic model) => model;
+
+        // Dynamic-typed invocation: `.Tag()` is late-bound and does not see the extension.
+        public static string ViaDynamic(dynamic model) => WorkAsync(model).Tag();
+
+        // Control: the same value pinned to a static type first.
+        public static string ViaStaticType(dynamic model)
+        {
+            Task<object> t = WorkAsync(model);
+            return t.Tag();
+        }
+    }
+}
+
+public class Program
+{
+    public static void Main()
+    {
+        Console.WriteLine(""static-typed: "" + Ns.One.Caller.ViaStaticType(1));
+
+        try
+        {
+            Console.WriteLine(""dynamic: "" + Ns.One.Caller.ViaDynamic(1));
+        }
+        catch (Exception)
+        {
+            // The exception TYPE differs by platform (RuntimeBinderException vs a JS TypeError), so
+            // only the fact that it fails is comparable.
+            Console.WriteLine(""dynamic: threw"");
+        }
+
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
     }
 }
