@@ -2713,6 +2713,110 @@ public class Program
 }", waitForOutput: "<<DONE>>");
         }
 
+        // ---- KNOWN, NOT-YET-FIXED instances of the same method-group-vs-bare-name bug ---------
+        //
+        // These are further confirmed instances of the exact same defect class as the fixes above —
+        // a static-member-access fallback for a [Template]-without-Fn method colliding with an
+        // unrelated overload's real bare name — found during the same audit but deliberately left
+        // UNFIXED. [Ignore]d so the suite stays green; remove the attribute to see them fail, and
+        // to use as the regression test once each is fixed.
+
+        [Ignore("known bug: Array.Reverse(T[]) as a method group resolves to a nonexistent bare " +
+                 "'reverse' — TypeError, not a function. Not yet fixed.")]
+        [TestMethod]
+        public async Task KnownBug_ArrayReverseMethodGroup()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        Action<int[]> f = Array.Reverse;
+        var arr = new[] { 1, 2, 3 };
+        f(arr);
+        Console.WriteLine(string.Join("","", arr));
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [Ignore("known bug: Decimal.Floor(decimal) as a method group resolves to a nonexistent bare " +
+                 "'floor' — TypeError, not a function. Not yet fixed.")]
+        [TestMethod]
+        public async Task KnownBug_DecimalFloorMethodGroup()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        Func<decimal, decimal> f = decimal.Floor;
+        Console.WriteLine(f(3.7m));
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [Ignore("known bug: Decimal.Round(decimal,int) as a method group falls back to the 0-arg " +
+                 "instance Round()'s bare name, silently dropping the digit count (returns 4, not 3.14). " +
+                 "Not yet fixed.")]
+        [TestMethod]
+        public async Task KnownBug_DecimalRoundMethodGroup()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        Func<decimal, int, decimal> f = decimal.Round;
+        Console.WriteLine(f(3.14159m, 2));
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [Ignore("known bug: Decimal.Equals(decimal,decimal) as a method group resolves to a " +
+                 "nonexistent bare 'equals' — TypeError, not a function. Not yet fixed.")]
+        [TestMethod]
+        public async Task KnownBug_DecimalEqualsMethodGroup()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        Func<decimal, decimal, bool> f = decimal.Equals;
+        Console.WriteLine(f(3.14m, 3.14m));
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [Ignore("known bug: Expression.Add(Expression,Expression,MethodInfo) as a method group " +
+                 "resolves to a nonexistent bare 'add' — TypeError, not a function. Not yet fixed.")]
+        [TestMethod]
+        public async Task KnownBug_ExpressionAddMethodGroup()
+        {
+            await RunTest(@"
+using System;
+using System.Linq.Expressions;
+using System.Reflection;
+public class Program
+{
+    public static void Main()
+    {
+        Func<Expression, Expression, MethodInfo, BinaryExpression> f = Expression.Add;
+        var e = f(Expression.Constant(1), Expression.Constant(2), null);
+        Console.WriteLine(e);
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
         // ---- [Template] 2-arg (format, nonExpandedFormat) — the non-expanded params variant ----
         //
         // A 2-arg [Template] gives a second template for when the trailing `params` argument is supplied
