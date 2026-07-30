@@ -351,7 +351,7 @@ public sealed partial class Emitter
                 _w.Block(() =>
                 {
                     _w.WriteLine("this.$initialize();");
-                    EmitInstanceFieldInitializers(type);
+                    EmitInstanceFieldInitializers(type, runInitializers: false);
                 });
                 _w.WriteLine(all.Count > 0 ? "," : "");
             }
@@ -468,7 +468,14 @@ public sealed partial class Emitter
         }
     }
 
-    private void EmitInstanceFieldInitializers(INamedTypeSymbol type)
+    /// <param name="runInitializers">
+    /// False for a struct's <i>implicit</i> parameterless constructor, which zeroes the value rather
+    /// than running the declared <c>= value</c> initializers: C# only runs those from a constructor the
+    /// type declares, so <c>new S().Y</c> is 0 for <c>struct S { public int Y = 1; … }</c>. Running them
+    /// here reported 1 instead. The struct-typed slots are still defaulted either way — the field slot
+    /// is emitted as <c>null</c> for order-independence, so <c>default(T)</c> has to be assigned here.
+    /// </param>
+    private void EmitInstanceFieldInitializers(INamedTypeSymbol type, bool runInitializers = true)
     {
         foreach (var m in type.GetMembers())
         {
@@ -488,7 +495,7 @@ public sealed partial class Emitter
                 _ => null,
             };
 
-            if (init is not null)
+            if (init is not null && runInitializers)
             {
                 _w.Write($"this.{TransposeNaming.MemberJsName(m)} = ");
                 EmitExpressionConverted(init, slotType);

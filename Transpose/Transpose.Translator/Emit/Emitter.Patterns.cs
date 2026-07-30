@@ -501,7 +501,14 @@ public sealed partial class Emitter
             _w.WriteLine($"let {holders[i]} = {{ v: null }};");
         }
 
-        _w.WriteLine($"{temp}.Deconstruct({string.Join(", ", holders)});");
+        // Resolve the Deconstruct overload being bound and use ITS JS name: a record synthesizes a
+        // Deconstruct for its positional parameters, so a record that also declares one by hand has two
+        // overloads, and the overload numbering puts them on different slots (Deconstruct /
+        // Deconstruct$1). Hardcoding "Deconstruct" here called whichever one landed on the bare slot.
+        var deconstructName = DeconstructMethod(valueType, targets.Count) is { } dm
+            ? TransposeNaming.MemberJsName(dm)
+            : "Deconstruct";
+        _w.WriteLine($"{temp}.{deconstructName}({string.Join(", ", holders)});");
 
         for (var i = 0; i < targets.Count; i++)
         {
@@ -541,13 +548,17 @@ public sealed partial class Emitter
         if (valueType is INamedTypeSymbol { IsTupleType: true } tuple && tuple.TupleElements.Length == count)
             return tuple.TupleElements.Select(e => (ITypeSymbol?)e.Type).ToArray();
 
-        var deconstruct = valueType?.GetMembers("Deconstruct").OfType<IMethodSymbol>()
-            .FirstOrDefault(m => m.Parameters.Length == count && m.Parameters.All(p => p.RefKind == RefKind.Out));
-
-        if (deconstruct is not null) return deconstruct.Parameters.Select(p => (ITypeSymbol?)p.Type).ToArray();
+        if (DeconstructMethod(valueType, count) is { } deconstruct)
+            return deconstruct.Parameters.Select(p => (ITypeSymbol?)p.Type).ToArray();
 
         return new ITypeSymbol?[count];
     }
+
+    /// <summary>The <c>Deconstruct(out …)</c> overload of <paramref name="valueType"/> that binds
+    /// <paramref name="count"/> positions, or null.</summary>
+    private static IMethodSymbol? DeconstructMethod(ITypeSymbol? valueType, int count)
+        => valueType?.GetMembers("Deconstruct").OfType<IMethodSymbol>()
+            .FirstOrDefault(m => m.Parameters.Length == count && m.Parameters.All(p => p.RefKind == RefKind.Out));
 
     private IEnumerable<DeconstructionTarget> CollectDeconstructionTargets(ExpressionSyntax left)
     {

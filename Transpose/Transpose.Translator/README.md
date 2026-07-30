@@ -45,13 +45,46 @@ Entry point: `RoslynTranslator.Translate(source)` → `TranslationResult { Javas
   initializers, arrays, element access, lambdas / anonymous methods, `?.`, `await`, method groups, enums,
   `ref`/`out` parameters (holder objects), `params`, named/optional arguments.
 - Modern C#: pattern matching (type/constant/relational/logical/property/positional), switch expressions,
-  tuples + deconstruction, records (positional, value equality, `with`, `Deconstruct`, ToString).
+  tuples + deconstruction, records — see below.
 - Collections: `List<T>`, `Dictionary<K,V>`, `HashSet<T>`, arrays; LINQ-to-objects; iterators (`yield`).
 - BCL surface: `Console`, `String` (+ static), `StringBuilder`, `Math`/`MathF`, `Convert`, numeric parsing,
   `Char`, `Task`/`Task<T>` (→ Promise), `TaskCompletionSource`, exceptions with `Message`/`InnerException`.
 - Async/await → native JS `async`/`await`; async `Main` bootstrap.
 - Unsupported-feature reporting: pointers, `unsafe`, `fixed`, `stackalloc`, P/Invoke, File I/O, sockets,
   threading primitives (Task-based async is allowed).
+
+## Records
+
+`record`, `record class`, `record struct` and `readonly record struct` are all supported, in the
+one-line positional form and with a body, at any depth of a record inheritance chain. What the emitter
+synthesizes (`Emitter.ValueTypes.cs`, `AddRecordMethodEntries` + `TryEmitRecordCtors`) mirrors C#:
+
+| Member | Emitted as | Over which members |
+| --- | --- | --- |
+| `PrintMembers(StringBuilder)` | `PrintMembers` | the record's non-static **public** fields and **public readable** properties, chaining to the base record's `PrintMembers` first |
+| `ToString()` | `toString` | `"Name { " + PrintMembers + " }"` — via the real `PrintMembers`, so an override participates |
+| `Equals(object)` | `equals` | delegates to the typed `Equals` after a type check, as C#'s `Equals(obj as T)` does |
+| `Equals(T)` | `equalsT` | every instance **field** slot, base record first — private fields and auto-property backing fields included, computed properties excluded |
+| `GetHashCode()` | `getHashCode` | the same slots |
+| `Deconstruct(out …)` | `Deconstruct` | the positional properties |
+| primary constructor | `ctor` | parameter defaults, field initializers, the `: Base(…)` call, then the positional stores |
+
+Two consequences worth keeping in mind when changing this code:
+
+- **ToString and equality cover different member sets.** ToString *prints* members (so a computed
+  `int Doubled => X * 2` shows up, and a non-public member never does); equality *compares* fields (so a
+  public field of the record body participates, and a get-only property that allocates on each read —
+  `int[] Cache => new[] { V }` — does not, or two equal records would compare unequal).
+- **A declared member replaces the synthesized one.** Each entry above is emitted only when the record
+  does not declare it (`ISymbol.IsImplicitlyDeclared`), and every key comes from
+  `TransposeNaming.MemberJsName` on the synthesized symbol — which is also what puts a hand-written
+  `Deconstruct(out int, out int)` on `Deconstruct$1`, clear of the synthesized one-parameter form.
+
+A record may also carry `[ObjectLiteral]`, which makes it the declaration of a plain JavaScript
+object's shape: `new Point(1, 2)` on `[ObjectLiteral] record Point(int X, int Y)` emits `{X: 1, Y: 2}`
+(the positional arguments become the literal's members; the synthesized `EqualityContract` does not).
+
+`RecordTests.cs` covers all of the above end to end, diffing against native .NET.
 
 ## Extending
 

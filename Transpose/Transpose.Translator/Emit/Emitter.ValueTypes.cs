@@ -30,27 +30,96 @@ public sealed partial class Emitter
            && (p.IsImplicitlyDeclared
                || p.DeclaringSyntaxReferences.Any(r => r.GetSyntax() is ParameterSyntax));
 
-    /// <summary>All instance properties that participate in a record's value equality / ToString,
-    /// ordered base-record members first — matching C#'s synthesized PrintMembers / Equals /
-    /// GetHashCode, which chain to the base record before the derived members. A derived record
-    /// that only listed its own members would drop the inherited ones from ToString/equality.</summary>
-    private List<string> RecordValuePropNames(INamedTypeSymbol type)
+    /// <summary>The record inheritance chain ending at <paramref name="type"/>, base record first.
+    /// C#'s synthesized PrintMembers / Equals / GetHashCode chain to the base record before handling
+    /// the derived members, so a derived record that only listed its own members would drop the
+    /// inherited ones from ToString/equality.</summary>
+    private static List<INamedTypeSymbol> RecordChain(INamedTypeSymbol type)
     {
         var chain = new List<INamedTypeSymbol>();
         for (var t = type; t is not null && t.IsRecord; t = t.BaseType)
             chain.Add(t);
         chain.Reverse(); // base → derived
-
-        var names = new List<string>();
-        foreach (var t in chain)
-            foreach (var p in t.GetMembers().OfType<IPropertySymbol>()
-                         .Where(p => !p.IsStatic && p.GetMethod is not null && !p.IsIndexer && p.Name != "EqualityContract"))
-            {
-                var n = TransposeNaming.MemberJsName(p);
-                if (!names.Contains(n)) names.Add(n);
-            }
-        return names;
+        return chain;
     }
+
+    /// <summary>
+    /// The members one record's synthesized <c>PrintMembers</c> prints: its own non-static
+    /// <b>public</b> fields and <b>public readable</b> properties, in declaration order. Note this is
+    /// a different set from the one equality uses (<see cref="RecordEqualitySlots"/>): ToString prints
+    /// members — including computed properties, which have no storage — while Equals compares fields,
+    /// including private ones. A non-public member is printed by neither, and <c>EqualityContract</c>
+    /// (protected) is excluded by the accessibility test.
+    /// </summary>
+    /// <remarks>The printed LABEL is the C# member name (that is what .NET writes), while the value is
+    /// read through the member's JS name — the two differ for a <c>[Name]</c>-renamed member or one that
+    /// took a hiding slot.</remarks>
+    private static List<(string label, string js, ITypeSymbol type)> RecordPrintableMembers(INamedTypeSymbol type)
+    {
+        var members = new List<(string, string, ITypeSymbol)>();
+        foreach (var m in type.GetMembers())
+        {
+            if (m.IsStatic || m.DeclaredAccessibility != Accessibility.Public) continue;
+            // An OVERRIDE is not a member of this record's own set: the base record's PrintMembers
+            // already prints it, and virtual dispatch reads the override's value there — printing it
+            // again here gave `OverrideProp2 { A = 1, V = 2, V = 2 }`. A `new` member is different: C#
+            // prints both the hidden and the hiding one, which the base/derived split does naturally.
+            if (m.IsOverride) continue;
+            switch (m)
+            {
+                // A backing field (AssociatedSymbol) is private, so it never reaches here; the
+                // property it backs is printed instead.
+                case IFieldSymbol { IsConst: false, AssociatedSymbol: null } f when f.CanBeReferencedByName:
+                    members.Add((f.Name, TransposeNaming.MemberJsName(f), f.Type));
+                    break;
+                case IPropertySymbol { IsIndexer: false, IsAbstract: false } p when p.GetMethod is not null:
+                    members.Add((p.Name, TransposeNaming.MemberJsName(p), p.Type));
+                    break;
+            }
+        }
+        return members;
+    }
+
+    /// <summary>
+    /// The instance slots a record's synthesized <c>Equals</c>/<c>GetHashCode</c> compare, base record
+    /// first. C# compares a record's <b>fields</b> — every instance field, public or private, including
+    /// the compiler-generated backing field of each auto-property — which is exactly the set of slots
+    /// the emitter lays down. Comparing the <i>properties</i> instead diverged twice over: a public
+    /// field of a record body was ignored, and a computed (storage-less) property was compared, so
+    /// <c>record Node(int V) { public int[] Cache => new[] { V }; }</c> reported two equal values as
+    /// unequal because each read allocated a fresh array.
+    /// </summary>
+    private List<(string name, ITypeSymbol? type)> RecordEqualitySlots(INamedTypeSymbol type)
+    {
+        var slots = new List<(string, ITypeSymbol?)>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var t in RecordChain(type))
+            foreach (var (name, _, symbol) in InstanceFieldSlots(t))
+                if (seen.Add(name))
+                    slots.Add((name, symbol switch
+                    {
+                        IFieldSymbol f => f.Type,
+                        IPropertySymbol p => p.Type,
+                        IEventSymbol e => e.Type,
+                        _ => null,
+                    }));
+        return slots;
+    }
+
+    /// <summary>The record member C# synthesizes for this signature, or null when the record declares
+    /// its own (which the ordinary method walk emits instead, so nothing must be synthesized for it).
+    /// Recognised by <see cref="ISymbol.IsImplicitlyDeclared"/> — true for every member the record
+    /// machinery adds, and false as soon as the user writes one.</summary>
+    private static IMethodSymbol? SynthesizedRecordMethod(
+        INamedTypeSymbol type, string name, Func<IMethodSymbol, bool> signature)
+        => type.GetMembers(name).OfType<IMethodSymbol>()
+            .FirstOrDefault(m => !m.IsStatic && m.IsImplicitlyDeclared && signature(m));
+
+    /// <summary>The record's <c>PrintMembers(StringBuilder)</c> signature — not just any one-parameter
+    /// method of that name, which an unrelated overload could also be.</summary>
+    private static bool IsRecordPrintMembers(IMethodSymbol m)
+        => m.Parameters is [{ Type: { Name: "StringBuilder" } t }]
+           && t.ContainingNamespace?.ToDisplayString() == "System.Text";
 
     /// <summary>The declared type behind each emitted instance slot, keyed by its JS name.</summary>
     private static Dictionary<string, ITypeSymbol> SlotTypesByName(
@@ -126,13 +195,12 @@ public sealed partial class Emitter
     /// <summary>Appends synthesized value-type methods (struct $clone/equals, record members).</summary>
     private void AddValueTypeMethodEntries(INamedTypeSymbol type, List<Action> entries)
     {
-        // Everything a value-copy must carry: backing fields/auto-props plus (for record
-        // structs) the positional value properties, which are synthesized without slots.
+        // Everything a value-copy must carry: the type's real slots (fields, auto-properties and a
+        // record's positional properties, which InstanceFieldSlots already covers). Only slots — a
+        // get-only computed property is not storage, and assigning one in $clone threw "Cannot set
+        // property … which has only a getter" for `readonly record struct RS(int X) { int D => X*2; }`.
         var slots = InstanceFieldSlots(type).ToList();
         var fields = slots.Select(f => f.name).ToList();
-        if (type.IsRecord)
-            foreach (var p in RecordValuePropNames(type))
-                if (!fields.Contains(p)) fields.Add(p);
 
         if (type.TypeKind == TypeKind.Struct)
         {
@@ -191,66 +259,161 @@ public sealed partial class Emitter
             }
         }
 
-        if (type.IsRecord)
+        if (type.IsRecord) AddRecordMethodEntries(type, entries);
+    }
+
+    /// <summary>
+    /// Appends the members C# synthesizes for a record: <c>PrintMembers</c>/<c>ToString</c>,
+    /// <c>Equals(object)</c>/<c>Equals(T)</c>/<c>GetHashCode</c> and <c>Deconstruct</c>.
+    ///
+    /// Each one is emitted only when the record does not declare it itself — a hand-written
+    /// <c>ToString</c>, <c>PrintMembers</c>, <c>Equals</c> or <c>Deconstruct</c> is emitted by the
+    /// ordinary member walk, and synthesizing a second entry under the same key made JavaScript keep
+    /// whichever came last (so the user's override silently never ran). Every key comes from
+    /// <see cref="TransposeNaming.MemberJsName"/> on the synthesized symbol itself, which also keeps a
+    /// synthesized member and a same-named user overload on distinct, correctly-numbered slots (a
+    /// record with its own two-out-parameter <c>Deconstruct</c> used to collide with the synthesized
+    /// one-parameter form).
+    /// </summary>
+    private void AddRecordMethodEntries(INamedTypeSymbol type, List<Action> entries)
+    {
+        // ToString() is `"Name { " + PrintMembers(sb) + " }"`, routed through the real PrintMembers so
+        // a hand-written or inherited override participates — matching C#, where ToString calls the
+        // virtual PrintMembers and a derived record's PrintMembers chains to its base.
+        var printMembers = SynthesizedRecordMethod(type, "PrintMembers", IsRecordPrintMembers);
+        if (printMembers is not null)
         {
-            var props = RecordValuePropNames(type);
+            var printName = TransposeNaming.MemberJsName(printMembers);
+            var printable = RecordPrintableMembers(type);
+            // A derived record prints the base record's members first, via the base's PrintMembers.
+            var basePrint = type.BaseType is { IsRecord: true } br ? $"{TypeRef(br)}.prototype.{printName}" : null;
             entries.Add(() =>
             {
-                _w.Write("toString: function () ");
+                _w.Write($"{NameMangler.JsPropertyKey(printName)}: function (builder) ");
                 _w.Block(() =>
                 {
-                    if (props.Count == 0) { _w.WriteLine($"return \"{type.Name} {{ }}\";"); return; }
-                    var parts = string.Join(" + \", \" + ", props.Select(p => $"\"{p} = \" + TransposeR.toStr(this.{p})"));
-                    _w.WriteLine($"return \"{type.Name} {{ \" + {parts} + \" }}\";");
+                    if (basePrint is not null)
+                    {
+                        // The base returns whether it printed anything; only then is a separator due.
+                        _w.WriteLine($"var $printed = {basePrint}.call(this, builder);");
+                        if (printable.Count == 0) { _w.WriteLine("return $printed;"); return; }
+                        _w.WriteLine("if ($printed) { builder.append(\", \"); }");
+                    }
+                    else if (printable.Count == 0)
+                    {
+                        _w.WriteLine("return false;");
+                        return;
+                    }
+                    for (var i = 0; i < printable.Count; i++)
+                    {
+                        if (i > 0) _w.WriteLine("builder.append(\", \");");
+                        var (label, js, memberType) = printable[i];
+                        _w.WriteLine($"builder.append(\"{label} = \");");
+                        _w.WriteLine($"builder.append({ToStringJs($"this.{js}", memberType)});");
+                    }
+                    _w.WriteLine("return true;");
                 });
             });
-            // The value-equality body, shared by the object override `equals(obj)` and the
-            // strongly-typed IEquatable<T> `equalsT(other)` a record synthesizes. Both are needed:
-            // `a.Equals(b)` binds to IEquatable<T>.Equals → `equalsT`, while ==/collections go
-            // through `equals`. Without `equalsT` a direct `.Equals(record)` call threw
-            // "equalsT is not a function".
-            void EmitRecordEqualsBody(string param)
-            {
-                _w.WriteLine($"if ({param} == null || {param}.constructor !== this.constructor) {{ return false; }}");
-                _w.Write("return ");
-                _w.Write(props.Count == 0 ? "true" : string.Join(" && ", props.Select(p => $"TransposeR.equals(this.{p}, {param}.{p})")));
-                _w.WriteLine(";");
-            }
+        }
+
+        var toString = SynthesizedRecordMethod(type, "ToString", m => m.Parameters.Length == 0);
+        if (toString is not null)
+        {
+            // The PrintMembers ToString calls — the synthesized one above, or the record's own.
+            var printName = TransposeNaming.MemberJsName(
+                type.GetMembers("PrintMembers").OfType<IMethodSymbol>().First(m => !m.IsStatic && IsRecordPrintMembers(m)));
             entries.Add(() =>
             {
-                _w.Write("equals: function (o) ");
-                _w.Block(() => EmitRecordEqualsBody("o"));
+                _w.Write($"{NameMangler.JsPropertyKey(TransposeNaming.MemberJsName(toString))}: function () ");
+                _w.Block(() =>
+                {
+                    _w.WriteLine("var $sb = new System.Text.StringBuilder();");
+                    _w.WriteLine($"$sb.append(\"{type.Name}\");");
+                    _w.WriteLine("$sb.append(\" { \");");
+                    _w.WriteLine($"if (this.{printName}($sb)) {{ $sb.append(\" \"); }}");
+                    _w.WriteLine("$sb.append(\"}\");");
+                    _w.WriteLine("return $sb.toString();");
+                });
             });
+        }
+
+        // The value-equality body, shared by the object override `equals(obj)` and the strongly-typed
+        // IEquatable<T> `equalsT(other)` a record synthesizes. Both are needed: `a.Equals(b)` binds to
+        // IEquatable<T>.Equals → `equalsT`, while ==/collections go through `equals`. Without
+        // `equalsT` a direct `.Equals(record)` call threw "equalsT is not a function".
+        var slots = RecordEqualitySlots(type);
+        void EmitRecordEqualsBody(string param)
+        {
+            _w.WriteLine($"if ({param} == null || {param}.constructor !== this.constructor) {{ return false; }}");
+            _w.Write("return ");
+            _w.Write(slots.Count == 0
+                ? "true"
+                : string.Join(" && ", slots.Select(s => $"TransposeR.equals(this.{s.name}, {param}.{s.name})")));
+            _w.WriteLine(";");
+        }
+
+        // The strongly-typed Equals a record gets from IEquatable<T> — synthesized, or hand-written when
+        // the record defines its own value equality. A derived record also carries a sealed override of
+        // the base record's Equals(Base); both land on the same JS slot, so prefer the one whose
+        // parameter is this very type to keep the choice deterministic.
+        var typedEquals = type.GetMembers("Equals").OfType<IMethodSymbol>()
+            .Where(m => m is { IsStatic: false, Parameters.Length: 1 }
+                        && m.Parameters[0].Type.SpecialType != SpecialType.System_Object)
+            .OrderByDescending(m => SymbolEqualityComparer.Default.Equals(m.Parameters[0].Type, type))
+            .FirstOrDefault();
+
+        var equalsObj = SynthesizedRecordMethod(type, "Equals",
+            m => m.Parameters is [{ Type.SpecialType: SpecialType.System_Object }]);
+        if (equalsObj is not null)
             entries.Add(() =>
             {
-                _w.Write("equalsT: function (other) ");
+                _w.Write($"{NameMangler.JsPropertyKey(TransposeNaming.MemberJsName(equalsObj))}: function (o) ");
+                _w.Block(() =>
+                {
+                    // C# synthesizes `Equals(object obj) => Equals(obj as T)`, so the object override
+                    // must DELEGATE to the typed one rather than repeat the field-wise comparison: a
+                    // record that writes its own Equals(T) governs ==, HashSet/Dictionary lookups AND
+                    // `Equals((object)x)` alike, and a duplicated body ignored it for the last of those.
+                    if (typedEquals is null) { EmitRecordEqualsBody("o"); return; }
+                    _w.WriteLine("if (o == null || o.constructor !== this.constructor) { return false; }");
+                    _w.WriteLine($"return this.{TransposeNaming.MemberJsName(typedEquals)}(o);");
+                });
+            });
+
+        if (typedEquals is { IsImplicitlyDeclared: true })
+            entries.Add(() =>
+            {
+                _w.Write($"{NameMangler.JsPropertyKey(TransposeNaming.MemberJsName(typedEquals))}: function (other) ");
                 _w.Block(() => EmitRecordEqualsBody("other"));
             });
+
+        var getHashCode = SynthesizedRecordMethod(type, "GetHashCode", m => m.Parameters.Length == 0);
+        if (getHashCode is not null)
             entries.Add(() =>
             {
-                _w.Write("getHashCode: function () ");
+                _w.Write($"{NameMangler.JsPropertyKey(TransposeNaming.MemberJsName(getHashCode))}: function () ");
                 _w.Block(() =>
                 {
                     _w.WriteLine("var h = 17;");
-                    foreach (var p in props) _w.WriteLine($"h = (h * 31 + TransposeR.hash(this.{p})) | 0;");
+                    foreach (var s in slots) _w.WriteLine($"h = (h * 31 + TransposeR.hash(this.{s.name})) | 0;");
                     _w.WriteLine("return h;");
                 });
             });
 
-            var positional = RecordPositionalProps(type).Select(p => TransposeNaming.MemberJsName(p)).ToList();
-            if (positional.Count > 0)
+        var positional = RecordPositionalProps(type).Select(p => TransposeNaming.MemberJsName(p)).ToList();
+        var deconstruct = SynthesizedRecordMethod(type, "Deconstruct", m => m.Parameters.Length == positional.Count);
+        if (positional.Count > 0 && deconstruct is not null)
+        {
+            entries.Add(() =>
             {
-                entries.Add(() =>
+                var holders = positional.Select((_, i) => "$p" + i).ToList();
+                _w.Write($"{NameMangler.JsPropertyKey(TransposeNaming.MemberJsName(deconstruct))}: function ({string.Join(", ", holders)}) ");
+                _w.Block(() =>
                 {
-                    var holders = positional.Select((_, i) => "$p" + i).ToList();
-                    _w.Write($"Deconstruct: function ({string.Join(", ", holders)}) ");
-                    _w.Block(() =>
-                    {
-                        for (var i = 0; i < positional.Count; i++)
-                            _w.WriteLine($"{holders[i]}.v = this.{positional[i]};");
-                    });
+                    for (var i = 0; i < positional.Count; i++)
+                        _w.WriteLine($"{holders[i]}.v = this.{positional[i]};");
                 });
-            }
+            });
         }
     }
 
@@ -258,8 +421,31 @@ public sealed partial class Emitter
     private bool TryEmitRecordCtors(INamedTypeSymbol type)
     {
         if (!type.IsRecord) return false;
-        var recordDecl = type.DeclaringSyntaxReferences.Select(r => r.GetSyntax()).OfType<RecordDeclarationSyntax>().FirstOrDefault();
+        var recordDecl = type.DeclaringSyntaxReferences.Select(r => r.GetSyntax())
+            .OfType<RecordDeclarationSyntax>().FirstOrDefault(r => r.ParameterList is not null)
+            ?? type.DeclaringSyntaxReferences.Select(r => r.GetSyntax()).OfType<RecordDeclarationSyntax>().FirstOrDefault();
         var positional = recordDecl?.ParameterList?.Parameters.Select(p => NameMangler.JsIdentifier(p.Identifier.Text)).ToList() ?? new List<string>();
+
+        // The primary constructor's symbol, for the parameter defaults: a positional parameter may be
+        // optional (`record Defaults(int X = 5)`), and a JS call that omits it passes undefined, so the
+        // default has to be applied in the body exactly as it is for an ordinary constructor. Without
+        // this `new Defaults()` left every omitted member undefined.
+        var primaryCtor = type.InstanceConstructors
+            .FirstOrDefault(c => c.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() is RecordDeclarationSyntax);
+
+        // Only the parameters the record actually synthesized a property for are stored. When the body
+        // declares its own member of that name C# suppresses the synthesized property and the parameter
+        // becomes an ordinary constructor parameter (referenced by initializers, nothing more);
+        // assigning it anyway clobbered the declared member, so
+        // `record R(int X) { public int X { get; init; } = X * 2; }` yielded 3 instead of 6.
+        // The store targets the property's SLOT, which is not always the parameter's own name — a
+        // [property: Name("jsX")] positional member lives at `jsX`, and writing `this.X` left the slot
+        // (and so ToString, equality and Deconstruct, which all read the slot) at its default.
+        var stored = RecordPositionalProps(type).ToDictionary(p => p.Name, TransposeNaming.MemberJsName, StringComparer.Ordinal);
+        var storedPositional = recordDecl?.ParameterList?.Parameters
+            .Where(p => stored.ContainsKey(p.Identifier.Text))
+            .Select(p => (slot: stored[p.Identifier.Text], param: NameMangler.JsIdentifier(p.Identifier.Text)))
+            .ToList() ?? new List<(string slot, string param)>();
 
         // Only user-written constructors (with real ConstructorDeclarationSyntax); the
         // primary constructor lives on the record header and is emitted as "ctor" above.
@@ -267,12 +453,24 @@ public sealed partial class Emitter
             .Where(c => c.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() is ConstructorDeclarationSyntax)
             .ToList();
 
+        // A `record struct` also has the implicit parameterless struct constructor that `new S()`,
+        // `default(S)` and `: this()` reach. The positional primary owns the plain "ctor" slot, so this
+        // one is named $ctorN — and it has no syntax of its own, so neither branch above emitted it and
+        // `new S()` on a `record struct S(int X)` threw "S.$ctor1 is not a constructor". It zeroes the
+        // value rather than running the declared field initializers, matching C#.
+        var structDefaultCtor = type.TypeKind == TypeKind.Struct
+            ? type.InstanceConstructors.FirstOrDefault(c => c is { Parameters.Length: 0, IsImplicitlyDeclared: true })
+            : null;
+        // A record struct with no positional parameters already emits that very constructor as "ctor".
+        if (structDefaultCtor is not null && CtorName(structDefaultCtor) == "ctor") structDefaultCtor = null;
+
         _w.Block(() =>
         {
             // primary ctor
             _w.Write($"ctor: function ({string.Join(", ", positional)}) ");
             _w.Block(() =>
             {
+                if (primaryCtor is not null) EmitOptionalDefaults(primaryCtor);
                 _w.WriteLine("this.$initialize();");
                 // A record body may declare ordinary fields/auto-properties, with or without an
                 // initializer, and the positional constructor is the only one that runs — so it has
@@ -301,9 +499,21 @@ public sealed partial class Emitter
                         _w.WriteLine($"{TypeRef(bt)}.ctor.call(this);");
                     }
                 }
-                foreach (var p in positional) _w.WriteLine($"this.{p} = {p};");
+                foreach (var (slot, param) in storedPositional) _w.WriteLine($"this.{slot} = {param};");
             });
-            _w.WriteLine(explicitCtors.Count > 0 ? "," : "");
+            _w.WriteLine(explicitCtors.Count > 0 || structDefaultCtor is not null ? "," : "");
+
+            if (structDefaultCtor is not null)
+            {
+                _w.Write($"{CtorName(structDefaultCtor)}: function () ");
+                _w.Block(() =>
+                {
+                    _w.WriteLine("this.$initialize();");
+                    EmitInstanceFieldInitializers(type, runInitializers: false);
+                });
+                _w.WriteLine(explicitCtors.Count > 0 ? "," : "");
+            }
+
             // explicit ctors kept as $ctorN. C# requires each to chain `: this(...)` back to the
             // positional primary; emit that delegation (EmitConstructorChain) then the body — else
             // the delegated-to primary never runs and the record's members stay unset.
