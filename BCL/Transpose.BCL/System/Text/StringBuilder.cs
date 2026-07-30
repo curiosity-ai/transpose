@@ -45,7 +45,7 @@ namespace System.Text
 
         public extern StringBuilder Append(byte value);
 
-        [Transpose.Template("append(String.fromCharCode({value}))")]
+        [Transpose.Template("append(String.fromCharCode({value}))", Fn = "function ($sb, $v) { return $sb.append(String.fromCharCode($v)); }")]
         public extern StringBuilder Append(char value);
 
         public extern StringBuilder Append(decimal value);
@@ -56,7 +56,7 @@ namespace System.Text
 
         public extern StringBuilder Append(int value);
 
-        [Transpose.Template("{this}.append({value}.toString())")]
+        [Transpose.Template("{this}.append({value}.toString())", Fn = "function ($sb, $v) { return $sb.append($v.toString()); }")]
         public extern StringBuilder Append(long value);
 
         public extern StringBuilder Append(object value);
@@ -66,11 +66,11 @@ namespace System.Text
         
         public extern StringBuilder Append(uint value);
 
-        [Transpose.Template("{this}.append({value}.toString())")]
-        
+        [Transpose.Template("{this}.append({value}.toString())", Fn = "function ($sb, $v) { return $sb.append($v.toString()); }")]
+
         public extern StringBuilder Append(ulong value);
 
-        [Transpose.Template("append(String.fromCharCode({value}), {repeatCount})")]
+        [Transpose.Template("append(String.fromCharCode({value}), {repeatCount})", Fn = "function ($sb, $v, $r) { return $sb.append(String.fromCharCode($v), $r); }")]
         public extern StringBuilder Append(char value, int repeatCount);
 
         public extern StringBuilder Append(string value, int startIndex, int count);
@@ -87,7 +87,7 @@ namespace System.Text
 
         public extern StringBuilder Insert(int index, bool value);
 
-        [Transpose.Template("insert({index}, String.fromCharCode({value}))")]
+        [Transpose.Template("insert({index}, String.fromCharCode({value}))", Fn = "function ($sb, $i, $v) { return $sb.insert($i, String.fromCharCode($v)); }")]
         public extern StringBuilder Insert(int index, char value);
 
         public extern StringBuilder Insert(int index, decimal value);
@@ -98,7 +98,7 @@ namespace System.Text
 
         public extern StringBuilder Insert(int index, int value);
 
-        [Transpose.Template("{this}.insert({index}, {value}.toString())")]
+        [Transpose.Template("{this}.insert({index}, {value}.toString())", Fn = "function ($sb, $i, $v) { return $sb.insert($i, $v.toString()); }")]
         public extern StringBuilder Insert(int index, long value);
 
         public extern StringBuilder Insert(int index, object value);
@@ -108,20 +108,20 @@ namespace System.Text
         
         public extern StringBuilder Insert(int index, uint value);
 
-        [Transpose.Template("{this}.insert({index}, {value}.toString())")]
-        
+        [Transpose.Template("{this}.insert({index}, {value}.toString())", Fn = "function ($sb, $i, $v) { return $sb.insert($i, $v.toString()); }")]
+
         public extern StringBuilder Insert(int index, ulong value);
 
         public extern StringBuilder Insert(int index, string value, int count);
 
         public extern StringBuilder Remove(int startIndex, int length);
 
-        [Transpose.Template("replace(String.fromCharCode({oldChar}), String.fromCharCode({newChar}))")]
+        [Transpose.Template("replace(String.fromCharCode({oldChar}), String.fromCharCode({newChar}))", Fn = "function ($sb, $o, $n) { return $sb.replace(String.fromCharCode($o), String.fromCharCode($n)); }")]
         public extern StringBuilder Replace(char oldChar, char newChar);
 
         public extern StringBuilder Replace(string oldValue, string newValue);
 
-        [Transpose.Template("replace(String.fromCharCode({oldChar}), String.fromCharCode({newChar}), {startIndex}, {count})")]
+        [Transpose.Template("replace(String.fromCharCode({oldChar}), String.fromCharCode({newChar}), {startIndex}, {count})", Fn = "function ($sb, $o, $n, $i, $c) { return $sb.replace(String.fromCharCode($o), String.fromCharCode($n), $i, $c); }")]
         public extern StringBuilder Replace(char oldChar, char newChar, int startIndex, int count);
 
         public extern StringBuilder Replace(string oldValue, string newValue, int startIndex, int count);
