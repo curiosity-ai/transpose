@@ -638,6 +638,13 @@ public sealed partial class Emitter
             case IEventSymbol ev:
                 _w.Write(ev.IsStatic ? StaticMemberAccess(ev) : $"this.{TransposeNaming.MemberJsName(ev)}");
                 break;
+            // A query-expression range variable: `x` in `from x in xs …`. Each clause is emitted as a
+            // one-parameter lambda, so once a query introduces a second range variable they are carried
+            // in a frame object and `x` has to read `$q0.x` — see Emitter.Query.cs.
+            case IRangeVariableSymbol range when _queryRanges is not null
+                                                 && _queryRanges.TryGetValue(range.Name, out var rangeAccess):
+                _w.Write(rangeAccess);
+                break;
             case IMethodSymbol { MethodKind: MethodKind.LocalFunction } localFn:
                 _w.Write(NameMangler.JsIdentifier(localFn.Name));
                 break;
