@@ -2713,18 +2713,19 @@ public class Program
 }", waitForOutput: "<<DONE>>");
         }
 
-        // ---- KNOWN, NOT-YET-FIXED instances of the same method-group-vs-bare-name bug ---------
+        // ---- more of the same method-group-vs-bare-name bug: Array/Decimal/Expression ----------
         //
-        // These are further confirmed instances of the exact same defect class as the fixes above —
-        // a static-member-access fallback for a [Template]-without-Fn method colliding with an
-        // unrelated overload's real bare name — found during the same audit but deliberately left
-        // UNFIXED. [Ignore]d so the suite stays green; remove the attribute to see them fail, and
-        // to use as the regression test once each is fixed.
+        // Further confirmed instances of the exact same defect class as the fixes above — a
+        // static-member-access fallback for a [Template]-without-Fn method colliding with an
+        // unrelated overload's real bare name. Array.Reverse(T[]) and Decimal.Floor/Equals(decimal,...)
+        // fell back to a nonexistent bare name and threw "not a function"; Decimal.Round(decimal,int)
+        // fell back to the 0-arg instance Round()'s bare name and silently dropped the digit count
+        // (returned 4, not 3.14). Fixed the same way: each templated overload now carries a Fn
+        // pointing at the already-shaped real runtime function (Array.reverse, Decimal.round/
+        // toDecimalPlaces) or a small inline wrapper (Decimal.Floor/Equals, Expression.Add).
 
-        [Ignore("known bug: Array.Reverse(T[]) as a method group resolves to a nonexistent bare " +
-                 "'reverse' — TypeError, not a function. Not yet fixed.")]
         [TestMethod]
-        public async Task KnownBug_ArrayReverseMethodGroup()
+        public async Task TemplateFnResolvesArrayReverseMethodGroup()
         {
             await RunTest(@"
 using System;
@@ -2741,10 +2742,8 @@ public class Program
 }", waitForOutput: "<<DONE>>");
         }
 
-        [Ignore("known bug: Decimal.Floor(decimal) as a method group resolves to a nonexistent bare " +
-                 "'floor' — TypeError, not a function. Not yet fixed.")]
         [TestMethod]
-        public async Task KnownBug_DecimalFloorMethodGroup()
+        public async Task TemplateFnResolvesDecimalFloorMethodGroup()
         {
             await RunTest(@"
 using System;
@@ -2759,11 +2758,8 @@ public class Program
 }", waitForOutput: "<<DONE>>");
         }
 
-        [Ignore("known bug: Decimal.Round(decimal,int) as a method group falls back to the 0-arg " +
-                 "instance Round()'s bare name, silently dropping the digit count (returns 4, not 3.14). " +
-                 "Not yet fixed.")]
         [TestMethod]
-        public async Task KnownBug_DecimalRoundMethodGroup()
+        public async Task TemplateFnResolvesDecimalRoundMethodGroup()
         {
             await RunTest(@"
 using System;
@@ -2778,10 +2774,8 @@ public class Program
 }", waitForOutput: "<<DONE>>");
         }
 
-        [Ignore("known bug: Decimal.Equals(decimal,decimal) as a method group resolves to a " +
-                 "nonexistent bare 'equals' — TypeError, not a function. Not yet fixed.")]
         [TestMethod]
-        public async Task KnownBug_DecimalEqualsMethodGroup()
+        public async Task TemplateFnResolvesDecimalEqualsMethodGroup()
         {
             await RunTest(@"
 using System;
@@ -2796,22 +2790,38 @@ public class Program
 }", waitForOutput: "<<DONE>>");
         }
 
-        [Ignore("known bug: Expression.Add(Expression,Expression,MethodInfo) as a method group " +
-                 "resolves to a nonexistent bare 'add' — TypeError, not a function. Not yet fixed.")]
+        // Expression.Add(Expression,Expression,MethodInfo): compares the method-group call against a
+        // direct call rather than printing the BinaryExpression (its NodeType/ToString formatting
+        // diverges from native for unrelated reasons — raw ntype numbers vs a named enum, no custom
+        // ToString on the object-literal-shaped expression nodes — outside the scope of this bug), and
+        // uses a source-declared method (Reflectable) rather than a BCL one, since [External] types
+        // without [Reflectable] (e.g. Math) surface no methods via GetMethod/GetMethods.
         [TestMethod]
-        public async Task KnownBug_ExpressionAddMethodGroup()
+        public async Task TemplateFnResolvesExpressionAddMethodGroup()
         {
             await RunTest(@"
 using System;
 using System.Linq.Expressions;
 using System.Reflection;
+public class Helper
+{
+    public static int CustomAdd(int a, int b) => a + b + 100;
+}
 public class Program
 {
     public static void Main()
     {
+        MethodInfo m = typeof(Helper).GetMethod(""CustomAdd"");
+
+        var direct = Expression.Add(Expression.Constant(1), Expression.Constant(2), m);
         Func<Expression, Expression, MethodInfo, BinaryExpression> f = Expression.Add;
-        var e = f(Expression.Constant(1), Expression.Constant(2), null);
-        Console.WriteLine(e);
+        var viaGroup = f(Expression.Constant(1), Expression.Constant(2), m);
+
+        Console.WriteLine(direct.NodeType == viaGroup.NodeType);
+        Console.WriteLine(direct.Method == viaGroup.Method);
+        Console.WriteLine(direct.Type == viaGroup.Type);
+        Console.WriteLine(((ConstantExpression)direct.Left).Value + "" "" + ((ConstantExpression)viaGroup.Left).Value);
+        Console.WriteLine(((ConstantExpression)direct.Right).Value + "" "" + ((ConstantExpression)viaGroup.Right).Value);
         Console.WriteLine(""<<DONE>>"");
     }
 }", waitForOutput: "<<DONE>>");

@@ -221,7 +221,7 @@ namespace System
         [Transpose.Template("{d1}.div({d2})")]
         public static extern decimal Divide(decimal d1, decimal d2);
 
-        [Transpose.Template("{d}.floor()")]
+        [Transpose.Template("{d}.floor()", Fn = "function ($d) { return $d.floor(); }")]
         public static extern decimal Floor(decimal d);
 
         [Transpose.Template("{d1}.mod({d2})")]
@@ -245,16 +245,16 @@ namespace System
         [Transpose.Template("System.Decimal.tryParse({s}, {provider}, {result})")]
         public static extern bool TryParse(string s, IFormatProvider provider, out decimal result);
 
-        [Transpose.Template("System.Decimal.round({d}, 6)")]
+        [Transpose.Template("System.Decimal.round({d}, 6)", Fn = "function ($d) { return System.Decimal.round($d, 6); }")]
         public static extern decimal Round(decimal d);
 
-        [Transpose.Template("System.Decimal.toDecimalPlaces({d}, {decimals}, 6)")]
+        [Transpose.Template("System.Decimal.toDecimalPlaces({d}, {decimals}, 6)", Fn = "function ($d, $dec) { return System.Decimal.toDecimalPlaces($d, $dec, 6); }")]
         public static extern decimal Round(decimal d, int decimals);
 
-        [Transpose.Template("System.Decimal.toDecimalPlaces({d}, {decimals}, {mode})")]
+        [Transpose.Template("System.Decimal.toDecimalPlaces({d}, {decimals}, {mode})", Fn = "System.Decimal.toDecimalPlaces")]
         public static extern decimal Round(decimal d, int decimals, MidpointRounding mode);
 
-        [Transpose.Template("System.Decimal.round({d}, {mode})")]
+        [Transpose.Template("System.Decimal.round({d}, {mode})", Fn = "System.Decimal.round")]
         public static extern decimal Round(decimal d, MidpointRounding mode);
 
         [Transpose.Template("{d}.trunc()")]
@@ -269,7 +269,7 @@ namespace System
         [Transpose.Template("{d1}.compareTo({d2})")]
         public static extern int Compare(decimal d1, decimal d2);
 
-        [Transpose.Template("{d1}.equals({d2})")]
+        [Transpose.Template("{d1}.equals({d2})", Fn = "function ($d1, $d2) { return $d1.equals($d2); }")]
         public static extern bool Equals(decimal d1, decimal d2);
 
         [Transpose.Template("System.Decimal.toInt({value})")]
