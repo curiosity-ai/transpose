@@ -277,9 +277,11 @@ internal static class OutputBuilder
 
         foreach (var group in config.Resources)
         {
-            // Parse the "module#file" grouping and ".dontload" flag so a referencing project extracts
-            // the resource under its real name and knows whether to inject it into index.html.
-            var (name, load) = ParseResourceName(group.Name ?? "");
+            // Resolve the "module#file" grouping and the load flag ("load": false / a ".dontload"
+            // name) so a referencing project extracts the resource under its real name and knows
+            // whether to inject it into index.html. The flag travels in the DLL's resource manifest,
+            // which is how it survives packing.
+            var (name, load) = ResolveResource(group);
             var destSub = string.IsNullOrEmpty(group.Output) ? null : group.Output!.Replace('\\', '/');
 
             var isBundle = name.EndsWith(".js", StringComparison.OrdinalIgnoreCase)
@@ -460,6 +462,27 @@ internal static class OutputBuilder
     }
 
     /// <summary>
+    /// What a <c>tps.json</c> resource group produces: the output file name, and whether the generated
+    /// <c>index.html</c> references it (a <c>&lt;script&gt;</c> for JavaScript, a
+    /// <c>&lt;link rel=stylesheet&gt;</c> for CSS — the only two resource kinds the HTML can load).
+    /// Either way the file is written to the output and embedded into a package DLL; a
+    /// non-loaded resource is simply left for the application to fetch itself.
+    ///
+    /// Two spellings say "don't load", and they are AND-ed so either one alone suppresses the
+    /// injection: the declarative <c>"load": false</c> on the group, and the legacy <c>.dontload</c>
+    /// suffix on its <c>name</c> (see <see cref="ParseResourceName"/>). The single place both are
+    /// resolved, so the site build (<see cref="ProcessResourceGroup"/>) and the package embed
+    /// (<see cref="CollectEmbeddableItems"/>) cannot disagree — which is what makes the flag survive
+    /// packing: the resolved value is what lands in the DLL's resource manifest as <c>Load</c>, and a
+    /// referencing project's site build honours it there.
+    /// </summary>
+    internal static (string fileName, bool load) ResolveResource(TransposeJson.ResourceGroup group)
+    {
+        var (name, loadFromName) = ParseResourceName(group.Name ?? "");
+        return (name, loadFromName && group.Load);
+    }
+
+    /// <summary>
     /// Parses a tps.json resource group's <c>name</c> into the output file name and whether it should
     /// be injected into index.html, mirroring the legacy compiler's conventions:
     /// <list type="bullet">
@@ -469,6 +492,8 @@ internal static class OutputBuilder
     /// the output but NOT referenced from index.html (loaded on demand); the output name drops the
     /// suffix (<c>file.js</c>).</item>
     /// </list>
+    /// Callers that need the group's effective load flag go through <see cref="ResolveResource"/>,
+    /// which folds in the group's own <c>load</c> property.
     /// </summary>
     internal static (string fileName, bool load) ParseResourceName(string rawName)
     {
@@ -523,9 +548,10 @@ internal static class OutputBuilder
         string projectDir, string outputDir, TransposeJson.ResourceGroup group,
         List<JsOut> jsOuts, List<string> cssLinks, HashSet<string> written)
     {
-        // The group name carries the "module#file" grouping and the ".dontload" flag; parse both. A
-        // .dontload resource is written to the output but never referenced from index.html.
-        var (name, load) = ParseResourceName(group.Name ?? "");
+        // The output name (the group name minus its "module#" grouping prefix and ".dontload" suffix)
+        // plus the effective load flag: a non-loaded resource is written to the output but never
+        // referenced from index.html — neither as a <script> nor as a stylesheet <link>.
+        var (name, load) = ResolveResource(group);
         var isBundle = IsBundleName(name);
 
         foreach (var (rel, sources) in ResourceGroupOutputs(projectDir, group))
@@ -568,7 +594,7 @@ internal static class OutputBuilder
 
         string Rel(string leaf) => string.IsNullOrEmpty(destSub) ? leaf : destSub + "/" + leaf;
 
-        var (name, _) = ParseResourceName(group.Name ?? "");
+        var (name, _) = ResolveResource(group);
         if (IsBundleName(name))
         {
             outputs.Add((Rel(name), files));
@@ -623,7 +649,7 @@ internal static class OutputBuilder
             if (cfg is null) return;
             foreach (var group in cfg.Resources)
             {
-                var isBundle = IsBundleName(ParseResourceName(group.Name ?? "").fileName);
+                var isBundle = IsBundleName(ResolveResource(group).fileName);
                 foreach (var (rel, sources) in ResourceGroupOutputs(projectDir, group))
                     if (IsCss(rel)) css.Add(new CssResource(rel, sources, isBundle));
             }
