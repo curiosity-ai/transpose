@@ -177,6 +177,132 @@ public class App
     }
 
     /// <summary>
+    /// The same cast-operator type as <see cref="ValueTypeWithACastOperatorFromString"/>, but
+    /// deserialized directly as the top-level type instead of through a containing object's property.
+    /// A nested member's raw value has already been through one JSON.parse call (for the containing
+    /// document), so it arrives unquoted; a top-level call passes the wire text itself, still quoted
+    /// (<c>"\"ab12\""</c>, not <c>ab12</c>). <c>DeserializeObject&lt;T&gt;</c> mosaik actually uses this
+    /// way (<c>REQ</c>'s <c>Deserialize&lt;T&gt;</c> worked around exactly this gap for <c>UID128</c> by
+    /// special-casing it before ever reaching <c>JsonConvert</c> - see the comment dated 2019-07-17 in
+    /// <c>Mosaik.FrontEnd.Core/src/Helpers/Code/Request.cs</c>).
+    /// </summary>
+    [TestMethod]
+    public async Task CastOperatorTypeDeserializesAtTheTopLevelToo()
+    {
+        var code = Header + @"
+public sealed class Uid
+{
+    private readonly string _value;
+    public Uid(string value)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length != 4) throw new ArgumentException(""bad uid: "" + value);
+        _value = value;
+    }
+    public string Value => _value;
+
+    public static explicit operator Uid(string value)  => string.IsNullOrEmpty(value) ? null : new Uid(value);
+    public static implicit operator string(Uid value)  => value == null ? null : value.Value;
+}
+
+public class App
+{
+    public static void Main()
+    {
+        var single = JsonConvert.DeserializeObject<Uid>(""\""ab12\"""");
+        Console.WriteLine(single.Value);
+
+        var array = JsonConvert.DeserializeObject<Uid[]>(""[\""ab12\"",\""cd34\""]"");
+        Console.WriteLine(array.Length + ""|"" + array[0].Value + ""|"" + array[1].Value);
+    }
+}";
+        await RunAndCompare(code);
+    }
+
+    /// <summary>
+    /// The real <c>UID128</c> from the Curiosity front-end (<c>FrontEnd/Mosaik.FrontEnd.Core/src/Schema/Graph/UID128.cs</c>)
+    /// goes one step further than <see cref="ValueTypeWithACastOperatorFromString"/>: its constructor is
+    /// <c>extern</c> with a <c>[Template]</c> body (there is no real object at runtime — the JS value is
+    /// the plain string), and it is a constructor-injected member ([JsonConstructor]) rather than only a
+    /// settable property. Neither detail can go through <see cref="RunAndCompare"/>: plain Roslyn rejects
+    /// an <c>extern</c> constructor with no <c>DllImport</c> (CS0626), so there is no native oracle to
+    /// diff against for this exact shape — only <see cref="RunJs(string, string, string?)"/> (JS-only)
+    /// applies here. <see cref="ValueTypeWithACastOperatorFromString"/> is the dual-run proof that the
+    /// deserializer's cast-operator lookup matches Json.NET; this test proves the extra, Transpose-only
+    /// detail (an extern/Template constructor reached only through the compiled op_Explicit body, never
+    /// through reflection) does not change that.
+    /// </summary>
+    [TestMethod]
+    public async Task Uid128PatternWithJsonConstructorInvokesTheRealConstructor()
+    {
+        var code = Header + @"
+using Transpose;
+
+namespace UID
+{
+    public sealed class UID128
+    {
+        [Template(""UID.UID128.ThrowIfInvalid({value})"")]
+        public extern UID128(string value);
+
+        private static string ThrowIfInvalid(string value) =>
+            value != null && value.Length == 22 ? value : throw new ArgumentException(""Invalid string content specified for UID128: '"" + value + ""'"");
+
+        public extern string Value { [Template(""{this}"")] get; }
+
+        public static explicit operator UID128(string value) => string.IsNullOrEmpty(value) ? null : new UID128(value);
+        public static implicit operator string(UID128 value) => value?.Value;
+
+        [Template(""Transpose.getHashCode({this})"")]
+        public extern override int GetHashCode();
+
+        [Template(""Transpose.equals({this}, {o})"")]
+        public extern override bool Equals(object o);
+    }
+}
+
+public sealed class Node
+{
+    [JsonConstructor]
+    public Node(UID.UID128 id, string name)
+    {
+        Id   = id;
+        Name = name;
+    }
+
+    public UID.UID128 Id   { get; }
+    public string     Name { get; }
+}
+
+public class App
+{
+    public static void Main()
+    {
+        // The constructor parameter's UID128 argument is built through the compiled op_Explicit
+        // operator (which itself calls the extern/Template constructor) - not through reflection.
+        var back = JsonConvert.DeserializeObject<Node>(""{\""Id\"":\""1111111111111111111112\"",\""Name\"":\""n\""}"");
+        Console.WriteLine(back.Id.Value + ""|"" + back.Name + ""|"" + (((string)back.Id) == ""1111111111111111111112""));
+
+        // Same conversion, reached through a plain settable property instead of a constructor.
+        var withArray = JsonConvert.DeserializeObject<UID.UID128[]>(""[\""1111111111111111111113\"",\""1111111111111111111114\""]"");
+        Console.WriteLine(withArray.Length + ""|"" + withArray[0].Value + ""|"" + withArray[1].Value);
+
+        // Equals/GetHashCode (also Template-based) still agree across two independently-built instances.
+        var a = JsonConvert.DeserializeObject<UID.UID128>(""\""1111111111111111111112\"""");
+        var b = JsonConvert.DeserializeObject<UID.UID128>(""\""1111111111111111111112\"""");
+        Console.WriteLine(a.Equals(b) + ""|"" + (a.GetHashCode() == b.GetHashCode()));
+
+        Console.WriteLine(JsonConvert.SerializeObject(back));
+    }
+}";
+        await RunJs(code,
+            expected: @"
+1111111111111111111112|n|True
+2|1111111111111111111113|1111111111111111111114
+True|True
+{""Id"":""1111111111111111111112"",""Name"":""n""}");
+    }
+
+    /// <summary>
     /// The Curiosity library's wire DTOs: short <c>[JsonProperty]</c> names on internal members, with
     /// [JsonIgnore] on the computed ones.
     /// </summary>
