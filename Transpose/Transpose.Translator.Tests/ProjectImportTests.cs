@@ -221,7 +221,7 @@ public sealed class ErrorReportingTests
     {
         // 60 per file = 120 total: comfortably past the 40-error cap the compiler used to apply.
         const int perFile = 60;
-        var errors = Program.OrderErrorsForReport(Errors(perFile));
+        var errors = ProjectBuild.OrderErrorsForReport(Errors(perFile));
         Assert.AreEqual(perFile * 2, errors.Count(d => d.Id == "CS0103"),
             "every error from both files must survive to the report");
     }
@@ -229,7 +229,7 @@ public sealed class ErrorReportingTests
     [TestMethod]
     public void ErrorsAreOrderedByFileThenPosition()
     {
-        var errors = Program.OrderErrorsForReport(Errors(5));
+        var errors = ProjectBuild.OrderErrorsForReport(Errors(5));
 
         var files = errors.Select(d => Path.GetFileName(d.Location.SourceTree?.FilePath ?? "")).ToList();
         CollectionAssert.AreEqual(files.OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray(), files.ToArray(),
