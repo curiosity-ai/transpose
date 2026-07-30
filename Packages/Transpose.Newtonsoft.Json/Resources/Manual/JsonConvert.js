@@ -1428,7 +1428,16 @@
                     if (!field && typeof raw === "string") {
                         var obj = Newtonsoft.Json.JsonConvert.parse(raw);
 
-                        if (typeof obj === "object" || Transpose.isArray(obj) || type === System.Array.type(System.Byte, 1) || type === Function || type == System.Type || type === System.Guid || type === System.Globalization.CultureInfo || type === System.Uri || type === System.Version || type === System.DateTime || type === System.DateTimeOffset || type === System.Char || Transpose.Reflection.isEnum(type)) {
+                        // Every branch below that consumes a scalar (Guid.Parse, DateTime.parseExact,
+                        // tryToGetCastOperator, ...) expects the JSON-decoded value, not the raw wire
+                        // text - so a top-level scalar document (no containing object/array to have
+                        // already been JSON.parse()'d) has to be unwrapped here too. This mirrors the
+                        // named BCL types already listed; a user type reachable only through an
+                        // explicit/implicit string-conversion operator (the UID128 pattern) needs the
+                        // same treatment, or the operator receives the still-quoted text (e.g. '"ab12"'
+                        // instead of 'ab12') and a valid value fails its own validation.
+                        if (typeof obj === "object" || Transpose.isArray(obj) || type === System.Array.type(System.Byte, 1) || type === Function || type == System.Type || type === System.Guid || type === System.Globalization.CultureInfo || type === System.Uri || type === System.Version || type === System.DateTime || type === System.DateTimeOffset || type === System.Char || Transpose.Reflection.isEnum(type) ||
+                            (typeof obj !== "object" && !Transpose.isArray(obj) && type !== System.String && !type.$number && type !== System.Boolean && Newtonsoft.Json.JsonConvert.tryToGetCastOperator(obj, type))) {
                             raw = obj;
                         }
                     }
