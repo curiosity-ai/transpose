@@ -2688,6 +2688,10 @@ public sealed partial class Emitter
             return;
         }
 
+        // An explicit (object)someEnum is the same boxing conversion C# inserts implicitly at an
+        // assignment/argument site, so it boxes the same way — see TryEmitEnumToReferenceConversion.
+        if (TryEmitEnumToReferenceConversion(sourceType, targetType, cast.Expression)) return;
+
         EmitNumericConversion(targetType, sourceType, cast.Expression);
     }
 
@@ -3472,16 +3476,10 @@ public sealed partial class Emitter
     /// <summary>
     /// The JS expression rendering an already-written enum VALUE as its .NET string form:
     /// <c>System.Enum.toString(type, value)</c>, which reads the name off the enum's runtime type
-    /// object (its <c>fields</c> table, keyed by each member's emitted <c>[Name]</c>).
-    /// <para>
-    /// An <b>[External]</b> enum has no such runtime object — nothing is emitted for an external type
-    /// — so for those the lookup would read a property off <c>undefined</c> and crash ("Cannot read
-    /// properties of undefined (reading '&lt;TypeName&gt;')"). That is the case for the BCL's
-    /// <c>[External] [Enum(Emit.Value)]</c> enums (<c>System.Linq.Expressions.ExpressionType</c>,
-    /// <c>System.MidpointRounding</c>), whose members inline as bare numbers with no name table to
-    /// consult; the best available behaviour there is the raw number's own <c>toString()</c>, a
-    /// divergence from native .NET that comes with choosing [External].
-    /// </para>
+    /// object (its <c>fields</c> table, keyed by each member's emitted <c>[Name]</c>). An enum with no
+    /// runtime object falls back to the raw value's own <c>toString()</c> — see
+    /// <see cref="HasRuntimeEnumObject"/> — because the lookup would otherwise read a property off
+    /// <c>undefined</c> and crash ("Cannot read properties of undefined (reading '&lt;TypeName&gt;')").
     /// <para>
     /// This deliberately does <b>not</b> key off <c>Emit.Value</c>: a Value-mode enum declared in
     /// source or in a compiled library (Tesserae's <c>UIcons</c>/<c>Emoji</c>, the BCL's
@@ -3491,9 +3489,38 @@ public sealed partial class Emitter
     /// </para>
     /// </summary>
     private string EnumToStringJs(ITypeSymbol type, string valueJs)
-        => TransposeNaming.IsExternalType(type)
-            ? $"({valueJs}).toString()"
-            : $"System.Enum.toString({TypeRef(type)}, {valueJs})";
+        => HasRuntimeEnumObject(type)
+            ? $"System.Enum.toString({TypeRef(type)}, {valueJs})"
+            : $"({valueJs}).toString()";
+
+    /// <summary>
+    /// Whether an enum has a runtime type object to read names off / box against.
+    /// <para>
+    /// A non-external enum always does — the emitter writes its <c>Transpose.define</c>, whatever the
+    /// <c>[Enum(Emit.X)]</c> mode.
+    /// </para>
+    /// <para>
+    /// An <b>[External]</b> enum has no emitted define, but one under a <b>Name* mode</b> still has an
+    /// object: those modes emit every member reference as <c>T.member</c>, so <c>T</c> must exist at
+    /// runtime or the member itself — not merely its name — would be <c>undefined</c> everywhere. The
+    /// hand-written runtime supplies it: <c>System.Threading.Tasks.TaskStatus</c> and
+    /// <c>System.Diagnostics.Contracts.ContractFailureKind</c> are both <c>[External]</c> +
+    /// <c>[Enum(Emit.Name)]</c> and both carry a <c>Transpose.define</c> in <c>Resources/Task.js</c> /
+    /// <c>Contract.js</c>, whose camelCased slots the runtime reads back (<c>t.status ===
+    /// TaskStatus.ranToCompletion</c>).
+    /// </para>
+    /// <para>
+    /// What is left — an <c>[External]</c> enum in a Value or StringName* mode — genuinely has none:
+    /// its members inline as bare numbers/strings and nothing ever names the type. That is the BCL's
+    /// <c>System.Linq.Expressions.ExpressionType</c> and <c>System.MidpointRounding</c>, which crashed
+    /// on every ToString/concat/interpolation until the fallback was added. Reporting the ordinal there
+    /// diverges from native .NET, which always has the name via reflection metadata; that is the
+    /// accepted cost of an [External] enum with no name table.
+    /// </para>
+    /// </summary>
+    private static bool HasRuntimeEnumObject(ITypeSymbol type)
+        => !TransposeNaming.IsExternalType(type)
+           || TransposeNaming.EnumEmitMode(type) is 1 or 7 or 8 or 9;
 
     private static bool IsIntegerType(ITypeSymbol? type)
     {

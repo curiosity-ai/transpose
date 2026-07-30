@@ -2592,6 +2592,46 @@ public class Program
             Assert.IsTrue(js.Contains("midpoint=4"), "MidpointRounding.AwayFromZero's ordinal (4), a different Value-mode enum\n" + js);
         }
 
+        // An [External] enum in a NAME mode does have a runtime type object even though the emitter
+        // writes no define for it: those modes emit every member reference as `T.member`, so the
+        // hand-written runtime has to supply T or the member itself would be undefined. TaskStatus
+        // ([External] + [Enum(Emit.Name)]) is defined in Resources/Task.js with camelCased slots that
+        // the runtime reads back (`t.status === TaskStatus.ranToCompletion`) — so its name is available
+        // and ToString() must report it, not the ordinal. Keying the numeric fallback off [External]
+        // alone printed "5" here.
+        //
+        // Transpose-only (skipRoslyn): the slot casing is h5's — native .NET reports "RanToCompletion"
+        // — and this asserts the h5-verified value, which is also what makes the == comparison against
+        // the runtime's own stored status work at all.
+        [TestMethod]
+        public async Task ExternalNameModeEnumStringifiesToItsRuntimeSlot()
+        {
+            var js = await RunTest(@"
+using System;
+using System.Threading.Tasks;
+public class Program
+{
+    public static void Main()
+    {
+        var t = Task.FromResult(42);
+        Console.WriteLine(""equals="" + (t.Status == TaskStatus.RanToCompletion));
+        Console.WriteLine(""tostring="" + t.Status.ToString());
+        Console.WriteLine(""concat="" + t.Status);
+        Console.WriteLine($""interp={t.Status}"");
+        Console.WriteLine(""boxed="" + ((object)t.Status).ToString());
+        Console.WriteLine(""member="" + TaskStatus.Faulted.ToString());
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>", skipRoslyn: true);
+
+            Assert.IsTrue(js.Contains("equals=True"), "the emitted member must match the runtime's stored status\n" + js);
+            Assert.IsTrue(js.Contains("tostring=ranToCompletion"), "ToString reads the runtime's slot, not the ordinal\n" + js);
+            Assert.IsTrue(js.Contains("concat=ranToCompletion"), "concatenation too\n" + js);
+            Assert.IsTrue(js.Contains("interp=ranToCompletion"), "interpolation too\n" + js);
+            Assert.IsTrue(js.Contains("boxed=ranToCompletion"), "and a boxed value too\n" + js);
+            Assert.IsTrue(js.Contains("member=faulted"), "a member referenced directly resolves as well\n" + js);
+        }
+
         // A Value-mode enum that is NOT external is emitted with a full runtime type object whose
         // fields table is keyed by each member's [Name] — so ToString()/concat/interpolation must
         // return that name, not the ordinal. This is the contract Tesserae's icon sets are built on:
@@ -2670,6 +2710,77 @@ public class Program
         Console.WriteLine(""<<DONE>>"");
     }
 }", waitForOutput: "<<DONE>>");
+        }
+
+        // ---- an explicit (object) cast boxes an enum, like the implicit conversion does ----
+        //
+        // C# classifies `(object)Color.Red` and `object o = Color.Red` as the same boxing conversion,
+        // but only the implicit sites (assignment, argument, return) emitted the box: an explicit cast
+        // went through EmitCast → EmitNumericConversion, which has no boxing case and fell through to
+        // emitting the operand bare. So `((object)Color.Red).ToString()` read "1" off a plain JS number
+        // — and `((object)Color.Red).GetType()` was Int32 — where the assignment form correctly read
+        // "Red". Both now share TryEmitEnumToReferenceConversion.
+        //
+        // Native-diffed: this is plain .NET semantics, no Transpose attribute involved. The boxed value
+        // stays usable as the value it is — CompareTo/Equals/GetHashCode, sorting and dictionary lookup
+        // all go through the box, which is what the (IComparable)/(ValueType) casts exist for.
+        [TestMethod]
+        public async Task ExplicitObjectCastBoxesAnEnum()
+        {
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+public enum Color { Red = 1, Green = 2 }
+public class Program
+{
+    public static void Main()
+    {
+        Console.WriteLine(""cast.ToString="" + ((object)Color.Red).ToString());
+        Console.WriteLine(""cast concat=""  + ((object)Color.Red));
+        Console.WriteLine($""cast interp={(object)Color.Red}"");
+        Console.WriteLine(""cast type=""    + ((object)Color.Red).GetType().Name);
+        Console.WriteLine(""valuetype=""    + ((ValueType)Color.Red).ToString());
+        Console.WriteLine(""icomparable=""  + ((IComparable)Color.Red).ToString());
+
+        // the box must stay usable as the value it holds
+        Console.WriteLine(""compare="" + ((IComparable)Color.Green).CompareTo(Color.Red));
+        Console.WriteLine(""equals=""  + ((ValueType)Color.Red).Equals(Color.Red));
+        Console.WriteLine(""hash=""    + (((object)Color.Red).GetHashCode() == ((object)Color.Red).GetHashCode()));
+        Console.WriteLine(""unbox=""   + (int)(Color)(object)Color.Green);
+
+        var items = new List<IComparable> { (IComparable)Color.Green, (IComparable)Color.Red };
+        items.Sort();
+        Console.WriteLine(""sorted="" + items[0] + "","" + items[1]);
+
+        var byKey = new Dictionary<object, string>();
+        byKey[(object)Color.Red] = ""hit"";
+        Console.WriteLine(""dict="" + (byKey.ContainsKey((object)Color.Red) ? byKey[(object)Color.Red] : ""MISS""));
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        // The same cast on a [Name]-carrying Value-mode enum yields the [Name] (Transpose-only: native
+        // .NET ignores [Name] and would report the C# member name).
+        [TestMethod]
+        public async Task ExplicitObjectCastOnANamedEnumYieldsTheName()
+        {
+            var js = await RunTest(@"
+using System;
+using Transpose;
+[Enum(Emit.Value)] public enum Icons { [Name(""fi-rr-bug"")] Bug = 0 }
+public class Program
+{
+    public static void Main()
+    {
+        Console.WriteLine(""cast="" + ((object)Icons.Bug).ToString());
+        Console.WriteLine(""type="" + ((object)Icons.Bug).GetType().Name);
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>", skipRoslyn: true);
+
+            Assert.IsTrue(js.Contains("cast=fi-rr-bug"), "a boxed named enum stringifies to its [Name]\n" + js);
+            Assert.IsTrue(js.Contains("type=Icons"), "and keeps the enum as its runtime type\n" + js);
         }
 
         // A default-mode enum (a plain user enum, and a default-mode BCL enum like DayOfWeek) must
