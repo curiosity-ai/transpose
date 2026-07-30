@@ -133,6 +133,9 @@ public sealed partial class Emitter
             case PrefixUnaryExpressionSyntax prefix:
                 EmitPrefixUnary(prefix);
                 break;
+            case RangeExpressionSyntax rangeExpr:
+                EmitRangeExpression(rangeExpr);
+                break;
             case PostfixUnaryExpressionSyntax postfix:
                 EmitPostfixUnary(postfix);
                 break;

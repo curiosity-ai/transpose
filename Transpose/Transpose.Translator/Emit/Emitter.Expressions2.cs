@@ -2488,6 +2488,61 @@ public sealed partial class Emitter
         _w.Write(")");
     }
 
+    /// <summary>
+    /// Emits a range expression (<c>a..b</c>, <c>a..</c>, <c>..b</c>, <c>..</c>) as the
+    /// <see cref="System.Range"/> value C# defines it to be. Array and string slicing lowers a range
+    /// inline (see <c>EmitElementAccess</c>), so this covers every other position — a <c>Range</c>-typed
+    /// argument such as <c>xs.Take(1..^1)</c>, a <c>Range r = 1..^1;</c> initializer, a field of that
+    /// type. The three static factories are used where they apply so only <c>a..b</c> needs the
+    /// constructor, and each end is emitted through the ordinary conversion path, which supplies the
+    /// implicit <c>int</c>-to-<c>Index</c> conversion (a <c>^n</c> end is already an <c>Index</c>).
+    /// </summary>
+    private void EmitRangeExpression(RangeExpressionSyntax range)
+    {
+        var info = _model.GetTypeInfo(range);
+        if ((info.Type ?? info.ConvertedType) is not INamedTypeSymbol rangeType
+            || rangeType.ToDisplayString() != "System.Range")
+        {
+            Unsupported(range, "range expression");
+            return;
+        }
+
+        var left = range.LeftOperand;
+        var right = range.RightOperand;
+
+        // `..` is the whole sequence.
+        if (left is null && right is null)
+        {
+            if (RangeMember(rangeType, "All") is not { } all) { Unsupported(range, "range expression"); return; }
+            _w.Write($"{TypeRef(rangeType)}.{TransposeNaming.MemberJsName(all)}");
+            return;
+        }
+
+        // `..b` / `a..` — one end is open, which is exactly what EndAt/StartAt mean.
+        if (left is null || right is null)
+        {
+            var factoryName = left is null ? "EndAt" : "StartAt";
+            if (RangeMember(rangeType, factoryName) is not IMethodSymbol factory) { Unsupported(range, "range expression"); return; }
+            _w.Write($"{TypeRef(rangeType)}.{TransposeNaming.MemberJsName(factory)}(");
+            EmitExpressionConverted(left ?? right!, factory.Parameters[0].Type);
+            _w.Write(")");
+            return;
+        }
+
+        var ctor = rangeType.InstanceConstructors.FirstOrDefault(c => c.Parameters.Length == 2);
+        if (ctor is null) { Unsupported(range, "range expression"); return; }
+
+        _w.Write($"new {TypeRef(rangeType)}.{TransposeNaming.ConstructorName(ctor)}(");
+        EmitExpressionConverted(left, ctor.Parameters[0].Type);
+        _w.Write(", ");
+        EmitExpressionConverted(right, ctor.Parameters[1].Type);
+        _w.Write(")");
+    }
+
+    /// <summary>The single public static member of <c>System.Range</c> called <paramref name="name"/>.</summary>
+    private static ISymbol? RangeMember(INamedTypeSymbol rangeType, string name)
+        => rangeType.GetMembers(name).FirstOrDefault(m => m.IsStatic);
+
     private void EmitPrefixUnary(PrefixUnaryExpressionSyntax prefix)
     {
         // `^n` (from-end index) as a value → a System.Index. Array element access handles `^n`

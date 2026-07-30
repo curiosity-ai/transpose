@@ -426,12 +426,17 @@ The short version:
   routed through `ThrowHelper.Throw*Exception(ExceptionResource.X)` reports "X" as its message where
   .NET reports a sentence. Sites whose message is user-facing (e.g. the duplicate key
   `ToDictionary` surfaces) call the keyed helper instead, which carries real text.
-- **LINQ operators added after .NET 6 are not in the BCL.** `Enumerable` covers the classic surface
-  plus `Chunk`/`MinBy`/`MaxBy` (the latter three in `EnumerableExtras`, as plain transpiled C#).
-  Missing, so a call fails to compile: `Append`, `Prepend`, `ToHashSet`, `DistinctBy`, `UnionBy`,
-  `IntersectBy`, `ExceptBy`, `SkipLast`, `TakeLast`, `Order`, `OrderDescending`, `Index`, `CountBy`,
-  `AggregateBy`, `TryGetNonEnumeratedCount`, the two-argument tuple `Zip`, `ElementAt(Index)` and
-  `Take(Range)`. `EnumerableExtras` is where they belong.
+- **The modern LINQ surface lives in `EnumerableExtras` (done).** `Enumerable` is the external binding
+  onto `linq.js`, whose API predates everything `System.Linq` gained after it, so those operators are
+  implemented alongside it as plain transpiled C# in `BCL/Transpose.BCL/System/Linq/EnumerableExtras.cs`:
+  `Append`, `Prepend`, `ToHashSet`, `Chunk`, `MinBy`, `MaxBy`, `DistinctBy`, `UnionBy`, `IntersectBy`,
+  `ExceptBy`, `SkipLast`, `TakeLast`, `Order`, `OrderDescending`, `Index`, `CountBy`, `AggregateBy`,
+  `TryGetNonEnumeratedCount`, the tuple-returning `Zip` overloads, and `ElementAt`/`ElementAtOrDefault`
+  by `Index` / `Take` by `Range`. Covered by `Linq/LinqModernOperatorTests`. `TryGetNonEnumeratedCount`
+  carries the one documented difference: it answers true only for a real collection, where .NET also
+  answers true for lazy operators whose count it can work out cheaply — false is a permitted answer, but
+  it is not always the *same* answer. Still absent: the `*OrDefault(defaultValue)` overloads
+  (`FirstOrDefault(source, 42)` and friends) and .NET 10's `Shuffle`/`RightJoin`/`LeftJoin`.
 - **A positional pattern only resolves members for tuples and records** — `x is Foo(1, 2)` against a
   type with a hand-written `Deconstruct(out …)` still reads `Item1`/`Item2` (see
   `PositionalPatternMemberNames`), because a pattern test is emitted as a single JS expression and
