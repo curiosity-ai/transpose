@@ -507,7 +507,7 @@ Transform each file as you copy it:
    source, with these fixed icons:
    `# :icon-sparkles: Features`, `# :icon-code-simple: Language and Compiler`,
    `# :icon-cube: Runtime and Base Library`, `# :icon-browser: Web and Package Bindings`,
-   `# :icon-terminal: Build and Tooling`, `# :icon-gauge: Performance`.
+   `# :icon-terminal: Build and Tooling`, `# :icon-rocket: Performance`.
 6. **Every bullet becomes a `::: change` container**, with the bold title moved
    into `title=` (no trailing period, no `Fix:` / `Improvement:` / `Feature:`
    prefix) and the sentences as the body. The `badge=` value is the change type,
