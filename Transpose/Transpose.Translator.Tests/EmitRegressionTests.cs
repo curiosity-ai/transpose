@@ -2617,6 +2617,37 @@ public class Program
 }", waitForOutput: "<<DONE>>");
         }
 
+        // ---- char.IsUpper / char.IsLower as a method group ------------------------------------
+        //
+        // char.IsUpper(char)/IsLower(char) have a plain [Template] (no Fn), so a method group of
+        // either fell through EmitMethodGroup's Fn check into the generic static-member-access path,
+        // which just name-mangles the method to "isUpper"/"isLower". char.IsLower has no backing
+        // runtime function under that name at all (silently always-truthy predicate — every non-'\0'
+        // char code is truthy, so password.Any(char.IsLower) always returned true), and char.IsUpper
+        // collided with the UNRELATED (string, int) overload's runtime function
+        // (System.Char.isUpper(s, index)), which read `index` as the char code and threw
+        // ArgumentOutOfRangeException. Fixed by giving both a Fn pointing at the already
+        // correctly-shaped (char) -> bool runtime helper (Transpose.isUpper / Transpose.isLower).
+        [TestMethod]
+        public async Task TemplateFnResolvesCharIsUpperIsLowerMethodGroup()
+        {
+            await RunTest(@"
+using System;
+using System.Linq;
+public class Program
+{
+    public static void Main()
+    {
+        Console.WriteLine(""abc123"".Any(char.IsUpper));   // False
+        Console.WriteLine(""abc123"".Any(char.IsLower));   // True
+        Console.WriteLine(""ABC123"".Any(char.IsLower));   // False
+        Console.WriteLine(""ABC123"".Any(char.IsUpper));   // True
+
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
         // ---- [Template] 2-arg (format, nonExpandedFormat) — the non-expanded params variant ----
         //
         // A 2-arg [Template] gives a second template for when the trailing `params` argument is supplied
