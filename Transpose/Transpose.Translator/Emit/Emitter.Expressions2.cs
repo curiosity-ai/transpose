@@ -3470,18 +3470,28 @@ public sealed partial class Emitter
     }
 
     /// <summary>
-    /// The JS expression rendering an already-written enum VALUE as its .NET string form. An
-    /// <c>[Enum(Emit.Value)]</c> enum (e.g. <c>System.Linq.Expressions.ExpressionType</c>) has no
-    /// runtime type object — a deliberate bundle-size tradeoff: its members inline as bare numbers
-    /// everywhere they are referenced, so <c>System.Enum.toString(TypeRef(type), value)</c> would read
-    /// a property off <c>undefined</c> and crash ("Cannot read properties of undefined (reading
-    /// '&lt;TypeName&gt;')"). There is no name table to fall back to for this mode by design, so the
-    /// best available behaviour is the raw number's own <c>toString()</c>, same as any other integer —
-    /// this necessarily diverges from native .NET (which always has the name via reflection metadata),
-    /// but that divergence is the accepted cost of choosing Emit.Value, not a new one this introduces.
+    /// The JS expression rendering an already-written enum VALUE as its .NET string form:
+    /// <c>System.Enum.toString(type, value)</c>, which reads the name off the enum's runtime type
+    /// object (its <c>fields</c> table, keyed by each member's emitted <c>[Name]</c>).
+    /// <para>
+    /// An <b>[External]</b> enum has no such runtime object — nothing is emitted for an external type
+    /// — so for those the lookup would read a property off <c>undefined</c> and crash ("Cannot read
+    /// properties of undefined (reading '&lt;TypeName&gt;')"). That is the case for the BCL's
+    /// <c>[External] [Enum(Emit.Value)]</c> enums (<c>System.Linq.Expressions.ExpressionType</c>,
+    /// <c>System.MidpointRounding</c>), whose members inline as bare numbers with no name table to
+    /// consult; the best available behaviour there is the raw number's own <c>toString()</c>, a
+    /// divergence from native .NET that comes with choosing [External].
+    /// </para>
+    /// <para>
+    /// This deliberately does <b>not</b> key off <c>Emit.Value</c>: a Value-mode enum declared in
+    /// source or in a compiled library (Tesserae's <c>UIcons</c>/<c>Emoji</c>, the BCL's
+    /// <c>DateTimeKind</c>/<c>StringComparison</c>) is still emitted with a full name table, and its
+    /// <c>[Name]</c> is exactly what a caller expects back — <c>UIcons.Bug.ToString()</c> is the CSS
+    /// class "fi-rr-bug", not the ordinal.
+    /// </para>
     /// </summary>
     private string EnumToStringJs(ITypeSymbol type, string valueJs)
-        => TransposeNaming.EnumEmitMode(type) == 2
+        => TransposeNaming.IsExternalType(type)
             ? $"({valueJs}).toString()"
             : $"System.Enum.toString({TypeRef(type)}, {valueJs})";
 

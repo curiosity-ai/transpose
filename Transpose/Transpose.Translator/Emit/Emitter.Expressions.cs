@@ -352,25 +352,35 @@ public sealed partial class Emitter
             return;
         }
 
-        // Enum → string / object (boxing). Under a StringName* mode (2–6) the runtime value is
-        // already the name string, so it stringifies and boxes to itself (a raw string — matching
-        // Transpose's StringName contract, where the boxed value `is string`). Under the numeric
-        // modes: enum → string looks up the name (System.Enum.toString); enum → object / interface
-        // boxes the value with its enum type so GetType() is the enum (not Int32) and ToString() is
-        // the name, rather than boxing to a bare number.
+        // Enum → string / object (boxing), matching h5:
+        //  * An [External] enum has no runtime type object to name or box against, so it stays the
+        //    bare number its members inline as.
+        //  * enum → string is the name (System.Enum.toString), except under a StringName* mode (3–6)
+        //    where the runtime value already IS that string.
+        //  * enum → object / interface boxes the value together with its enum type, whatever the mode,
+        //    so GetType() is the enum (not Int32/String) and ToString() is the name. The box stays
+        //    transparent for everything else — a boxed StringName* value still `is string`, casts to
+        //    it, compares equal to it and reaches a JS API as it, which is the mode's contract.
         if (sourceType is { TypeKind: TypeKind.Enum }
             && targetType is { IsReferenceType: true })
         {
-            var stringMode = TransposeNaming.EnumEmitMode(sourceType) is 2 or 3 or 4 or 5 or 6;
-            if (stringMode)
+            var stringMode = TransposeNaming.EnumEmitMode(sourceType) is 3 or 4 or 5 or 6;
+            if (TransposeNaming.IsExternalType(sourceType))
             {
-                EmitExpression(expr); // already a name string
+                EmitExpression(expr); // a nameless external ordinal
             }
             else if (targetType.SpecialType == SpecialType.System_String)
             {
-                _w.Write($"System.Enum.toString({TypeRef(sourceType)}, ");
-                EmitExpression(expr);
-                _w.Write(")");
+                if (stringMode)
+                {
+                    EmitExpression(expr); // already the name string
+                }
+                else
+                {
+                    _w.Write($"System.Enum.toString({TypeRef(sourceType)}, ");
+                    EmitExpression(expr);
+                    _w.Write(")");
+                }
             }
             else
             {
@@ -1029,7 +1039,8 @@ public sealed partial class Emitter
                 _w.Write(JsString(TransposeNaming.EnumStringName(enumField, TransposeNaming.EnumEmitMode(enumField.ContainingType))));
                 return;
             default: // Emit.Name* / default → the runtime enum object's member
-                _w.Write($"{TypeRef(enumField.ContainingType)}.{TransposeNaming.MemberJsName(enumField)}");
+                _w.Write(NameMangler.JsMemberAccess(TypeRef(enumField.ContainingType),
+                                                    TransposeNaming.MemberJsName(enumField)));
                 return;
         }
     }

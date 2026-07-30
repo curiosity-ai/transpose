@@ -126,17 +126,26 @@ internal static class TransposeNaming
     /// 4 preserves), unless an explicit <c>[Name]</c> overrides it.
     /// </summary>
     public static string EnumStringName(IFieldSymbol member, int mode)
+        => GetName(member) ?? EnumNameCasing(member.Name, mode);
+
+    /// <summary>
+    /// An enum member's name under the casing its <c>[Enum(Emit.X)]</c> mode applies: the two
+    /// camelCasing modes (1 Name, 3 StringName) lowercase the first letter, the lowercase modes
+    /// (5 StringNameLowerCase, 8 NameLowerCase) and uppercase modes (6 StringNameUpperCase,
+    /// 9 NameUpperCase) recase the whole name, and every other mode (2 Value, 4
+    /// StringNamePreserveCase, 7 NamePreserveCase) preserves it. The Name-family and
+    /// StringName-family modes pair up deliberately: a member's JS slot and — under a StringName
+    /// mode — its string value are the same text, which is what h5 emits (<c>topLeft: "topLeft"</c>,
+    /// <c>TOPLEFT: "TOPLEFT"</c>) and what makes <c>ToString()</c> report the value a consumer
+    /// actually sees.
+    /// </summary>
+    private static string EnumNameCasing(string name, int mode) => mode switch
     {
-        if (GetName(member) is { } named) return named;
-        var name = member.Name;
-        return mode switch
-        {
-            3 => char.ToLowerInvariant(name[0]) + name.Substring(1),
-            5 => name.ToLowerInvariant(),
-            6 => name.ToUpperInvariant(),
-            _ => name,
-        };
-    }
+        1 or 3 => char.ToLowerInvariant(name[0]) + name.Substring(1),
+        5 or 8 => name.ToLowerInvariant(),
+        6 or 9 => name.ToUpperInvariant(),
+        _ => name,
+    };
 
     /// <summary>The [Template] JS string for a member, or null.</summary>
     public static string? GetTemplate(ISymbol symbol)
@@ -545,19 +554,12 @@ internal static class TransposeNaming
     {
         if (PropertyEffectiveName(symbol) is { } name) return name;
 
-        // Enum members honour the [Enum(Emit.Name*)] casing modes on their own JS name: NameLowerCase
-        // (8) lowercases, NameUpperCase (9) uppercases; Name (1) / NamePreserveCase (7) and every
-        // other mode preserve. (The StringName* modes 3–6 cast the emitted string VALUE — see
-        // EnumStringName — not the member's JS name, which stays verbatim.)
+        // An enum member's JS slot carries its mode's casing — see EnumNameCasing. Under a
+        // StringName* mode (3–6) that makes the slot and the emitted string VALUE the same text
+        // (h5 emits `topLeft: "topLeft"`), so System.Enum.toString hands back the string a consumer
+        // sees rather than the C# member name.
         if (symbol is IFieldSymbol { ContainingType.TypeKind: TypeKind.Enum } enumMember)
-        {
-            return EnumEmitMode(enumMember.ContainingType) switch
-            {
-                8 => enumMember.Name.ToLowerInvariant(),
-                9 => enumMember.Name.ToUpperInvariant(),
-                _ => enumMember.Name,
-            };
-        }
+            return EnumNameCasing(enumMember.Name, EnumEmitMode(enumMember.ContainingType));
 
         // A compiled type's member keeps its verbatim C# name. An [External] type's member does
         // NOT short-circuit here even when in source (self-building the BCL): its members bind to

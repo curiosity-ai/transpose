@@ -50,6 +50,19 @@ public sealed class NameMangler
         return ok ? name : "\"" + name.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
     }
 
+    /// <summary>
+    /// Reads a member back off its declaring object: <c>Recv.name</c> when the name is a valid JS
+    /// identifier, <c>Recv["name"]</c> when it is not. The counterpart to <see cref="JsPropertyKey"/>
+    /// — a key that had to be quoted in the object literal cannot be read with a dot, so a
+    /// <c>[Name("fi-rr-bug")]</c> enum member emitted <c>UIcons.fi-rr-bug</c>, which JS parses as
+    /// subtraction and fails on at runtime ("rr is not defined").
+    /// </summary>
+    public static string JsMemberAccess(string receiver, string name)
+    {
+        var key = JsPropertyKey(name);
+        return key == name ? receiver + "." + name : receiver + "[" + key + "]";
+    }
+
     /// <summary>Fully-qualified JS name for a type, e.g. <c>App.Foo.Bar</c>.</summary>
     public string TypeFullName(INamedTypeSymbol type)
     {

@@ -2512,8 +2512,10 @@ public class Program
         // AND name-casing modes (Name / NamePreserveCase / NameLowerCase / NameUpperCase) that set the
         // enum member's JS PROPERTY name. The value-casing modes were covered; the name-casing ones were
         // not — the same "an attribute enum parameter changes emission but is untested" gap as
-        // ObjectCreateMode. NameLowerCase lowercases the slot, NameUpperCase uppercases it, Name /
-        // NamePreserveCase preserve.
+        // ObjectCreateMode. Name camelCases the slot, NameLowerCase lowercases it, NameUpperCase
+        // uppercases it, NamePreserveCase preserves it. Each expectation below is verified against h5
+        // (see EnumEmitModeTests for the whole nine-mode table) — a shipped contract, not an
+        // observation: do not "update" one to match a changed emitter.
 
         [TestMethod]
         public void EnumEmitNameCasingModesRenameTheMemberSlot()
@@ -2537,26 +2539,29 @@ public class Program
             var js = result.Javascript!;
             Assert.IsTrue(js.Contains("LowerE.alphaone"), "NameLowerCase must lowercase the member slot\n" + js);
             Assert.IsTrue(js.Contains("UpperE.BETATWO"),  "NameUpperCase must uppercase the member slot\n" + js);
-            Assert.IsTrue(js.Contains("NameE.AlphaOne"),  "Name must preserve the member slot\n" + js);
+            Assert.IsTrue(js.Contains("NameE.alphaOne"),  "Name must camelCase the member slot (h5: `topLeft: 0`)\n" + js);
             Assert.IsTrue(js.Contains("PresE.BetaTwo"),   "NamePreserveCase must preserve the member slot\n" + js);
         }
 
-        // ---- [Enum(Emit.Value)] ToString/concat/interpolation must not crash ------------------
+        // ---- [External] enum ToString/concat/interpolation must not crash ---------------------
         //
-        // An [Enum(Emit.Value)] enum (e.g. System.Linq.Expressions.ExpressionType,
-        // System.MidpointRounding) has no runtime type object — its members inline as bare numbers
-        // everywhere, a deliberate bundle-size tradeoff — but converting one to a string (explicit
-        // ToString(), string concatenation, or $"{}") unconditionally called
+        // An [External] enum (e.g. System.Linq.Expressions.ExpressionType, System.MidpointRounding —
+        // both also [Enum(Emit.Value)]) has no runtime type object: nothing is emitted for an
+        // external type, and its members inline as bare numbers everywhere. Converting one to a
+        // string (explicit ToString(), string concatenation, or $"{}") unconditionally called
         // System.Enum.toString(TypeRef(type), value), which read a property off `undefined` (there is
         // no such runtime type to look up) and crashed with "Cannot read properties of undefined
-        // (reading '<TypeName>')". This reproduced on every Value-mode enum, including ones built
+        // (reading '<TypeName>')". This reproduced on every such enum, including ones built
         // through long-working factories like Expression.Assign — nothing to do with any specific
-        // factory method. Fixed by falling back to the raw number's own toString() for this mode,
-        // in EmitConcatOperand, the explicit ToString() call, string interpolation, and the shared
-        // ToStringJs helper (all four previously duplicated the same unconditional call). This
+        // factory method. Fixed by falling back to the raw number's own toString() when the enum is
+        // external, in EmitConcatOperand, the explicit ToString() call, string interpolation, and the
+        // shared ToStringJs helper (all four previously duplicated the same unconditional call). This
         // necessarily diverges from native, which always has the symbolic name via reflection
-        // metadata — that divergence is the accepted cost of choosing Emit.Value, not a new one this
+        // metadata — that divergence is the accepted cost of choosing [External], not a new one this
         // introduces, so this test is Transpose-only (skipRoslyn) rather than diffed against native.
+        //
+        // The condition is external-ness, NOT Emit.Value: see EnumValueModeWithNameStringifiesToName
+        // below for a Value-mode enum that DOES have a runtime type object and must use its names.
         [TestMethod]
         public async Task EnumValueModeToStringDoesNotCrash()
         {
@@ -2585,6 +2590,86 @@ public class Program
             Assert.IsTrue(js.Contains("interp=9"), "string interpolation must not crash either\n" + js);
             Assert.IsTrue(js.Contains("assign=46"), "ExpressionType.Assign's ordinal (46), a different factory\n" + js);
             Assert.IsTrue(js.Contains("midpoint=4"), "MidpointRounding.AwayFromZero's ordinal (4), a different Value-mode enum\n" + js);
+        }
+
+        // A Value-mode enum that is NOT external is emitted with a full runtime type object whose
+        // fields table is keyed by each member's [Name] — so ToString()/concat/interpolation must
+        // return that name, not the ordinal. This is the contract Tesserae's icon sets are built on:
+        //
+        //     [Enum(Emit.Value)] enum UIcons { [Name("fi-rr-bug")] Bug, ... }
+        //     I(Att($"{Icon.Transform(icon, weight)}"))   // Transform() is icon.ToString()
+        //
+        // Falling back to the raw number for every Value-mode enum (rather than only for the external
+        // ones that have no name table) made every icon render as <i class="4615"> instead of
+        // <i class="fi-rr-bug">, and broke Transform()'s weight rewrite (v.Substring(6), which strips
+        // the "fi-rr-" prefix). Transpose-only (skipRoslyn): [Name] is a Transpose codegen attribute,
+        // so native .NET reports the C# member name here.
+        [TestMethod]
+        public async Task EnumValueModeWithNameStringifiesToName()
+        {
+            var js = await RunTest(@"
+using System;
+using Transpose;
+[Enum(Emit.Value)]
+public enum Icons
+{
+    [Name(""fi-rr-default-empty"")] Default,
+    [Name(""fi-rr-cloud"")]         Cloud,
+    [Name(""fi-rr-bug"")]           Bug,
+}
+[Enum(Emit.StringName)]
+public enum Weight
+{
+    [Name(""fi-rr-"")] Regular,
+    [Name(""fi-sr-"")] Solid,
+}
+public class Program
+{
+    public static string Transform(Icons icon, Weight weight)
+    {
+        string v = icon.ToString();
+        if (weight == Weight.Regular) return v;
+        return weight + v.Substring(6);
+    }
+
+    public static void Main()
+    {
+        Console.WriteLine(""explicit="" + Icons.Bug.ToString());
+        Console.WriteLine(""concat="" + Icons.Bug);
+        Console.WriteLine($""interp={Icons.Bug}"");
+        Console.WriteLine(""regular="" + Transform(Icons.Cloud, Weight.Regular));
+        Console.WriteLine(""solid="" + Transform(Icons.Cloud, Weight.Solid));
+        Console.WriteLine(""default="" + Icons.Default);
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>", skipRoslyn: true);
+
+            Assert.IsTrue(js.Contains("explicit=fi-rr-bug"), "explicit ToString() must be the [Name]\n" + js);
+            Assert.IsTrue(js.Contains("concat=fi-rr-bug"),   "concatenation must be the [Name]\n" + js);
+            Assert.IsTrue(js.Contains("interp=fi-rr-bug"),   "interpolation must be the [Name]\n" + js);
+            Assert.IsTrue(js.Contains("regular=fi-rr-cloud"), "the Regular weight keeps the name as-is\n" + js);
+            Assert.IsTrue(js.Contains("solid=fi-sr-cloud"),   "another weight rewrites the 6-char prefix\n" + js);
+            Assert.IsTrue(js.Contains("default=fi-rr-default-empty"), "the zero-valued member too\n" + js);
+        }
+
+        // The BCL's own non-external Value-mode enums (StringComparison, StringSplitOptions,
+        // DateTimeKind) are emitted into the runtime with their name tables, so they must keep
+        // matching native exactly — they were collateral damage of keying the fallback off Emit.Value.
+        [TestMethod]
+        public async Task BclValueModeEnumToStringStillMatchesNative()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        Console.WriteLine(""comparison="" + StringComparison.OrdinalIgnoreCase);
+        Console.WriteLine(""split="" + StringSplitOptions.RemoveEmptyEntries.ToString());
+        Console.WriteLine($""kind={DateTimeKind.Utc}"");
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
         }
 
         // A default-mode enum (a plain user enum, and a default-mode BCL enum like DayOfWeek) must
