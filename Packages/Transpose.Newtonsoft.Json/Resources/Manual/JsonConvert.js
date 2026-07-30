@@ -14,14 +14,300 @@
                         return JSON.parse(value);
                     } catch (e) {
                         if (e instanceof SyntaxError) {
+                            // JSON.parse accepts only strict JSON, while Json.NET's reader accepts a
+                            // superset (see parseLenient). Falling back to it keeps a payload with
+                            // single-quoted strings, unquoted member names, trailing commas or
+                            // comments readable, as it is on the server.
                             try {
-                                return eval('(' + value + ')');
-                            } catch (e) {
-                                throw new Newtonsoft.Json.JsonException.$ctor1(e.message);
+                                return Newtonsoft.Json.JsonConvert.parseLenient(value);
+                            } catch (lenientError) {
+                                throw new Newtonsoft.Json.JsonException.$ctor1(lenientError.message);
                             }
                         }
                         throw new Newtonsoft.Json.JsonException.$ctor1(e.message);
                     }
+                },
+
+                // A reader for the JSON superset Json.NET accepts and JSON.parse rejects: comments,
+                // single-quoted strings, unquoted member names, trailing commas, hexadecimal numbers
+                // and NaN/Infinity. It runs only after JSON.parse has failed, so a strict document —
+                // effectively every document — never pays for it.
+                //
+                // This replaced a fallback that wrapped the payload in parentheses and ran it through
+                // the JavaScript evaluator. That executes whatever the payload contains (arbitrary
+                // script from any source the app deserializes, not just data), and a
+                // Content-Security-Policy without 'unsafe-eval' blocks it outright, which turned a
+                // lenient payload into a hard CSP failure. Parsing by hand also stops being
+                // *more* lenient than Json.NET: `undefined` and a leading `+` on a number are rejected
+                // here exactly as the server rejects them.
+                parseLenient: function (text) {
+                    if (typeof text !== "string") {
+                        throw new SyntaxError("Cannot parse a non-string value as JSON.");
+                    }
+
+                    var state = { text: text, i: 0 };
+
+                    Newtonsoft.Json.JsonConvert.lenientWhitespace(state);
+                    var value = Newtonsoft.Json.JsonConvert.lenientValue(state);
+                    Newtonsoft.Json.JsonConvert.lenientWhitespace(state);
+
+                    if (state.i < text.length) {
+                        Newtonsoft.Json.JsonConvert.lenientFail(state, "Unexpected content after the JSON value");
+                    }
+
+                    return value;
+                },
+
+                lenientFail: function (state, message) {
+                    throw new SyntaxError(message + " at position " + state.i + " in JSON.");
+                },
+
+                // Whitespace, // line comments and /* block comments */.
+                lenientWhitespace: function (state) {
+                    var text = state.text;
+
+                    while (state.i < text.length) {
+                        var c = text.charAt(state.i);
+
+                        if (c === " " || c === "\t" || c === "\n" || c === "\r" || c === "\f" || c === "\v" || c === " " || c === "﻿") {
+                            state.i = (state.i + 1) | 0;
+                        } else if (c === "/" && text.charAt(((state.i + 1) | 0)) === "/") {
+                            var newline = text.indexOf("\n", state.i);
+                            state.i = newline < 0 ? text.length : ((newline + 1) | 0);
+                        } else if (c === "/" && text.charAt(((state.i + 1) | 0)) === "*") {
+                            var end = text.indexOf("*/", ((state.i + 2) | 0));
+
+                            if (end < 0) {
+                                Newtonsoft.Json.JsonConvert.lenientFail(state, "Unterminated comment");
+                            }
+
+                            state.i = (end + 2) | 0;
+                        } else {
+                            return;
+                        }
+                    }
+                },
+
+                lenientValue: function (state) {
+                    if (state.i >= state.text.length) {
+                        Newtonsoft.Json.JsonConvert.lenientFail(state, "Unexpected end of JSON");
+                    }
+
+                    var c = state.text.charAt(state.i);
+
+                    if (c === "{") {
+                        return Newtonsoft.Json.JsonConvert.lenientObject(state);
+                    }
+
+                    if (c === "[") {
+                        return Newtonsoft.Json.JsonConvert.lenientArray(state);
+                    }
+
+                    if (c === "\"" || c === "'") {
+                        return Newtonsoft.Json.JsonConvert.lenientString(state);
+                    }
+
+                    return Newtonsoft.Json.JsonConvert.lenientLiteral(state);
+                },
+
+                lenientObject: function (state) {
+                    var result = {};
+
+                    state.i = (state.i + 1) | 0; // {
+                    Newtonsoft.Json.JsonConvert.lenientWhitespace(state);
+
+                    if (state.text.charAt(state.i) === "}") {
+                        state.i = (state.i + 1) | 0;
+                        return result;
+                    }
+
+                    for (;;) {
+                        Newtonsoft.Json.JsonConvert.lenientWhitespace(state);
+                        var name = Newtonsoft.Json.JsonConvert.lenientMemberName(state);
+                        Newtonsoft.Json.JsonConvert.lenientWhitespace(state);
+
+                        if (state.text.charAt(state.i) !== ":") {
+                            Newtonsoft.Json.JsonConvert.lenientFail(state, "Expected ':' after the member name '" + name + "'");
+                        }
+
+                        state.i = (state.i + 1) | 0;
+                        Newtonsoft.Json.JsonConvert.lenientWhitespace(state);
+                        result[name] = Newtonsoft.Json.JsonConvert.lenientValue(state);
+                        Newtonsoft.Json.JsonConvert.lenientWhitespace(state);
+
+                        var c = state.text.charAt(state.i);
+
+                        if (c === ",") {
+                            state.i = (state.i + 1) | 0;
+                            Newtonsoft.Json.JsonConvert.lenientWhitespace(state);
+
+                            // A trailing comma before the closing brace.
+                            if (state.text.charAt(state.i) === "}") {
+                                state.i = (state.i + 1) | 0;
+                                return result;
+                            }
+
+                            continue;
+                        }
+
+                        if (c === "}") {
+                            state.i = (state.i + 1) | 0;
+                            return result;
+                        }
+
+                        Newtonsoft.Json.JsonConvert.lenientFail(state, "Expected ',' or '}' in the JSON object");
+                    }
+                },
+
+                lenientArray: function (state) {
+                    var result = [];
+
+                    state.i = (state.i + 1) | 0; // [
+                    Newtonsoft.Json.JsonConvert.lenientWhitespace(state);
+
+                    if (state.text.charAt(state.i) === "]") {
+                        state.i = (state.i + 1) | 0;
+                        return result;
+                    }
+
+                    for (;;) {
+                        Newtonsoft.Json.JsonConvert.lenientWhitespace(state);
+                        result.push(Newtonsoft.Json.JsonConvert.lenientValue(state));
+                        Newtonsoft.Json.JsonConvert.lenientWhitespace(state);
+
+                        var c = state.text.charAt(state.i);
+
+                        if (c === ",") {
+                            state.i = (state.i + 1) | 0;
+                            Newtonsoft.Json.JsonConvert.lenientWhitespace(state);
+
+                            // A trailing comma before the closing bracket.
+                            if (state.text.charAt(state.i) === "]") {
+                                state.i = (state.i + 1) | 0;
+                                return result;
+                            }
+
+                            continue;
+                        }
+
+                        if (c === "]") {
+                            state.i = (state.i + 1) | 0;
+                            return result;
+                        }
+
+                        Newtonsoft.Json.JsonConvert.lenientFail(state, "Expected ',' or ']' in the JSON array");
+                    }
+                },
+
+                // A quoted string, or an unquoted member name (everything up to the ':').
+                lenientMemberName: function (state) {
+                    var c = state.text.charAt(state.i);
+
+                    if (c === "\"" || c === "'") {
+                        return Newtonsoft.Json.JsonConvert.lenientString(state);
+                    }
+
+                    var start = state.i,
+                        text = state.text;
+
+                    while (state.i < text.length && ":,{}[]\"' \t\n\r\f\v".indexOf(text.charAt(state.i)) < 0) {
+                        state.i = (state.i + 1) | 0;
+                    }
+
+                    if (state.i === start) {
+                        Newtonsoft.Json.JsonConvert.lenientFail(state, "Expected a member name");
+                    }
+
+                    return text.substring(start, state.i);
+                },
+
+                lenientString: function (state) {
+                    var text = state.text,
+                        quote = text.charAt(state.i),
+                        parts = [];
+
+                    state.i = (state.i + 1) | 0;
+
+                    while (state.i < text.length) {
+                        var c = text.charAt(state.i);
+
+                        if (c === quote) {
+                            state.i = (state.i + 1) | 0;
+                            return parts.join("");
+                        }
+
+                        if (c !== "\\") {
+                            parts.push(c);
+                            state.i = (state.i + 1) | 0;
+                            continue;
+                        }
+
+                        var escaped = text.charAt(((state.i + 1) | 0));
+                        state.i = (state.i + 2) | 0;
+
+                        switch (escaped) {
+                            case "b": parts.push("\b"); break;
+                            case "f": parts.push("\f"); break;
+                            case "n": parts.push("\n"); break;
+                            case "r": parts.push("\r"); break;
+                            case "t": parts.push("\t"); break;
+                            case "0": parts.push("\0"); break;
+                            case "u":
+                                var hex = text.substr(state.i, 4);
+
+                                if (!/^[0-9a-fA-F]{4}$/.test(hex)) {
+                                    Newtonsoft.Json.JsonConvert.lenientFail(state, "Invalid \\u escape");
+                                }
+
+                                parts.push(String.fromCharCode(parseInt(hex, 16)));
+                                state.i = (state.i + 4) | 0;
+                                break;
+                            // Anything else stands for itself: \" \' \\ \/ and, as in Json.NET, an
+                            // unrecognised escape.
+                            default: parts.push(escaped); break;
+                        }
+                    }
+
+                    Newtonsoft.Json.JsonConvert.lenientFail(state, "Unterminated string");
+                },
+
+                // true / false / null / NaN / Infinity / -Infinity, a hexadecimal integer, or a
+                // number. A bare word (`{a:b}`) and `undefined` are NOT values — Json.NET rejects
+                // both, so they fall through to the failure below.
+                lenientLiteral: function (state) {
+                    var rest = state.text.substr(state.i),
+                        words = [
+                            { text: "true", value: true },
+                            { text: "false", value: false },
+                            { text: "null", value: null },
+                            { text: "NaN", value: NaN },
+                            { text: "Infinity", value: Infinity },
+                            { text: "-Infinity", value: -Infinity }
+                        ];
+
+                    for (var w = 0; w < words.length; w++) {
+                        if (rest.substr(0, words[w].text.length) === words[w].text) {
+                            state.i = (state.i + words[w].text.length) | 0;
+                            return words[w].value;
+                        }
+                    }
+
+                    // Unsigned only: Json.NET rejects a signed hexadecimal literal ("-0xff").
+                    var hex = /^0[xX]([0-9a-fA-F]+)/.exec(rest);
+
+                    if (hex) {
+                        state.i = (state.i + hex[0].length) | 0;
+                        return parseInt(hex[1], 16);
+                    }
+
+                    var number = /^-?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][-+]?[0-9]+)?/.exec(rest);
+
+                    if (number) {
+                        state.i = (state.i + number[0].length) | 0;
+                        return parseFloat(number[0]);
+                    }
+
+                    Newtonsoft.Json.JsonConvert.lenientFail(state, "Unexpected token '" + state.text.charAt(state.i) + "'");
                 },
 
                 getEnumerableElementType: function (type) {
