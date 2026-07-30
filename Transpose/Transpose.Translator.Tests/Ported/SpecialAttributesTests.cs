@@ -198,6 +198,18 @@ public class Program
             await RunTest(code, skipRoslyn: true);
         }
 
+        // Each expected value below is the SHIPPED CONTRACT of its [Enum(Emit.X)] mode — a library
+        // author picks a mode precisely to pin what its members look like at runtime, so these must
+        // never be "updated" to match a changed emitter. See EnumEmitModeTests for the full nine-mode
+        // table (including the enum→string paths and [Name] overrides), which is the canonical
+        // statement of the contract; this ported test covers the boxing (enum → object) side of it.
+        //
+        // Two of these expectations were wrong as originally ported and were corrected once the
+        // emitter was fixed: a Value-mode member boxed to a bare number, so `((object)EnumValue.A)`
+        // reported "1" and typed as Int32 where native .NET reports "A" typed as the enum. Value mode
+        // chooses the ordinal as the runtime *representation*; it does not throw the name away (the
+        // enum's runtime object still carries the name table), and Tesserae's UIcons/Emoji read those
+        // names back to build their CSS classes.
         [TestMethod]
         public async Task TestEnumAttribute()
         {
@@ -224,21 +236,27 @@ public class Program
 {
     public static void Main()
     {
-        // Emit.Value -> checks value
+        // Emit.Value: the ordinal is the runtime representation, but the enum keeps its runtime type
+        // object (and its name table), so boxing carries the enum type and ToString() is the NAME —
+        // exactly as native .NET. Casting back to the enum recovers the ordinal.
         object valA = EnumValue.A;
         Console.WriteLine(""ValA: "" + valA);
-        if (valA.ToString() != ""1"") throw new Exception(""EnumValue.A should be 1"");
+        if (valA.ToString() != ""A"") throw new Exception(""EnumValue.A should stringify to 'A'"");
+        if (valA is string) throw new Exception(""EnumValue.A must not box to a string"");
+        if ((int)(EnumValue)valA != 1) throw new Exception(""EnumValue.A should unbox to the ordinal 1"");
+        if (EnumValue.B.ToString() != ""B"") throw new Exception(""EnumValue.B should stringify to 'B'"");
 
-        // Emit.StringName -> defaults to camelCase in Transpose unless configured otherwise?
-        // Let's check what it emits. Usually StringName means string representation.
-        // Transpose default for StringName is often the name as string.
+        // Emit.StringName: the runtime value IS the name string (camelCased first letter), and it
+        // boxes to that raw string — the mode exists so a value can be handed straight to a JS API,
+        // so `is string` being true is part of the contract (a documented divergence from native).
         object valFirst = EnumString.First;
         Console.WriteLine(""EnumString.First: "" + valFirst);
-        // Note: Transpose default notation might affect this, but StringName usually emits the name.
-        // Let's verify if it's a string.
         if (!(valFirst is string)) throw new Exception(""EnumString should emit string"");
-        // Emit.StringName camelCases the first letter (Transpose behaviour): First -> first.
         if ((string)valFirst != ""first"") throw new Exception(""EnumString.First should be 'first'"");
+        // ToString() reports the same string: a StringName* member's JS slot carries the emitted
+        // string, so the name table hands back the value a consumer sees (h5: `first: ""first""`).
+        if (EnumString.First.ToString() != ""first"") throw new Exception(""EnumString.First should stringify to 'first'"");
+        if (valFirst.GetType() != typeof(EnumString)) throw new Exception(""a boxed string-mode enum keeps its enum type"");
 
         // Emit.StringNamePreserveCase
         object valMixed = EnumPreserve.MixedCase;
