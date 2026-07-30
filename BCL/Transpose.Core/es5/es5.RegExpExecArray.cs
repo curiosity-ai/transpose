@@ -22,6 +22,14 @@ namespace Transpose.Core
             {
                 get; set;
             }
+
+            /// <summary>
+            /// The named capture groups of the match, or undefined if the pattern has none.
+            /// </summary>
+            public virtual dynamic groups
+            {
+                get; set;
+            }
         }
     }
 }
