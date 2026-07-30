@@ -130,12 +130,13 @@ namespace System.Linq.Expressions
         //public static BinaryExpression Coalesce(Expression left, Expression right, LambdaExpression conversion) { return null; }
 
         [Transpose.NonScriptable, EditorBrowsable(EditorBrowsableState.Never)]
+        [Transpose.Template("{ ntype: 0, t: {right}.t, left: {left}, right: {right} }", Fn = "function ($left, $right) { return { ntype: 0, t: $right.t, left: $left, right: $right }; }")]
         public static extern BinaryExpression Add(Expression left, Expression right);
 
         [Transpose.Template("{ ntype: 0, t: {type}, left: {left}, right: {right} }")]
         public static extern BinaryExpression Add(Expression left, Expression right, Type type);
 
-        [Transpose.Template("{ ntype: 0, t: {method}.rt, left: {left}, right: {right}, method: {method} }", Fn = "function ($left, $right, $method) { return { ntype: 0, t: $method.rt, left: $left, right: $right, method: $method }; }")]
+        [Transpose.Template("({method} == null ? { ntype: 0, t: {right}.t, left: {left}, right: {right} } : { ntype: 0, t: {method}.rt, left: {left}, right: {right}, method: {method} })", Fn = "function ($left, $right, $method) { return $method == null ? { ntype: 0, t: $right.t, left: $left, right: $right } : { ntype: 0, t: $method.rt, left: $left, right: $right, method: $method }; }")]
         public static extern BinaryExpression Add(Expression left, Expression right, MethodInfo method);
 
         [Transpose.Template("{ ntype: 63, t: {type}, left: {left}, right: {right} }")]

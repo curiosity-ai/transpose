@@ -2790,12 +2790,27 @@ public class Program
 }", waitForOutput: "<<DONE>>");
         }
 
-        // Expression.Add(Expression,Expression,MethodInfo): compares the method-group call against a
-        // direct call rather than printing the BinaryExpression (its NodeType/ToString formatting
-        // diverges from native for unrelated reasons — raw ntype numbers vs a named enum, no custom
-        // ToString on the object-literal-shaped expression nodes — outside the scope of this bug), and
-        // uses a source-declared method (Reflectable) rather than a BCL one, since [External] types
-        // without [Reflectable] (e.g. Math) surface no methods via GetMethod/GetMethods.
+        // Expression.Add — three overloads, direct call AND method group, compared via == rather than
+        // printed (concatenating an Expression's NodeType/Type into a string is a separate,
+        // pre-existing crash — "Cannot read properties of undefined (reading 'ExpressionType')" — that
+        // reproduces even on long-working factories like Expression.Assign, unrelated to this bug and
+        // out of scope here), and uses a source-declared method (Reflectable) rather than a BCL one,
+        // since [External] types without [Reflectable] (e.g. Math) surface no methods via
+        // GetMethod/GetMethods (also a separate, much larger gap: [External] types are unconditionally
+        // excluded from reflection metadata regardless of [Reflectable] — Emitter.Reflection.IsReflectableType
+        // checks IsExternalType first — so fixing it would mean changing that policy for every external
+        // BCL/DOM type, not just Math).
+        //
+        // The 2-arg Add(left,right) and the 3-arg Add(left,right,method) with a NULL method were
+        // BOTH actually broken before this fix (not just as a method group) — Add(left,right) had no
+        // [Template] at all and, since Expression carries [Name("System.Object")] for its runtime VALUE
+        // representation (nodes are plain object literals), naming-convention resolution misused that
+        // same [Name] for the static-member-ACCESS path too and produced "System.Object.add is not a
+        // function"; Add(left,right,method) unconditionally read {method}.rt, crashing on a null method
+        // instead of behaving like the 2-arg overload (native treats a null method as "infer the type from
+        // the operands"). Both now have a template (and a matching Fn for the method-group path) that
+        // infers the type from the right operand when there is no method, matching the existing
+        // Expression.MakeBinary/Assign convention in this file.
         [TestMethod]
         public async Task TemplateFnResolvesExpressionAddMethodGroup()
         {
@@ -2811,17 +2826,37 @@ public class Program
 {
     public static void Main()
     {
-        MethodInfo m = typeof(Helper).GetMethod(""CustomAdd"");
+        var e2 = Expression.Add(Expression.Constant(1), Expression.Constant(2));
+        Console.WriteLine(e2.NodeType == ExpressionType.Add);
+        Console.WriteLine(e2.Type == typeof(int));
+        Console.WriteLine(e2.Method == null);
 
+        var e3null = Expression.Add(Expression.Constant(1), Expression.Constant(2), (MethodInfo)null);
+        Console.WriteLine(e3null.NodeType == ExpressionType.Add);
+        Console.WriteLine(e3null.Type == typeof(int));
+        Console.WriteLine(e3null.Method == null);
+
+        MethodInfo m = typeof(Helper).GetMethod(""CustomAdd"");
         var direct = Expression.Add(Expression.Constant(1), Expression.Constant(2), m);
         Func<Expression, Expression, MethodInfo, BinaryExpression> f = Expression.Add;
         var viaGroup = f(Expression.Constant(1), Expression.Constant(2), m);
-
         Console.WriteLine(direct.NodeType == viaGroup.NodeType);
         Console.WriteLine(direct.Method == viaGroup.Method);
         Console.WriteLine(direct.Type == viaGroup.Type);
         Console.WriteLine(((ConstantExpression)direct.Left).Value + "" "" + ((ConstantExpression)viaGroup.Left).Value);
         Console.WriteLine(((ConstantExpression)direct.Right).Value + "" "" + ((ConstantExpression)viaGroup.Right).Value);
+
+        Func<Expression, Expression, BinaryExpression> f2 = Expression.Add;
+        var viaGroup2 = f2(Expression.Constant(1), Expression.Constant(2));
+        Console.WriteLine(viaGroup2.NodeType == ExpressionType.Add);
+        Console.WriteLine(viaGroup2.Type == typeof(int));
+
+        Func<Expression, Expression, MethodInfo, BinaryExpression> f3null = Expression.Add;
+        var viaGroup3null = f3null(Expression.Constant(1), Expression.Constant(2), null);
+        Console.WriteLine(viaGroup3null.NodeType == ExpressionType.Add);
+        Console.WriteLine(viaGroup3null.Type == typeof(int));
+        Console.WriteLine(viaGroup3null.Method == null);
+
         Console.WriteLine(""<<DONE>>"");
     }
 }", waitForOutput: "<<DONE>>");
