@@ -35,6 +35,8 @@ namespace Transpose.Core
             [Template("{this}({0}, {1})")]
             es5.RegExp Self(string pattern, string flags);
 
+            string escape(string @string);
+
             es5.RegExp prototype { get; }
 
             [Name("$1")]
