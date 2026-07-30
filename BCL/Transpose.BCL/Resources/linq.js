@@ -114,6 +114,29 @@
         }
     };
 
+    // The exceptions the element operators raise. These MUST be real BCL exception objects, not raw
+    // JavaScript `Error`s: a `catch (InvalidOperationException)` in transpiled C# tests the thrown
+    // value against the BCL type, so a raw Error escapes every C# catch clause and tears down the
+    // program instead. The message text matches System.Linq's ThrowHelper exactly, because user code
+    // (and the test suite) compares `ex.Message` against native .NET.
+    var Errors = {
+        noElements: function () {
+            return new System.InvalidOperationException.$ctor1("Sequence contains no elements");
+        },
+        noMatch: function () {
+            return new System.InvalidOperationException.$ctor1("Sequence contains no matching element");
+        },
+        moreThanOneElement: function () {
+            return new System.InvalidOperationException.$ctor1("Sequence contains more than one element");
+        },
+        moreThanOneMatch: function () {
+            return new System.InvalidOperationException.$ctor1("Sequence contains more than one matching element");
+        },
+        outOfRange: function (paramName) {
+            return new System.ArgumentOutOfRangeException.$ctor1(paramName);
+        }
+    };
+
     // IEnumerator State
     var State = { Before: 0, Running: 1, After: 2 };
 
@@ -447,6 +470,9 @@
     // Overload:function (start, count, step)
     Enumerable.range = function (start, count, step) {
         if (step == null) step = 1;
+        // Enumerable.Range validates EAGERLY in .NET (before anything is enumerated), so the check
+        // belongs here rather than inside the iterator.
+        if (count < 0) throw Errors.outOfRange("count");
 
         return new Enumerable(function () {
             var value;
@@ -523,7 +549,12 @@
     // Overload:function (element)
     // Overload:function (element, count)
     Enumerable.repeat = function (element, count) {
-        if (count != null) return Enumerable.repeat(element).take(count);
+        // count == null is linq.js's infinite form (used internally); only the .NET-facing
+        // Repeat(element, count) overload has a count to validate, and it validates eagerly.
+        if (count != null) {
+            if (count < 0) throw Errors.outOfRange("count");
+            return Enumerable.repeat(element).take(count);
+        }
 
         return new Enumerable(function () {
             return new IEnumerator(
@@ -2045,7 +2076,7 @@
             }
         });
 
-        if (!found) throw new Error("index is less than 0 or greater than or equal to the number of elements in source.");
+        if (!found) throw Errors.outOfRange("index");
         return value;
     };
 
@@ -2066,8 +2097,10 @@
 
     // Overload:function ()
     // Overload:function (predicate)
-    Enumerable.prototype.first = function (predicate) {
-        if (predicate != null) return this.where(predicate).first();
+    // `$matching` is internal: the predicate overload filters and then re-enters this method, and
+    // .NET distinguishes "no elements" from "no matching element", so the flag carries which it was.
+    Enumerable.prototype.first = function (predicate, $matching) {
+        if (predicate != null) return this.where(predicate).first(null, true);
 
         var value;
         var found = false;
@@ -2077,7 +2110,7 @@
             return false;
         });
 
-        if (!found) throw new Error("first:No element satisfies the condition.");
+        if (!found) throw $matching ? Errors.noMatch() : Errors.noElements();
         return value;
     };
 
@@ -2097,8 +2130,8 @@
 
     // Overload:function ()
     // Overload:function (predicate)
-    Enumerable.prototype.last = function (predicate) {
-        if (predicate != null) return this.where(predicate).last();
+    Enumerable.prototype.last = function (predicate, $matching) {
+        if (predicate != null) return this.where(predicate).last(null, true);
 
         var value;
         var found = false;
@@ -2107,7 +2140,7 @@
             value = x;
         });
 
-        if (!found) throw new Error("last:No element satisfies the condition.");
+        if (!found) throw $matching ? Errors.noMatch() : Errors.noElements();
         return value;
     };
 
@@ -2128,8 +2161,8 @@
 
     // Overload:function ()
     // Overload:function (predicate)
-    Enumerable.prototype.single = function (predicate) {
-        if (predicate != null) return this.where(predicate).single();
+    Enumerable.prototype.single = function (predicate, $matching) {
+        if (predicate != null) return this.where(predicate).single(null, true);
 
         var value;
         var found = false;
@@ -2137,18 +2170,18 @@
             if (!found) {
                 found = true;
                 value = x;
-            } else throw new Error("single:sequence contains more than one element.");
+            } else throw $matching ? Errors.moreThanOneMatch() : Errors.moreThanOneElement();
         });
 
-        if (!found) throw new Error("single:No element satisfies the condition.");
+        if (!found) throw $matching ? Errors.noMatch() : Errors.noElements();
         return value;
     };
 
     // Overload:function (defaultValue)
     // Overload:function (defaultValue,predicate)
-    Enumerable.prototype.singleOrDefault = function (predicate, defaultValue) {
+    Enumerable.prototype.singleOrDefault = function (predicate, defaultValue, $matching) {
         if (defaultValue === undefined) defaultValue = null;
-        if (predicate != null) return this.where(predicate).singleOrDefault(null, defaultValue);
+        if (predicate != null) return this.where(predicate).singleOrDefault(null, defaultValue, true);
 
         var value;
         var found = false;
@@ -2156,7 +2189,7 @@
             if (!found) {
                 found = true;
                 value = x;
-            } else throw new Error("single:sequence contains more than one element.");
+            } else throw $matching ? Errors.moreThanOneMatch() : Errors.moreThanOneElement();
         });
 
         return (!found) ? defaultValue : value;
@@ -3051,7 +3084,9 @@
     // dictionary = Dictionary<TKey, TValue[]>
     var Lookup = function (dictionary, order, nullKey) {
         this.count = function () {
-            return dictionary.Count;
+            // The null key is held outside `dictionary` (a BCL Dictionary rejects a null key), so it
+            // has to be added back in — System.Linq.Lookup counts a null-keyed grouping like any other.
+            return dictionary.Count + (nullKey ? 1 : 0);
         };
         this.get = function (key) {
             if (key == null) {

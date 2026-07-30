@@ -758,7 +758,9 @@ public sealed partial class Emitter
             if (ps.Length != args.Length) return;
             for (var i = 0; i < ps.Length; i++)
             {
-                (map ??= new())[ps[i].Name] = TypeRef(args[i]);
+                (map ??= new())[ps[i].Name] = member is IMethodSymbol mm
+                    ? TemplateTypeRef(mm, args[i])
+                    : TypeRef(args[i]);
                 // {T:default} in a template → the default value of the bound type argument.
                 map[ps[i].Name + ":default"] = DefaultValueLiteral(args[i]);
                 // {T:ToString} → a value→string FUNCTION for the bound type (fn arg of
@@ -774,6 +776,23 @@ public sealed partial class Emitter
             Add(m.OriginalDefinition.TypeParameters, m.TypeArguments);
         return map;
     }
+
+    /// <summary>
+    /// The runtime type a <c>[Template]</c> token like <c>{T}</c> resolves to. Same as
+    /// <see cref="TypeRef(ITypeSymbol)"/>, except that a type argument which is still the CALLEE's OWN
+    /// type parameter — i.e. inference never substituted it — degrades to <c>System.Object</c> rather
+    /// than emitting its bare name. That happens when a generic method is invoked with a
+    /// <c>dynamic</c> argument: <c>Enumerable.Count(dyn)</c> expanded to
+    /// <c>Enumerable.from(dyn, TSource)</c> and threw "TSource is not defined" at runtime. A type
+    /// parameter of the *enclosing* generic method or type is a real substitution and keeps its name,
+    /// which is in scope there as a threaded argument.
+    /// </summary>
+    private string TemplateTypeRef(IMethodSymbol callee, ITypeSymbol argument)
+        => argument is ITypeParameterSymbol { TypeParameterKind: TypeParameterKind.Method } tp
+           && SymbolEqualityComparer.Default.Equals(
+                  tp.DeclaringMethod?.OriginalDefinition, callee.OriginalDefinition)
+            ? "System.Object"
+            : TypeRef(argument);
 
     /// <summary>
     /// The JS function that converts a value of <paramref name="t"/> to its .NET <c>ToString()</c>

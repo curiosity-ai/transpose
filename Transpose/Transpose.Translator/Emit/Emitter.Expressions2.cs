@@ -415,7 +415,7 @@ public sealed partial class Emitter
     {
         for (var i = 0; i < definition.TypeParameters.Length && i < constructed.TypeArguments.Length; i++)
         {
-            byName[definition.TypeParameters[i].Name] = TypeRef(constructed.TypeArguments[i]);
+            byName[definition.TypeParameters[i].Name] = TemplateTypeRef(definition, constructed.TypeArguments[i]);
             byName[definition.TypeParameters[i].Name + ":default"] = DefaultValueLiteral(constructed.TypeArguments[i]);
             if (ToStringFnLiteral(constructed.TypeArguments[i]) is { } tsFn)
                 byName[definition.TypeParameters[i].Name + ":ToString"] = tsFn;
@@ -1365,9 +1365,22 @@ public sealed partial class Emitter
         _w.Write(" }");
     }
 
+    /// <summary>
+    /// Emits <c>new { A = 1, B = x }</c> as a plain object literal tagged by <c>Transpose.anon</c>. The tag
+    /// is what gives the object the anonymous type's .NET semantics — value-based <c>Equals</c>/
+    /// <c>GetHashCode</c> (so <c>Select(x =&gt; new { x.A }).Distinct()</c>, <c>GroupBy</c> on an anonymous
+    /// key and <c>Contains</c> work) and the <c>{ A = 1, B = x }</c> <c>ToString</c>. The object stays a
+    /// plain literal so object-literal interop and JSON serialization are unaffected.
+    /// </summary>
     private void EmitAnonymousObject(AnonymousObjectCreationExpressionSyntax anon)
     {
-        _w.Write("{ ");
+        // A char or enum member is a plain JS number at runtime, so the runtime's ToString cannot tell
+        // it from an int. Each such member's value-to-string converter is passed along so the
+        // "{ Z = c, E = Monday }" rendering stays right; members whose own toString already matches
+        // .NET contribute nothing.
+        var memberFormatters = new List<string>();
+
+        _w.Write("Transpose.anon({ ");
         for (var i = 0; i < anon.Initializers.Count; i++)
         {
             if (i > 0) _w.Write(", ");
@@ -1377,10 +1390,21 @@ public sealed partial class Emitter
                 ?? (init.Expression as MemberAccessExpressionSyntax)?.Name.Identifier.Text
                 ?? (init.Expression as IdentifierNameSyntax)?.Identifier.Text
                 ?? $"Item{i + 1}";
-            _w.Write($"{NameMangler.JsIdentifier(name)}: ");
+            var jsName = NameMangler.JsIdentifier(name);
+            var memberType = _model.GetTypeInfo(init.Expression).Type;
+            if (memberType is not null && ToStringFnLiteral(memberType) is { } fn)
+                memberFormatters.Add($"{jsName}: {fn}");
+            _w.Write($"{jsName}: ");
             EmitExpression(init.Expression);
         }
         _w.Write(" }");
+        if (memberFormatters.Count > 0)
+        {
+            _w.Write(", { ");
+            _w.Write(string.Join(", ", memberFormatters));
+            _w.Write(" }");
+        }
+        _w.Write(")");
     }
 
     // ---- binary / unary / assignment --------------------------------------

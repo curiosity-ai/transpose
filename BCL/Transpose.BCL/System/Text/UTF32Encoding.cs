@@ -113,7 +113,7 @@ namespace System.Text
 
                 if (this.bigEndian)
                 {
-                    r.Reverse();
+                    Array.Reverse(r);
                 }
 
                 write(r[0]);

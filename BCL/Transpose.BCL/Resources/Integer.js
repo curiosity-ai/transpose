@@ -15,13 +15,88 @@
                 return 0;
             },
 
+            /// The number of significant digits in the SHORTEST decimal string that round-trips back to
+            /// `value` — what .NET Core 3.0+ uses for `double.ToString()` / `float.ToString()` / the "G"
+            /// and "R" formats. (.NET Framework used a fixed 15 for double and 7 for float, which is
+            /// what `System.Double.precision` still carries for an explicit "G15".)
+            ///
+            /// For a double, JS's own `toExponential()` with no argument is defined to use "as many
+            /// digits as necessary to uniquely specify the number", i.e. exactly the shortest
+            /// round-trippable form. A float has to be probed instead: the value is held in a double, so
+            /// the shortest form is the fewest digits that still survive a round-trip through
+            /// `Math.fround` (1f/3f prints "0.33333334", not "0.3333333432674408").
+            shortestDigits: function (value, isSingle) {
+                if (!isFinite(value) || value === 0) {
+                    return 1;
+                }
+
+                var v = Math.abs(value);
+
+                if (isSingle) {
+                    for (var p = 1; p < 9; p++) {
+                        if (Math.fround(parseFloat(v.toPrecision(p))) === v) {
+                            return p;
+                        }
+                    }
+
+                    return 9;
+                }
+
+                var mantissa = v.toExponential(),
+                    dot = mantissa.indexOf("."),
+                    exp = mantissa.indexOf("e");
+
+                return dot < 0 ? 1 : exp - dot;
+            },
+
+            /// The default `ToString()` (and bare "G"/"R") of a double or float on .NET Core 3.0+: the
+            /// SHORTEST decimal string that round-trips back to the value. The digit count comes from
+            /// `shortestDigits`; the notation rule is .NET's own — scientific once the value's scale (the
+            /// count of digits before the decimal point) exceeds the type's full precision, 17 for a
+            /// double and 9 for a float, or once the value drops below 1e-4.
+            shortestFormat: function (number, isSingle, nf) {
+                var isNeg = number < 0 || (number === 0 && (1 / number) < 0),
+                    magnitude = Math.abs(number),
+                    digits = this.shortestDigits(magnitude, isSingle),
+                    // Rounding the ORIGINAL value to `digits` significant digits reproduces the shortest
+                    // form exactly; rounding a separately computed coefficient does not (its own binary
+                    // value is a hair below, and 1.2345678901234568E+17 came out …4567E+17).
+                    exponential = magnitude.toExponential(digits - 1),
+                    eIndex = exponential.indexOf("e"),
+                    exponent = parseInt(exponential.substring(eIndex + 1), 10),
+                    scale = exponent + 1,
+                    text;
+
+                if (scale > (isSingle ? 9 : 17) || scale < -3) {
+                    // The mantissa already carries exactly `digits` significant digits, so it is used as
+                    // the STRING it is: re-parsing it and re-rendering through defaultFormat would round
+                    // the mantissa's own binary value and drop the last digit.
+                    text = exponential.substring(0, eIndex).replace(".", nf.numberDecimalSeparator)
+                        + "E" + (exponent < 0 ? nf.negativeSign : nf.positiveSign)
+                        + this.defaultFormat(Math.abs(exponent), 2, 0, 0, nf, true);
+                } else {
+                    text = this.defaultFormat(parseFloat(exponential), 1, 0, Math.max(0, Math.min(100, digits - scale)), nf, true);
+                }
+
+                return (isNeg ? nf.negativeSign : "") + text;
+            },
+
             format: function (number, format, provider, T, toUnsign) {
+                // A float is carried in a JS number (a double), and arithmetic on it is done at double
+                // precision, so the value can hold bits a real `float` never had: 1f/3f sits here as
+                // 0.3333333333333333 rather than 0.3333333432674408. Rounding to single precision before
+                // rendering is what makes float.ToString() agree with .NET ("0.33333334").
+                if (T === System.Single && typeof number === "number" && isFinite(number) && Math.fround) {
+                    number = Math.fround(number);
+                }
+
                 var nf = (provider || System.Globalization.CultureInfo.getCurrentCulture()).getFormat(System.Globalization.NumberFormatInfo),
                     decimalSeparator = nf.numberDecimalSeparator,
                     groupSeparator = nf.numberGroupSeparator,
                     isDecimal = number instanceof System.Decimal,
                     isLong = number instanceof System.Int64 || number instanceof System.UInt64,
-                    isNeg = isDecimal || isLong ? (number.isZero() ? false : number.isNegative()) : number < 0,
+                    isNeg = isDecimal || isLong ? (number.isZero() ? false : number.isNegative())
+                        : (number < 0 || (number === 0 && (1 / number) < 0)),
                     match,
                     precision,
                     groups,
@@ -42,6 +117,13 @@
                     precision = parseInt(match[2], 10);
                     //precision = precision > 15 ? 15 : precision;
 
+                    // The default ToString of a double/float — and a bare "G" — is the shortest
+                    // round-trippable form since .NET Core 3.0, not a fixed 15/7 significant digits. An
+                    // explicit "G15"/"G7" still means what it says and falls through below.
+                    if (fs === "G" && isNaN(precision) && (T === System.Double || T === System.Single)) {
+                        return this.shortestFormat(number, T === System.Single, nf);
+                    }
+
                     switch (fs) {
                         case "D":
                             return this.defaultFormat(number, isNaN(precision) ? 1 : precision, 0, 0, nf, true);
@@ -61,29 +143,35 @@
                                 minDecimals,
                                 maxDecimals;
 
-                            while (isDecimal || isLong ? coefficient.gte(10) : (coefficient >= 10)) {
-                                if (isDecimal || isLong) {
+                            if (isDecimal || isLong) {
+                                while (coefficient.gte(10)) {
                                     coefficient = coefficient.div(10);
-                                } else {
-                                    coefficient /= 10;
+                                    exponent++;
                                 }
 
-                                exponent++;
-                            }
-
-                            while (isDecimal || isLong ? (coefficient.ne(0) && coefficient.lt(1)) : (coefficient !== 0 && coefficient < 1)) {
-                                if (isDecimal || isLong) {
+                                while (coefficient.ne(0) && coefficient.lt(1)) {
                                     coefficient = coefficient.mul(10);
-                                } else {
-                                    coefficient *= 10;
+                                    exponent--;
                                 }
+                            } else if (coefficient !== 0) {
+                                // Normalising by repeated *10 / /10 accumulates error at the extremes of
+                                // the double range (1e-320 ended up with a coefficient of 10, printing
+                                // "10E-321"); toExponential gives the coefficient and exponent exactly.
+                                var normalized = coefficient.toExponential(),
+                                    eIndex = normalized.indexOf("e");
 
-                                exponent--;
+                                coefficient = parseFloat(normalized.substring(0, eIndex));
+                                exponent = parseInt(normalized.substring(eIndex + 1), 10);
                             }
 
                             if (fs === "G") {
                                 var noPrecision = isNaN(precision);
 
+                                // A "G" with no explicit precision is the DEFAULT ToString of a double or
+                                // float, and since .NET Core 3.0 that is the shortest round-trippable form
+                                // rather than a fixed 15/7 significant digits — so `(7.0/3).ToString()` is
+                                // "2.3333333333333335", not "2.33333333333333". An explicit "G15"/"G7"
+                                // keeps the requested precision, and decimal/long keep their own widths.
                                 if (noPrecision) {
                                     if (isDecimal) {
                                         precision = 29;
@@ -98,7 +186,13 @@
 
                                 if ((exponent > -5 && exponent < precision) || isDecimal && noPrecision) {
                                     minDecimals = 0;
-                                    maxDecimals = precision - (exponent > 0 ? exponent + 1 : 1);
+                                    // `precision` counts SIGNIFICANT digits, so the decimals available are
+                                    // those left after the integer part. The `exponent > 0 ? … : 1` form
+                                    // below is the historical approximation: it is one digit short for a
+                                    // value below 1 (exponent < 0), which the shortest form cannot absorb.
+                                    maxDecimals = isDecimal
+                                        ? precision - (exponent > 0 ? exponent + 1 : 1)
+                                        : Math.max(0, Math.min(100, precision - exponent - 1));
 
                                     return this.defaultFormat(number, 1, isDecimal ? Math.min(27, Math.max(minDecimals, number.$precision)) : minDecimals, maxDecimals, nf, true);
                                 }
@@ -260,7 +354,18 @@
                 } else if (isLong) {
                     str = number.eq(System.Int64.MinValue) ? number.value.toUnsigned().toString() : number.abs().toString();
                 } else {
-                    str = "" + (+Math.abs(number).toFixed(maxDecLen));
+                    str = Math.abs(number).toFixed(maxDecLen);
+
+                    if (str.indexOf("e") >= 0) {
+                        // toFixed falls back to exponential notation at 1e21 and beyond; leave that shape
+                        // to the numeric round-trip, as before.
+                        str = "" + (+str);
+                    } else if (str.indexOf(".") >= 0) {
+                        // Drop the trailing fraction zeros as a STRING. The old form (`+str`) round-tripped
+                        // through a double, which silently collapsed every digit beyond the shortest
+                        // round-trippable form — "G17" of 2.0/3 came back with 16 digits instead of 17.
+                        str = str.replace(/0+$/, "").replace(/\.$/, "");
+                    }
                 }
 
                 isZero = str.split("").every(function (s) { return s === "0" || s === "."; });
