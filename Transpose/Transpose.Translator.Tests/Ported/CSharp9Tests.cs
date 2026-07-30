@@ -436,6 +436,28 @@ public class Program
         }
 
         [TestMethod]
+        public async Task LambdaSingleUnderscoreParameterIsNotADiscard()
+        {
+            // A lambda parameter named "_" is only a real (inaccessible) discard when it appears
+            // two or more times; a single "_" is an ordinary, referenceable parameter.
+            var code = """
+using System;
+
+public class Program
+{
+    static int DoSomething(int a, int b, int c) => a + b + c;
+
+    public static void Main()
+    {
+        Func<int, int, int, int> f = (a, b, _) => DoSomething(a, b, _);
+        Console.WriteLine(f(1, 2, 3));
+    }
+}
+""";
+            await RunTest(code);
+        }
+
+        [TestMethod]
         public async Task NativeSizedIntegers()
         {
             var code = """

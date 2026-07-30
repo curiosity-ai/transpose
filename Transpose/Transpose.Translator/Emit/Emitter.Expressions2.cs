@@ -3274,10 +3274,15 @@ public sealed partial class Emitter
         // EmitMaybeAsyncBody), so it composes with Task.Run/WhenAll/ContinueWith; the outer
         // function is therefore not itself `async`.
         _w.Write("(");
-        // Uniquify discard parameters ("_") so JS doesn't see duplicate names.
+        // A parameter named "_" is a real discard only when it appears two or more times —
+        // C# then makes it inaccessible in the body, so it's safe (and necessary, since "use
+        // strict" rejects duplicate parameter names) to uniquify each occurrence. A single "_"
+        // is just a regular, referenceable parameter and must keep its name.
+        var paramList = parameters as IReadOnlyCollection<string> ?? parameters.ToList();
+        var isRealDiscard = paramList.Count(p => p == "_") > 1;
         var discardN = 0;
-        _w.Write(string.Join(", ", parameters.Select(p =>
-            p == "_" ? "$d" + discardN++ : NameMangler.JsIdentifier(p))));
+        _w.Write(string.Join(", ", paramList.Select(p =>
+            p == "_" && isRealDiscard ? "$d" + discardN++ : NameMangler.JsIdentifier(p))));
         _w.Write(") => ");
 
         // Optional lambda parameters (C# 12): default when undefined.
