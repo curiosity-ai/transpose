@@ -47,6 +47,7 @@ Requirements: **Node** on `PATH` (or `/opt/node22/bin/node`) and a `Transpose.dl
 | `TypeNameHandlingTests` | `$type`, `ISerializationBinder`, polymorphic payloads |
 | `PopulateObjectTests` | `JsonConvert.PopulateObject` |
 | `ErrorHandlingTests` | malformed JSON, type mismatches, required members |
+| `LenientJsonTests` | the JSON superset Json.NET accepts (comments, single quotes, unquoted names, trailing commas, hex, NaN/Infinity), and the no-`eval` guard |
 | `CuriosityUsageTests` | the shapes the Curiosity front-end actually sends and receives |
 
 ## Known divergences from Json.NET
@@ -66,6 +67,19 @@ Each is asserted by the test named beside it, so this list stays true.
 | deserializing to `object` | `JObject` (Linq-to-JSON) | the raw parsed JavaScript value | `DeserializingToObjectReturnsTheRawParsedValue` |
 | `Nullable<TEnum>` | prints the member name | prints the number (comparisons are fine) | `NullableEnumPrintsItsNumberInsteadOfItsName` |
 | unknown enum name | `JsonSerializationException` | `ArgumentException` | `UnknownEnumNameThrowsArgumentExceptionNotJsonException` |
+
+## No `eval`
+
+`JSON.parse` accepts only strict JSON, so a payload using Json.NET's lenient syntax falls back to the
+package's own reader, `JsonConvert.parseLenient`. That fallback used to hand the payload to the
+JavaScript evaluator, which executes whatever it contains and is blocked outright by a
+Content-Security-Policy without `'unsafe-eval'`. `LenientJsonTests.TheJavaScriptContainsNoEval` scans
+the package's hand-written JavaScript and fails on `eval(`, `new Function(` or a string-bodied
+`setTimeout`/`setInterval`, so the fallback cannot come back.
+
+The hand-written reader is also *less* permissive than the evaluator was, and matches the server: it
+rejects `undefined`, a leading `+` on a number and a signed hexadecimal literal, exactly as Json.NET
+does.
 
 `FractionalSecondsRoundTrip` reports **inconclusive** against a runtime that predates the
 `fractionToMilliseconds` fix in `BCL/Transpose.BCL/Resources/Date.js` (a `.25` fraction read as 25 ms

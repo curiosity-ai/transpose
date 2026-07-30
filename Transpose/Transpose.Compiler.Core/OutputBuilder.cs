@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Text;
 using System.Text.Json;
 
@@ -58,6 +57,20 @@ internal static class OutputBuilder
     /// re-produce). <see cref="RemovedStaleFiles"/> is empty when cleaning is disabled or nothing was
     /// stale.</summary>
     public readonly record struct SiteBuildResult(string OutputDir, IReadOnlyList<string> RemovedStaleFiles);
+
+    /// <summary>
+    /// One stylesheet a site build produces <em>from files on disk</em> — a <c>tps.json</c> resource
+    /// group of the root project or of any project in its closure — recorded as the output-relative
+    /// path it is written to plus the source files that produce it. <see cref="Concatenated"/>
+    /// distinguishes a named bundle group (every source file joined into the one output, e.g.
+    /// Tesserae's <c>tss.css</c>) from a copy-through group (each source copied under its own name).
+    ///
+    /// This is what makes a CSS-only rebuild possible: watch mode can reproduce exactly these files,
+    /// byte for byte, without recompiling anything (see <see cref="WriteCssResources"/>). CSS a
+    /// referenced <em>package</em> embeds is deliberately not here — changing that means rebuilding
+    /// the package, which is a real build.
+    /// </summary>
+    public readonly record struct CssResource(string OutputRelativePath, IReadOnlyList<string> SourceFiles, bool Concatenated);
 
     public static SiteBuildResult Build(ResolvedProject project, TransposeJson config, string javascript, string outputDir, string configuration, string? metadataJavascript = null, string? liveReloadScript = null)
     {
@@ -264,9 +277,11 @@ internal static class OutputBuilder
 
         foreach (var group in config.Resources)
         {
-            // Parse the "module#file" grouping and ".dontload" flag so a referencing project extracts
-            // the resource under its real name and knows whether to inject it into index.html.
-            var (name, load) = ParseResourceName(group.Name ?? "");
+            // Resolve the "module#file" grouping and the load flag ("load": false / a ".dontload"
+            // name) so a referencing project extracts the resource under its real name and knows
+            // whether to inject it into index.html. The flag travels in the DLL's resource manifest,
+            // which is how it survives packing.
+            var (name, load) = ResolveResource(group);
             var destSub = string.IsNullOrEmpty(group.Output) ? null : group.Output!.Replace('\\', '/');
 
             var isBundle = name.EndsWith(".js", StringComparison.OrdinalIgnoreCase)
@@ -335,6 +350,52 @@ internal static class OutputBuilder
     private readonly record struct EmbeddedJs(string FileName, string Rel, string Text, bool Load = true);
 
     /// <summary>
+    /// Read-only access to one assembly's embedded resources, opened and closed around the extraction —
+    /// deliberately <em>not</em> via <c>Assembly.LoadFrom</c>.
+    ///
+    /// Loading an assembly to read its resources has two consequences a build cannot live with, both of
+    /// which only show up in a long-running process (i.e. <c>tps --watch</c>, or a host embedding the
+    /// compiler): the file stays locked for the lifetime of the process, so the *next* rebuild of that
+    /// referenced project fails to write its DLL; and the runtime resolves by assembly identity, so a
+    /// second read of a rebuilt DLL silently returns the copy loaded the first time. Reading the metadata
+    /// with Mono.Cecil — already how <see cref="TopologicalOrder"/> inspects these same assemblies — has
+    /// neither problem: nothing is loaded into the process, and the handle is released on Dispose.
+    /// </summary>
+    private sealed class AssemblyResources : IDisposable
+    {
+        private readonly Mono.Cecil.AssemblyDefinition _assembly;
+        private readonly Dictionary<string, Mono.Cecil.EmbeddedResource> _byName;
+
+        private AssemblyResources(Mono.Cecil.AssemblyDefinition assembly)
+        {
+            _assembly = assembly;
+            _byName = new Dictionary<string, Mono.Cecil.EmbeddedResource>(StringComparer.Ordinal);
+            var names = new List<string>();
+            foreach (var resource in assembly.MainModule.Resources.OfType<Mono.Cecil.EmbeddedResource>())
+            {
+                if (_byName.TryAdd(resource.Name, resource)) names.Add(resource.Name);
+            }
+            Names = names;
+        }
+
+        /// <summary>Opens <paramref name="dllPath"/> for reading, or returns null if it is not a readable
+        /// assembly — a missing or half-written DLL is a condition the site build reports by simply
+        /// contributing nothing, exactly as it did before.</summary>
+        public static AssemblyResources? TryOpen(string dllPath)
+        {
+            try { return new AssemblyResources(Mono.Cecil.AssemblyDefinition.ReadAssembly(dllPath)); }
+            catch { return null; }
+        }
+
+        /// <summary>Every embedded resource's name, in metadata order.</summary>
+        public IReadOnlyList<string> Names { get; }
+
+        public Stream Open(string name) => _byName[name].GetResourceStream();
+
+        public void Dispose() => _assembly.Dispose();
+    }
+
+    /// <summary>
     /// Extracts a referenced project assembly's embedded resources (listed in its
     /// Transpose.Resources.json manifest) into the output folder: CSS is written and linked here,
     /// and the JS resources are returned for <c>RoutePackageJs</c> to place (which picks the
@@ -346,15 +407,15 @@ internal static class OutputBuilder
     {
         var jsFiles = new List<EmbeddedJs>();
         if (!File.Exists(dllPath)) return jsFiles;
-        Assembly asm;
-        try { asm = Assembly.LoadFrom(dllPath); } catch { return jsFiles; }
+        using var asm = AssemblyResources.TryOpen(dllPath);
+        if (asm is null) return jsFiles;
 
-        var names = asm.GetManifestResourceNames();
+        var names = asm.Names;
         var manifestName = names.FirstOrDefault(n => n.EndsWith("Transpose.Resources.json", StringComparison.OrdinalIgnoreCase));
         if (manifestName is null) return jsFiles;
 
         List<(string fileName, string? path, bool load)> entries;
-        using (var ms = asm.GetManifestResourceStream(manifestName)!)
+        using (var ms = asm.Open(manifestName))
         using (var sr = new StreamReader(ms))
         using (var doc = JsonDocument.Parse(sr.ReadToEnd(), new JsonDocumentOptions { AllowTrailingCommas = true }))
         {
@@ -381,7 +442,7 @@ internal static class OutputBuilder
 
             if (rel.EndsWith(".js", StringComparison.OrdinalIgnoreCase))
             {
-                using var s = asm.GetManifestResourceStream(resName)!;
+                using var s = asm.Open(resName);
                 using var reader = new StreamReader(s);
                 jsFiles.Add(new EmbeddedJs(fileName, rel, reader.ReadToEnd(), load));
             }
@@ -390,7 +451,7 @@ internal static class OutputBuilder
                 // CSS and copy-through resources (images, fonts): write to disk now.
                 var dest = Path.Combine(outputDir, rel.Replace('/', Path.DirectorySeparatorChar));
                 Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-                using (var s = asm.GetManifestResourceStream(resName)!)
+                using (var s = asm.Open(resName))
                 using (var fs = File.Create(dest))
                     s.CopyTo(fs);
                 written.Add(Path.GetFullPath(dest));
@@ -398,6 +459,27 @@ internal static class OutputBuilder
             }
         }
         return jsFiles;
+    }
+
+    /// <summary>
+    /// What a <c>tps.json</c> resource group produces: the output file name, and whether the generated
+    /// <c>index.html</c> references it (a <c>&lt;script&gt;</c> for JavaScript, a
+    /// <c>&lt;link rel=stylesheet&gt;</c> for CSS — the only two resource kinds the HTML can load).
+    /// Either way the file is written to the output and embedded into a package DLL; a
+    /// non-loaded resource is simply left for the application to fetch itself.
+    ///
+    /// Two spellings say "don't load", and they are AND-ed so either one alone suppresses the
+    /// injection: the declarative <c>"load": false</c> on the group, and the legacy <c>.dontload</c>
+    /// suffix on its <c>name</c> (see <see cref="ParseResourceName"/>). The single place both are
+    /// resolved, so the site build (<see cref="ProcessResourceGroup"/>) and the package embed
+    /// (<see cref="CollectEmbeddableItems"/>) cannot disagree — which is what makes the flag survive
+    /// packing: the resolved value is what lands in the DLL's resource manifest as <c>Load</c>, and a
+    /// referencing project's site build honours it there.
+    /// </summary>
+    internal static (string fileName, bool load) ResolveResource(TransposeJson.ResourceGroup group)
+    {
+        var (name, loadFromName) = ParseResourceName(group.Name ?? "");
+        return (name, loadFromName && group.Load);
     }
 
     /// <summary>
@@ -410,6 +492,8 @@ internal static class OutputBuilder
     /// the output but NOT referenced from index.html (loaded on demand); the output name drops the
     /// suffix (<c>file.js</c>).</item>
     /// </list>
+    /// Callers that need the group's effective load flag go through <see cref="ResolveResource"/>,
+    /// which folds in the group's own <c>load</c> property.
     /// </summary>
     internal static (string fileName, bool load) ParseResourceName(string rawName)
     {
@@ -464,52 +548,133 @@ internal static class OutputBuilder
         string projectDir, string outputDir, TransposeJson.ResourceGroup group,
         List<JsOut> jsOuts, List<string> cssLinks, HashSet<string> written)
     {
-        var destSub = (group.Output ?? "").Replace('\\', '/').TrimEnd('/');
-        var files = group.Files.SelectMany(p => ExpandGlob(projectDir, p)).ToList();
-        if (files.Count == 0) return;
+        // The output name (the group name minus its "module#" grouping prefix and ".dontload" suffix)
+        // plus the effective load flag: a non-loaded resource is written to the output but never
+        // referenced from index.html — neither as a <script> nor as a stylesheet <link>.
+        var (name, load) = ResolveResource(group);
+        var isBundle = IsBundleName(name);
 
-        // The group name carries the "module#file" grouping and the ".dontload" flag; parse both. A
-        // .dontload resource is written to the output but never referenced from index.html.
-        var (name, load) = ParseResourceName(group.Name ?? "");
-        var isBundle = name.EndsWith(".js", StringComparison.OrdinalIgnoreCase)
-                       || name.EndsWith(".css", StringComparison.OrdinalIgnoreCase);
-
-        void RouteJs(string rel)
+        foreach (var (rel, sources) in ResourceGroupOutputs(projectDir, group))
         {
-            if (!load) return;   // copied to disk already; not injected into index.html
+            WriteResource(outputDir, rel, sources, concatenate: isBundle, written);
+            if (!load) continue;   // written to disk already; not injected into index.html
+
+            if (IsCss(rel)) cssLinks.Add(rel);
             // Resource JS is taken as authored (never re-minified): a .min.js links only from
             // index.min.html; a plain .js links only from index.html — matching the legacy compiler.
-            if (IsMinifiedName(rel)) jsOuts.Add(new JsOut { Path = rel, IsMinified = true });
-            else jsOuts.Add(new JsOut { Path = rel });
+            else if (rel.EndsWith(".js", StringComparison.OrdinalIgnoreCase))
+                jsOuts.Add(new JsOut { Path = rel, IsMinified = IsMinifiedName(rel) });
         }
+    }
 
-        void LinkCss(string rel) { if (load) cssLinks.Add(rel); }
+    /// <summary>Whether a resource group's <c>name</c> makes it a <em>bundle</em> group — every file it
+    /// lists is concatenated into that one named output — rather than a copy-through group, where each
+    /// listed file is copied under its own file name.</summary>
+    private static bool IsBundleName(string name)
+        => name.EndsWith(".js", StringComparison.OrdinalIgnoreCase)
+           || name.EndsWith(".css", StringComparison.OrdinalIgnoreCase);
 
-        if (isBundle)
+    /// <summary>
+    /// What one <c>tps.json</c> resource group resolves to on disk: the output-relative path of each
+    /// file it produces, and the source file(s) behind it. A bundle group yields exactly one output
+    /// (its declared name, fed by every file it lists); a copy-through group yields one output per
+    /// file. Empty when the group's globs match nothing.
+    ///
+    /// The single place that maps a group to its outputs, so the site build
+    /// (<see cref="ProcessResourceGroup"/>) and the CSS-only rebuild path
+    /// (<see cref="CssResources"/>) can never disagree about where a file lands.
+    /// </summary>
+    private static List<(string rel, List<string> sources)> ResourceGroupOutputs(
+        string projectDir, TransposeJson.ResourceGroup group)
+    {
+        var outputs = new List<(string, List<string>)>();
+        var destSub = (group.Output ?? "").Replace('\\', '/').TrimEnd('/');
+        var files = group.Files.SelectMany(p => ExpandGlob(projectDir, p)).ToList();
+        if (files.Count == 0) return outputs;
+
+        string Rel(string leaf) => string.IsNullOrEmpty(destSub) ? leaf : destSub + "/" + leaf;
+
+        var (name, _) = ResolveResource(group);
+        if (IsBundleName(name))
         {
-            // Concatenate the group's files into a single named output (e.g. tss-dep.js).
-            var rel = string.IsNullOrEmpty(destSub) ? name : destSub + "/" + name;
-            var dest = Path.Combine(outputDir, rel.Replace('/', Path.DirectorySeparatorChar));
-            Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-            File.WriteAllText(dest, string.Join("\n", files.Select(File.ReadAllText)));
-            written.Add(Path.GetFullPath(dest));
-            if (name.EndsWith(".css", StringComparison.OrdinalIgnoreCase)) LinkCss(rel);
-            else RouteJs(rel);
+            outputs.Add((Rel(name), files));
         }
         else
         {
-            // Copy each file through (images, or JS/CSS referenced by their own file name).
             foreach (var src in files)
+                outputs.Add((Rel(Path.GetFileName(src)), new List<string> { src }));
+        }
+        return outputs;
+    }
+
+    /// <summary>Writes one resource-group output: a bundle group's files joined with newlines, or a
+    /// single file copied through byte for byte. <paramref name="written"/> is null for a CSS-only
+    /// rebuild, which rewrites files the last full build already recorded in its manifest.</summary>
+    private static void WriteResource(
+        string outputDir, string rel, IReadOnlyList<string> sources, bool concatenate, HashSet<string>? written)
+    {
+        var dest = Path.Combine(outputDir, rel.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+        if (concatenate) File.WriteAllText(dest, string.Join("\n", sources.Select(File.ReadAllText)));
+        else File.Copy(sources[0], dest, overwrite: true);
+        written?.Add(Path.GetFullPath(dest));
+    }
+
+    /// <summary>
+    /// Every stylesheet this project's site build produces from files on disk, across the whole project
+    /// closure. Two sources contribute, and both resolve a group to the same output path:
+    ///
+    /// <list type="bullet">
+    /// <item>the projects whose <c>tps.json</c> resources <see cref="Build"/> reads directly
+    /// (<see cref="ResolvedProject.ProjectDirs"/> — in separate-assembly mode, just the root);</item>
+    /// <item>every project the root <em>references</em>, whose stylesheets reach the site as resources
+    /// embedded in its package DLL. The embedded copy is a byte-for-byte concatenation of the same files
+    /// under the same group name and <c>output</c> directory, so re-copying from disk lands the same
+    /// bytes at the same path that a full rebuild (recompiling that dependency, re-embedding, and
+    /// re-extracting) would have.</item>
+    /// </list>
+    ///
+    /// Watch mode captures this after each successful build so it can tell a change to a CSS source it
+    /// already knows about from one that needs a real rebuild.
+    /// </summary>
+    public static List<CssResource> CssResources(ResolvedProject project, TransposeJson config, string configuration)
+    {
+        var css = new List<CssResource>();
+        var seen = new HashSet<string>(PathComparer);
+
+        void Scan(string projectDir)
+        {
+            if (!seen.Add(Path.GetFullPath(projectDir))) return;
+            var cfg = projectDir == project.ProjectDir ? config : TransposeJson.TryLoad(projectDir, configuration);
+            if (cfg is null) return;
+            foreach (var group in cfg.Resources)
             {
-                var rel = string.IsNullOrEmpty(destSub) ? Path.GetFileName(src) : destSub + "/" + Path.GetFileName(src);
-                var dest = Path.Combine(outputDir, rel.Replace('/', Path.DirectorySeparatorChar));
-                Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-                File.Copy(src, dest, overwrite: true);
-                written.Add(Path.GetFullPath(dest));
-                if (rel.EndsWith(".css", StringComparison.OrdinalIgnoreCase)) LinkCss(rel);
-                else if (rel.EndsWith(".js", StringComparison.OrdinalIgnoreCase)) RouteJs(rel);
+                var isBundle = IsBundleName(ResolveResource(group).fileName);
+                foreach (var (rel, sources) in ResourceGroupOutputs(projectDir, group))
+                    if (IsCss(rel)) css.Add(new CssResource(rel, sources, isBundle));
             }
         }
+
+        // Referenced projects first, then the project's own dirs with the root last — the precedence
+        // Build applies (a package's extracted resources are written before the root's own, and the
+        // root's tps.json wins a collision).
+        foreach (var dep in ProjectResolver.ReferencedProjectsInBuildOrder(project.CsprojPath))
+            if (Path.GetDirectoryName(dep) is { } dir) Scan(dir);
+        foreach (var projectDir in Enumerable.Reverse(project.ProjectDirs))
+            Scan(projectDir);
+
+        return css;
+    }
+
+    /// <summary>Rewrites the given stylesheets into an already-assembled site, exactly as
+    /// <see cref="Build"/> would have — same concatenation, same encoding, same destination — so a
+    /// CSS-only update leaves the site byte-identical to what a full rebuild would have produced.
+    /// Nothing else in the output is touched, and no manifest entry changes (these paths were already
+    /// recorded by the build that produced them).</summary>
+    public static void WriteCssResources(string outputDir, IEnumerable<CssResource> resources)
+    {
+        foreach (var resource in resources)
+            WriteResource(outputDir, resource.OutputRelativePath, resource.SourceFiles, resource.Concatenated, written: null);
     }
 
     /// <summary>
@@ -581,11 +746,10 @@ internal static class OutputBuilder
     private static IReadOnlyList<EmbeddedJs> ExtractEmbeddedJs(string dllPath, string outputDir, List<string> cssLinks, HashSet<string> written)
     {
         var jsFiles = new List<EmbeddedJs>();
-        Assembly asm;
-        try { asm = Assembly.LoadFrom(dllPath); }
-        catch { return jsFiles; }
+        using var asm = AssemblyResources.TryOpen(dllPath);
+        if (asm is null) return jsFiles;
 
-        var resourceNames = asm.GetManifestResourceNames();
+        var resourceNames = asm.Names;
         var manifest = resourceNames.FirstOrDefault(n => n.EndsWith("Transpose.Resources.json", StringComparison.OrdinalIgnoreCase));
 
         // Each entry: the resource's FileName (manifest key), the output subdirectory it extracts to
@@ -595,7 +759,7 @@ internal static class OutputBuilder
         List<(string fileName, string? path, bool load)> entries;
         if (manifest is not null)
         {
-            using var ms = asm.GetManifestResourceStream(manifest)!;
+            using var ms = asm.Open(manifest);
             using var sr = new StreamReader(ms);
             using var doc = JsonDocument.Parse(sr.ReadToEnd(), new JsonDocumentOptions { AllowTrailingCommas = true });
             entries = doc.RootElement.EnumerateArray()
@@ -630,7 +794,7 @@ internal static class OutputBuilder
 
             if (rel.EndsWith(".js", StringComparison.OrdinalIgnoreCase))
             {
-                using var s = asm.GetManifestResourceStream(resName)!;
+                using var s = asm.Open(resName);
                 using var reader = new StreamReader(s);
                 jsFiles.Add(new EmbeddedJs(leaf, rel, reader.ReadToEnd(), load));   // JS: placed/minified by RoutePackageJs
             }
@@ -640,7 +804,7 @@ internal static class OutputBuilder
                 // assets stay intact, and link stylesheets. These must never reach the JS minifier.
                 var dest = Path.Combine(outputDir, rel.Replace('/', Path.DirectorySeparatorChar));
                 Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-                using (var s = asm.GetManifestResourceStream(resName)!)
+                using (var s = asm.Open(resName))
                 using (var fs = File.Create(dest))
                     s.CopyTo(fs);
                 written.Add(Path.GetFullPath(dest));

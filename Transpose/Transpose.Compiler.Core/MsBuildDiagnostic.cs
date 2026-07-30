@@ -95,14 +95,32 @@ internal static class MsBuildDiagnostic
         return $"{origin}: {category} {code}: {(message.Length == 0 ? "(no message)" : message)}";
     }
 
+    /// <summary>
+    /// Where a diagnostic line is written: the line, and whether it is an error. Null — the default —
+    /// means the console, which is what <c>tps</c> wants (errors on stderr, warnings on stdout; MSBuild
+    /// parses both streams alike). <c>Transpose.Compiler.Library</c> redirects this for the duration of
+    /// one build so a hosting application can collect the diagnostics instead of finding them on its own
+    /// console. Process-wide mutable state, exactly like <c>Transpose.Translator.CompileProgress.Sink</c>
+    /// — which is why the library serializes its builds.
+    /// </summary>
+    public static Action<string, bool>? Sink;
+
     /// <summary>Writes an error for a failure that is not tied to a source file.</summary>
     public static void WriteError(string code, string text)
-        => Console.Error.WriteLine(Format("error", code, text));
+        => Write(Format("error", code, text), isError: true);
 
-    /// <summary>Writes a warning for a condition that is not tied to a source file. Warnings go to
-    /// stdout — they are not failures, and MSBuild parses both streams alike.</summary>
+    /// <summary>Writes a warning for a condition that is not tied to a source file.</summary>
     public static void WriteWarning(string code, string text)
-        => Console.WriteLine(Format("warning", code, text));
+        => Write(Format("warning", code, text), isError: false);
+
+    /// <summary>Writes an already-formatted diagnostic line to <see cref="Sink"/> (or the console).</summary>
+    public static void Write(string line, bool isError)
+    {
+        var sink = Sink;
+        if (sink is not null) sink(line, isError);
+        else if (isError) Console.Error.WriteLine(line);
+        else Console.WriteLine(line);
+    }
 
     /// <summary>
     /// Collapses a message to a single line: MSBuild parses line by line, so a newline in the middle

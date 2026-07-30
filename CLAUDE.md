@@ -36,10 +36,14 @@ Transpose/                     # The compiler toolchain
 │   ├── Support/               #   TransposeNaming, NameMangler, UnsupportedFeatureScanner
 │   └── Runtime/tps.shim.js    #   embedded TransposeR shim (language helpers over the tps.js runtime)
 ├── Transpose.Compiler/        # The CLI compiler.  AssemblyName + tool command: `tps`
-│   ├── Program.cs             #   arg parsing, orchestration, output modes
-│   └── WatchMode.cs           #   `tps --watch`: rebuild on change, serve over Kestrel + live reload
+│   ├── Program.cs             #   arg parsing -> BuildOptions, the --timing report, watch-mode entry
+│   └── WatchMode.cs           #   `tps --watch`'s dev server only: Kestrel static files + the reload socket
 ├── Transpose.Compiler.Core/   # Shared engine behind the CLI and Transpose.Compiler.Library — not itself
 │   │                          #   packaged, like Transpose.Translator above. Namespace Transpose.Compiler.
+│   ├── ProjectBuild.cs        #   one build of one project, end to end (everything `tps` does after parsing
+│   │                          #   its command line): BuildOptions -> BuildOutcome, plus BuildLog
+│   ├── WatchSession.cs        #   the watch engine: file watchers + debounce, the rebuild-vs-CSS-only
+│   │                          #   decision, ReloadHub (websocket) and the injected live-reload script
 │   ├── ProjectResolver.cs     #   reads the .csproj (raw XML), globs sources, resolves references
 │   ├── ProjectXml.cs          #   csproj + <Import> flattening (shared projects' .projitems)
 │   ├── OutputBuilder.cs       #   site build (runtime + bundle + resources + index.html) + stale-output prune
@@ -52,8 +56,13 @@ Transpose/                     # The compiler toolchain
 ├── Transpose.Compiler.Library/# Compiler-as-a-library. Package id + AssemblyName Transpose.Compiler.Library
 │   ├── CompilationRequest.cs  #   fluent request: in-memory sources, package/reference assemblies, settings
 │   ├── CompilationResult.cs   #   JS/assembly bytes + diagnostics on success, formatted errors on failure
-│   └── TransposeCompilerLibrary.cs # Compile/CompileAsync — serialized (CompileProgress/PhaseTimings are
-│                              #   process-wide mutable state, so concurrent compiles are queued, not parallel)
+│   ├── ProjectBuildRequest.cs #   build a real on-disk .csproj (the library form of `tps --project`)
+│   ├── ProjectBuildResult.cs  #   exit code + site directory + formatted errors/warnings + captured output
+│   ├── TransposeWatcher.cs    #   watch mode for a host that runs its own web server: Start/BeginWatching +
+│   │                          #   HandleWebSocketAsync. Used by `curiosity-cli serve --watch` (mosaik repo)
+│   └── TransposeCompilerLibrary.cs # Compile/BuildProject (+Async) — serialized (CompileProgress/PhaseTimings
+│                              #   and the diagnostic sink are process-wide mutable state, so concurrent
+│                              #   compiles are queued, not parallel)
 ├── Transpose.Bench/           # Benchmark harness. AssemblyName + tool command: `tps-bench`
 │   ├── MachineInfo.cs         #   CPU model / cores / RAM / SIMD-ISA detection
 │   ├── CpuScore.cs            #   short deterministic CPU+memory benchmark -> normalisation score
@@ -280,8 +289,9 @@ property is not guessed at: such an import or item is skipped, which is why SDK-
 `--max-errors <n>` (a cap; by default **every** error is reported, ordered by file and line),
 `--watch` / `--watch-port <n>` (rebuild a site on every source change — root project and every
 referenced project — and serve it over Kestrel on localhost; the served index.html carries an
-injected script that reconnects over a websocket and reloads the page after each rebuild; see
-`Transpose.Compiler/WatchMode.cs`).
+injected script that reconnects over a websocket and reloads the page after each rebuild, or swaps
+the page's stylesheets in place when only CSS changed; see `Transpose.Compiler.Core/WatchSession.cs`
+for the engine and `Transpose.Compiler/WatchMode.cs` for the dev server).
 
 ### Diagnostics are in MSBuild's canonical format
 
@@ -415,19 +425,45 @@ The short version:
   a consumer actually binds against. Output is byte-identical either way, gated in CI over eight edit
   shapes. The `tps` CLI still defaults to off; the SDK opts in. Remaining: re-emitting only the
   *dependent* types when a declaration changes. See **`TODO.incremental.md`**.
-- **Watch mode (done).** `tps --watch` (`Transpose.Compiler/WatchMode.cs`) rebuilds a site whenever a
-  source file changes — the root project's own sources and every project it transitively references
-  (via `ProjectResolver.ReferencedProjectsInBuildOrder`), debounced so one save triggers one rebuild —
-  and serves the assembled site over a Kestrel dev server (`--watch-port`, default 4300) started with
+- **Watch mode (done).** `tps --watch` rebuilds a site whenever a source file changes — the root
+  project's own sources and every project it transitively references (via
+  `ProjectResolver.ReferencedProjectsInBuildOrder`), debounced so one save triggers one rebuild — and
+  serves the assembled site over a Kestrel dev server (`--watch-port`, default 4300) started with
   `Microsoft.AspNetCore.App` as a `FrameworkReference` (no `Sdk.Web` switch needed). `OutputBuilder`
   gets an optional `liveReloadScript` inlined before `</body>`; it opens a websocket to
-  `/__tps-livereload` and reloads on any message, and a monotonic build version embedded in the script
-  lets a reconnecting client (e.g. one whose reload navigation overlapped a second rebuild) catch up
-  immediately instead of waiting on a broadcast it could otherwise miss. `Program.RunOnce` is the
-  extracted single-build path both a plain invocation and every watch rebuild call. Covered end to end
-  by `WatchModeTests` in its own **`Transpose.WatchMode.Tests`** project (a real `tps --watch` subprocess
-  + headless Chromium via Playwright, editing both the root and a referenced project and asserting the
-  page reloads itself — never calling `page.ReloadAsync()`).
+  `/__tps-livereload` and acts on the message (`reload` → reload the page, `css` → re-fetch the
+  stylesheets), and a monotonic build version embedded in the script lets a reconnecting client (e.g. one
+  whose reload navigation overlapped a second rebuild) catch up immediately instead of waiting on a
+  broadcast it could otherwise miss.
+
+  The split is deliberate: `WatchSession` (`Transpose.Compiler.Core`) is the whole engine — watchers,
+  debounce, the change classification, the reload hub and the injected script — and
+  `Transpose.Compiler/WatchMode.cs` is *only* the dev server (static files + the websocket endpoint), so
+  a host with its own web server drives the identical loop through `TransposeWatcher`
+  (`Transpose.Compiler.Library`). `curiosity-cli serve --watch` in the **mosaik** repo is that host.
+
+  **A CSS-only change skips the compiler.** When every file in a debounced batch is a source of a
+  stylesheet the last successful build already produced from disk (a `tps.json` `resources` group, in the
+  root project or in any project it references), the site's CSS is re-copied — byte for byte what a full
+  build would have written, via `OutputBuilder.CssResources`/`WriteCssResources` — and the page is told
+  `css` rather than `reload`, so the running app keeps its state. Anything else is a real build: a new
+  stylesheet adds a `<link>` to index.html, a deleted one has to remove it, and a `.cs`/`.csproj`/tps.json
+  edit obviously needs compiling. The build version deliberately does **not** advance for a CSS update,
+  because index.html was not rewritten.
+
+  Covered end to end by `WatchModeTests` in its own **`Transpose.WatchMode.Tests`** project (a real
+  `tps --watch` subprocess + headless Chromium via Playwright): editing both the root and a referenced
+  project and asserting the page reloads itself — never calling `page.ReloadAsync()` — and editing a
+  stylesheet and asserting the computed style changes while a value set on `window` survives, i.e. the
+  page was *not* reloaded and `app.js` was not even rewritten.
+
+- **Reading a package's embedded resources never loads it (`OutputBuilder.AssemblyResources`).** The site
+  build reads each reference's embedded JS/CSS through Mono.Cecil, not `Assembly.LoadFrom`. Loading an
+  assembly to read its resources is fine for a one-shot CLI and broken for anything long-running: the
+  file stays locked for the process's lifetime, so the *next* rebuild of a referenced project fails to
+  write its DLL (`IOException`, which is exactly what watch mode used to do on its second rebuild of a
+  multi-project app), and resolution is by assembly identity, so a re-read of a rebuilt DLL silently
+  returns the copy loaded the first time.
 
 A compilation server is still intentionally **out of scope** — though the measurements in
 `TODO.incremental.md` say what it would be worth (the residual cost of an incremental build is almost

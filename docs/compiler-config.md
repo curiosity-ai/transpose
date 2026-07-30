@@ -44,6 +44,11 @@ H5 can manage and bundle external assets (JS, CSS, fonts) using the `resources` 
       "name": "styles.css",
       "files": [ "assets/css/*.css" ],
       "output": "css"
+    },
+    {
+      "name": "lazy-module.js",
+      "files": [ "assets/js/lazy-module.js" ],
+      "load": false
     }
   ]
 }
@@ -52,6 +57,17 @@ H5 can manage and bundle external assets (JS, CSS, fonts) using the `resources` 
 - **`name`**: The name of the bundled file.
 - **`files`**: A list of files or wildcards to include.
 - **`output`**: The sub-directory in the output folder where the bundle will be placed.
+- **`load`**: `true` (default) injects the resource into `index.html` — a `<script>` for
+  JavaScript, a `<link rel="stylesheet">` for CSS. `false` still copies the resource into
+  the output folder (and still embeds it when the project is packaged) but leaves loading
+  it to your code: a module you fetch on demand, a theme you swap in at runtime, an asset
+  another file references. This is the declarative form of h5's `.dontload` name suffix
+  (`"name": "lazy-module.js.dontload"`), which is still honoured; either spelling alone
+  suppresses the injection.
+
+The flag survives packaging. When a library declares `"load": false`, that is recorded in
+the resource manifest embedded in its DLL, so a project *referencing* the library also
+extracts the file into its site without referencing it from its own `index.html`.
 
 ### Output Folder Cleanup
 
