@@ -63,8 +63,24 @@ category it belongs to:
 
 1. List commits in the window:
    ```bash
-   git log master --since="<7d ago>" --pretty=format:'%H %s'
+   git log master --since="<7d ago>" --pretty=format:'%cd %H %s' --date=short
    ```
+
+   !!! Bucket by the printed date, not by `--since`/`--until`
+   `--since` / `--until` are resolved in **local time**, so a commit made late in
+   the day in a `+HHMM` zone lands on the far side of a midnight boundary from the
+   date `%cd --date=short` prints for it. Take the date column and compare it as a
+   string (`"2026-07-20" <= d <= "2026-07-26"`); do not trust the boundary git
+   picked. Getting this wrong silently attributes a whole day's work to the wrong
+   release, which the next check catches.
+   !!!
+
+   **Cross-check against the anchor release's publish date.** The file is named
+   after the newest `Transpose.Compiler` build in the week (§6), so nothing dated
+   *after* that version was published can be in it. Fetch the publish dates in §4
+   first and use them as the gate: if the anchor build shipped on the Sunday, a
+   commit dated the following Monday belongs to the next week's file, however git
+   bucketed it.
    In a cloud container the clone is usually **shallow** (only the last few days
    of history). If your window reaches further back, unshallow first:
    ```bash
@@ -101,6 +117,22 @@ category it belongs to:
 
 5. **Determine the category** of every real change from the paths it touches
    (see §3) so it lands in the right section.
+
+6. **Sweep per package, not just per commit.** Compiler work dominates the commit
+   count, so the base library, the Web bindings and the JSON package are easy to
+   under-report. After the first pass, re-run the log scoped to each package's
+   source root and check that what it shows is represented:
+   ```bash
+   for p in BCL/Transpose.BCL BCL/Transpose.Core Packages/Transpose.Newtonsoft.Json \
+            Packages/Transpose.HttpClient Transpose/Transpose.Build.Target; do
+     echo "== $p"; git log master --since=<start> --until=<end> --no-merges --oneline -- "$p"
+   done
+   ```
+   A commit that touches both the emitter and the base library usually deserves an
+   entry in **each** category, describing the half that belongs there: the emit
+   change under Language and Compiler, the API change under Runtime and Base
+   Library. That is not double-listing, which is about repeating one *capability*
+   in two places.
 
 For a window with many commits, parallelise with **sub-agents**:
 
