@@ -1,5 +1,12 @@
+# Builds and publishes both faces of the compiler: the `tps` CLI tool (ReadyToRun, one package per
+# RID plus the outer selector) and Transpose.Compiler.Library, the compiler-as-a-library package.
+# They share Transpose.Translator and Transpose.Compiler.Core — neither of which is published on its
+# own, so a change in either has to reach nuget.org through *both* packages at the same version.
+# Splitting that across two pipelines meant two triggers, two CalVer stamps and two chances to ship
+# one half of a change, so they are packed and pushed together here.
 variables:
   compiler: '$(Build.SourcesDirectory)/Transpose/Transpose.Compiler/Transpose.Compiler.csproj'
+  compilerLibrary: '$(Build.SourcesDirectory)/Transpose/Transpose.Compiler.Library/Transpose.Compiler.Library.csproj'
   bench: '$(Build.SourcesDirectory)/Transpose/Transpose.Bench/Transpose.Bench.csproj'
   translatorTests: '$(Build.SourcesDirectory)/Transpose/Transpose.Translator.Tests/Transpose.Translator.Tests.csproj'
   watchModeTests: '$(Build.SourcesDirectory)/Transpose/Transpose.WatchMode.Tests/Transpose.WatchMode.Tests.csproj'
@@ -36,6 +43,8 @@ trigger:
   paths:
     include:
     - Transpose/Transpose.Compiler/*
+    - Transpose/Transpose.Compiler.Core/*
+    - Transpose/Transpose.Compiler.Library/*
     - Transpose/Transpose.Translator/*
     - Transpose/Transpose.Bench/*
     - Transpose/Transpose.Translator.Tests/*
@@ -86,6 +95,21 @@ steps:
   inputs:
     command: 'build'
     projects: '$(compiler)'
+    arguments: '-c $(buildConfiguration) /p:Version=$(targetVersion)'
+
+# Transpose.Compiler.Library gets its own restore/build: it is RID-agnostic (a plain library, no
+# ReadyToRun), so it must *not* inherit TransposePackRidSpecificTools from the restore above.
+- task: DotNetCoreCLI@2
+  displayName: 'restore nuget compiler library'
+  inputs:
+    command: 'restore'
+    projects: '$(compilerLibrary)'
+
+- task: DotNetCoreCLI@2
+  displayName: 'build compiler library'
+  inputs:
+    command: 'build'
+    projects: '$(compilerLibrary)'
     arguments: '-c $(buildConfiguration) /p:Version=$(targetVersion)'
 
 # --- tests ------------------------------------------------------------------------------------
@@ -153,6 +177,9 @@ steps:
 # ###########################################################################
 
 # --- pack and push ----------------------------------------------------------------------------
+# Everything below packs into $(Build.ArtifactStagingDirectory), and the single push at the end sends
+# whatever landed there — the tool packages and Transpose.Compiler.Library, all at $(targetVersion).
+#
 # One pack produces the outer selector package plus one ReadyToRun package per RID (~15 MB each).
 - task: DotNetCoreCLI@2
   displayName: 'pack nuget compiler (ReadyToRun, per RID)'
@@ -182,6 +209,18 @@ steps:
     dotnet "$(Build.SourcesDirectory)/Transpose/Transpose.Bench/bin/$(buildConfiguration)/net10.0/tps-bench.dll" \
       --verify-r2r "$(Build.ArtifactStagingDirectory)"
   displayName: 'verify the packed tool is ReadyToRun'
+
+# Packed *after* the R2R gate on purpose. `--verify-r2r` classifies a non-tool package as "skipped"
+# and would pass it anyway, but keeping the staging directory to just the tool packages while the gate
+# runs means the gate can never be weakened by what else happens to be sitting next to them.
+- task: DotNetCoreCLI@2
+  displayName: 'pack nuget compiler library'
+  inputs:
+    command: 'pack'
+    configuration: '$(buildConfiguration)'
+    packagesToPack: '$(compilerLibrary)'
+    versioningScheme: 'off'
+    buildProperties: 'Version="$(targetVersion)"'
 
 - task: NuGetCommand@2
   displayName: 'push nuget'

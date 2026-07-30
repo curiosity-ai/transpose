@@ -90,7 +90,11 @@ Packages/                      # Additional binding libraries (all [assembly: Ex
 
 benchmarks/tesserae/           # git submodule: the benchmark corpus (see Performance below)
 docs/perf/                     # recorded tps-bench reports (baseline + current)
-.devops/                       # Azure DevOps pipelines (one per package, plus the benchmark).
+.devops/                       # Azure DevOps pipelines (one per package, plus the benchmark). The
+                               #   exception is build-transpose-compiler, which publishes both
+                               #   Transpose.Compiler and Transpose.Compiler.Library: they share the
+                               #   unpublished Translator/Compiler.Core, so both have to ship at the
+                               #   same version and are packed and pushed in one run.
                                #   Two of them carry test steps — build-transpose-compiler (the
                                #   translator + watch-mode suites) and build-transpose-json — but both
                                #   are commented out: the DevOps agents are too resource-limited to
