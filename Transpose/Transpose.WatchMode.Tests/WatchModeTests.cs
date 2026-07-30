@@ -186,6 +186,99 @@ public sealed class WatchModeTests
     }
 
     [TestMethod]
+    [Timeout(300_000)]
+    public async Task EditingOnlyCssUpdatesTheStylesheetWithoutRebuildingOrReloading()
+    {
+        Write("App/App.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <TargetFramework>netstandard2.0</TargetFramework>
+                <AssemblyName>App</AssemblyName>
+              </PropertyGroup>
+            </Project>
+            """);
+        // A tps.json `resources` group whose name is a .css file: the site build concatenates the group's
+        // files into that one stylesheet and links it from index.html. This is the shape watch mode can
+        // update without the compiler.
+        Write("App/tps.json", """
+            {
+              "fileName": "app.js",
+              "resources": [ { "name": "app.css", "files": [ "css/app.css" ] } ]
+            }
+            """);
+        var cssPath = Write("App/css/app.css", "body { background-color: rgb(1, 2, 3); }");
+        Write("App/Program.cs", """
+            using Transpose;
+
+            public class Program
+            {
+                [Script("document.body.innerHTML = html;")]
+                public static extern void SetBody(string html);
+
+                public static void Main()
+                {
+                    SetBody("styled");
+                }
+            }
+            """);
+        var appCsproj = Path.Combine(_root, "App", "App.csproj");
+        var siteDir = Path.Combine(_root, "site");
+
+        var port = GetFreePort();
+        _watchProcess = StartWatch(appCsproj, siteDir, port);
+        await WaitForLogAsync(msg => msg.Contains("tps: serving http://localhost:"), TimeSpan.FromSeconds(60));
+
+        var appJsPath = Path.Combine(siteDir, "app.js");
+        var appJsBefore = File.ReadAllText(appJsPath);
+        var appJsStampBefore = File.GetLastWriteTimeUtc(appJsPath);
+
+        var page = await Browser!.NewPageAsync();
+        try
+        {
+            await page.GotoAsync($"http://localhost:{port}/", new PageGotoOptions { WaitUntil = WaitUntilState.Load });
+            await page.WaitForFunctionAsync(
+                "() => getComputedStyle(document.body).backgroundColor === 'rgb(1, 2, 3)'",
+                null, new PageWaitForFunctionOptions { Timeout = 60_000 });
+
+            // A value that only survives if the page is never reloaded — the whole point of the CSS path is
+            // that the running application keeps its state while the stylesheet is swapped underneath it.
+            await page.EvaluateAsync("() => { window.__survivesCssUpdate = 'kept'; }");
+
+            File.WriteAllText(cssPath, "body { background-color: rgb(9, 8, 7); }");
+
+            try
+            {
+                await page.WaitForFunctionAsync(
+                    "() => getComputedStyle(document.body).backgroundColor === 'rgb(9, 8, 7)'",
+                    null, new PageWaitForFunctionOptions { Timeout = 90_000 });
+            }
+            catch (TimeoutException)
+            {
+                Assert.Fail("Timed out waiting for the edited stylesheet to reach the page."
+                    + $"\n--- tps --watch log ---\n{string.Join('\n', SnapshotLog())}");
+            }
+
+            Assert.AreEqual("kept", await page.EvaluateAsync<string?>("() => window.__survivesCssUpdate"),
+                "a CSS-only change must swap the stylesheet in place, not reload the page.\n"
+                + string.Join('\n', SnapshotLog()));
+        }
+        finally
+        {
+            await page.CloseAsync();
+        }
+
+        Assert.IsTrue(SnapshotLog().Any(l => l.Contains("stylesheets only")),
+            "the change should have taken the CSS-only path.\n" + string.Join('\n', SnapshotLog()));
+        Assert.IsFalse(SnapshotLog().Any(l => l.Contains("change detected, rebuilding")),
+            "a stylesheet edit must not trigger a rebuild.\n" + string.Join('\n', SnapshotLog()));
+
+        // Nothing the compiler produces may have been rewritten — that is what "without rebuilding" means.
+        Assert.AreEqual(appJsBefore, File.ReadAllText(appJsPath), "app.js must not be re-emitted");
+        Assert.AreEqual(appJsStampBefore, File.GetLastWriteTimeUtc(appJsPath), "app.js must not even be rewritten");
+        Assert.AreEqual("body { background-color: rgb(9, 8, 7); }", File.ReadAllText(Path.Combine(siteDir, "app.css")));
+    }
+
+    [TestMethod]
     [Timeout(60_000)]
     public async Task RebuildExceptionDoesNotCorruptOutputOrCrashTheWatchProcess()
     {

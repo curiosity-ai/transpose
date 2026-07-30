@@ -50,6 +50,111 @@ public static class TransposeCompilerLibrary
         return Task.Run(() => Compile(request), cancellationToken);
     }
 
+    /// <summary>
+    /// Builds a real, on-disk project — the library form of <c>tps --project …</c>: resolves the csproj,
+    /// builds every project it references, translates, and writes the site (or the package DLL). Serialized
+    /// against every other compilation in this process, for the reasons in the type-level remarks.
+    /// </summary>
+    public static ProjectBuildResult BuildProject(ProjectBuildRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        lock (Gate)
+        {
+            var (outcome, output) = RunProjectBuild(request, request.InjectedHtmlScript);
+            return new ProjectBuildResult(outcome, output);
+        }
+    }
+
+    /// <summary>Runs <paramref name="request"/> on a thread-pool thread, still serialized against any other
+    /// compilation in this process.</summary>
+    public static Task<ProjectBuildResult> BuildProjectAsync(ProjectBuildRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return Task.Run(() => BuildProject(request), cancellationToken);
+    }
+
+    /// <summary>
+    /// The shared build path behind <see cref="BuildProject"/> and <see cref="TransposeWatcher"/>: turns the
+    /// request into the CLI's own <see cref="BuildOptions"/>, redirects the build's console output into
+    /// <paramref name="output"/> (and the request's progress callback), and runs it.
+    ///
+    /// Not locked here — <see cref="BuildProject"/> takes the gate, and the watcher's builds are already
+    /// serialized by its own single-threaded update loop — but it does install process-wide sinks
+    /// (<see cref="MsBuildDiagnostic.Sink"/>, <c>CompileProgress.Sink</c>) for the duration of the build,
+    /// which is why nothing else may be compiling at the same time.
+    /// </summary>
+    internal static (BuildOutcome Outcome, IReadOnlyList<string> Output) RunProjectBuild(
+        ProjectBuildRequest request, string? injectedHtmlScript)
+    {
+        var lines = new List<string>();
+        var log = new CollectingLog(lines, request.OnProgress);
+
+        var options = ProjectBuild.ResolveOutputMode(new BuildOptions
+        {
+            CsprojPath = LocateProject(request.ProjectPath),
+            SiteDir = request.SiteDirectory,
+            Configuration = request.Configuration,
+            Quiet = request.Quiet,
+            MaxErrors = request.MaxErrors,
+            ExtraReferences = request.ExtraReferences.ToList(),
+            ExtraDefines = request.ExtraDefines.ToList(),
+            AssemblyVersion = request.AssemblyVersion,
+            Incremental = request.Incremental,
+            CacheDir = request.CacheDirectory,
+            LiveReloadScript = injectedHtmlScript,
+        });
+
+        var previousSink = MsBuildDiagnostic.Sink;
+        try
+        {
+            MsBuildDiagnostic.Sink = (line, _) => log.Info(line);
+            return (ProjectBuild.Run(options, log), lines);
+        }
+        finally
+        {
+            MsBuildDiagnostic.Sink = previousSink;
+        }
+    }
+
+    /// <summary>Resolves a project argument the way the <c>tps</c> CLI does: a <c>.csproj</c> path as given,
+    /// or the single <c>.csproj</c> in a directory.</summary>
+    internal static string LocateProject(string projectPath)
+    {
+        var full = Path.GetFullPath(projectPath);
+        if (File.Exists(full) && full.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)) return full;
+        if (Directory.Exists(full))
+        {
+            var found = Directory.GetFiles(full, "*.csproj", SearchOption.TopDirectoryOnly);
+            if (found.Length == 1) return Path.GetFullPath(found[0]);
+            if (found.Length > 1)
+                throw new ArgumentException($"'{full}' holds {found.Length} .csproj files; name the one to build.", nameof(projectPath));
+        }
+        throw new FileNotFoundException($"No .csproj found at '{projectPath}'.", full);
+    }
+
+    /// <summary>Collects the build's output so a failure can be reported in full afterwards, forwarding each
+    /// line to the request's progress callback as it happens.</summary>
+    private sealed class CollectingLog : BuildLog
+    {
+        private readonly List<string> _lines;
+        private readonly Action<string>? _forward;
+
+        public CollectingLog(List<string> lines, Action<string>? forward)
+        {
+            _lines = lines;
+            _forward = forward;
+        }
+
+        public override void Info(string message) => Add(message);
+        public override void Error(string message) => Add(message);
+
+        private void Add(string message)
+        {
+            lock (_lines) _lines.Add(message);
+            _forward?.Invoke(message);
+        }
+    }
+
     private static CompilationResult CompileCore(CompilationRequest request)
     {
         // The same gate the `tps` CLI applies: a reference built by a newer Transpose than this one

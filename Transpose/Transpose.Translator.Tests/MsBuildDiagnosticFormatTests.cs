@@ -111,7 +111,7 @@ public sealed class MsBuildDiagnosticFormatTests
     {
         // The whole error list, not just a sample: ordering and truncation must not produce a line the
         // build cannot read.
-        var errors = Program.OrderErrorsForReport(
+        var errors = ProjectBuild.OrderErrorsForReport(
             new RoslynTranslator().Translate(new[]
             {
                 ("A.cs", "public class A { public int M() { return X(); } }"),
