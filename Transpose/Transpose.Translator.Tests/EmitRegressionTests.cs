@@ -2541,6 +2541,77 @@ public class Program
             Assert.IsTrue(js.Contains("PresE.BetaTwo"),   "NamePreserveCase must preserve the member slot\n" + js);
         }
 
+        // ---- [Enum(Emit.Value)] ToString/concat/interpolation must not crash ------------------
+        //
+        // An [Enum(Emit.Value)] enum (e.g. System.Linq.Expressions.ExpressionType,
+        // System.MidpointRounding) has no runtime type object — its members inline as bare numbers
+        // everywhere, a deliberate bundle-size tradeoff — but converting one to a string (explicit
+        // ToString(), string concatenation, or $"{}") unconditionally called
+        // System.Enum.toString(TypeRef(type), value), which read a property off `undefined` (there is
+        // no such runtime type to look up) and crashed with "Cannot read properties of undefined
+        // (reading '<TypeName>')". This reproduced on every Value-mode enum, including ones built
+        // through long-working factories like Expression.Assign — nothing to do with any specific
+        // factory method. Fixed by falling back to the raw number's own toString() for this mode,
+        // in EmitConcatOperand, the explicit ToString() call, string interpolation, and the shared
+        // ToStringJs helper (all four previously duplicated the same unconditional call). This
+        // necessarily diverges from native, which always has the symbolic name via reflection
+        // metadata — that divergence is the accepted cost of choosing Emit.Value, not a new one this
+        // introduces, so this test is Transpose-only (skipRoslyn) rather than diffed against native.
+        [TestMethod]
+        public async Task EnumValueModeToStringDoesNotCrash()
+        {
+            var js = await RunTest(@"
+using System;
+using System.Linq.Expressions;
+public class Program
+{
+    public static void Main()
+    {
+        var c = Expression.Constant(1);
+        Console.WriteLine(""concat="" + c.NodeType);
+        Console.WriteLine(""explicit="" + c.NodeType.ToString());
+        Console.WriteLine($""interp={c.NodeType}"");
+
+        var assign = Expression.Assign(Expression.Parameter(typeof(int)), Expression.Constant(1));
+        Console.WriteLine(""assign="" + assign.NodeType);
+
+        Console.WriteLine(""midpoint="" + MidpointRounding.AwayFromZero);
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>", skipRoslyn: true);
+
+            Assert.IsTrue(js.Contains("concat=9"), "ExpressionType.Constant's ordinal (9)\n" + js);
+            Assert.IsTrue(js.Contains("explicit=9"), "explicit ToString() must not crash either\n" + js);
+            Assert.IsTrue(js.Contains("interp=9"), "string interpolation must not crash either\n" + js);
+            Assert.IsTrue(js.Contains("assign=46"), "ExpressionType.Assign's ordinal (46), a different factory\n" + js);
+            Assert.IsTrue(js.Contains("midpoint=4"), "MidpointRounding.AwayFromZero's ordinal (4), a different Value-mode enum\n" + js);
+        }
+
+        // A default-mode enum (a plain user enum, and a default-mode BCL enum like DayOfWeek) must
+        // keep printing its symbolic NAME exactly like native — this fix must not regress that.
+        [TestMethod]
+        public async Task DefaultModeEnumToStringStillMatchesNative()
+        {
+            await RunTest(@"
+using System;
+public enum Color { Red, Green, Blue }
+public class Program
+{
+    public static void Main()
+    {
+        var color = Color.Green;
+        Console.WriteLine(""concat="" + color);
+        Console.WriteLine(""explicit="" + color.ToString());
+        Console.WriteLine($""interp={color}"");
+
+        var day = DayOfWeek.Wednesday;
+        Console.WriteLine(""day="" + day);
+
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
         // ---- [Convention(Notation.*)] — every notation on an [External] type's members ----
         //
         // Convention has a Notation axis (None / LowerCase / UpperCase / CamelCase / PascalCase) plus
