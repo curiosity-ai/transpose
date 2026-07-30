@@ -9,8 +9,10 @@ namespace Transpose.Translator.Tests.Linq
     /// binding maps onto: <c>Append</c>/<c>Prepend</c>, <c>ToHashSet</c>, <c>DistinctBy</c>/
     /// <c>UnionBy</c>/<c>IntersectBy</c>/<c>ExceptBy</c>, <c>SkipLast</c>/<c>TakeLast</c>,
     /// <c>Order</c>/<c>OrderDescending</c>, <c>Index</c>, <c>CountBy</c>/<c>AggregateBy</c>,
-    /// <c>TryGetNonEnumeratedCount</c>, the tuple-returning <c>Zip</c> overloads, and indexing by
-    /// <see cref="System.Index"/> / <see cref="System.Range"/>.
+    /// <c>TryGetNonEnumeratedCount</c>, the tuple-returning <c>Zip</c> overloads, indexing by
+    /// <see cref="System.Index"/> / <see cref="System.Range"/>, the
+    /// <c>FirstOrDefault</c>/<c>LastOrDefault</c>/<c>SingleOrDefault</c> overloads that take an explicit
+    /// default, <c>Shuffle</c>, and <c>LeftJoin</c>/<c>RightJoin</c>.
     ///
     /// Each is covered in every declared overload, over an array/List receiver and over a query receiver
     /// (which matters: an instance method on <c>EnumerableInstance</c> beats an extension method, so
@@ -455,6 +457,163 @@ public class Program
         }
 
         [TestMethod]
+        public async Task OrDefaultOverloadsWithAnExplicitDefault()
+        {
+            var code = """
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+public class Program
+{
+    public static void Main()
+    {
+        var xs = new[] { 1, 2, 3 };
+        var empty = new int[0];
+        Console.WriteLine(xs.FirstOrDefault(99) + "," + empty.FirstOrDefault(99));
+        Console.WriteLine(xs.FirstOrDefault(x => x > 2, 99) + "," + xs.FirstOrDefault(x => x > 9, 99));
+        Console.WriteLine(xs.LastOrDefault(99) + "," + empty.LastOrDefault(99));
+        Console.WriteLine(xs.LastOrDefault(x => x < 3, 99) + "," + xs.LastOrDefault(x => x > 9, 99));
+        Console.WriteLine(new[] { 7 }.SingleOrDefault(99) + "," + empty.SingleOrDefault(99));
+        Console.WriteLine(xs.SingleOrDefault(x => x == 2, 99) + "," + xs.SingleOrDefault(x => x > 9, 99));
+        // "OrDefault" covers emptiness, not ambiguity: more than one element still throws.
+        try { xs.SingleOrDefault(99); } catch (InvalidOperationException e) { Console.WriteLine("many: " + e.Message); }
+        try { xs.SingleOrDefault(x => x > 1, 99); } catch (InvalidOperationException e) { Console.WriteLine("manymatch: " + e.Message); }
+
+        var strs = new[] { "a", "b" };
+        Console.WriteLine(strs.FirstOrDefault("z") + "," + new string[0].FirstOrDefault("z"));
+        Console.WriteLine(new string[0].LastOrDefault("z") + "," + new string[0].SingleOrDefault("z"));
+        Console.WriteLine(strs.FirstOrDefault(s => s == "q", "z"));
+        var list = new List<int> { 5 };
+        Console.WriteLine(list.FirstOrDefault(9) + "," + list.LastOrDefault(9) + "," + list.SingleOrDefault(9));
+        // Adding these must not disturb the overloads that were already there: a lambda still binds as a
+        // predicate rather than as a default value.
+        Console.WriteLine(empty.FirstOrDefault() + "," + xs.FirstOrDefault(x => x > 1) + "," + empty.SingleOrDefault());
+        // A query receiver reaches EnumerableInstance's own instance forms, which take the same arguments.
+        var q = xs.Where(x => x > 1);
+        Console.WriteLine(q.FirstOrDefault(99) + "," + q.LastOrDefault(99) + "," + q.FirstOrDefault(x => x > 9, 99));
+    }
+}
+""";
+            await RunTest(code);
+        }
+
+        [TestMethod]
+        public async Task LeftJoinAndRightJoin()
+        {
+            var code = """
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+public class Program
+{
+    public static void Main()
+    {
+        var outer = new[] { "1a", "2b", "3c" };
+        var inner = new[] { "1x", "1y", "3z" };
+        Func<string, string> outerKey = o => o.Substring(0, 1);
+        Func<string, string> innerKey = i => i.Substring(0, 1);
+        // LeftJoin keeps every outer element (2b has no match), in outer order.
+        Console.WriteLine(string.Join(";", outer.LeftJoin(inner, outerKey, innerKey, (o, i) => o + "/" + (i ?? "-"))));
+        // RightJoin keeps every inner element, and the result is in INNER order.
+        Console.WriteLine(string.Join(";", outer.RightJoin(inner, outerKey, innerKey, (o, i) => (o ?? "-") + "/" + i)));
+        Console.WriteLine(string.Join(";", outer.LeftJoin(inner, outerKey, innerKey, (o, i) => o + "/" + (i ?? "-"), StringComparer.Ordinal)));
+        Console.WriteLine(string.Join(";", outer.RightJoin(inner, outerKey, innerKey, (o, i) => (o ?? "-") + "/" + i, StringComparer.Ordinal)));
+        Console.WriteLine(outer.LeftJoin(new string[0], outerKey, innerKey, (o, i) => o).Count());
+        Console.WriteLine(new string[0].LeftJoin(inner, outerKey, innerKey, (o, i) => o).Count());
+        Console.WriteLine(outer.RightJoin(new string[0], outerKey, innerKey, (o, i) => i).Count());
+        Console.WriteLine(new string[0].RightJoin(inner, outerKey, innerKey, (o, i) => i).Count());
+
+        // A value-typed unmatched side is the type's default, not null.
+        var ints = new[] { 1, 2 };
+        var pairs = new[] { (K: 1, V: "one") };
+        Console.WriteLine(string.Join(";", ints.LeftJoin(pairs, x => x, p => p.K, (x, p) => x + "=" + (p.V ?? "none"))));
+        Console.WriteLine(string.Join(";", pairs.RightJoin(ints, p => p.K, x => x, (p, x) => x + "=" + (p.V ?? "none"))));
+
+        Console.WriteLine(string.Join(";", new[] { "A" }.LeftJoin(new[] { "a1" }, s => s, s => s.Substring(0, 1), (o, i) => o + "/" + (i ?? "-"), StringComparer.OrdinalIgnoreCase)));
+        Console.WriteLine(string.Join(";", new[] { "A" }.LeftJoin(new[] { "a1" }, s => s, s => s.Substring(0, 1), (o, i) => o + "/" + (i ?? "-"), StringComparer.Ordinal)));
+    }
+}
+""";
+            await RunTest(code);
+        }
+
+        [TestMethod]
+        public async Task JoinsNeverMatchANullKey()
+        {
+            var code = """
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+public class Program
+{
+    public static void Main()
+    {
+        var outer = new[] { "a1", "b2", null };
+        var inner = new[] { "x1", null, "y1" };
+        Func<string, string> outerKey = o => o == null ? null : o.Substring(1);
+        Func<string, string> innerKey = i => i == null ? null : i.Substring(1);
+        // System.Linq's join lookup drops null-keyed elements, so a null key never correlates — the two
+        // null elements below are NOT paired, and GroupJoin reports an empty group for the null outer.
+        Console.WriteLine(string.Join(";", outer.Join(inner, outerKey, innerKey, (o, i) => (o ?? "N") + "/" + (i ?? "N"))));
+        Console.WriteLine(string.Join(";", outer.GroupJoin(inner, outerKey, innerKey, (o, g) => (o ?? "N") + "=" + g.Count())));
+        Console.WriteLine(string.Join(";", outer.LeftJoin(inner, outerKey, innerKey, (o, i) => (o ?? "N") + "/" + (i ?? "N"))));
+        Console.WriteLine(string.Join(";", outer.RightJoin(inner, outerKey, innerKey, (o, i) => (o ?? "N") + "/" + (i ?? "N"))));
+
+        // A nullable-typed key behaves the same way.
+        var xs = new[] { 1, 2, 3 };
+        var ys = new[] { 1, 3 };
+        Func<int, int?> nullableKey = x => x == 2 ? (int?)null : x;
+        Console.WriteLine(string.Join(";", xs.Join(ys, nullableKey, nullableKey, (a, b) => a + "/" + b)));
+        Console.WriteLine(string.Join(";", xs.GroupJoin(ys, nullableKey, nullableKey, (a, g) => a + "=" + g.Count())));
+        Console.WriteLine(string.Join(";", xs.LeftJoin(ys, nullableKey, nullableKey, (a, b) => a + "/" + b)));
+
+        // The rule is specific to joins: ToLookup and GroupBy DO keep a null-keyed grouping.
+        Console.WriteLine(outer.ToLookup(outerKey).Count + "," + outer.GroupBy(outerKey).Count());
+    }
+}
+""";
+            await RunTest(code);
+        }
+
+        [TestMethod]
+        public async Task Shuffle_PreservesTheElementsItRandomizes()
+        {
+            var code = """
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+public class Program
+{
+    public static void Main()
+    {
+        var xs = Enumerable.Range(1, 20).ToArray();
+        // The order is random, so only the invariants can be diffed against native .NET: the same
+        // elements, the same number of them, none lost or duplicated.
+        var shuffled = xs.Shuffle().ToList();
+        Console.WriteLine(shuffled.Count);
+        Console.WriteLine(string.Join(",", shuffled.OrderBy(x => x)));
+        Console.WriteLine(shuffled.Distinct().Count() + "," + shuffled.Sum());
+        Console.WriteLine(new int[0].Shuffle().Count());
+        Console.WriteLine(new[] { 7 }.Shuffle().Single());
+        var words = new[] { "a", "b", "c" };
+        Console.WriteLine(string.Join(",", words.Shuffle().OrderBy(s => s)));
+        Console.WriteLine(string.Join(",", words.Shuffle().Where(s => s != "b").OrderBy(s => s)));
+        Console.WriteLine(xs.Where(x => x > 15).Shuffle().Count());
+        // Deferred, and re-drawn on each enumeration — so both remain permutations of the source.
+        var q = xs.Shuffle();
+        Console.WriteLine(string.Join(",", q.OrderBy(x => x).Take(3)));
+        Console.WriteLine(string.Join(",", q.OrderBy(x => x).Take(3)));
+    }
+}
+""";
+            await RunTest(code);
+        }
+
+        [TestMethod]
         public async Task ArgumentValidationOfTheNewOperators()
         {
             var code = """
@@ -488,6 +647,14 @@ public class Program
         try { new[] { 1 }.Zip((int[])null); } catch (ArgumentNullException e) { Console.WriteLine("zip " + e.ParamName); }
         try { nothing.Take(0..1); } catch (ArgumentNullException e) { Console.WriteLine("take-range " + e.ParamName); }
         try { nothing.ElementAt(^1); } catch (ArgumentNullException e) { Console.WriteLine("elementat " + e.ParamName); }
+        try { nothing.FirstOrDefault(1); } catch (ArgumentNullException e) { Console.WriteLine("firstordefault " + e.ParamName); }
+        try { nothing.LastOrDefault(1); } catch (ArgumentNullException e) { Console.WriteLine("lastordefault " + e.ParamName); }
+        try { nothing.SingleOrDefault(1); } catch (ArgumentNullException e) { Console.WriteLine("singleordefault " + e.ParamName); }
+        try { new[] { 1 }.FirstOrDefault((Func<int, bool>)null, 1); } catch (ArgumentNullException e) { Console.WriteLine("firstordefault-pred " + e.ParamName); }
+        try { nothing.Shuffle(); } catch (ArgumentNullException e) { Console.WriteLine("shuffle " + e.ParamName); }
+        try { nothing.LeftJoin(new[] { 1 }, x => x, x => x, (a, b) => a); } catch (ArgumentNullException e) { Console.WriteLine("leftjoin " + e.ParamName); }
+        try { new[] { 1 }.LeftJoin((int[])null, x => x, x => x, (a, b) => a); } catch (ArgumentNullException e) { Console.WriteLine("leftjoin-inner " + e.ParamName); }
+        try { new[] { 1 }.RightJoin(new[] { 1 }, x => x, x => x, (Func<int, int, int>)null); } catch (ArgumentNullException e) { Console.WriteLine("rightjoin-result " + e.ParamName); }
         int c;
         try { nothing.TryGetNonEnumeratedCount(out c); } catch (ArgumentNullException e) { Console.WriteLine("trygetcount " + e.ParamName); }
     }

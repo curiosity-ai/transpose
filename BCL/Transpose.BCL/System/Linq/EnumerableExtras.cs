@@ -21,7 +21,12 @@ namespace System.Linq
     /// <see cref="Index"/> and <c>Take</c> by <see cref="Range"/></description></item>
     /// <item><description>.NET 7: <c>Order</c>, <c>OrderDescending</c></description></item>
     /// <item><description>.NET 9: <c>Index</c>, <c>CountBy</c>, <c>AggregateBy</c></description></item>
+    /// <item><description>.NET 10: <c>Shuffle</c>, <c>LeftJoin</c>, <c>RightJoin</c></description></item>
     /// </list>
+    ///
+    /// Plus the <c>FirstOrDefault</c>/<c>LastOrDefault</c>/<c>SingleOrDefault</c> overloads that take an
+    /// explicit default (.NET 6). <c>EnumerableInstance</c> — what a chained query evaluates to — already
+    /// binds those onto <c>linq.js</c>, so only an <c>IEnumerable&lt;T&gt;</c> receiver needed them.
     ///
     /// <para><b>One documented difference.</b> <see cref="TryGetNonEnumeratedCount"/> answers true only
     /// for a real collection. .NET also answers true for some lazy operators whose count it can work out
@@ -690,6 +695,279 @@ namespace System.Linq
                     yield return (e1.Current, e2.Current, e3.Current);
                 }
             }
+        }
+
+        // ---- The *OrDefault overloads that take an explicit default ----------------------------
+
+        /// <summary>The first element, or <paramref name="defaultValue"/> when the sequence is empty.</summary>
+        public static TSource FirstOrDefault<TSource>(this IEnumerable<TSource> source, TSource defaultValue)
+        {
+            if (source == null) throw new ArgumentNullException(nameof(source));
+
+            foreach (var item in source) return item;
+
+            return defaultValue;
+        }
+
+        /// <summary>The first matching element, or <paramref name="defaultValue"/> when none matches.</summary>
+        public static TSource FirstOrDefault<TSource>(this IEnumerable<TSource> source,
+            Func<TSource, bool> predicate, TSource defaultValue)
+        {
+            if (source == null) throw new ArgumentNullException(nameof(source));
+            if (predicate == null) throw new ArgumentNullException(nameof(predicate));
+
+            foreach (var item in source)
+            {
+                if (predicate(item)) return item;
+            }
+
+            return defaultValue;
+        }
+
+        /// <summary>The last element, or <paramref name="defaultValue"/> when the sequence is empty.</summary>
+        public static TSource LastOrDefault<TSource>(this IEnumerable<TSource> source, TSource defaultValue)
+        {
+            if (source == null) throw new ArgumentNullException(nameof(source));
+
+            TSource last = defaultValue;
+            foreach (var item in source) last = item;
+
+            return last;
+        }
+
+        /// <summary>The last matching element, or <paramref name="defaultValue"/> when none matches.</summary>
+        public static TSource LastOrDefault<TSource>(this IEnumerable<TSource> source,
+            Func<TSource, bool> predicate, TSource defaultValue)
+        {
+            if (source == null) throw new ArgumentNullException(nameof(source));
+            if (predicate == null) throw new ArgumentNullException(nameof(predicate));
+
+            TSource last = defaultValue;
+            foreach (var item in source)
+            {
+                if (predicate(item)) last = item;
+            }
+
+            return last;
+        }
+
+        /// <summary>
+        /// The single element, or <paramref name="defaultValue"/> when the sequence is empty. Still throws
+        /// when the sequence holds more than one element — the "OrDefault" covers emptiness, not ambiguity.
+        /// </summary>
+        public static TSource SingleOrDefault<TSource>(this IEnumerable<TSource> source, TSource defaultValue)
+        {
+            if (source == null) throw new ArgumentNullException(nameof(source));
+
+            using (var e = source.GetEnumerator())
+            {
+                if (!e.MoveNext()) return defaultValue;
+
+                TSource single = e.Current;
+                if (e.MoveNext()) throw new InvalidOperationException("Sequence contains more than one element");
+
+                return single;
+            }
+        }
+
+        /// <summary>
+        /// The single matching element, or <paramref name="defaultValue"/> when none matches. Throws when
+        /// more than one element matches.
+        /// </summary>
+        public static TSource SingleOrDefault<TSource>(this IEnumerable<TSource> source,
+            Func<TSource, bool> predicate, TSource defaultValue)
+        {
+            if (source == null) throw new ArgumentNullException(nameof(source));
+            if (predicate == null) throw new ArgumentNullException(nameof(predicate));
+
+            TSource single = defaultValue;
+            bool found = false;
+
+            foreach (var item in source)
+            {
+                if (!predicate(item)) continue;
+                if (found) throw new InvalidOperationException("Sequence contains more than one matching element");
+
+                single = item;
+                found = true;
+            }
+
+            return single;
+        }
+
+        // ---- Shuffle ----------------------------------------------------------------------------
+
+        /// <summary>
+        /// The elements in a random order, using <see cref="Random.Shared"/>. Deferred: nothing is drawn
+        /// until the result is enumerated, and each enumeration shuffles afresh.
+        /// </summary>
+        public static IEnumerable<TSource> Shuffle<TSource>(this IEnumerable<TSource> source)
+        {
+            if (source == null) throw new ArgumentNullException(nameof(source));
+
+            return ShuffleIterator(source);
+        }
+
+        private static IEnumerable<TSource> ShuffleIterator<TSource>(IEnumerable<TSource> source)
+        {
+            // The whole sequence has to be in hand before the first element can be known, so it is
+            // buffered and shuffled in place (Fisher-Yates) rather than streamed.
+            var buffer = new List<TSource>(source);
+            var random = Random.Shared;
+
+            for (int i = buffer.Count - 1; i > 0; i--)
+            {
+                int j = random.Next(i + 1);
+                TSource swap = buffer[i];
+                buffer[i] = buffer[j];
+                buffer[j] = swap;
+            }
+
+            foreach (var item in buffer) yield return item;
+        }
+
+        // ---- LeftJoin / RightJoin ---------------------------------------------------------------
+
+        /// <summary>
+        /// Correlates the two sequences on a key, keeping every element of <paramref name="outer"/>: an
+        /// outer element with no match is paired with <c>default(TInner)</c>.
+        /// </summary>
+        public static IEnumerable<TResult> LeftJoin<TOuter, TInner, TKey, TResult>(this IEnumerable<TOuter> outer,
+            IEnumerable<TInner> inner, Func<TOuter, TKey> outerKeySelector, Func<TInner, TKey> innerKeySelector,
+            Func<TOuter, TInner, TResult> resultSelector)
+            => LeftJoin(outer, inner, outerKeySelector, innerKeySelector, resultSelector, null);
+
+        /// <summary>
+        /// Correlates the two sequences on a key compared with <paramref name="comparer"/>, keeping every
+        /// element of <paramref name="outer"/>. The result is in outer order, with each outer element's
+        /// matches in inner order. A null key never matches, so an outer element with one is always paired
+        /// with <c>default(TInner)</c>.
+        /// </summary>
+        public static IEnumerable<TResult> LeftJoin<TOuter, TInner, TKey, TResult>(this IEnumerable<TOuter> outer,
+            IEnumerable<TInner> inner, Func<TOuter, TKey> outerKeySelector, Func<TInner, TKey> innerKeySelector,
+            Func<TOuter, TInner, TResult> resultSelector, IEqualityComparer<TKey> comparer)
+        {
+            if (outer == null) throw new ArgumentNullException(nameof(outer));
+            if (inner == null) throw new ArgumentNullException(nameof(inner));
+            if (outerKeySelector == null) throw new ArgumentNullException(nameof(outerKeySelector));
+            if (innerKeySelector == null) throw new ArgumentNullException(nameof(innerKeySelector));
+            if (resultSelector == null) throw new ArgumentNullException(nameof(resultSelector));
+
+            return LeftJoinIterator(outer, inner, outerKeySelector, innerKeySelector, resultSelector, comparer);
+        }
+
+        private static IEnumerable<TResult> LeftJoinIterator<TOuter, TInner, TKey, TResult>(IEnumerable<TOuter> outer,
+            IEnumerable<TInner> inner, Func<TOuter, TKey> outerKeySelector, Func<TInner, TKey> innerKeySelector,
+            Func<TOuter, TInner, TResult> resultSelector, IEqualityComparer<TKey> comparer)
+        {
+            using (var e = outer.GetEnumerator())
+            {
+                // An empty outer means no result at all, and .NET does not even enumerate the inner
+                // sequence in that case — so the lookup is built only once there is something to match.
+                if (!e.MoveNext()) yield break;
+
+                var lookup = BuildJoinLookup(inner, innerKeySelector, comparer);
+
+                do
+                {
+                    TOuter item = e.Current;
+                    TKey key = outerKeySelector(item);
+                    List<TInner> matches;
+
+                    if (key != null && lookup.TryGetValue(key, out matches))
+                    {
+                        foreach (var match in matches) yield return resultSelector(item, match);
+                    }
+                    else
+                    {
+                        yield return resultSelector(item, default(TInner));
+                    }
+                }
+                while (e.MoveNext());
+            }
+        }
+
+        /// <summary>
+        /// Correlates the two sequences on a key, keeping every element of <paramref name="inner"/>: an
+        /// inner element with no match is paired with <c>default(TOuter)</c>.
+        /// </summary>
+        public static IEnumerable<TResult> RightJoin<TOuter, TInner, TKey, TResult>(this IEnumerable<TOuter> outer,
+            IEnumerable<TInner> inner, Func<TOuter, TKey> outerKeySelector, Func<TInner, TKey> innerKeySelector,
+            Func<TOuter, TInner, TResult> resultSelector)
+            => RightJoin(outer, inner, outerKeySelector, innerKeySelector, resultSelector, null);
+
+        /// <summary>
+        /// Correlates the two sequences on a key compared with <paramref name="comparer"/>, keeping every
+        /// element of <paramref name="inner"/>. The result is in INNER order (the kept side drives it),
+        /// with each inner element's matches in outer order.
+        /// </summary>
+        public static IEnumerable<TResult> RightJoin<TOuter, TInner, TKey, TResult>(this IEnumerable<TOuter> outer,
+            IEnumerable<TInner> inner, Func<TOuter, TKey> outerKeySelector, Func<TInner, TKey> innerKeySelector,
+            Func<TOuter, TInner, TResult> resultSelector, IEqualityComparer<TKey> comparer)
+        {
+            if (outer == null) throw new ArgumentNullException(nameof(outer));
+            if (inner == null) throw new ArgumentNullException(nameof(inner));
+            if (outerKeySelector == null) throw new ArgumentNullException(nameof(outerKeySelector));
+            if (innerKeySelector == null) throw new ArgumentNullException(nameof(innerKeySelector));
+            if (resultSelector == null) throw new ArgumentNullException(nameof(resultSelector));
+
+            return RightJoinIterator(outer, inner, outerKeySelector, innerKeySelector, resultSelector, comparer);
+        }
+
+        private static IEnumerable<TResult> RightJoinIterator<TOuter, TInner, TKey, TResult>(IEnumerable<TOuter> outer,
+            IEnumerable<TInner> inner, Func<TOuter, TKey> outerKeySelector, Func<TInner, TKey> innerKeySelector,
+            Func<TOuter, TInner, TResult> resultSelector, IEqualityComparer<TKey> comparer)
+        {
+            using (var e = inner.GetEnumerator())
+            {
+                if (!e.MoveNext()) yield break;
+
+                var lookup = BuildJoinLookup(outer, outerKeySelector, comparer);
+
+                do
+                {
+                    TInner item = e.Current;
+                    TKey key = innerKeySelector(item);
+                    List<TOuter> matches;
+
+                    if (key != null && lookup.TryGetValue(key, out matches))
+                    {
+                        foreach (var match in matches) yield return resultSelector(match, item);
+                    }
+                    else
+                    {
+                        yield return resultSelector(default(TOuter), item);
+                    }
+                }
+                while (e.MoveNext());
+            }
+        }
+
+        /// <summary>
+        /// Groups a join's matched side by key, in source order within each key. Null-keyed elements are
+        /// DROPPED, which is how System.Linq's join lookup behaves — a null key never correlates.
+        /// </summary>
+        private static Dictionary<TKey, List<TElement>> BuildJoinLookup<TElement, TKey>(IEnumerable<TElement> source,
+            Func<TElement, TKey> keySelector, IEqualityComparer<TKey> comparer)
+        {
+            var lookup = new Dictionary<TKey, List<TElement>>(comparer);
+
+            foreach (var item in source)
+            {
+                TKey key = keySelector(item);
+                if (key == null) continue;
+
+                List<TElement> bucket;
+                if (!lookup.TryGetValue(key, out bucket))
+                {
+                    bucket = new List<TElement>();
+                    lookup.Add(key, bucket);
+                }
+
+                bucket.Add(item);
+            }
+
+            return lookup;
         }
 
         // ---- Index/Range indexing ---------------------------------------------------------------

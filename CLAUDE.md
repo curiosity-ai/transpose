@@ -431,12 +431,14 @@ The short version:
   implemented alongside it as plain transpiled C# in `BCL/Transpose.BCL/System/Linq/EnumerableExtras.cs`:
   `Append`, `Prepend`, `ToHashSet`, `Chunk`, `MinBy`, `MaxBy`, `DistinctBy`, `UnionBy`, `IntersectBy`,
   `ExceptBy`, `SkipLast`, `TakeLast`, `Order`, `OrderDescending`, `Index`, `CountBy`, `AggregateBy`,
-  `TryGetNonEnumeratedCount`, the tuple-returning `Zip` overloads, and `ElementAt`/`ElementAtOrDefault`
-  by `Index` / `Take` by `Range`. Covered by `Linq/LinqModernOperatorTests`. `TryGetNonEnumeratedCount`
-  carries the one documented difference: it answers true only for a real collection, where .NET also
-  answers true for lazy operators whose count it can work out cheaply — false is a permitted answer, but
-  it is not always the *same* answer. Still absent: the `*OrDefault(defaultValue)` overloads
-  (`FirstOrDefault(source, 42)` and friends) and .NET 10's `Shuffle`/`RightJoin`/`LeftJoin`.
+  `TryGetNonEnumeratedCount`, `Shuffle`, `LeftJoin`, `RightJoin`, the tuple-returning `Zip` overloads,
+  `ElementAt`/`ElementAtOrDefault` by `Index` / `Take` by `Range`, and the
+  `FirstOrDefault`/`LastOrDefault`/`SingleOrDefault` overloads that take an explicit default (only for an
+  `IEnumerable<T>` receiver — `EnumerableInstance`, what a chained query evaluates to, already binds those
+  onto `linq.js`). Covered by `Linq/LinqModernOperatorTests`. `TryGetNonEnumeratedCount` carries the one
+  documented difference: it answers true only for a real collection, where .NET also answers true for lazy
+  operators whose count it can work out cheaply — false is a permitted answer, but it is not always the
+  *same* answer.
 - **A positional pattern only resolves members for tuples and records** — `x is Foo(1, 2)` against a
   type with a hand-written `Deconstruct(out …)` still reads `Item1`/`Item2` (see
   `PositionalPatternMemberNames`), because a pattern test is emitted as a single JS expression and

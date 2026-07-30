@@ -1142,7 +1142,7 @@
             return new IEnumerator(
                 function () {
                     outerEnumerator = source.GetEnumerator();
-                    lookup = Enumerable.from(inner).toLookup(innerKeySelector, Functions.Identity, comparer);
+                    lookup = Enumerable.from(inner).toLookup(innerKeySelector, Functions.Identity, comparer, true);
                 },
                 function () {
                     while (true) {
@@ -1187,7 +1187,7 @@
             return new IEnumerator(
                 function () {
                     enumerator = source.GetEnumerator();
-                    lookup = Enumerable.from(inner).toLookup(innerKeySelector, Functions.Identity, comparer);
+                    lookup = Enumerable.from(inner).toLookup(innerKeySelector, Functions.Identity, comparer, true);
                 },
                 function () {
                     if (enumerator.moveNext()) {
@@ -2414,7 +2414,11 @@
     // Overload:function (keySelector)
     // Overload:function (keySelector, elementSelector)
     // Overload:function (keySelector, elementSelector, compareSelector)
-    Enumerable.prototype.toLookup = function (keySelector, elementSelector, comparer) {
+    // `$skipNullKeys` is internal, for the lookups join/groupJoin build: a null key NEVER matches in
+    // System.Linq (its join lookup simply drops null-keyed elements), whereas ToLookup itself does keep a
+    // null-keyed grouping. Without it, an outer and an inner element that both had a null key were paired
+    // up, and GroupJoin reported a match for an outer element .NET gives an empty group.
+    Enumerable.prototype.toLookup = function (keySelector, elementSelector, comparer, $skipNullKeys) {
         keySelector = Utils.createLambda(keySelector);
         elementSelector = Utils.createLambda(elementSelector);
 
@@ -2428,6 +2432,10 @@
             var array = { v: null };
 
             if (key == null) {
+                if ($skipNullKeys) {
+                    return;
+                }
+
                 if (!nullKey) {
                     nullKey = [];
                     order.push(key);
