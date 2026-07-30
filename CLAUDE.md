@@ -73,6 +73,10 @@ Transpose/                     # The compiler toolchain
 ├── Transpose.Build.Target/    # MSBuild SDK (package id Transpose.Build.Target) that invokes `tps`
 ├── Transpose.Template/        # `dotnet new` template (package id Transpose.Template)
 ├── Transpose.Translator.Tests/# MSTest suite; transpiles snippets and diffs vs native .NET on Node
+│   ├── Ported/                #   the suites ported from h5, one per language/BCL area
+│   └── Linq/                  #   the LINQ surface: every Enumerable/EnumerableExtras overload, every
+│                              #   element type (class/struct/record/record struct/enum/nullable/tuple/
+│                              #   anonymous/dynamic/…), query syntax, and the exception/edge cases
 └── Transpose.WatchMode.Tests/ # MSTest suite for `tps --watch`: a real tps subprocess + headless
                                #   Chromium (Playwright). Separate project on purpose — it waits on
                                #   wall-clock events, so sharing a host with the Roslyn-heavy suite
@@ -406,7 +410,28 @@ The short version:
   `DateTime`/tuple assignment allocate, so it is a deliberate trade-off rather than an oversight.
 - **`Span<T>` does not accept the implicit array conversion** — `Span<int> s = new int[3];` emits
   the bare array, so `s[0] = 1` throws "setItem is not a function". Unrelated to `stackalloc`;
-  the conversion itself is simply not modelled.
+  the conversion itself is simply not modelled. A span therefore reaches JS in one of two shapes —
+  a real span object (built by a span constructor, e.g. through `string.AsSpan`) or the bare array —
+  so a span helper has to normalise first (`TransposeR.spanArray`). `MemoryExtensions.SequenceEqual`
+  does: C# resolves `someArray.SequenceEqual(other)` to *it* rather than to `Enumerable.SequenceEqual`
+  (the array-to-span conversion beats array-to-`IEnumerable`), so that very common LINQ call would
+  otherwise throw "getItem is not a function".
+- **A boxed numeric loses its exact type.** Every JS number is a double, so `(object)1 is double` is
+  true and `objects.OfType<double>()` also matches the boxed `int`s. `long`/`ulong`/`decimal` are
+  real runtime objects and are unaffected, as are reference types and structs.
+- **`dynamic` has no runtime overload resolver.** A generic call with a `dynamic` argument works when
+  the method has one candidate (`Enumerable.Count(dyn)`); with numeric overloads to choose between
+  (`Enumerable.Sum(dyn)`) there is no single binding and the emitted call does not exist.
+- **The BCL's `ThrowHelper` messages are resource NAMES, not text.** `SR` is not ported, so a throw
+  routed through `ThrowHelper.Throw*Exception(ExceptionResource.X)` reports "X" as its message where
+  .NET reports a sentence. Sites whose message is user-facing (e.g. the duplicate key
+  `ToDictionary` surfaces) call the keyed helper instead, which carries real text.
+- **LINQ operators added after .NET 6 are not in the BCL.** `Enumerable` covers the classic surface
+  plus `Chunk`/`MinBy`/`MaxBy` (the latter three in `EnumerableExtras`, as plain transpiled C#).
+  Missing, so a call fails to compile: `Append`, `Prepend`, `ToHashSet`, `DistinctBy`, `UnionBy`,
+  `IntersectBy`, `ExceptBy`, `SkipLast`, `TakeLast`, `Order`, `OrderDescending`, `Index`, `CountBy`,
+  `AggregateBy`, `TryGetNonEnumeratedCount`, the two-argument tuple `Zip`, `ElementAt(Index)` and
+  `Take(Range)`. `EnumerableExtras` is where they belong.
 - **A positional pattern only resolves members for tuples and records** — `x is Foo(1, 2)` against a
   type with a hand-written `Deconstruct(out …)` still reads `Item1`/`Item2` (see
   `PositionalPatternMemberNames`), because a pattern test is emitted as a single JS expression and
