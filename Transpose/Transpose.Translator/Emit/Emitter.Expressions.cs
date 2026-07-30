@@ -352,44 +352,7 @@ public sealed partial class Emitter
             return;
         }
 
-        // Enum → string / object (boxing), matching h5:
-        //  * An [External] enum has no runtime type object to name or box against, so it stays the
-        //    bare number its members inline as.
-        //  * enum → string is the name (System.Enum.toString), except under a StringName* mode (3–6)
-        //    where the runtime value already IS that string.
-        //  * enum → object / interface boxes the value together with its enum type, whatever the mode,
-        //    so GetType() is the enum (not Int32/String) and ToString() is the name. The box stays
-        //    transparent for everything else — a boxed StringName* value still `is string`, casts to
-        //    it, compares equal to it and reaches a JS API as it, which is the mode's contract.
-        if (sourceType is { TypeKind: TypeKind.Enum }
-            && targetType is { IsReferenceType: true })
-        {
-            var stringMode = TransposeNaming.EnumEmitMode(sourceType) is 3 or 4 or 5 or 6;
-            if (TransposeNaming.IsExternalType(sourceType))
-            {
-                EmitExpression(expr); // a nameless external ordinal
-            }
-            else if (targetType.SpecialType == SpecialType.System_String)
-            {
-                if (stringMode)
-                {
-                    EmitExpression(expr); // already the name string
-                }
-                else
-                {
-                    _w.Write($"System.Enum.toString({TypeRef(sourceType)}, ");
-                    EmitExpression(expr);
-                    _w.Write(")");
-                }
-            }
-            else
-            {
-                _w.Write($"Transpose.box(");
-                EmitExpression(expr);
-                _w.Write($", {TypeRef(sourceType)}, function ($v) {{ return System.Enum.toString({TypeRef(sourceType)}, $v); }})");
-            }
-            return;
-        }
+        if (TryEmitEnumToReferenceConversion(sourceType, targetType, expr)) return;
 
         // char → object / interface / ValueType / dynamic (a boxing conversion). A char is a bare
         // code-point number at runtime; box it so the boxed value stringifies and compares as its
@@ -413,6 +376,56 @@ public sealed partial class Emitter
         }
 
         EmitExpression(expr);
+    }
+
+    /// <summary>
+    /// Emits an enum → string / object conversion, returning false when the conversion is not one
+    /// (so the caller carries on). Matching h5:
+    /// <list type="bullet">
+    /// <item>An enum with no runtime type object to name or box against (see
+    /// <see cref="HasRuntimeEnumObject"/>) stays the bare number its members inline as.</item>
+    /// <item>enum → string is the name (<c>System.Enum.toString</c>), except under a StringName* mode
+    /// (3–6) where the runtime value already IS that string.</item>
+    /// <item>enum → object / interface boxes the value together with its enum type, whatever the mode,
+    /// so <c>GetType()</c> is the enum (not Int32/String) and <c>ToString()</c> is the name. The box
+    /// stays transparent for everything else — a boxed StringName* value still <c>is string</c>, casts
+    /// to it, compares equal to it and reaches a JS API as it, which is the mode's contract.</item>
+    /// </list>
+    /// Shared by the implicit conversion sites (assignment, argument, return, …) and by an explicit
+    /// <c>(object)</c> cast: C# classifies both as the same boxing conversion, so both must box. Only
+    /// the implicit sites did, which left <c>((object)Color.Red).ToString()</c> reading "1" off a bare
+    /// number where <c>object o = Color.Red; o.ToString()</c> correctly read "Red".
+    /// </summary>
+    private bool TryEmitEnumToReferenceConversion(ITypeSymbol? sourceType, ITypeSymbol? targetType, ExpressionSyntax expr)
+    {
+        if (sourceType is not { TypeKind: TypeKind.Enum } || targetType is not { IsReferenceType: true })
+            return false;
+
+        var stringMode = TransposeNaming.EnumEmitMode(sourceType) is 3 or 4 or 5 or 6;
+        if (!HasRuntimeEnumObject(sourceType))
+        {
+            EmitExpression(expr); // a nameless external ordinal
+        }
+        else if (targetType.SpecialType == SpecialType.System_String)
+        {
+            if (stringMode)
+            {
+                EmitExpression(expr); // already the name string
+            }
+            else
+            {
+                _w.Write($"System.Enum.toString({TypeRef(sourceType)}, ");
+                EmitExpression(expr);
+                _w.Write(")");
+            }
+        }
+        else
+        {
+            _w.Write($"Transpose.box(");
+            EmitExpression(expr);
+            _w.Write($", {TypeRef(sourceType)}, function ($v) {{ return System.Enum.toString({TypeRef(sourceType)}, $v); }})");
+        }
+        return true;
     }
 
     /// <summary>Whether a user-defined conversion operator should be emitted as an actual call rather
