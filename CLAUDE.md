@@ -232,6 +232,16 @@ Every other project is a JavaScript binding library that `tps` transpiles, bindi
 
 All six binding libraries currently transpile successfully.
 
+Which path `tps` takes for a project is decided by its **assembly name**, not by its resolved
+references: `outputBy: ClassPath` selects the runtime build only for the base library (assembly name
+`Transpose`). A binding library may declare `ClassPath` for its own JS layout — `Transpose.Newtonsoft.Json`
+does — and must still take the package path, because it *binds against* the BCL rather than defining it.
+Keying that off a resolved reference to `Transpose.dll` does not work: the translator **injects** the base
+library instead of taking it from the project's references, so in a dev tree (where the
+`Transpose.BCL` PackageReference is not in the NuGet cache) such a project resolves zero references and
+looked like the base library — which compiled it self-contained and failed with `CS0518` on every
+predefined type.
+
 ### 3. How a normal project builds
 
 A user project references the `Transpose.Build.Target` SDK, which runs `tps` once per project:
@@ -391,19 +401,6 @@ The short version:
   type with a hand-written `Deconstruct(out …)` still reads `Item1`/`Item2` (see
   `PositionalPatternMemberNames`), because a pattern test is emitted as a single JS expression and
   cannot call `Deconstruct` with out-holders.
-- **An overriding auto-property shares the base's slot.** .NET gives `public override int P { get; set; }`
-  its *own* backing field, so the base and the override hold separate values and the base's getter is
-  reached only through virtual dispatch. Transpose emits an auto-property AS its slot and only suffixes a
-  `new`-hiding member (`HidingIndex`), so both write `this.P` and the later initializer wins: with
-  initializers on both, `new D().P` reads the base's value. General, not record-specific — but a record
-  makes it visible in ToString/equality too, because its constructor runs the derived initializers
-  before the base call (which is C#'s order).
-- **An identifier may shadow a type reference.** A type is referenced by its bare emitted name, so a
-  parameter or local of that same name shadows it: `record RD(int A, int B) : RB(A)` where the base is
-  literally named `B` emits `B.ctor.call(this, A)` inside `function (A, B)` and throws. This is not
-  specific to records — `class D : B { D(int A, int B) : base(A) }` fails identically — and the fix is
-  general (mangling locals/parameters against the in-scope type names), so it is tracked here rather
-  than in the record emitter.
 - **Reference resolution beyond the NuGet cache** — `<Reference HintPath>` and `tps.json`
   `references`/`referencesPath` (partially covered by `--reference`).
 - **MSBuild evaluation** stays deliberately shallow: `<Import>` is followed (see above) but

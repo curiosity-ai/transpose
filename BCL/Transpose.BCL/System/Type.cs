@@ -429,7 +429,10 @@ namespace System
         [Transpose.Template("{left} !== {right}")]
         public static extern bool operator !=(Type left, Type right);
 
-        [Transpose.Template("Transpose.getTypeName({this})")]
+        // Type.ToString() is the full name with each generic argument named plainly
+        // (List`1[System.Int32]); FullName assembly-qualifies them, which is what
+        // Transpose.getTypeName / getTypeFullName return.
+        [Transpose.Template("Transpose.Reflection.getTypeDisplayName({this})")]
         public override extern string ToString();
 
         public extern bool IsValueType

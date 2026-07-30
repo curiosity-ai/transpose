@@ -714,7 +714,7 @@ internal static class TransposeNaming
     /// type-level <c>[Transpose.Name]</c> (its dotted value becomes the mangled prefix, e.g.
     /// <c>[Name("tss.IC")]</c> → <c>tss$IC</c>), so interface-member slots stay consistent with the
     /// type's registered name.</summary>
-    private static string MangledTypeName(INamedTypeSymbol type)
+    internal static string MangledTypeName(INamedTypeSymbol type)
     {
         if (MangledSelf(type) is { } named) return named;
         var parts = new System.Collections.Generic.List<string>();

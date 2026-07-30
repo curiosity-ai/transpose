@@ -221,15 +221,21 @@ public static class Program
         // outputBy: ClassPath, stitch the per-class files with the hand-written Resources primitives
         // into tps.js per the project's tps.json, and embed tps.js + tps.meta.js into Transpose.dll.
         //
-        // This path is ONLY for the base library, which *defines* the BCL and therefore references no
-        // Transpose.dll of its own. A binding library (Transpose.Newtonsoft.Json, Transpose.WebGL2, …)
-        // may also declare outputBy: ClassPath for its JS layout, but it references the Transpose BCL
-        // and must bind against it — compiling it self-contained would leave System.Object and every
-        // other predefined type undefined (CS0518 ×N). Such libraries fall through to the package path.
-        var referencesTransposeBcl = project.ReferencePaths.Any(p =>
-            string.Equals(Path.GetFileNameWithoutExtension(p), "Transpose", StringComparison.OrdinalIgnoreCase));
+        // This path is ONLY for the base library, which *defines* the BCL. A binding library
+        // (Transpose.Newtonsoft.Json, Transpose.WebGL2, …) may also declare outputBy: ClassPath for its
+        // JS layout, but it BINDS against the BCL — compiling it self-contained leaves System.Object
+        // and every other predefined type undefined (CS0518 ×N). Such libraries fall through to the
+        // package path.
+        //
+        // The base library is recognised by its assembly name, which is the one identity that always
+        // holds. Testing for a *resolved* reference to Transpose.dll instead did not: the translator
+        // injects the BCL rather than taking it from ReferencePaths, so a project whose
+        // `<PackageReference Include="Transpose.BCL" />` is absent from the NuGet cache — every fresh
+        // dev tree, which is exactly what bootstrap.sh builds — looked like it referenced nothing and
+        // took the runtime path. That is the CS0518 bootstrap.sh reported on Transpose.Newtonsoft.Json.
+        var isBaseLibrary = string.Equals(project.AssemblyName, "Transpose", StringComparison.OrdinalIgnoreCase);
         if (buildRuntime
-            || (string.Equals(tpscfg?.OutputBy, "ClassPath", StringComparison.OrdinalIgnoreCase) && !referencesTransposeBcl))
+            || (string.Equals(tpscfg?.OutputBy, "ClassPath", StringComparison.OrdinalIgnoreCase) && isBaseLibrary))
             return new BuildRunResult(BuildRuntime(project, configuration, sw, outPath, maxErrors), null, false);
 
         // Refuse to compile against assemblies built by a newer Transpose than this one (see

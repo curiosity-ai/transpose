@@ -2330,6 +2330,21 @@ public sealed partial class Emitter
             return;
         }
 
+        // `base.P = v` must reach the BASE type's setter for the same reason `base.P` reads through it
+        // (see EmitPropertyAccess): `base` emits as `this`, so a plain `this.P = v` would run the
+        // most-derived override's setter and write the wrong storage.
+        if (left is MemberAccessExpressionSyntax { Expression: BaseExpressionSyntax } baseMember
+            && _model.GetSymbolInfo(left).Symbol is IPropertySymbol { IsStatic: false } baseProp
+            && HasEmittedAccessors(baseProp))
+        {
+            _w.Write($"TransposeR.baseSet({TypeRef(baseProp.ContainingType)}.prototype, ");
+            _w.Write(JsString(TransposeNaming.MemberJsName(baseProp)));
+            _w.Write(", this, ");
+            emitValue();
+            _w.Write(")");
+            return;
+        }
+
         EmitExpression(left);
         _w.Write(" = ");
         emitValue();

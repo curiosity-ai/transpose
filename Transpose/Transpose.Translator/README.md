@@ -86,6 +86,32 @@ object's shape: `new Point(1, 2)` on `[ObjectLiteral] record Point(int X, int Y)
 
 `RecordTests.cs` covers all of the above end to end, diffing against native .NET.
 
+## Object model invariants
+
+Three rules the emitter upholds for every type, each of which a record's synthesized members made
+visible first (`ObjectToStringAndInitOrderTests.cs`):
+
+- **Instance field initializers run before the base constructor**, which is C#'s order — so a base
+  constructor observes the derived slots already initialized, and the side effects of an initializer are
+  sequenced ahead of the base's.
+- **A virtual or overriding auto-property has storage of its own** (`IsFieldBackedProperty`): it is
+  emitted as a real accessor pair over a per-declaration backing slot (`$P`, and `$P$<Type>` for an
+  override) rather than AS the slot named after the property. Sharing one slot collapsed the base's
+  field and the override's into a single location, so the base constructor's initializer landed on the
+  override's value and no read ever dispatched. A non-virtual auto-property is still the plain slot.
+- **A local binding never shadows a type reference.** A type is named by its bare emitted identifier,
+  so a parameter, local, `out var`, `foreach`/`catch` variable or query range variable of the same name
+  would shadow it (`record RD(int A, int B) : RB(A)` with a base named `B` emitted `B.ctor.call(this, A)`
+  inside `function (A, B)`). `EmitClassLike` collects the identifiers a type binds and `TypeRef` routes a
+  colliding reference through `Transpose.global`, which nothing can intercept.
+
+`object.ToString()` follows .NET rather than JavaScript, in the runtime (`Transpose.toString`): an
+array reports its type name instead of its joined elements, a `DateTime` the culture's general
+date/time pattern instead of the JS `Date` string, a `Type` its display name instead of the
+constructor's source text, and the fallback for a type with no `ToString` of its own is
+`GetType().ToString()` — which names generic arguments plainly (`List`1[System.Int32]`), not
+assembly-qualified as `FullName` does.
+
 ## Extending
 
 1. Add a language feature by handling its `SyntaxNode` in the relevant `Emitter.*.cs` file.

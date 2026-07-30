@@ -724,9 +724,25 @@ public sealed partial class Emitter
             _w.Write(StaticMemberAccess(prop));
             return;
         }
+        // `base.P` must reach the BASE type's accessor. `base` emits as `this`, so a plain `this.P`
+        // dispatches to the most-derived override — exactly what `base` exists to bypass. Only
+        // properties with real accessors need this; a plain auto-property IS its slot, which the base
+        // and any (necessarily non-virtual) redeclaration cannot both own.
+        if (thisTarget is BaseExpressionSyntax && HasEmittedAccessors(prop))
+        {
+            _w.Write($"TransposeR.baseGet({TypeRef(prop.ContainingType)}.prototype, ");
+            _w.Write(JsString(TransposeNaming.MemberJsName(prop)));
+            _w.Write(", this)");
+            return;
+        }
         EmitReceiver(thisTarget);
         _w.Write(TransposeNaming.MemberJsName(prop));
     }
+
+    /// <summary>True when a property is emitted as a real accessor pair (a <c>props:</c> entry) rather
+    /// than as a plain slot named after it — the same rule <c>EmitInstanceProperties</c> applies.</summary>
+    private static bool HasEmittedAccessors(IPropertySymbol prop)
+        => !prop.IsIndexer && (!IsAutoProperty(prop) || IsFieldBackedProperty(prop));
 
     /// <summary>
     /// Maps a member's generic type-parameter names to the type arguments bound at the call

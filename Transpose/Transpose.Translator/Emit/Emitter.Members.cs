@@ -325,13 +325,17 @@ public sealed partial class Emitter
         {
             if (!hasExplicit)
             {
-                // Synthesized default constructor.
+                // Synthesized default constructor. The field initializers run BEFORE the base
+                // constructor, which is C#'s order for every derived type (and what a declared
+                // constructor already does, via EmitConstructorChain) — running them after meant a
+                // base constructor observed this type's slots at their defaults, and any side effect
+                // in an initializer was sequenced after the base's.
                 _w.Write("ctor: function () ");
                 _w.Block(() =>
                 {
                     _w.WriteLine("this.$initialize();");
-                    EmitImplicitBaseCall(type);
                     EmitInstanceFieldInitializers(type);
+                    EmitImplicitBaseCall(type);
                 });
                 _w.WriteLine();
                 return;
@@ -371,14 +375,16 @@ public sealed partial class Emitter
                     _w.WriteLine("this.$initialize();");
                     if (isPrimary)
                     {
-                        // Primary constructor: chain to base, store captured params, run field
-                        // inits. Inside this body, param refs use the raw JS parameter name.
+                        // Primary constructor: run the field initializers, chain to base, then store
+                        // the captured params — the same order a record's primary constructor uses,
+                        // and C#'s (the derived initializers precede the base constructor). Inside
+                        // this body, param refs use the raw JS parameter name.
                         _inPrimaryCtorBody = true;
+                        EmitInstanceFieldInitializers(type);
                         EmitPrimaryBaseCall(type, syntax as TypeDeclarationSyntax);
                         var captured = CapturedPrimaryParamNames(type);
                         foreach (var p in ctor.Parameters.Where(p => captured.Contains(p.Name)))
                             _w.WriteLine($"this.{NameMangler.JsIdentifier(p.Name)} = {NameMangler.JsIdentifier(p.Name)};");
-                        EmitInstanceFieldInitializers(type);
                         _inPrimaryCtorBody = false;
                     }
                     else
@@ -483,7 +489,7 @@ public sealed partial class Emitter
             ITypeSymbol? slotType = m switch
             {
                 IFieldSymbol f when !f.IsConst && f.AssociatedSymbol is null => f.Type,
-                IPropertySymbol p when IsAutoProperty(p) => p.Type,
+                IPropertySymbol p when IsAutoProperty(p) || IsFieldBackedProperty(p) => p.Type,
                 _ => null,
             };
             if (slotType is null) continue;
@@ -495,9 +501,15 @@ public sealed partial class Emitter
                 _ => null,
             };
 
+            // A field-backed property's initializer writes its BACKING slot, never `this.P` — going
+            // through the setter would dispatch to a derived override and initialize the wrong storage.
+            var slot = m is IPropertySymbol fbp && IsFieldBackedProperty(fbp)
+                ? PropertyBackingName(fbp)
+                : TransposeNaming.MemberJsName(m);
+
             if (init is not null && runInitializers)
             {
-                _w.Write($"this.{TransposeNaming.MemberJsName(m)} = ");
+                _w.Write($"this.{slot} = ");
                 EmitExpressionConverted(init, slotType);
                 _w.WriteLine(";");
             }
@@ -508,7 +520,7 @@ public sealed partial class Emitter
                 // (order-independence at define time), so assign the real default here in the ctor,
                 // when the struct type is defined — otherwise e.g. an uninitialized DateTime is null
                 // and `.Equals`/`.UtcDateTime` throws (reading getTime of null).
-                _w.WriteLine($"this.{TransposeNaming.MemberJsName(m)} = Transpose.getDefaultValue({TypeRef(slotType)});");
+                _w.WriteLine($"this.{slot} = Transpose.getDefaultValue({TypeRef(slotType)});");
             }
         }
     }
@@ -796,7 +808,11 @@ public sealed partial class Emitter
     private void EmitInstanceProperties(INamedTypeSymbol type)
     {
         var props = type.GetMembers().OfType<IPropertySymbol>()
-            .Where(p => !p.IsStatic && !p.IsAbstract && !p.IsIndexer && !IsAutoProperty(p)
+            // A field-backed property needs real accessors even when its accessors are auto — that is
+            // what makes a virtual auto-property dispatch to the most-derived declaration instead of
+            // every level sharing one slot.
+            .Where(p => !p.IsStatic && !p.IsAbstract && !p.IsIndexer
+                        && (!IsAutoProperty(p) || IsFieldBackedProperty(p))
                         && !p.IsImplicitlyDeclared
                         && p.DeclaringSyntaxReferences.Length > 0
                         && p.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() is PropertyDeclarationSyntax)
@@ -835,8 +851,16 @@ public sealed partial class Emitter
     }
 
     /// <summary>
-    /// A property that needs a compiler-synthesized backing field: it mixes an auto
-    /// accessor with a bodied one, or an accessor uses the C# 14 `field` keyword.
+    /// A property that needs a compiler-synthesized backing field rather than being emitted AS its
+    /// slot: it mixes an auto accessor with a bodied one, an accessor uses the C# 14 `field` keyword,
+    /// or it is a <b>virtual or overriding</b> auto-property.
+    ///
+    /// The last case is what .NET does: each declaration of a virtual auto-property has its own
+    /// backing field, and the base's is reachable only through <c>base.P</c> — every other read goes
+    /// through the virtual getter. Emitting both as one plain slot named after the property collapsed
+    /// them into a single storage location, so with an initializer at each level the base
+    /// constructor's write landed on the derived value (`new D().P` read 1, not 2). Real accessors over
+    /// per-declaration slots restore both the storage and the dispatch.
     /// </summary>
     internal static bool IsFieldBackedProperty(IPropertySymbol p)
     {
@@ -846,10 +870,16 @@ public sealed partial class Emitter
         var anyAuto = accessors.Accessors.Any(a => a.Body is null && a.ExpressionBody is null);
         var anyBodied = accessors.Accessors.Any(a => a.Body is not null || a.ExpressionBody is not null);
         if (anyAuto && anyBodied) return true;
+        if (anyAuto && !anyBodied && (p.IsVirtual || p.IsOverride)) return true;
         return accessors.Accessors.Any(a => a.DescendantNodes().Any(n => n.IsKind(SyntaxKind.FieldExpression)));
     }
 
-    internal static string PropertyBackingName(IPropertySymbol p) => "$" + TransposeNaming.MemberJsName(p);
+    /// <summary>The slot a field-backed property stores into. An OVERRIDE carries its declaring type,
+    /// because .NET gives it storage of its own: sharing the base's slot is exactly what made the base
+    /// constructor's initializer overwrite the override's value.</summary>
+    internal static string PropertyBackingName(IPropertySymbol p)
+        => "$" + TransposeNaming.MemberJsName(p)
+           + (p.IsOverride ? "$" + TransposeNaming.MangledTypeName(p.ContainingType) : "");
 
     private void EmitAccessorBody(IMethodSymbol accessor, bool isGetter)
     {
