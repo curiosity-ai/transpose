@@ -121,7 +121,7 @@ namespace System.Collections.Generic
             if (key == null) ThrowHelper.ThrowArgumentNullException(ExceptionArgument.key);
             int i = Array.BinarySearch<TKey>(keys, 0, _size, key, comparer);
             if (i >= 0)
-                ThrowHelper.ThrowArgumentException(ExceptionResource.Argument_AddingDuplicate);
+                ThrowHelper.ThrowAddingDuplicateWithKeyArgumentException(key);
             Insert(~i, key, value);
         }
 

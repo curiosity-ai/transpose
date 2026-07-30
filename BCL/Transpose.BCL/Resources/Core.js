@@ -38,6 +38,32 @@
                     : "System.Array";
             }
 
+            // A C# anonymous type is a plain literal here, so Object.prototype.toString would win the
+            // check further down and report the TYPE name. .NET renders the members instead, with each
+            // value's own ToString() and an empty string for null.
+            if (instance.$$anon === true && Transpose.isPlainObject(instance)) {
+                var anonParts = [];
+
+                for (var anonKey in instance) {
+                    if (instance.hasOwnProperty(anonKey)) {
+                        var anonValue = instance[anonKey];
+                        var anonText;
+
+                        if (anonValue == null) {
+                            anonText = "";
+                        } else if (instance.$$anonFormat && instance.$$anonFormat[anonKey]) {
+                            anonText = instance.$$anonFormat[anonKey](anonValue);
+                        } else {
+                            anonText = Transpose.toString(anonValue);
+                        }
+
+                        anonParts.push(anonKey + " = " + anonText);
+                    }
+                }
+
+                return "{ " + anonParts.join(", ") + " }";
+            }
+
             // A DateTime is backed by a native Date, whose toString() is the JS date form
             // ("Thu Jan 02 2020 00:00:00 GMT+0000 (…)"); .NET's is the culture's general pattern.
             if (instance instanceof Date) {
@@ -262,6 +288,34 @@
             }
 
             return false;
+        },
+
+        /// Tags a plain object literal as a C# ANONYMOUS TYPE instance. An anonymous type in .NET is a
+        /// generated class with value-based Equals/GetHashCode and a "{ A = 1, B = x }" ToString, so a
+        /// bare literal (which compares by reference) is not enough: `xs.Select(x => new { x.A, x.B })
+        /// .Distinct()` would keep every duplicate. The marker is NON-ENUMERABLE on purpose — the
+        /// structural comparison, hashing, JSON.stringify and every `for..in` over the object must not
+        /// see it — and the prototype is left alone so `isPlainObject` (and everything keyed off it,
+        /// e.g. object-literal interop and JSON serialization) still recognises the object.
+        anon: function (obj, formatters) {
+            Object.defineProperty(obj, "$$anon", { value: true, enumerable: false, configurable: true, writable: true });
+
+            if (formatters) {
+                // A char and an enum are both plain numbers at runtime, so ToString cannot recover "c"
+                // or "Monday" from the value alone. The emitter passes a { member: fn } map for exactly
+                // those members; anything whose own toString already matches .NET is absent.
+                Object.defineProperty(obj, "$$anonFormat", { value: formatters, enumerable: false, configurable: true, writable: true });
+            }
+
+            return obj;
+        },
+
+        /// True for a plain object that carries structural (value-based) equality: a C# anonymous type
+        /// or a ValueTuple, both of which are emitted as plain literals.
+        isStructuralObject: function (obj) {
+            return obj != null && typeof obj === "object"
+                && (obj.$$anon === true || obj.hasOwnProperty("Item1"))
+                && Transpose.isPlainObject(obj);
         },
 
         toPlain: function (o) {
@@ -758,7 +812,7 @@
                 return value.$$hashCode;
             }
 
-            if (deep !== false && value.hasOwnProperty("Item1") && Transpose.isPlainObject(value)) {
+            if (deep !== false && Transpose.isStructuralObject(value)) {
                 deep = true;
             }
 
@@ -774,15 +828,27 @@
                 }
 
                 if (result !== 0) {
-                    value.$$hashCode = result;
+                    Transpose.defineHashCode(value, result);
 
                     return result;
                 }
             }
 
-            value.$$hashCode = (Math.random() * 0x100000000) | 0;
+            Transpose.defineHashCode(value, (Math.random() * 0x100000000) | 0);
 
             return value.$$hashCode;
+        },
+
+        /// Memoizes a computed hash on an object without making it an enumerable own property:
+        /// deepEquals walks both operands' own properties, so a visible $$hashCode on one side only
+        /// (the usual case — the hash of the needle is computed before the haystack's) reported two
+        /// structurally equal objects as different.
+        defineHashCode: function (value, hash) {
+            try {
+                Object.defineProperty(value, "$$hashCode", { value: hash, enumerable: false, configurable: true, writable: true });
+            } catch (ex) {
+                // Sealed/frozen or an exotic host object: the memo is an optimization, not a contract.
+            }
         },
 
         getDefaultValue: function (type) {
@@ -1440,7 +1506,7 @@
                     return Transpose.getHashCode(a) === Transpose.getHashCode(b) && Transpose.objectEquals(a, b);
                 }
 
-                if (!eq && a && b && a.hasOwnProperty("Item1") && Transpose.isPlainObject(a) && b.hasOwnProperty("Item1") && Transpose.isPlainObject(b)) {
+                if (!eq && Transpose.isStructuralObject(a) && Transpose.isStructuralObject(b)) {
                     return Transpose.objectEquals(a, b, true);
                 }
 

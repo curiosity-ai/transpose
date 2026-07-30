@@ -139,7 +139,16 @@ namespace System
 
         public extern object Pop();
 
-        public extern void Reverse();
+        /// <summary>
+        /// The JavaScript <c>Array.prototype.reverse()</c> — reverses the array **in place**.
+        /// Named <c>JsReverse</c> rather than <c>Reverse</c> (the <c>JsSort</c> precedent above) because an
+        /// instance method beats an extension method in overload resolution: a plain <c>Reverse()</c> here
+        /// hid <see cref="System.Linq.Enumerable.Reverse{TSource}"/> for every array, so
+        /// <c>arr.Reverse()</c> resolved to this void member and <c>foreach (var x in arr.Reverse())</c>
+        /// failed to compile. Use <see cref="Reverse(Array)"/> for the in-place BCL form.
+        /// </summary>
+        [Transpose.Name("reverse")]
+        public extern void JsReverse();
 
         public extern object Shift();
 

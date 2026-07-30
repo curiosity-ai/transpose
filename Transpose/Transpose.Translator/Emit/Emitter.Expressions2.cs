@@ -415,7 +415,7 @@ public sealed partial class Emitter
     {
         for (var i = 0; i < definition.TypeParameters.Length && i < constructed.TypeArguments.Length; i++)
         {
-            byName[definition.TypeParameters[i].Name] = TypeRef(constructed.TypeArguments[i]);
+            byName[definition.TypeParameters[i].Name] = TemplateTypeRef(definition, constructed.TypeArguments[i]);
             byName[definition.TypeParameters[i].Name + ":default"] = DefaultValueLiteral(constructed.TypeArguments[i]);
             if (ToStringFnLiteral(constructed.TypeArguments[i]) is { } tsFn)
                 byName[definition.TypeParameters[i].Name + ":ToString"] = tsFn;
@@ -1365,9 +1365,22 @@ public sealed partial class Emitter
         _w.Write(" }");
     }
 
+    /// <summary>
+    /// Emits <c>new { A = 1, B = x }</c> as a plain object literal tagged by <c>Transpose.anon</c>. The tag
+    /// is what gives the object the anonymous type's .NET semantics — value-based <c>Equals</c>/
+    /// <c>GetHashCode</c> (so <c>Select(x =&gt; new { x.A }).Distinct()</c>, <c>GroupBy</c> on an anonymous
+    /// key and <c>Contains</c> work) and the <c>{ A = 1, B = x }</c> <c>ToString</c>. The object stays a
+    /// plain literal so object-literal interop and JSON serialization are unaffected.
+    /// </summary>
     private void EmitAnonymousObject(AnonymousObjectCreationExpressionSyntax anon)
     {
-        _w.Write("{ ");
+        // A char or enum member is a plain JS number at runtime, so the runtime's ToString cannot tell
+        // it from an int. Each such member's value-to-string converter is passed along so the
+        // "{ Z = c, E = Monday }" rendering stays right; members whose own toString already matches
+        // .NET contribute nothing.
+        var memberFormatters = new List<string>();
+
+        _w.Write("Transpose.anon({ ");
         for (var i = 0; i < anon.Initializers.Count; i++)
         {
             if (i > 0) _w.Write(", ");
@@ -1377,10 +1390,21 @@ public sealed partial class Emitter
                 ?? (init.Expression as MemberAccessExpressionSyntax)?.Name.Identifier.Text
                 ?? (init.Expression as IdentifierNameSyntax)?.Identifier.Text
                 ?? $"Item{i + 1}";
-            _w.Write($"{NameMangler.JsIdentifier(name)}: ");
+            var jsName = NameMangler.JsIdentifier(name);
+            var memberType = _model.GetTypeInfo(init.Expression).Type;
+            if (memberType is not null && ToStringFnLiteral(memberType) is { } fn)
+                memberFormatters.Add($"{jsName}: {fn}");
+            _w.Write($"{jsName}: ");
             EmitExpression(init.Expression);
         }
         _w.Write(" }");
+        if (memberFormatters.Count > 0)
+        {
+            _w.Write(", { ");
+            _w.Write(string.Join(", ", memberFormatters));
+            _w.Write(" }");
+        }
+        _w.Write(")");
     }
 
     // ---- binary / unary / assignment --------------------------------------
@@ -2463,6 +2487,61 @@ public sealed partial class Emitter
         EmitExpressionConverted(assignment.Right, leftType);
         _w.Write(")");
     }
+
+    /// <summary>
+    /// Emits a range expression (<c>a..b</c>, <c>a..</c>, <c>..b</c>, <c>..</c>) as the
+    /// <see cref="System.Range"/> value C# defines it to be. Array and string slicing lowers a range
+    /// inline (see <c>EmitElementAccess</c>), so this covers every other position — a <c>Range</c>-typed
+    /// argument such as <c>xs.Take(1..^1)</c>, a <c>Range r = 1..^1;</c> initializer, a field of that
+    /// type. The three static factories are used where they apply so only <c>a..b</c> needs the
+    /// constructor, and each end is emitted through the ordinary conversion path, which supplies the
+    /// implicit <c>int</c>-to-<c>Index</c> conversion (a <c>^n</c> end is already an <c>Index</c>).
+    /// </summary>
+    private void EmitRangeExpression(RangeExpressionSyntax range)
+    {
+        var info = _model.GetTypeInfo(range);
+        if ((info.Type ?? info.ConvertedType) is not INamedTypeSymbol rangeType
+            || rangeType.ToDisplayString() != "System.Range")
+        {
+            Unsupported(range, "range expression");
+            return;
+        }
+
+        var left = range.LeftOperand;
+        var right = range.RightOperand;
+
+        // `..` is the whole sequence.
+        if (left is null && right is null)
+        {
+            if (RangeMember(rangeType, "All") is not { } all) { Unsupported(range, "range expression"); return; }
+            _w.Write($"{TypeRef(rangeType)}.{TransposeNaming.MemberJsName(all)}");
+            return;
+        }
+
+        // `..b` / `a..` — one end is open, which is exactly what EndAt/StartAt mean.
+        if (left is null || right is null)
+        {
+            var factoryName = left is null ? "EndAt" : "StartAt";
+            if (RangeMember(rangeType, factoryName) is not IMethodSymbol factory) { Unsupported(range, "range expression"); return; }
+            _w.Write($"{TypeRef(rangeType)}.{TransposeNaming.MemberJsName(factory)}(");
+            EmitExpressionConverted(left ?? right!, factory.Parameters[0].Type);
+            _w.Write(")");
+            return;
+        }
+
+        var ctor = rangeType.InstanceConstructors.FirstOrDefault(c => c.Parameters.Length == 2);
+        if (ctor is null) { Unsupported(range, "range expression"); return; }
+
+        _w.Write($"new {TypeRef(rangeType)}.{TransposeNaming.ConstructorName(ctor)}(");
+        EmitExpressionConverted(left, ctor.Parameters[0].Type);
+        _w.Write(", ");
+        EmitExpressionConverted(right, ctor.Parameters[1].Type);
+        _w.Write(")");
+    }
+
+    /// <summary>The single public static member of <c>System.Range</c> called <paramref name="name"/>.</summary>
+    private static ISymbol? RangeMember(INamedTypeSymbol rangeType, string name)
+        => rangeType.GetMembers(name).FirstOrDefault(m => m.IsStatic);
 
     private void EmitPrefixUnary(PrefixUnaryExpressionSyntax prefix)
     {

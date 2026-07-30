@@ -317,7 +317,10 @@ namespace System.Collections.Generic
                 {
                     if (add)
                     {
-                        ThrowHelper.ThrowArgumentException(ExceptionResource.Argument_AddingDuplicate);
+                        // The KEYED overload: .NET's message names the offending key ("An item with the
+                        // same key has already been added. Key: x"), whereas the resource-only form
+                        // reported the bare resource name, "Argument_AddingDuplicate".
+                        ThrowHelper.ThrowAddingDuplicateWithKeyArgumentException(key);
                     }
 
                     entries[GetBucket(this.simpleBuckets, key)].value = value;
@@ -362,7 +365,7 @@ namespace System.Collections.Generic
                 {
                     if (add)
                     {
-                        ThrowHelper.ThrowArgumentException(ExceptionResource.Argument_AddingDuplicate);
+                        ThrowHelper.ThrowAddingDuplicateWithKeyArgumentException(key);
                     }
                     entries[i].value = value;
                     version++;

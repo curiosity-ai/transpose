@@ -109,6 +109,23 @@
         }
         return Object.assign(Object.create(Object.getPrototypeOf(o)), o);
     };
+    // A Span/ReadOnlySpan reaches JS in one of two shapes: as a real span object (built by one of the
+    // span constructors, e.g. through string.AsSpan) or as the bare underlying JS array, because the
+    // implicit array-to-span conversion is not modelled and hands the array straight through. Any span
+    // helper therefore has to normalise first.
+    TransposeR.spanArray = function (s) {
+        if (s == null) { return []; }
+        return typeof s.toArray === 'function' ? s.toArray() : s;
+    };
+    TransposeR.spanSequenceEqual = function (a, b) {
+        a = TransposeR.spanArray(a);
+        b = TransposeR.spanArray(b);
+        if (a.length !== b.length) { return false; }
+        for (var i = 0; i < a.length; i++) {
+            if (!Transpose.equals(a[i], b[i])) { return false; }
+        }
+        return true;
+    };
     // Copies one slot of a struct's $clone whose declared type is a TYPE PARAMETER, where only the
     // runtime value can say whether a value copy is due: `struct Wrap<T> { public T Value; }` must
     // clone Value for Wrap<SomeStruct> (C# copies the whole value) and must NOT clone it for
