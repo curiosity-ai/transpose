@@ -223,10 +223,10 @@ namespace System
         [Transpose.Template("System.Array.resize({array}, {newSize}, {T:defaultFn}, {T})")]
         public static extern void Resize<T>(ref T[] array, int newSize);
 
-        [Transpose.Template("System.Array.reverse({array})")]
+        [Transpose.Template("System.Array.reverse({array})", Fn = "System.Array.reverse")]
         public static extern void Reverse(Array array);
 
-        [Transpose.Template("System.Array.reverse({array}, {index}, {length})")]
+        [Transpose.Template("System.Array.reverse({array}, {index}, {length})", Fn = "System.Array.reverse")]
         public static extern void Reverse(Array array, int index, int length);
 
         [Transpose.Template("System.Array.binarySearch({array}, 0, {array}.length, {value})")]

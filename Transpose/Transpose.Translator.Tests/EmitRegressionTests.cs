@@ -2541,6 +2541,77 @@ public class Program
             Assert.IsTrue(js.Contains("PresE.BetaTwo"),   "NamePreserveCase must preserve the member slot\n" + js);
         }
 
+        // ---- [Enum(Emit.Value)] ToString/concat/interpolation must not crash ------------------
+        //
+        // An [Enum(Emit.Value)] enum (e.g. System.Linq.Expressions.ExpressionType,
+        // System.MidpointRounding) has no runtime type object — its members inline as bare numbers
+        // everywhere, a deliberate bundle-size tradeoff — but converting one to a string (explicit
+        // ToString(), string concatenation, or $"{}") unconditionally called
+        // System.Enum.toString(TypeRef(type), value), which read a property off `undefined` (there is
+        // no such runtime type to look up) and crashed with "Cannot read properties of undefined
+        // (reading '<TypeName>')". This reproduced on every Value-mode enum, including ones built
+        // through long-working factories like Expression.Assign — nothing to do with any specific
+        // factory method. Fixed by falling back to the raw number's own toString() for this mode,
+        // in EmitConcatOperand, the explicit ToString() call, string interpolation, and the shared
+        // ToStringJs helper (all four previously duplicated the same unconditional call). This
+        // necessarily diverges from native, which always has the symbolic name via reflection
+        // metadata — that divergence is the accepted cost of choosing Emit.Value, not a new one this
+        // introduces, so this test is Transpose-only (skipRoslyn) rather than diffed against native.
+        [TestMethod]
+        public async Task EnumValueModeToStringDoesNotCrash()
+        {
+            var js = await RunTest(@"
+using System;
+using System.Linq.Expressions;
+public class Program
+{
+    public static void Main()
+    {
+        var c = Expression.Constant(1);
+        Console.WriteLine(""concat="" + c.NodeType);
+        Console.WriteLine(""explicit="" + c.NodeType.ToString());
+        Console.WriteLine($""interp={c.NodeType}"");
+
+        var assign = Expression.Assign(Expression.Parameter(typeof(int)), Expression.Constant(1));
+        Console.WriteLine(""assign="" + assign.NodeType);
+
+        Console.WriteLine(""midpoint="" + MidpointRounding.AwayFromZero);
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>", skipRoslyn: true);
+
+            Assert.IsTrue(js.Contains("concat=9"), "ExpressionType.Constant's ordinal (9)\n" + js);
+            Assert.IsTrue(js.Contains("explicit=9"), "explicit ToString() must not crash either\n" + js);
+            Assert.IsTrue(js.Contains("interp=9"), "string interpolation must not crash either\n" + js);
+            Assert.IsTrue(js.Contains("assign=46"), "ExpressionType.Assign's ordinal (46), a different factory\n" + js);
+            Assert.IsTrue(js.Contains("midpoint=4"), "MidpointRounding.AwayFromZero's ordinal (4), a different Value-mode enum\n" + js);
+        }
+
+        // A default-mode enum (a plain user enum, and a default-mode BCL enum like DayOfWeek) must
+        // keep printing its symbolic NAME exactly like native — this fix must not regress that.
+        [TestMethod]
+        public async Task DefaultModeEnumToStringStillMatchesNative()
+        {
+            await RunTest(@"
+using System;
+public enum Color { Red, Green, Blue }
+public class Program
+{
+    public static void Main()
+    {
+        var color = Color.Green;
+        Console.WriteLine(""concat="" + color);
+        Console.WriteLine(""explicit="" + color.ToString());
+        Console.WriteLine($""interp={color}"");
+
+        var day = DayOfWeek.Wednesday;
+        Console.WriteLine(""day="" + day);
+
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
         // ---- [Convention(Notation.*)] — every notation on an [External] type's members ----
         //
         // Convention has a Notation axis (None / LowerCase / UpperCase / CamelCase / PascalCase) plus
@@ -2707,6 +2778,155 @@ public class Program
 
         Func<char, bool> isLd = char.IsLetterOrDigit;
         Console.WriteLine(isLd('!'));                     // False
+
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        // ---- more of the same method-group-vs-bare-name bug: Array/Decimal/Expression ----------
+        //
+        // Further confirmed instances of the exact same defect class as the fixes above — a
+        // static-member-access fallback for a [Template]-without-Fn method colliding with an
+        // unrelated overload's real bare name. Array.Reverse(T[]) and Decimal.Floor/Equals(decimal,...)
+        // fell back to a nonexistent bare name and threw "not a function"; Decimal.Round(decimal,int)
+        // fell back to the 0-arg instance Round()'s bare name and silently dropped the digit count
+        // (returned 4, not 3.14). Fixed the same way: each templated overload now carries a Fn
+        // pointing at the already-shaped real runtime function (Array.reverse, Decimal.round/
+        // toDecimalPlaces) or a small inline wrapper (Decimal.Floor/Equals, Expression.Add).
+
+        [TestMethod]
+        public async Task TemplateFnResolvesArrayReverseMethodGroup()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        Action<int[]> f = Array.Reverse;
+        var arr = new[] { 1, 2, 3 };
+        f(arr);
+        Console.WriteLine(string.Join("","", arr));
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [TestMethod]
+        public async Task TemplateFnResolvesDecimalFloorMethodGroup()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        Func<decimal, decimal> f = decimal.Floor;
+        Console.WriteLine(f(3.7m));
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [TestMethod]
+        public async Task TemplateFnResolvesDecimalRoundMethodGroup()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        Func<decimal, int, decimal> f = decimal.Round;
+        Console.WriteLine(f(3.14159m, 2));
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        [TestMethod]
+        public async Task TemplateFnResolvesDecimalEqualsMethodGroup()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        Func<decimal, decimal, bool> f = decimal.Equals;
+        Console.WriteLine(f(3.14m, 3.14m));
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        // Expression.Add — three overloads, direct call AND method group, compared via == rather than
+        // printed (concatenating an Expression's NodeType/Type into a string is a separate,
+        // pre-existing crash — "Cannot read properties of undefined (reading 'ExpressionType')" — that
+        // reproduces even on long-working factories like Expression.Assign, unrelated to this bug and
+        // out of scope here), and uses a source-declared method (Reflectable) rather than a BCL one,
+        // since [External] types without [Reflectable] (e.g. Math) surface no methods via
+        // GetMethod/GetMethods (also a separate, much larger gap: [External] types are unconditionally
+        // excluded from reflection metadata regardless of [Reflectable] — Emitter.Reflection.IsReflectableType
+        // checks IsExternalType first — so fixing it would mean changing that policy for every external
+        // BCL/DOM type, not just Math).
+        //
+        // The 2-arg Add(left,right) and the 3-arg Add(left,right,method) with a NULL method were
+        // BOTH actually broken before this fix (not just as a method group) — Add(left,right) had no
+        // [Template] at all and, since Expression carries [Name("System.Object")] for its runtime VALUE
+        // representation (nodes are plain object literals), naming-convention resolution misused that
+        // same [Name] for the static-member-ACCESS path too and produced "System.Object.add is not a
+        // function"; Add(left,right,method) unconditionally read {method}.rt, crashing on a null method
+        // instead of behaving like the 2-arg overload (native treats a null method as "infer the type from
+        // the operands"). Both now have a template (and a matching Fn for the method-group path) that
+        // infers the type from the right operand when there is no method, matching the existing
+        // Expression.MakeBinary/Assign convention in this file.
+        [TestMethod]
+        public async Task TemplateFnResolvesExpressionAddMethodGroup()
+        {
+            await RunTest(@"
+using System;
+using System.Linq.Expressions;
+using System.Reflection;
+public class Helper
+{
+    public static int CustomAdd(int a, int b) => a + b + 100;
+}
+public class Program
+{
+    public static void Main()
+    {
+        var e2 = Expression.Add(Expression.Constant(1), Expression.Constant(2));
+        Console.WriteLine(e2.NodeType == ExpressionType.Add);
+        Console.WriteLine(e2.Type == typeof(int));
+        Console.WriteLine(e2.Method == null);
+
+        var e3null = Expression.Add(Expression.Constant(1), Expression.Constant(2), (MethodInfo)null);
+        Console.WriteLine(e3null.NodeType == ExpressionType.Add);
+        Console.WriteLine(e3null.Type == typeof(int));
+        Console.WriteLine(e3null.Method == null);
+
+        MethodInfo m = typeof(Helper).GetMethod(""CustomAdd"");
+        var direct = Expression.Add(Expression.Constant(1), Expression.Constant(2), m);
+        Func<Expression, Expression, MethodInfo, BinaryExpression> f = Expression.Add;
+        var viaGroup = f(Expression.Constant(1), Expression.Constant(2), m);
+        Console.WriteLine(direct.NodeType == viaGroup.NodeType);
+        Console.WriteLine(direct.Method == viaGroup.Method);
+        Console.WriteLine(direct.Type == viaGroup.Type);
+        Console.WriteLine(((ConstantExpression)direct.Left).Value + "" "" + ((ConstantExpression)viaGroup.Left).Value);
+        Console.WriteLine(((ConstantExpression)direct.Right).Value + "" "" + ((ConstantExpression)viaGroup.Right).Value);
+
+        Func<Expression, Expression, BinaryExpression> f2 = Expression.Add;
+        var viaGroup2 = f2(Expression.Constant(1), Expression.Constant(2));
+        Console.WriteLine(viaGroup2.NodeType == ExpressionType.Add);
+        Console.WriteLine(viaGroup2.Type == typeof(int));
+
+        Func<Expression, Expression, MethodInfo, BinaryExpression> f3null = Expression.Add;
+        var viaGroup3null = f3null(Expression.Constant(1), Expression.Constant(2), null);
+        Console.WriteLine(viaGroup3null.NodeType == ExpressionType.Add);
+        Console.WriteLine(viaGroup3null.Type == typeof(int));
+        Console.WriteLine(viaGroup3null.Method == null);
 
         Console.WriteLine(""<<DONE>>"");
     }

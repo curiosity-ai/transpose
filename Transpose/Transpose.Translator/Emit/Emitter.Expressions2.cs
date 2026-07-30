@@ -109,9 +109,7 @@ public sealed partial class Emitter
             && invocation.Expression is MemberAccessExpressionSyntax { Expression: { } enumRecv }
             && _model.GetTypeInfo(enumRecv).Type is { TypeKind: TypeKind.Enum } enumType)
         {
-            _w.Write($"System.Enum.toString({TypeRef(enumType)}, ");
-            EmitExpression(enumRecv);
-            _w.Write(")");
+            _w.Write(EnumToStringJs(enumType, Capture(() => EmitExpression(enumRecv))));
             return;
         }
 
@@ -2078,11 +2076,9 @@ public sealed partial class Emitter
             EmitExpression(operand);
             _w.Write(")");
         }
-        else if (type is { TypeKind: TypeKind.Enum })
+        else if (type is { TypeKind: TypeKind.Enum } enumType)
         {
-            _w.Write($"System.Enum.toString({TypeRef(type)}, ");
-            EmitExpression(operand);
-            _w.Write(")");
+            _w.Write(EnumToStringJs(enumType, Capture(() => EmitExpression(operand))));
         }
         // A Nullable<char>/Nullable<TEnum> needs the same rendering as its underlying type (`"" +
         // (Color?)Color.Red` is "Red", not "0"), but the value may be null, so the conversion cannot be
@@ -2894,9 +2890,7 @@ public sealed partial class Emitter
                     }
                     else if (_model.GetTypeInfo(interpolation.Expression).Type is { TypeKind: TypeKind.Enum } enumT)
                     {
-                        _w.Write($"System.Enum.toString({TypeRef(enumT)}, ");
-                        EmitExpression(interpolation.Expression);
-                        _w.Write(")");
+                        _w.Write(EnumToStringJs(enumT, Capture(() => EmitExpression(interpolation.Expression))));
                     }
                     // A type parameter only bound at runtime — see EmitConcatOperand.
                     else if (TryEmitTypeParamToString(interpolation.Expression,
@@ -3384,12 +3378,28 @@ public sealed partial class Emitter
     {
         if (IsStringType(type)) return $"({js} ?? \"\")";
         if (IsCharType(type)) return $"TransposeR.chr({js})";
-        if (type is { TypeKind: TypeKind.Enum }) return $"System.Enum.toString({TypeRef(type)}, {js})";
+        if (type is { TypeKind: TypeKind.Enum } enumType) return EnumToStringJs(enumType, js);
         if (NullableUnderlyingType(type) is { } u && (IsCharType(u) || u.TypeKind == TypeKind.Enum))
             return $"TransposeR.toStrT({js}, {TypeRef(u)})";
         if (type is ITypeParameterSymbol tp && TypeParamInScope(tp)) return $"TransposeR.toStrT({js}, {TypeRef(type)})";
         return $"TransposeR.toStr({js})";
     }
+
+    /// <summary>
+    /// The JS expression rendering an already-written enum VALUE as its .NET string form. An
+    /// <c>[Enum(Emit.Value)]</c> enum (e.g. <c>System.Linq.Expressions.ExpressionType</c>) has no
+    /// runtime type object — a deliberate bundle-size tradeoff: its members inline as bare numbers
+    /// everywhere they are referenced, so <c>System.Enum.toString(TypeRef(type), value)</c> would read
+    /// a property off <c>undefined</c> and crash ("Cannot read properties of undefined (reading
+    /// '&lt;TypeName&gt;')"). There is no name table to fall back to for this mode by design, so the
+    /// best available behaviour is the raw number's own <c>toString()</c>, same as any other integer —
+    /// this necessarily diverges from native .NET (which always has the name via reflection metadata),
+    /// but that divergence is the accepted cost of choosing Emit.Value, not a new one this introduces.
+    /// </summary>
+    private string EnumToStringJs(ITypeSymbol type, string valueJs)
+        => TransposeNaming.EnumEmitMode(type) == 2
+            ? $"({valueJs}).toString()"
+            : $"System.Enum.toString({TypeRef(type)}, {valueJs})";
 
     private static bool IsIntegerType(ITypeSymbol? type)
     {
