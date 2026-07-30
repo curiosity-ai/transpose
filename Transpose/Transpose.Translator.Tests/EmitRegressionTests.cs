@@ -2648,6 +2648,71 @@ public class Program
 }", waitForOutput: "<<DONE>>");
         }
 
+        // ---- a wider sweep of the same [Template]-without-Fn method-group bug -----------------
+        //
+        // The IsUpper/IsLower fix above was one instance of a general shape: a BCL method with a
+        // per-call-site [Template] (no Fn) shares its bare mangled JS name with a DIFFERENT
+        // overload's real backing function (or, for Double/Single/StringBuilder below, with a
+        // differently-shaped hand-written runtime helper). A method-group reference to the
+        // templated overload falls through to that unrelated bare name and misbehaves — silently
+        // wrong results (Double.ToString(string) picked up the (int radix) overload's native
+        // `.toString(radix)` and threw a RangeError on a non-numeric radix; StringBuilder.Append(char)
+        // pushed the raw char CODE into the generic buffer instead of the character; String.LastIndexOf(char)
+        // searched for the wrong thing entirely). Found by auditing every [External] BCL type for
+        // overloads whose mangled JS names collide, and fixed the same way: give the templated
+        // overload a Fn (an already-shaped real function, or a small inline wrapper) so a method
+        // group resolves correctly instead of falling back to the bare name.
+        [TestMethod]
+        public async Task TemplateFnResolvesWiderMethodGroupCollisionSweep()
+        {
+            await RunTest(@"
+using System;
+using System.Text;
+public class Program
+{
+    public static void Main()
+    {
+        double dd = 3.14159;
+        Func<string, string> fd = dd.ToString;
+        Console.WriteLine(fd(""F2""));                     // 3.14
+
+        float ff = 3.14159f;
+        Func<IFormatProvider, string> ff2 = ff.ToString;
+        Console.WriteLine(ff2(null));                     // 3.14159
+
+        string s = ""hello world"";
+        Func<char, int> lif = s.LastIndexOf;
+        Console.WriteLine(lif('o'));                      // 7
+
+        var sb = new StringBuilder();
+        Func<char, StringBuilder> app = sb.Append;
+        app('X'); app('Y');
+        Console.WriteLine(sb.ToString());                 // XY
+
+        var sb2 = new StringBuilder(""a-b"");
+        Func<int, long, StringBuilder> ins = sb2.Insert;
+        ins(1, 42L);
+        Console.WriteLine(sb2.ToString());                // a42-b
+
+        var sb3 = new StringBuilder(""banana"");
+        Func<char, char, StringBuilder> rep = sb3.Replace;
+        rep('a', 'o');
+        Console.WriteLine(sb3.ToString());                // bonono
+
+        Func<string, int, bool> isLetter = char.IsLetter;
+        Console.WriteLine(isLetter(""a1"", 0));            // True
+
+        Func<char, bool> isWs = char.IsWhiteSpace;
+        Console.WriteLine(isWs(' '));                     // True
+
+        Func<char, bool> isLd = char.IsLetterOrDigit;
+        Console.WriteLine(isLd('!'));                     // False
+
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
         // ---- [Template] 2-arg (format, nonExpandedFormat) — the non-expanded params variant ----
         //
         // A 2-arg [Template] gives a second template for when the trailing `params` argument is supplied

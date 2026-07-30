@@ -398,7 +398,7 @@ namespace System
         /// </summary>
         /// <param name="value">The Unicode character to seek.</param>
         /// <returns>The zero-based index position of value if that character is found, or -1 if it is not.</returns>
-        [Transpose.Template("{this}.lastIndexOf(String.fromCharCode({value}))")]
+        [Transpose.Template("{this}.lastIndexOf(String.fromCharCode({value}))", Fn = "function ($s, $v) { return $s.lastIndexOf(String.fromCharCode($v)); }")]
         public extern int LastIndexOf(char value);
 
         /// <summary>
@@ -407,7 +407,7 @@ namespace System
         /// <param name="value">The Unicode character to seek.</param>
         /// <param name="startIndex">The starting position of the search. The search proceeds from startIndex toward the beginning of this instance.</param>
         /// <returns>The zero-based index position of value if that character is found, or -1 if it is not found or if the current instance equals String.Empty.</returns>
-        [Transpose.Template("{this}.lastIndexOf(String.fromCharCode({value}), {startIndex})")]
+        [Transpose.Template("{this}.lastIndexOf(String.fromCharCode({value}), {startIndex})", Fn = "function ($s, $v, $i) { return $s.lastIndexOf(String.fromCharCode($v), $i); }")]
         public extern int LastIndexOf(char value, int startIndex);
 
         /// <summary>
@@ -417,7 +417,7 @@ namespace System
         /// <param name="startIndex">The starting position of the search. The search proceeds from startIndex toward the beginning of this instance.</param>
         /// <param name="count">The number of character positions to examine.</param>
         /// <returns>The zero-based index position of value if that character is found, or -1 if it is not found or if the current instance equals String.Empty.</returns>
-        [Transpose.Template("System.String.lastIndexOf({this}, String.fromCharCode({value}), {startIndex}, {count})")]
+        [Transpose.Template("System.String.lastIndexOf({this}, String.fromCharCode({value}), {startIndex}, {count})", Fn = "function ($s, $v, $i, $c) { return System.String.lastIndexOf($s, String.fromCharCode($v), $i, $c); }")]
         public extern int LastIndexOf(char value, int startIndex, int count);
 
         /// <summary>
@@ -442,7 +442,7 @@ namespace System
         /// <param name="startIndex">The search starting position. The search proceeds from startIndex toward the beginning of this instance.</param>
         /// <param name="count">The number of character positions to examine.</param>
         /// <returns>The zero-based starting index position of value if that string is found, or -1 if it is not found or if the current instance equals String.Empty. If value is Empty, the return value is the smaller of startIndex and the last index position in this instance.</returns>
-        [Transpose.Template("System.String.lastIndexOf({this}, {value}, {startIndex}, {count})")]
+        [Transpose.Template("System.String.lastIndexOf({this}, {value}, {startIndex}, {count})", Fn = "System.String.lastIndexOf")]
         public extern int LastIndexOf(string value, int startIndex, int count);
 
         // TODO: Missing System.String.LastIndexOf Method overloads #2396

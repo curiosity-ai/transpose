@@ -34,16 +34,16 @@ namespace System
 
         public extern string ToString(int radix);
 
-        [Transpose.Template("System.Double.format({this}, {format})")]
+        [Transpose.Template("System.Double.format({this}, {format})", Fn = "System.Double.format")]
         public extern string ToString(string format);
 
-        [Transpose.Template("System.Double.format({this}, {format}, {provider})")]
+        [Transpose.Template("System.Double.format({this}, {format}, {provider})", Fn = "System.Double.format")]
         public extern string ToString(string format, IFormatProvider provider);
 
         [Transpose.Template(Fn = "System.Double.format")]
         public override extern string ToString();
 
-        [Transpose.Template("System.Double.format({this}, \"G\", {provider})")]
+        [Transpose.Template("System.Double.format({this}, \"G\", {provider})", Fn = "function ($v, $p) { return System.Double.format($v, \"G\", $p); }")]
         public extern string ToString(IFormatProvider provider);
 
         [Transpose.Template("System.Double.parse({s})")]
