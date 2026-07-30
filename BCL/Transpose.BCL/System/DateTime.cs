@@ -184,7 +184,11 @@ namespace System
         [Transpose.Template("System.DateTime.ToFileTimeUtc({this})")]
         public extern long ToFileTimeUtc();
 
-        [Transpose.Template(Fn = "System.DateTime.format")]
+        // The direct form is needed as well as Fn: with only the delegate template, a plain
+        // `d.ToString()` had no template to apply and fell through to a member call on the backing
+        // native Date, whose toString() is the JS date form ("Thu Jan 02 2020 00:00:00 GMT+0000 (…)")
+        // rather than the culture's general date/time pattern.
+        [Transpose.Template("System.DateTime.format({this})", Fn = "System.DateTime.format")]
         public override extern string ToString();
 
         [Transpose.Template("System.DateTime.format({this}, {0})")]

@@ -27,10 +27,48 @@
                 return System.Boolean.toString(instance);
             }
 
+            // Array.ToString() is object.ToString() in .NET — the array TYPE's name, not its
+            // elements. JS's Array.prototype.toString joins the elements, and it is not
+            // Object.prototype.toString, so the check below would let it through ("1,2" for an
+            // int[2]). System.Array.init tags every array it creates with its $type; a raw array
+            // arriving from interop carries none, and then System.Array is all that is known.
+            if (Transpose.isArray(instance)) {
+                return instance.$type
+                    ? Transpose.Reflection.getTypeDisplayName(instance.$type)
+                    : "System.Array";
+            }
+
+            // A DateTime is backed by a native Date, whose toString() is the JS date form
+            // ("Thu Jan 02 2020 00:00:00 GMT+0000 (…)"); .NET's is the culture's general pattern.
+            if (instance instanceof Date) {
+                return System.DateTime.format(instance);
+            }
+
+            // A Transpose type is a JS constructor function, so Function.prototype.toString would
+            // hand back the constructor's SOURCE TEXT; .NET's is Type.ToString(). Recognised by
+            // $$name rather than by being a function, because a delegate is a bare function too.
+            if (typeof instance === "function" && (instance.$$name !== undefined || instance.$isArray)) {
+                return Transpose.Reflection.getTypeDisplayName(instance);
+            }
+
             var guardItem = Transpose.$toStringGuard[Transpose.$toStringGuard.length - 1];
 
             if (instance.toString === Object.prototype.toString || guardItem && guardItem === instance) {
-                return Transpose.Reflection.getTypeFullName(instance);
+                // object.ToString() is GetType().ToString(), i.e. the type's DISPLAY name — which
+                // names generic arguments plainly (List`1[System.Int32]). $$fullname, which
+                // getTypeFullName reads off the instance, holds the assembly-qualified FullName
+                // shape instead (List`1[[System.Int32, mscorlib]]).
+                var instanceType = null;
+
+                try {
+                    instanceType = Transpose.getType(instance);
+                } catch (ex) {
+                    instanceType = null;
+                }
+
+                return instanceType
+                    ? Transpose.Reflection.getTypeDisplayName(instanceType)
+                    : Transpose.Reflection.getTypeFullName(instance);
             }
 
             Transpose.$toStringGuard.push(instance);

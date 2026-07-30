@@ -11,6 +11,28 @@
         try { return Transpose.toString(v); } catch (e) { return v.toString ? v.toString() : String(v); }
     };
     TransposeR.chr = function (code) { return String.fromCharCode(code); };
+    // `base.P` / `base.P = v` on a property with real accessors. `base` emits as `this`, so a plain
+    // `this.P` would dispatch to the most-derived override — the very thing `base` bypasses. Accessors
+    // are installed with Object.defineProperty on each type's prototype, so walk from the base type's
+    // prototype up to the nearest one that declares the member and invoke it with the real receiver.
+    TransposeR.baseGet = function (proto, name, obj) {
+        for (var p = proto; p; p = Object.getPrototypeOf(p)) {
+            var d = Object.getOwnPropertyDescriptor(p, name);
+            if (d) { return d.get ? d.get.call(obj) : d.value; }
+        }
+        return obj[name];
+    };
+    TransposeR.baseSet = function (proto, name, obj, value) {
+        for (var p = proto; p; p = Object.getPrototypeOf(p)) {
+            var d = Object.getOwnPropertyDescriptor(p, name);
+            if (d) {
+                if (d.set) { d.set.call(obj, value); } else { obj[name] = value; }
+                return value;
+            }
+        }
+        obj[name] = value;
+        return value;
+    };
     // Box a char (a bare code-point number at runtime) so it stringifies / compares as its
     // character once widened to object — `object o = 'A'; o.ToString()` must be "A", not "65".
     TransposeR.boxChar = function (c) { return Transpose.box(c, System.Char, TransposeR.chr); };

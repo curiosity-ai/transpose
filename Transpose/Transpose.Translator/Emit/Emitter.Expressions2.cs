@@ -1105,21 +1105,43 @@ public sealed partial class Emitter
             && ObjectLiteralCreateMode(objLit) != 1)
         {
             var mode = ObjectLiteralInitMode(objLit);
+            var ctorValues = RecordLiteralMemberValues(type, ctor, argList);
+            var emitted = new HashSet<string>(StringComparer.Ordinal);
+            var first = true;
             _w.Write("{");
             if (mode is 1 or 2)
             {
-                var first = true;
                 foreach (var prop in type.GetMembers().OfType<IPropertySymbol>()
-                             .Where(p => !p.IsStatic && !p.IsIndexer && !p.IsWriteOnly))
+                             // A record's synthesized non-positional members (EqualityContract) are
+                             // compiler bookkeeping, not part of the literal's shape — emitting them
+                             // put `EqualityContract: null` into every literal built from a record.
+                             .Where(p => !p.IsStatic && !p.IsIndexer && !p.IsWriteOnly
+                                         && (!p.IsImplicitlyDeclared || IsRecordPositionalProperty(p))))
                 {
                     var propInit = PropertyInitializerExpr(prop);
-                    if (mode == 1 && propInit is null) continue; // Initializer: only initialized members
+                    var name = TransposeNaming.MemberJsName(prop);
+                    var ctorValue = ctorValues.FirstOrDefault(v => v.name == name).value;
+                    // Initializer mode emits only members that carry a value: a `= value` initializer
+                    // or — for a record — a positional constructor argument.
+                    if (mode == 1 && propInit is null && ctorValue is null) continue;
                     if (!first) _w.Write(", ");
                     first = false;
-                    _w.Write($"{NameMangler.JsPropertyKey(TransposeNaming.MemberJsName(prop))}: ");
-                    if (propInit is not null) EmitExpression(propInit);
+                    emitted.Add(name);
+                    _w.Write($"{NameMangler.JsPropertyKey(name)}: ");
+                    if (ctorValue is not null) _w.Write(ctorValue);
+                    else if (propInit is not null) EmitExpression(propInit);
                     else _w.Write(DefaultValueLiteral(prop.Type));
                 }
+            }
+            // Constructor-supplied members the init mode did not enumerate — in Ignore mode (the
+            // default) that is all of them, so `[ObjectLiteral] record Point(int X, int Y)` emits
+            // `new Point(1, 2)` as `{X: 1, Y: 2}`.
+            foreach (var (name, value) in ctorValues)
+            {
+                if (!emitted.Add(name)) continue;
+                if (!first) _w.Write(", ");
+                first = false;
+                _w.Write($"{NameMangler.JsPropertyKey(name)}: {value}");
             }
             _w.Write("}");
             return;
@@ -1202,6 +1224,45 @@ public sealed partial class Emitter
             if (arg.Type?.ToDisplayString() == "Transpose.ObjectCreateMode" && arg.Value is int v)
                 return v;
         return 0;
+    }
+
+    /// <summary>
+    /// The members an <c>[ObjectLiteral]</c> record's constructor call fills in, as JS member name →
+    /// emitted value, in positional-parameter order.
+    ///
+    /// A record's positional parameters ARE its members, so a record is the most natural way to declare
+    /// the shape of a JavaScript object literal — but a plain-create <c>[ObjectLiteral]</c> emits
+    /// <c>{}</c> plus an object initializer, which dropped the constructor arguments and left every such
+    /// literal empty. Only the positional primary constructor names members this way; any other
+    /// overload is ordinary code and keeps the previous behaviour, as does a non-record class (which
+    /// has <c>ObjectCreateMode.Constructor</c> for running its constructor).
+    /// </summary>
+    private List<(string name, string value)> RecordLiteralMemberValues(
+        INamedTypeSymbol type, IMethodSymbol? ctor, ArgumentListSyntax? argList)
+    {
+        var values = new List<(string, string)>();
+        if (!type.IsRecord || ctor is null) return values;
+        if (ctor.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() is not RecordDeclarationSyntax) return values;
+
+        var args = argList?.Arguments ?? default;
+        for (var i = 0; i < ctor.Parameters.Length; i++)
+        {
+            var p = ctor.Parameters[i];
+            // No synthesized property means the record body declared its own member of that name, in
+            // which case the parameter initializes nothing on its own.
+            var member = type.GetMembers(p.Name).OfType<IPropertySymbol>().FirstOrDefault(IsRecordPositionalProperty);
+            if (member is null) continue;
+
+            // Named arguments may appear out of order, so match by name first and fall back to position.
+            var arg = args.FirstOrDefault(a => a.NameColon?.Name.Identifier.Text == p.Name)
+                      ?? (i < args.Count && args[i].NameColon is null ? args[i] : null);
+
+            var value = arg is not null ? Capture(() => EmitExpressionConverted(arg.Expression, p.Type))
+                : p.HasExplicitDefaultValue ? ConstantLiteral(p.ExplicitDefaultValue, p.Type)
+                : DefaultValueLiteral(p.Type);
+            values.Add((TransposeNaming.MemberJsName(member), value));
+        }
+        return values;
     }
 
     /// <summary>The `= value` initializer expression of an auto-property, or null.</summary>
@@ -2023,6 +2084,16 @@ public sealed partial class Emitter
             EmitExpression(operand);
             _w.Write(")");
         }
+        // A Nullable<char>/Nullable<TEnum> needs the same rendering as its underlying type (`"" +
+        // (Color?)Color.Red` is "Red", not "0"), but the value may be null, so the conversion cannot be
+        // the bare char/enum form above. toStrT tolerates null and dispatches on the runtime type.
+        else if (NullableUnderlyingType(type) is { } nullableUnderlying
+                 && (IsCharType(nullableUnderlying) || nullableUnderlying.TypeKind == TypeKind.Enum))
+        {
+            _w.Write("TransposeR.toStrT(");
+            EmitExpression(operand);
+            _w.Write($", {TypeRef(nullableUnderlying)})");
+        }
         // A type parameter only bound at runtime: same reason as the char/enum branches above, but the
         // choice between them can only be made once the threaded type argument is known.
         else if (TryEmitTypeParamToString(operand, type))
@@ -2256,6 +2327,21 @@ public sealed partial class Emitter
             var val = Capture(emitValue);
             WriteTemplate(setTemplate, setProp.IsStatic, isExtension: false, recv,
                 new() { ["value"] = val }, new() { val });
+            return;
+        }
+
+        // `base.P = v` must reach the BASE type's setter for the same reason `base.P` reads through it
+        // (see EmitPropertyAccess): `base` emits as `this`, so a plain `this.P = v` would run the
+        // most-derived override's setter and write the wrong storage.
+        if (left is MemberAccessExpressionSyntax { Expression: BaseExpressionSyntax } baseMember
+            && _model.GetSymbolInfo(left).Symbol is IPropertySymbol { IsStatic: false } baseProp
+            && HasEmittedAccessors(baseProp))
+        {
+            _w.Write($"TransposeR.baseSet({TypeRef(baseProp.ContainingType)}.prototype, ");
+            _w.Write(JsString(TransposeNaming.MemberJsName(baseProp)));
+            _w.Write(", this, ");
+            emitValue();
+            _w.Write(")");
             return;
         }
 
@@ -3279,6 +3365,31 @@ public sealed partial class Emitter
 
     private static bool IsStringType(ITypeSymbol? type) => type?.SpecialType == SpecialType.System_String;
     private static bool IsCharType(ITypeSymbol? type) => type?.SpecialType == SpecialType.System_Char;
+
+    /// <summary>The <c>T</c> of a <c>Nullable&lt;T&gt;</c>, or null for any other type.</summary>
+    private static ITypeSymbol? NullableUnderlyingType(ITypeSymbol? type)
+        => type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T, TypeArguments.Length: 1 } n
+            ? n.TypeArguments[0]
+            : null;
+
+    /// <summary>
+    /// The JS expression that renders an <b>already-written</b> JS value as a .NET string, using the
+    /// same rules as <see cref="EmitConcatOperand"/>: null renders as <c>""</c>, a char as its
+    /// character (chars are code points at runtime), an enum as its member name, and a type parameter
+    /// through the converter for the type argument threaded at runtime. Callers that hold a JS
+    /// expression rather than the C# syntax behind it — a record's synthesized PrintMembers reads
+    /// <c>this.X</c>, which has no ExpressionSyntax to re-walk — go through this instead.
+    /// </summary>
+    private string ToStringJs(string js, ITypeSymbol? type)
+    {
+        if (IsStringType(type)) return $"({js} ?? \"\")";
+        if (IsCharType(type)) return $"TransposeR.chr({js})";
+        if (type is { TypeKind: TypeKind.Enum }) return $"System.Enum.toString({TypeRef(type)}, {js})";
+        if (NullableUnderlyingType(type) is { } u && (IsCharType(u) || u.TypeKind == TypeKind.Enum))
+            return $"TransposeR.toStrT({js}, {TypeRef(u)})";
+        if (type is ITypeParameterSymbol tp && TypeParamInScope(tp)) return $"TransposeR.toStrT({js}, {TypeRef(type)})";
+        return $"TransposeR.toStr({js})";
+    }
 
     private static bool IsIntegerType(ITypeSymbol? type)
     {

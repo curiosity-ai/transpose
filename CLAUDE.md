@@ -241,6 +241,16 @@ Every other project is a JavaScript binding library that `tps` transpiles, bindi
 
 All six binding libraries currently transpile successfully.
 
+Which path `tps` takes for a project is decided by its **assembly name**, not by its resolved
+references: `outputBy: ClassPath` selects the runtime build only for the base library (assembly name
+`Transpose`). A binding library may declare `ClassPath` for its own JS layout — `Transpose.Newtonsoft.Json`
+does — and must still take the package path, because it *binds against* the BCL rather than defining it.
+Keying that off a resolved reference to `Transpose.dll` does not work: the translator **injects** the base
+library instead of taking it from the project's references, so in a dev tree (where the
+`Transpose.BCL` PackageReference is not in the NuGet cache) such a project resolves zero references and
+looked like the base library — which compiled it self-contained and failed with `CS0518` on every
+predefined type.
+
 ### 3. How a normal project builds
 
 A user project references the `Transpose.Build.Target` SDK, which runs `tps` once per project:

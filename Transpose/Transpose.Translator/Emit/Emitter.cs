@@ -40,6 +40,10 @@ public sealed partial class Emitter
     /// type (accessible in C# but not emitted as a parameter here) is not in scope.</summary>
     private INamedTypeSymbol? _currentEmitType;
 
+    /// <summary>JS identifiers the type being emitted binds locally, which would otherwise shadow a
+    /// same-named type reference. See <c>ShadowingIdentifiers</c> / <c>UnshadowedTypeRef</c>.</summary>
+    private HashSet<string>? _shadowingNames;
+
     /// <summary>
     /// Active goto label-dispatch contexts. When non-empty a statement body is being lowered
     /// into a `for(;;) switch($state)` machine: `goto L` sets the state and continues the loop.

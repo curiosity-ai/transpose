@@ -58,7 +58,15 @@ public sealed partial class Emitter
     }
 
     /// <summary>Full JS name a type is registered / referenced under.</summary>
+    /// <summary>
+    /// The JavaScript expression that names a type at runtime. A named type resolves through
+    /// <see cref="UnshadowedTypeRef"/>, so a local binding of the same name cannot intercept it; a type
+    /// PARAMETER never does, because it IS a local binding (the generic define's own parameter).
+    /// </summary>
     private string TypeRef(ITypeSymbol type)
+        => type is ITypeParameterSymbol ? TypeRefCore(type) : UnshadowedTypeRef(TypeRefCore(type));
+
+    private string TypeRefCore(ITypeSymbol type)
     {
         // `dynamic` has no runtime type of its own — it is System.Object at runtime.
         if (type.TypeKind == TypeKind.Dynamic) return "System.Object";
@@ -343,9 +351,94 @@ public sealed partial class Emitter
     private void EmitClassLike(INamedTypeSymbol type)
     {
         var prevEmitType = _currentEmitType;
+        var prevShadowing = _shadowingNames;
         _currentEmitType = type;
+        _shadowingNames = ShadowingIdentifiers(type);
         try { EmitClassLikeCore(type); }
-        finally { _currentEmitType = prevEmitType; }
+        finally { _currentEmitType = prevEmitType; _shadowingNames = prevShadowing; }
+    }
+
+    /// <summary>
+    /// Every JS identifier this type's code introduces as a local binding — parameters (of methods,
+    /// constructors, lambdas, local functions and a record header), locals, <c>out var</c>/pattern
+    /// designations, <c>foreach</c> and <c>catch</c> variables, and query range variables.
+    ///
+    /// A type is referenced by its bare emitted name, so any of these shadows a same-named type for
+    /// the whole of the function it is declared in: <c>record RD(int A, int B) : RB(A)</c> whose base
+    /// is named <c>B</c> emitted <c>B.ctor.call(this, A)</c> inside <c>function (A, B)</c> and read
+    /// the int. <see cref="TypeRef"/> consults this set and routes such a reference through
+    /// <c>Transpose.global</c>, which nothing can shadow.
+    ///
+    /// Deliberately collected per TYPE rather than per function: a name that only shadows inside a
+    /// sibling function is then qualified as well, which is merely redundant, whereas tracking exact
+    /// scopes would have to be threaded through every body-emitting path to stay correct.
+    /// </summary>
+    private static HashSet<string> ShadowingIdentifiers(INamedTypeSymbol type)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var reference in type.DeclaringSyntaxReferences)
+        {
+            var declaration = reference.GetSyntax();
+            foreach (var node in declaration.DescendantNodesAndSelf())
+            {
+                switch (node)
+                {
+                    case ParameterSyntax p:
+                        Add(p.Identifier.Text);
+                        break;
+                    // A field's declarator is `this.X`, never a bare identifier — only locals shadow.
+                    case VariableDeclaratorSyntax v when v.Parent?.Parent is LocalDeclarationStatementSyntax
+                                                             or UsingStatementSyntax or ForStatementSyntax
+                                                             or FixedStatementSyntax:
+                        Add(v.Identifier.Text);
+                        break;
+                    case SingleVariableDesignationSyntax d:
+                        Add(d.Identifier.Text);
+                        break;
+                    case ForEachStatementSyntax f:
+                        Add(f.Identifier.Text);
+                        break;
+                    case CatchDeclarationSyntax c:
+                        Add(c.Identifier.Text);
+                        break;
+                    case FromClauseSyntax from:
+                        Add(from.Identifier.Text);
+                        break;
+                    case LetClauseSyntax let:
+                        Add(let.Identifier.Text);
+                        break;
+                    case JoinClauseSyntax join:
+                        Add(join.Identifier.Text);
+                        break;
+                    case JoinIntoClauseSyntax into:
+                        Add(into.Identifier.Text);
+                        break;
+                    case QueryContinuationSyntax cont:
+                        Add(cont.Identifier.Text);
+                        break;
+                    case LocalFunctionStatementSyntax fn:
+                        Add(fn.Identifier.Text);
+                        break;
+                }
+            }
+        }
+        return names;
+
+        void Add(string name)
+        {
+            if (name.Length > 0) names.Add(NameMangler.JsIdentifier(name));
+        }
+    }
+
+    /// <summary>Wraps a type reference so a local binding of the same name cannot shadow it. The
+    /// runtime registers every global-scope type on <c>Transpose.global</c> (the real global object),
+    /// so this reaches the same value by a path no local can intercept.</summary>
+    private string UnshadowedTypeRef(string reference)
+    {
+        if (_shadowingNames is null || _shadowingNames.Count == 0) return reference;
+        var dot = reference.IndexOfAny(new[] { '.', '(' });
+        var head = dot < 0 ? reference : reference.Substring(0, dot);
+        return _shadowingNames.Contains(head) ? "Transpose.global." + reference : reference;
     }
 
     private void EmitClassLikeCore(INamedTypeSymbol type)
@@ -486,13 +579,16 @@ public sealed partial class Emitter
             if (m.IsStatic) continue;
             if (m is IFieldSymbol f && !f.IsConst && f.AssociatedSymbol is null && f.CanBeReferencedByName)
                 yield return (TransposeNaming.MemberJsName(f), FieldDefaultLiteral(f.Type), f);
+            // Checked before the plain auto-property slot below: a virtual/overriding auto-property is
+            // field-backed (it needs real accessors so it dispatches, over storage of its own), so it
+            // must take the backing slot rather than the property's own name.
+            else if (m is IPropertySymbol fbp && IsFieldBackedProperty(fbp))
+                yield return (PropertyBackingName(fbp), FieldDefaultLiteral(fbp.Type), fbp);
             else if (m is IPropertySymbol p && !p.IsAbstract && !p.IsIndexer
                      && (IsAutoProperty(p) || IsRecordPositionalProperty(p)))
                 yield return (TransposeNaming.MemberJsName(p), FieldDefaultLiteral(p.Type), p);
             else if (m is IEventSymbol ev && IsFieldLikeEvent(ev))
                 yield return (TransposeNaming.MemberJsName(ev), "null", ev);
-            else if (m is IPropertySymbol fbp && IsFieldBackedProperty(fbp))
-                yield return (PropertyBackingName(fbp), FieldDefaultLiteral(fbp.Type), fbp);
         }
     }
 

@@ -243,6 +243,28 @@
             return "System.Object";
         },
 
+        /// The Type.ToString() form of a type, which is also what object.ToString() reports. It is
+        /// the full name with each generic argument named by ITS display name — plainly, without the
+        /// assembly qualification FullName carries: List`1[System.Int32], not
+        /// List`1[[System.Int32, mscorlib]] (the shape $$fullname holds).
+        getTypeDisplayName: function (type) {
+            if (type == null) {
+                return "";
+            }
+
+            if (type.$genericTypeDefinition && type.$typeArguments) {
+                var result = Transpose.Reflection.getTypeFullName(type.$genericTypeDefinition);
+
+                for (var i = 0; i < type.$typeArguments.length; i++) {
+                    result += (i === 0 ? "[" : ",") + Transpose.Reflection.getTypeDisplayName(type.$typeArguments[i]);
+                }
+
+                return result + "]";
+            }
+
+            return Transpose.Reflection.getTypeFullName(type);
+        },
+
         _makeQName: function (name, asm) {
             return name + (asm ? ", " + asm.name : "");
         },
