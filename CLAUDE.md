@@ -489,6 +489,21 @@ Claude Code; read the `SKILL.md` directly in other contexts):
   (CPU-score-normalised, clean-slate scenarios), `--timing`, dotnet-trace allocation/CPU profiles, and
   the correctness gate that keeps emitted output byte-identical. Captures the measurement traps on this
   hardware (the host drifts 20–40%, so never trust a single run) and the cost structure of a build.
+- **`write-changelog`** — produce the weekly, user-facing changelog for the whole product: read the
+  week's `master` commits, classify them into the six product categories, fetch the published NuGet
+  versions, and write `.changelog/<yy.M>/<yy.M.compilerBuild>.md` plus `.changelog/CurrentVersion`.
+  Also mirrors the entry into the public docs site (`documentation/transpose/changelog/`) in Neko's
+  changelog markup. Captures the NuGet-registry quirks (the flat-container index 404s for these ids;
+  the response carries a BOM) and the fact that Transpose's changelog history starts at the week of
+  2026-07-13 — anything earlier is h5.
+
+## The changelog
+
+`.changelog/` holds one user-facing file per week, named by the release revision it corresponds to
+(`<yy.M>/<yy.M.compilerBuild>.md`, anchored on the newest `Transpose.Compiler` build in that week),
+plus a `CurrentVersion` file carrying the current `yy.M` calendar version for the next release to
+stamp. Both are produced by the **`write-changelog`** skill — read it before writing one by hand, and
+mirror any new entry into `documentation/transpose/changelog/` so docs.curiosity.ai stays in sync.
 
 ## Conventions when editing
 
