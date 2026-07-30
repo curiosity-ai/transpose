@@ -41,10 +41,10 @@ namespace System
         [Transpose.Template("{this} === {0}")]
         public extern bool Equals(char obj);
 
-        [Transpose.Template("Transpose.isLower({0})")]
+        [Transpose.Template("Transpose.isLower({0})", Fn = "Transpose.isLower")]
         public static extern bool IsLower(char s);
 
-        [Transpose.Template("Transpose.isUpper({0})")]
+        [Transpose.Template("Transpose.isUpper({0})", Fn = "Transpose.isUpper")]
         public static extern bool IsUpper(char s);
 
         /// <summary>
