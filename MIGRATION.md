@@ -110,6 +110,27 @@ the same (`output`, `fileName`, `html`, `reflection`, `resources`,
 A per-configuration overlay is supported: `tps.Release.json` (or
 `tps.<Configuration>.json`) is merged on top of `tps.json` for that build.
 
+### Resources you load yourself
+
+h5 marked a resource that must be copied but *not* referenced from `index.html`
+by suffixing its name: `"name": "lazy-module.js.dontload"`. Transpose still
+honours that suffix, and adds a plain flag on the group — use whichever you
+prefer (either one alone suppresses the injection):
+
+```jsonc
+{
+    "resources": [
+        { "name": "lazy-module.js", "files": [ "tps/assets/js/lazy-module.js" ], "load": false },
+        { "name": "theme-dark.css", "files": [ "tps/assets/css/dark.css" ],      "load": false }
+    ]
+}
+```
+
+It applies to every resource kind the generated HTML can load — scripts and
+stylesheets — and it survives packaging: the flag is recorded in the resource
+manifest embedded in the package DLL, so a project referencing the library
+extracts the file without auto-loading it either.
+
 ### Cleaning the output folder
 
 h5's `cleanOutputFolderBeforeBuild` / `cleanOutputFolderBeforeBuildPattern`

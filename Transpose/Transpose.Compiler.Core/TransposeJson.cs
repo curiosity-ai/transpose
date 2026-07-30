@@ -87,6 +87,20 @@ internal sealed class TransposeJson
         public string? Name { get; init; }
         public List<string> Files { get; init; } = new();
         public string? Output { get; init; }
+
+        /// <summary>
+        /// <c>load</c> — whether the resource is referenced from the generated <c>index.html</c>
+        /// (a <c>&lt;script&gt;</c> for JavaScript, a <c>&lt;link rel=stylesheet&gt;</c> for CSS).
+        /// Defaults to <c>true</c>. <c>false</c> still copies the resource into the output — and
+        /// still embeds it into a package DLL, flagged so a *referencing* project doesn't inject it
+        /// either — but leaves loading it to the application (a lazily fetched module, a stylesheet
+        /// swapped in at runtime, …).
+        ///
+        /// The declarative form of the legacy <c>.dontload</c> name suffix, which is still honoured;
+        /// the two combine, so either one alone suppresses the injection
+        /// (see <c>OutputBuilder.ResolveResource</c>).
+        /// </summary>
+        public bool Load { get; init; } = true;
     }
 
     /// <summary>
@@ -201,7 +215,13 @@ internal sealed class TransposeJson
                 var files = new List<string>();
                 if (g.TryGetProperty("files", out var fs) && fs.ValueKind == JsonValueKind.Array)
                     files.AddRange(fs.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!));
-                resources.Add(new ResourceGroup { Name = Str(g, "name"), Files = files, Output = Str(g, "output") });
+                resources.Add(new ResourceGroup
+                {
+                    Name = Str(g, "name"),
+                    Files = files,
+                    Output = Str(g, "output"),
+                    Load = Bool(g, "load") ?? true,   // absent → loaded from index.html
+                });
             }
         }
 
