@@ -65,4 +65,101 @@ public sealed class JsMinifierTests
         Assert.IsFalse(min.Contains(")??!1}") || min.Contains(")??!1;"),
             $"minifier produced a bare `??` operand of `&&`: {min}");
     }
+
+    // ---------------------------------------------------------------------------------------------
+    // Block scoping: a `let` must never be moved into a narrower scope than it was emitted in.
+    //
+    // NUglify's InvertIfReturn / InvertIfContinue rewrite a guard clause by moving every following
+    // statement into a NEW block (`if (c) return; rest…` -> `if (!c) { rest… }`). A `let` among
+    // `rest…` then becomes block-scoped to that new block, and a closure emitted BEFORE the guard —
+    // which is exactly where a hoisted C# local function lands — loses the binding. The failure is
+    // `ReferenceError: <name> is not defined`, only ever in a minified bundle.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// The reported Tesserae case, reduced to the JavaScript the emitter actually produces for
+    /// <c>Router.Navigate</c>: the hoisted local function <c>ExecuteTheNavigation</c> is a
+    /// <c>var</c> arrow at the top of the method, and the <c>let</c> it captures is declared after a
+    /// guard clause. Minification must not separate the two.
+    /// </summary>
+    [TestMethod]
+    public void HoistedLocalFunctionKeepsAccessToALetDeclaredAfterAGuardClause()
+    {
+        var source = """
+            function Navigate(path, reload) {
+                var ExecuteTheNavigation = () => {
+                    if (!windowLocationSaysAlreadyThere) { go(path); return; }
+                    locationChanged(reload);
+                };
+                if (onWillNavigate != null) {
+                    if (!onWillNavigate(path)) { return; }
+                }
+                let windowLocationSaysAlreadyThere = alreadyThere(path);
+                if (reload) { ExecuteTheNavigation(); return; }
+                if (windowLocationSaysAlreadyThere) { return; }
+                ExecuteTheNavigation();
+            }
+            """;
+
+        var min = JsMinifier.Minify(source, "app.js");
+
+        AssertLetIsNotNestedDeeperThanTheClosureCapturingIt(min, "windowLocationSaysAlreadyThere");
+    }
+
+    /// <summary>
+    /// The same defect via <c>InvertIfContinue</c>: the guard is a `continue` in a loop body, and the
+    /// captured local must stay `let` (a loop body needs a fresh per-iteration binding, so it cannot
+    /// simply be emitted as `var`).
+    /// </summary>
+    [TestMethod]
+    public void HoistedLocalFunctionKeepsAccessToALetDeclaredAfterAContinueGuard()
+    {
+        var source = """
+            function Loop(items) {
+                for (var i = 0; i < items.length; i++) {
+                    var H = () => { use(doubled); };
+                    if (i === 1) { continue; }
+                    let doubled = i * 2;
+                    H();
+                }
+            }
+            """;
+
+        var min = JsMinifier.Minify(source, "app.js");
+
+        AssertLetIsNotNestedDeeperThanTheClosureCapturingIt(min, "doubled");
+    }
+
+    /// <summary>
+    /// Asserts that the minified output does not open a brace between the closure that reads
+    /// <paramref name="name"/> and the <c>let</c> that declares it — i.e. the declaration was not
+    /// pushed into a block the closure sits outside of. Brace-depth comparison rather than a literal
+    /// match, so the test keeps working as other (sound) transforms reshape the output.
+    /// </summary>
+    private static void AssertLetIsNotNestedDeeperThanTheClosureCapturingIt(string min, string name)
+    {
+        var declaration = min.IndexOf("let " + name, StringComparison.Ordinal);
+        Assert.IsTrue(declaration >= 0, $"expected a `let {name}` declaration to survive: {min}");
+
+        // The closure's own body is one brace level deeper than where it is declared, so measure the
+        // depth at the arrow's `=>` (the declaration site of the closure) rather than inside it.
+        var closure = min.IndexOf("=>", StringComparison.Ordinal);
+        Assert.IsTrue(closure >= 0 && closure < declaration,
+            $"expected the capturing closure to be emitted before the declaration: {min}");
+
+        Assert.IsTrue(BraceDepth(min, declaration) <= BraceDepth(min, closure),
+            $"minifier moved `let {name}` into a block nested deeper than the closure that captures " +
+            $"it — the closure will throw `ReferenceError: {name} is not defined`: {min}");
+    }
+
+    private static int BraceDepth(string s, int index)
+    {
+        var depth = 0;
+        for (var i = 0; i < index; i++)
+        {
+            if (s[i] == '{') depth++;
+            else if (s[i] == '}') depth--;
+        }
+        return depth;
+    }
 }

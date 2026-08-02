@@ -401,6 +401,21 @@ The short version:
   `index.html` (formatted) and `index.min.html` (minified) and collapses them per build configuration
   (Release keeps the minified one as `index.html`, Debug the formatted one) — a port of the legacy
   `HtmlGenerator`. **Source maps** for the emitted bundle are still remaining.
+
+  Two NUglify transforms are switched off through `CodeSettings.KillSwitch` because they are unsound
+  for the JavaScript we emit, and `JsMinifierTests` guards both. Besides the `??`-under-`&&` collapse
+  above, **`InvertIfReturn`/`InvertIfContinue`** rewrite a guard clause by moving every following
+  statement into a *new* block (`if (c) return; rest…` → `if (!c) { rest… }`). That is fine for `var`
+  and wrong for `let`: we emit locals as `let` (`LocalDeclKeyword`) and hoist a C# local function to
+  the top of its block as a `var f = () => …` (it must be callable before its textual position), so
+  the closure ends up *before* the guard and the `let` it captures ends up *after* it — the
+  declaration is swept into the new block and the closure throws
+  `ReferenceError: <name> is not defined`. Disabling both costs ~0.03% of bundle size.
+
+  The lesson is more general than the two flags: **a minification bug is invisible to the test
+  suite**, which runs the *formatted* output on Node — that output was valid JavaScript in both
+  cases. Only `JsMinifierTests` exercises the minified form, so a bug reported against a
+  `*.min.js` belongs there.
 - **Value-copy semantics are scoped to in-source structs.** A struct copy (assignment, by-value
   argument/return, array fill, boxing, a collection insert, `with`) clones the value — including,
   since `StructAndClassInitializerTests`, its struct-typed slots recursively — but only for a struct
