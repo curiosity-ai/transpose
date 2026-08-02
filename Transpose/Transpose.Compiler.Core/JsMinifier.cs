@@ -35,6 +35,36 @@ internal static class JsMinifier
     // source, and keeping `if (cond) stmt;` intact costs negligible size.
     private const long KillIfConditionCollapse = (long)TreeModifications.IfConditionCallToConditionAndCall;
 
+    // NUglify's early-exit inversions are unsound for `let`/`const`. Both rewrite a guard clause by
+    // moving every statement that follows it into a NEW block:
+    //
+    //   InvertIfReturn:    if (c) return;   rest…   ->   if (!c) { rest… }
+    //   InvertIfContinue:  if (c) continue; rest…   ->   if (!c) { rest… }
+    //
+    // That is a valid transform for `var` (function-scoped, so moving the declaration into a block
+    // changes nothing), and WRONG for a block-scoped declaration: a `let` among `rest…` becomes
+    // scoped to the new block, so any closure created *before* the guard that captures it silently
+    // loses the binding and throws `ReferenceError: <name> is not defined` at runtime.
+    //
+    // We emit exactly that shape. A C# local function is hoisted (callable before its textual
+    // position), so `EmitLocalFunction` emits it as a `var f = () => …` at the TOP of the block,
+    // ahead of the `let` locals it captures — which are declared further down, after any guard
+    // clause. Tesserae's `Router.Navigate` is the reported case:
+    //
+    //   var ExecuteTheNavigation = () => { if (!windowLocationSaysAlreadyThere) … };
+    //   if (…) { if (!_onWillNavigate(path)) return; }
+    //   let windowLocationSaysAlreadyThere = …;         // <- swept into the inverted if's block
+    //
+    // The bug only ever appears in a MINIFIED bundle (Release), which is why the Node-based test
+    // suite — which runs the formatted output, and that output is correct JavaScript — cannot see it.
+    // Disabling both inversions costs ~0.03% of bundle size (335 bytes on the 1.2 MB minified
+    // runtime), so there is nothing to trade off here.
+    private const long KillBlockScopeUnsafeInversions =
+        (long)(TreeModifications.InvertIfReturn | TreeModifications.InvertIfContinue);
+
+    // Everything the settings profiles below switch off.
+    private const long KillSwitches = KillIfConditionCollapse | KillBlockScopeUnsafeInversions;
+
     // Safe profile: never rename locals, terminate statements with semicolons, escape non-ASCII.
     private static CodeSettings Safe() => new()
     {
@@ -44,7 +74,7 @@ internal static class JsMinifier
         StrictMode           = false,
         RemoveUnneededCode   = false,
         AlwaysEscapeNonAscii = true,
-        KillSwitch           = KillIfConditionCollapse,
+        KillSwitch           = KillSwitches,
     };
 
     // Safe profile but crunch local variable names (smaller output; opted into per project).
@@ -56,7 +86,7 @@ internal static class JsMinifier
         StrictMode           = false,
         RemoveUnneededCode   = false,
         AlwaysEscapeNonAscii = true,
-        KillSwitch           = KillIfConditionCollapse,
+        KillSwitch           = KillSwitches,
     };
 
     // Runtime-core profile (tps.js, …): as safe but without the eval/local-renaming overrides.
@@ -66,7 +96,7 @@ internal static class JsMinifier
         StrictMode           = false,
         RemoveUnneededCode   = false,
         AlwaysEscapeNonAscii = true,
-        KillSwitch           = KillIfConditionCollapse,
+        KillSwitch           = KillSwitches,
     };
 
     /// <summary>
