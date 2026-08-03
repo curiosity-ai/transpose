@@ -51,6 +51,7 @@ Transpose/                     # The compiler toolchain
 │   ├── RuntimeAssembler.cs    #   stitches Resources/*.js + generated ClassPath files into tps.js
 │   ├── BuildCache.cs          #   the --incremental on-disk cache
 │   ├── JsMinifier.cs          #   NUglify-based bundle minification
+│   ├── CssProcessor.cs        #   strips /* … */ comments from every stylesheet (site + embedded)
 │   ├── TransposeJson.cs       #   reads tps.json (output/fileName/html/resources/reflection)
 │   └── MsBuildDiagnostic.cs   #   canonical MSBuild diagnostic formatting (Origin : Category Code : Text)
 ├── Transpose.Compiler.Library/# Compiler-as-a-library. Package id + AssemblyName Transpose.Compiler.Library
