@@ -17,6 +17,11 @@ namespace Transpose.Compiler;
 /// (Release keeps the minified one, Debug the formatted one). tps.json resource files are taken as
 /// authored (never re-minified) — a project ships both a <c>foo.js</c> and a <c>foo.min.js</c> group
 /// when it wants both variants, exactly as before.
+///
+/// Stylesheets are the one resource kind that is not copied through verbatim: every CSS file this
+/// build writes — from a resource group, or extracted from a referenced package — has its comments
+/// stripped by <see cref="CssProcessor"/>, as does every stylesheet embedded into a package DLL by
+/// <see cref="CollectEmbeddableItems"/>. Nothing else about it changes; it is not minified.
 /// </summary>
 internal static class OutputBuilder
 {
@@ -196,7 +201,8 @@ internal static class OutputBuilder
         //    first (a library's JS deps load before the app that uses them). A resource group
         //    whose name is a .js/.css file concatenates its files into that one bundle; other
         //    groups (globbed images, etc.) copy each file through. Resource JS is taken as authored:
-        //    a .js group routes to index.html, a .min.js group to index.min.html.
+        //    a .js group routes to index.html, a .min.js group to index.min.html. Resource CSS is
+        //    taken as authored too, minus its comments (CssProcessor).
         foreach (var projectDir in Enumerable.Reverse(project.ProjectDirs))
         {
             var cfg = projectDir == project.ProjectDir ? config : TransposeJson.TryLoad(projectDir, configuration);
@@ -286,6 +292,11 @@ internal static class OutputBuilder
 
             var isBundle = name.EndsWith(".js", StringComparison.OrdinalIgnoreCase)
                            || name.EndsWith(".css", StringComparison.OrdinalIgnoreCase);
+            // A stylesheet is comment-stripped before it is embedded, exactly as the site build strips
+            // it before writing it to disk (WriteResource) — the two paths must produce the same bytes,
+            // since a consuming project extracts what is embedded here.
+            var css = IsCss(name);
+
             if (isBundle)
             {
                 // Resolve each declared file to text, mapping a self-reference to the in-memory bundle.
@@ -294,7 +305,7 @@ internal static class OutputBuilder
                 {
                     var self = SelfText(Path.GetFileName(raw.Replace('\\', '/')));
                     if (self is not null) texts.Add(self);
-                    else texts.AddRange(ExpandGlob(projectDir, raw).Select(File.ReadAllText));
+                    else texts.AddRange(ExpandGlob(projectDir, raw).Select(f => ReadResourceText(f, css)));
                 }
                 if (texts.Count == 0) continue;
                 items.Add(new EmbeddedItem(name, utf8.GetBytes(string.Join("\n", texts)), destSub, load));
@@ -305,7 +316,11 @@ internal static class OutputBuilder
                 var files = group.Files.SelectMany(p => ExpandGlob(projectDir, p)).ToList();
                 if (files.Count == 0) continue;
                 foreach (var src in files)
-                    items.Add(new EmbeddedItem(Path.GetFileName(src), File.ReadAllBytes(src), destSub, load));
+                {
+                    var content = File.ReadAllBytes(src);
+                    if (IsCss(src)) content = CssProcessor.StripComments(content);
+                    items.Add(new EmbeddedItem(Path.GetFileName(src), content, destSub, load));
+                }
             }
         }
 
@@ -449,16 +464,40 @@ internal static class OutputBuilder
             else
             {
                 // CSS and copy-through resources (images, fonts): write to disk now.
-                var dest = Path.Combine(outputDir, rel.Replace('/', Path.DirectorySeparatorChar));
-                Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-                using (var s = asm.Open(resName))
-                using (var fs = File.Create(dest))
-                    s.CopyTo(fs);
-                written.Add(Path.GetFullPath(dest));
-                if (load && rel.EndsWith(".css", StringComparison.OrdinalIgnoreCase)) cssLinks.Add(rel);
+                ExtractResourceFile(asm, resName, outputDir, rel, written);
+                if (load && IsCss(rel)) cssLinks.Add(rel);
             }
         }
         return jsFiles;
+    }
+
+    /// <summary>
+    /// Writes one non-JavaScript embedded resource to the site: the raw bytes, so a binary asset (a
+    /// font, an image) stays intact, except for a stylesheet, which goes through
+    /// <see cref="CssProcessor"/> on the way out. A package built by an older compiler still carries
+    /// its comments, so the strip happens on extraction and not only on the embed side.
+    /// </summary>
+    private static void ExtractResourceFile(
+        AssemblyResources asm, string resourceName, string outputDir, string rel, HashSet<string> written)
+    {
+        var dest = Path.Combine(outputDir, rel.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+
+        using (var s = asm.Open(resourceName))
+        {
+            if (IsCss(rel))
+            {
+                using var buffer = new MemoryStream();
+                s.CopyTo(buffer);
+                File.WriteAllBytes(dest, CssProcessor.StripComments(buffer.ToArray()));
+            }
+            else
+            {
+                using var fs = File.Create(dest);
+                s.CopyTo(fs);
+            }
+        }
+        written.Add(Path.GetFullPath(dest));
     }
 
     /// <summary>
@@ -608,16 +647,29 @@ internal static class OutputBuilder
     }
 
     /// <summary>Writes one resource-group output: a bundle group's files joined with newlines, or a
-    /// single file copied through byte for byte. <paramref name="written"/> is null for a CSS-only
-    /// rebuild, which rewrites files the last full build already recorded in its manifest.</summary>
+    /// single file copied through byte for byte. A stylesheet goes through <see cref="CssProcessor"/>
+    /// first, so no authoring comment reaches the site — bundled or copied through alike, and per
+    /// source file so an unterminated comment in one cannot swallow the next.
+    /// <paramref name="written"/> is null for a CSS-only rebuild, which rewrites files the last full
+    /// build already recorded in its manifest.</summary>
     private static void WriteResource(
         string outputDir, string rel, IReadOnlyList<string> sources, bool concatenate, HashSet<string>? written)
     {
         var dest = Path.Combine(outputDir, rel.Replace('/', Path.DirectorySeparatorChar));
         Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-        if (concatenate) File.WriteAllText(dest, string.Join("\n", sources.Select(File.ReadAllText)));
+        var css = IsCss(rel);
+        if (concatenate)
+            File.WriteAllText(dest, string.Join("\n", sources.Select(s => ReadResourceText(s, css))));
+        else if (css) File.WriteAllBytes(dest, CssProcessor.StripComments(File.ReadAllBytes(sources[0])));
         else File.Copy(sources[0], dest, overwrite: true);
         written?.Add(Path.GetFullPath(dest));
+    }
+
+    /// <summary>One bundle member's text, comment-stripped when it is a stylesheet.</summary>
+    private static string ReadResourceText(string path, bool css)
+    {
+        var text = File.ReadAllText(path);
+        return css ? CssProcessor.StripComments(text) : text;
     }
 
     /// <summary>
@@ -802,12 +854,7 @@ internal static class OutputBuilder
             {
                 // CSS and copy-through resources (fonts, images): copy the raw bytes to disk so binary
                 // assets stay intact, and link stylesheets. These must never reach the JS minifier.
-                var dest = Path.Combine(outputDir, rel.Replace('/', Path.DirectorySeparatorChar));
-                Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-                using (var s = asm.Open(resName))
-                using (var fs = File.Create(dest))
-                    s.CopyTo(fs);
-                written.Add(Path.GetFullPath(dest));
+                ExtractResourceFile(asm, resName, outputDir, rel, written);
                 if (load && IsCss(rel)) cssLinks.Add(rel);
             }
         }
