@@ -598,8 +598,21 @@ public sealed partial class Emitter
 
     // ---- shared helpers ----------------------------------------------------
 
+    /// <summary>
+    /// An <c>extern</c> property — its accessors are bodyless, but the implementation lives outside
+    /// the compilation (a <c>[Template]</c>/<c>[Script]</c> applied at the call site), so C# gives it
+    /// no backing field and there is no accessor body to emit.
+    /// </summary>
+    internal static bool IsExternProperty(IPropertySymbol prop)
+        => prop.IsExtern || prop.GetMethod is { IsExtern: true } || prop.SetMethod is { IsExtern: true };
+
     internal static bool IsAutoProperty(IPropertySymbol prop)
     {
+        // Not an auto-property: treating one as such invented a phantom backing field that then leaked
+        // into the struct's default value, $clone, equals and getHashCode (e.g. LanguageDTO, whose
+        // runtime value IS its JS string).
+        if (IsExternProperty(prop)) return false;
+
         foreach (var reference in prop.DeclaringSyntaxReferences)
         {
             if (reference.GetSyntax() is PropertyDeclarationSyntax decl)
