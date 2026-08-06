@@ -37,7 +37,7 @@ public sealed partial class Emitter
             .Where(m => m.IsStatic && !m.IsImplicitlyDeclared && IsEmittableMethod(m) && !IsEntryPoint(m))
             .ToList();
         var staticProps = type.GetMembers().OfType<IPropertySymbol>()
-            .Where(p => p.IsStatic && !p.IsAbstract && !IsAutoProperty(p) && !p.IsIndexer)
+            .Where(p => p.IsStatic && !p.IsAbstract && !IsAutoProperty(p) && !IsExternProperty(p) && !p.IsIndexer)
             .ToList();
 
         var sections = new List<Action>();
@@ -813,6 +813,7 @@ public sealed partial class Emitter
             // every level sharing one slot.
             .Where(p => !p.IsStatic && !p.IsAbstract && !p.IsIndexer
                         && (!IsAutoProperty(p) || IsFieldBackedProperty(p))
+                        && !IsExternProperty(p)
                         && !p.IsImplicitlyDeclared
                         && p.DeclaringSyntaxReferences.Length > 0
                         && p.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() is PropertyDeclarationSyntax)

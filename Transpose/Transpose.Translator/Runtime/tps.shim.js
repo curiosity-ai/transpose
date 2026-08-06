@@ -97,6 +97,12 @@
     };
     TransposeR.clone = function (o) {
         if (!o) { return o; }
+        // A struct whose members are all [Template]/[Script] IS its JS value at runtime — a bare
+        // string, number or boolean (e.g. a language code, a UID). Copying it by value is the identity;
+        // the Object.assign path below would wrap it in a String/Number object, whose typeof is
+        // "object" and which JSON.stringify writes out as {"0":"d","1":"e"}. Functions (a delegate
+        // value) are likewise copied by reference.
+        if (typeof o !== 'object') { return o; }
         if (o.$clone) { return o.$clone(); }
         // A DateTime is backed by a native Date; Object.assign onto Object.create(Date.prototype)
         // would drop the internal [[DateValue]] (d.getTime() then throws). Copy it as a real Date,

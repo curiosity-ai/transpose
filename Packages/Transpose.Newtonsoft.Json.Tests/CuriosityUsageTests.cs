@@ -11,6 +11,8 @@ namespace Transpose.Newtonsoft.Json.Tests;
 ///   <item><c>LocalStorage.Get&lt;T&gt;</c> — deserialization behind a generic type parameter;</item>
 ///   <item>a UID128-style value type that is a plain string at runtime and converts through an
 ///     explicit cast operator;</item>
+///   <item>a LanguageDTO-style struct that IS its code string at runtime, reached only through
+///     <c>[Template]</c> members and an implicit conversion from an enum;</item>
 ///   <item>a server payload whose members are short <c>[JsonProperty]</c> names on internal members;</item>
 ///   <item>polymorphic renderer definitions (in <see cref="TypeNameHandlingTests"/>).</item>
 /// </list>
@@ -594,5 +596,112 @@ public class App
     }
 }";
         await RunAndCompare(code);
+    }
+
+    /// <summary>
+    /// The <c>LanguageDTO</c> pattern: the server exchanges a language as its code string ("de"), and
+    /// this library has no custom-converter support, so the front-end models it as a struct whose
+    /// runtime value IS that string — produced by an <c>implicit operator LanguageDTO(Language)</c> and
+    /// read back through <c>[Template]</c> members. What made this worth pinning is that the conversion
+    /// was NOT applied inside an object initializer, so `new Request { Language = someEnum }` stored the
+    /// enum's number and the request went out as <c>{"Language":42}</c>.
+    ///
+    /// JS-only: <c>[Template]</c> and <c>Script.Write</c> have no native equivalent to diff against.
+    /// </summary>
+    [TestMethod]
+    public async Task StringBackedLanguageDtoRoundTrips()
+    {
+        var code = @"
+using System;
+using Transpose;
+using Newtonsoft.Json;
+
+public enum Language { Abkhazian, English, German, Any }
+
+public static class Languages
+{
+    public static string EnumToCode(Language input)
+    {
+        switch (input)
+        {
+            case Language.English: return ""en"";
+            case Language.German:  return ""de"";
+            default:               return ""--"";
+        }
+    }
+
+    public static Language CodeToEnum(string input)
+    {
+        switch (input)
+        {
+            case ""en"": return Language.English;
+            case ""de"": return Language.German;
+            default:   return Language.Any;
+        }
+    }
+}
+
+public struct LanguageDTO : IEquatable<LanguageDTO>
+{
+    [Template(""LanguageDTO.Normalize({value})"")]
+    public extern LanguageDTO(string value);
+
+    public static implicit operator LanguageDTO(Language value) => new LanguageDTO(Languages.EnumToCode(value));
+    public static implicit operator Language(LanguageDTO value) => Languages.CodeToEnum(CodeOf(value));
+
+    // Load-bearing for deserialization: the binding finds this cast to land a bare JSON string here.
+    public static explicit operator LanguageDTO(string languageCode) => new LanguageDTO(languageCode);
+
+    public static bool operator ==(LanguageDTO x, LanguageDTO y) => CodeOf(x) == CodeOf(y);
+    public static bool operator !=(LanguageDTO x, LanguageDTO y) => CodeOf(x) != CodeOf(y);
+
+    public bool Equals(LanguageDTO other) => this == other;
+
+    [Template(""{this} === {o}"")]
+    public extern override bool Equals(object o);
+
+    [Template(""Transpose.getHashCode(LanguageDTO.CodeOf({this}))"")]
+    public extern override int GetHashCode();
+
+    private static string CodeOf(LanguageDTO value)
+        => Script.Write<string>(""(typeof {0} === \""string\"" ? {0} : null)"", value) ?? Languages.EnumToCode(Language.Any);
+
+    private static string Normalize(string code) => Languages.EnumToCode(Languages.CodeToEnum(code));
+}
+
+public sealed class Request
+{
+    public string      NodeType { get; set; }
+    public LanguageDTO Language { get; set; }
+}
+
+public class App
+{
+    public static void Main()
+    {
+        var request = new Request { NodeType = ""Person"", Language = Language.German };
+        Console.WriteLine(JsonConvert.SerializeObject(request));
+
+        var back = JsonConvert.DeserializeObject<Request>(""{\""NodeType\"":\""Person\"",\""Language\"":\""en\""}"");
+        Console.WriteLine(Script.Write<string>(""typeof {0}"", back.Language));
+        Console.WriteLine((Language)back.Language);
+        Console.WriteLine(JsonConvert.SerializeObject(back));
+
+        // A copy of the value must stay the bare string, not a String wrapper object.
+        var copy = back.Language;
+        Console.WriteLine(Script.Write<string>(""JSON.stringify({0})"", copy));
+
+        // A never-assigned value has no code string behind it; it reads as Any rather than throwing.
+        Console.WriteLine((Language)new Request().Language);
+    }
+}";
+        await RunJs(code, """
+{"Language":"de","NodeType":"Person"}
+string
+English
+{"Language":"en","NodeType":"Person"}
+"en"
+Any
+""");
     }
 }

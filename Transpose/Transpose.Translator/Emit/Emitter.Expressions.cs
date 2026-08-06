@@ -775,7 +775,7 @@ public sealed partial class Emitter
     /// <summary>True when a property is emitted as a real accessor pair (a <c>props:</c> entry) rather
     /// than as a plain slot named after it — the same rule <c>EmitInstanceProperties</c> applies.</summary>
     private static bool HasEmittedAccessors(IPropertySymbol prop)
-        => !prop.IsIndexer && (!IsAutoProperty(prop) || IsFieldBackedProperty(prop));
+        => !prop.IsIndexer && !IsExternProperty(prop) && (!IsAutoProperty(prop) || IsFieldBackedProperty(prop));
 
     /// <summary>
     /// Maps a member's generic type-parameter names to the type arguments bound at the call

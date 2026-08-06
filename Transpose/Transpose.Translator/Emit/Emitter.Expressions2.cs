@@ -1291,7 +1291,7 @@ public sealed partial class Emitter
                     var memberSym = _model.GetSymbolInfo(name).Symbol;
                     var memberName = memberSym is not null ? TransposeNaming.MemberJsName(memberSym) : NameMangler.JsIdentifier(name.Identifier.Text);
                     _w.Write($"{target}.{memberName} = ");
-                    EmitExpression(assign.Right);
+                    EmitExpressionConverted(assign.Right, MemberValueType(memberSym));
                     _w.Write("; ");
                     break;
                 // Index initializer: [key] = value
@@ -1299,36 +1299,56 @@ public sealed partial class Emitter
                     _w.Write($"{target}.setItem(");
                     EmitArgumentList(idx.ArgumentList);
                     _w.Write(", ");
-                    EmitExpression(assign.Right);
+                    EmitExpressionConverted(assign.Right, (_model.GetSymbolInfo(idx).Symbol as IPropertySymbol)?.Type);
                     _w.Write("); ");
                     break;
                 // Collection element with multiple values: { k, v }  (e.g. dictionary)
                 case InitializerExpressionSyntax nested:
-                    _w.Write($"{target}.{AddMethodName(nested)}(");
+                    var nestedAdd = AddMethod(nested);
+                    _w.Write($"{target}.{AddMethodName(nestedAdd)}(");
                     for (var i = 0; i < nested.Expressions.Count; i++)
                     {
                         if (i > 0) _w.Write(", ");
-                        EmitExpression(nested.Expressions[i]);
+                        EmitExpressionConverted(nested.Expressions[i], AddParameterType(nestedAdd, i));
                     }
                     _w.Write("); ");
                     break;
                 // Collection element: single value
                 default:
-                    _w.Write($"{target}.{AddMethodName(expr)}(");
-                    EmitExpression(expr);
+                    var add = AddMethod(expr);
+                    _w.Write($"{target}.{AddMethodName(add)}(");
+                    EmitExpressionConverted(expr, AddParameterType(add, 0));
                     _w.Write("); ");
                     break;
             }
         }
     }
 
+    /// <summary>Resolves the Add method a collection initializer element binds to, or null.</summary>
+    private IMethodSymbol? AddMethod(ExpressionSyntax element)
+        => _model.GetCollectionInitializerSymbolInfo(element).Symbol as IMethodSymbol;
+
     /// <summary>Resolves the JS name of the Add method a collection initializer element binds to.</summary>
-    private string AddMethodName(ExpressionSyntax element)
+    private static string AddMethodName(IMethodSymbol? add)
+        => add is not null ? TransposeNaming.MemberJsName(add) : "add";
+
+    /// <summary>The declared type of the Add parameter an initializer element is passed to, or null.</summary>
+    private static ITypeSymbol? AddParameterType(IMethodSymbol? add, int index)
     {
-        if (_model.GetCollectionInitializerSymbolInfo(element).Symbol is IMethodSymbol add)
-            return TransposeNaming.MemberJsName(add);
-        return "add";
+        if (add is null) return null;
+        // An extension `Add` bound in its UNreduced form carries the receiver as parameter 0.
+        if (add is { IsExtensionMethod: true, ReducedFrom: null }) index++;
+        return index < add.Parameters.Length ? add.Parameters[index].Type : null;
     }
+
+    /// <summary>The value type of an object-initializer member (`X = value`), or null.</summary>
+    private static ITypeSymbol? MemberValueType(ISymbol? member) => member switch
+    {
+        IPropertySymbol p => p.Type,
+        IFieldSymbol f    => f.Type,
+        IEventSymbol e    => e.Type,
+        _                 => null,
+    };
 
     // ---- tuples ------------------------------------------------------------
 
