@@ -671,7 +671,20 @@ internal static class TransposeNaming
                 if (GetTemplate(member) is not null) continue;   // templated members apply at the call site
 
                 if (type.FindImplementationForInterfaceMember(member) is not { } impl) continue;
-                if (!SymbolEqualityComparer.Default.Equals(impl.ContainingType, type)) continue; // declared here
+                if (!SymbolEqualityComparer.Default.Equals(impl.ContainingType, type))
+                {
+                    // The implementation is inherited. Roslyn always names the member that *fills the
+                    // interface slot* (the base declaration), never a derived override — so this is
+                    // also the case where `type` overrides it. An alias is a hard binding: the base
+                    // installed its own function on the mangled slot of the base prototype, and the
+                    // derived prototype's plain-slot override does not displace it. So republish the
+                    // alias here whenever this type overrides the inherited implementation, or a call
+                    // through the interface keeps reaching the base. A genuinely inherited (not
+                    // overridden) implementation needs nothing — the base's alias is reached through
+                    // the prototype chain.
+                    if (OverrideDeclaredIn(type, impl) is not { } overrider) continue;
+                    impl = overrider;
+                }
 
                 var isExplicit = ExplicitlyImplementedMember(impl) is not null;
 
@@ -702,6 +715,34 @@ internal static class TransposeNaming
         }
         return pairs;
     }
+
+    /// <summary>
+    /// The member <paramref name="type"/> itself declares that overrides <paramref name="inherited"/>
+    /// (directly or through intermediate overrides), or null when it declares none.
+    /// </summary>
+    private static ISymbol? OverrideDeclaredIn(INamedTypeSymbol type, ISymbol inherited)
+    {
+        foreach (var candidate in type.GetMembers(inherited.Name))
+        {
+            if (!candidate.IsOverride) continue;
+
+            for (var overridden = OverriddenMember(candidate); overridden is not null; overridden = OverriddenMember(overridden))
+            {
+                if (SymbolEqualityComparer.Default.Equals(overridden.OriginalDefinition, inherited.OriginalDefinition))
+                    return candidate;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>The member a symbol directly overrides, or null.</summary>
+    private static ISymbol? OverriddenMember(ISymbol symbol) => symbol switch
+    {
+        IMethodSymbol m => m.OverriddenMethod,
+        IPropertySymbol p => p.OverriddenProperty,
+        IEventSymbol e => e.OverriddenEvent,
+        _ => null,
+    };
 
     /// <summary>A user-defined (source) interface — its members are dispatched via mangled
     /// interface slots; BCL interfaces resolve through their implementers' plain names.</summary>
