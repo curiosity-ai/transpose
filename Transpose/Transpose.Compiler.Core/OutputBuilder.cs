@@ -305,21 +305,27 @@ internal static class OutputBuilder
                 {
                     var self = SelfText(Path.GetFileName(raw.Replace('\\', '/')));
                     if (self is not null) texts.Add(self);
-                    else texts.AddRange(ExpandGlob(projectDir, raw).Select(f => ReadResourceText(f, css)));
+                    else texts.AddRange(ExpandGlob(projectDir, raw).Select(m => ReadResourceText(m.FullPath, css)));
                 }
                 if (texts.Count == 0) continue;
                 items.Add(new EmbeddedItem(name, utf8.GetBytes(string.Join("\n", texts)), destSub, load));
             }
             else
             {
-                // Copy-through group (images, fonts): embed each file under its own name.
-                var files = group.Files.SelectMany(p => ExpandGlob(projectDir, p)).ToList();
-                if (files.Count == 0) continue;
-                foreach (var src in files)
+                // Copy-through group (images, fonts): embed each file under its own name, keyed and
+                // placed by the sub-directory a recursive glob found it in so the group's folder
+                // layout is reproduced on the consumer's side.
+                var matches = group.Files.SelectMany(p => ExpandGlob(projectDir, p)).ToList();
+                if (matches.Count == 0) continue;
+                foreach (var m in matches)
                 {
-                    var content = File.ReadAllBytes(src);
-                    if (IsCss(src)) content = CssProcessor.StripComments(content);
-                    items.Add(new EmbeddedItem(Path.GetFileName(src), content, destSub, load));
+                    var content = File.ReadAllBytes(m.FullPath);
+                    if (IsCss(m.FullPath)) content = CssProcessor.StripComments(content);
+                    items.Add(new EmbeddedItem(
+                        ResourceKey(m.RelativeDir, Path.GetFileName(m.FullPath)),
+                        content,
+                        JoinOutput(destSub, m.RelativeDir),
+                        load));
                 }
             }
         }
@@ -444,8 +450,11 @@ internal static class OutputBuilder
                 .ToList();
         }
 
+        // The entry's Path already carries the sub-directory a recursive glob matched under, so the
+        // name contributes only its leaf — same split as ExtractEmbeddedJs, which is what keeps a
+        // package DLL and a project DLL extracting one resource to the same place.
         string Rel(string fileName, string? path)
-            => string.IsNullOrEmpty(path) ? fileName : path!.Replace('\\', '/').TrimEnd('/') + "/" + fileName;
+            => string.IsNullOrEmpty(path) ? Path.GetFileName(fileName) : path!.Replace('\\', '/').TrimEnd('/') + "/" + Path.GetFileName(fileName);
 
         foreach (var (fileName, path, load) in entries)
         {
@@ -459,7 +468,7 @@ internal static class OutputBuilder
             {
                 using var s = asm.Open(resName);
                 using var reader = new StreamReader(s);
-                jsFiles.Add(new EmbeddedJs(fileName, rel, reader.ReadToEnd(), load));
+                jsFiles.Add(new EmbeddedJs(Path.GetFileName(fileName), rel, reader.ReadToEnd(), load));
             }
             else
             {
@@ -628,20 +637,27 @@ internal static class OutputBuilder
     {
         var outputs = new List<(string, List<string>)>();
         var destSub = (group.Output ?? "").Replace('\\', '/').TrimEnd('/');
-        var files = group.Files.SelectMany(p => ExpandGlob(projectDir, p)).ToList();
-        if (files.Count == 0) return outputs;
+        var matches = group.Files.SelectMany(p => ExpandGlob(projectDir, p)).ToList();
+        if (matches.Count == 0) return outputs;
 
-        string Rel(string leaf) => string.IsNullOrEmpty(destSub) ? leaf : destSub + "/" + leaf;
+        string Rel(string relativeDir, string leaf)
+        {
+            var dir = JoinOutput(destSub, relativeDir);
+            return string.IsNullOrEmpty(dir) ? leaf : dir + "/" + leaf;
+        }
 
         var (name, _) = ResolveResource(group);
         if (IsBundleName(name))
         {
-            outputs.Add((Rel(name), files));
+            // A bundle group is one output whatever depth its members came from.
+            outputs.Add((Rel("", name), matches.Select(m => m.FullPath).ToList()));
         }
         else
         {
-            foreach (var src in files)
-                outputs.Add((Rel(Path.GetFileName(src)), new List<string> { src }));
+            // Copy-through: each file keeps the sub-directory a recursive glob found it in, so the
+            // site mirrors what a consumer extracting the same group from a package DLL gets.
+            foreach (var m in matches)
+                outputs.Add((Rel(m.RelativeDir, Path.GetFileName(m.FullPath)), new List<string> { m.FullPath }));
         }
         return outputs;
     }
@@ -861,17 +877,85 @@ internal static class OutputBuilder
         return jsFiles;
     }
 
-    private static IEnumerable<string> ExpandGlob(string baseDir, string pattern)
+    /// <summary>One file a <c>tps.json</c> resource glob matched: its full path on disk, and the
+    /// directory it sits in <em>relative to the fixed part of the pattern</em> — empty for a
+    /// non-recursive pattern, and e.g. <c>icons/logos</c> for <c>tps/assets/img/**</c> matching
+    /// <c>tps/assets/img/icons/logos/api.svg</c>. A copy-through group appends that to its
+    /// <c>output</c> directory, so a package's folder layout survives being embedded and extracted
+    /// (an <c>@font-face</c> src or an <c>&lt;img&gt;</c> path into a sub-folder keeps resolving).</summary>
+    private readonly record struct GlobMatch(string FullPath, string RelativeDir);
+
+    /// <summary>
+    /// Expands one resource-group <c>files</c> entry against the project directory.
+    ///
+    /// A <c>**</c> path segment recurses: <c>assets/img/**</c> matches every file below
+    /// <c>assets/img</c> at any depth, and <c>assets/img/**/*.svg</c> narrows that to a file pattern.
+    /// Without <c>**</c> a pattern stays in its own directory — <c>assets/img/*</c> matches the files
+    /// directly under <c>assets/img</c> and nothing below it — which is what every existing tps.json
+    /// means by it.
+    ///
+    /// <c>**</c> is only recognised as a whole segment, and what follows it must be a single file
+    /// pattern (<c>a/**/b/*.js</c> is not a shape any tps.json uses and matches nothing). Results are
+    /// ordered ordinally by path so a build does not inherit the file system's enumeration order.
+    /// </summary>
+    private static IEnumerable<GlobMatch> ExpandGlob(string baseDir, string pattern)
     {
         pattern = pattern.Replace('\\', '/');
-        var dir = Path.GetDirectoryName(pattern) ?? "";
-        var file = Path.GetFileName(pattern);
-        var searchDir = Path.Combine(baseDir, dir);
-        if (!Directory.Exists(searchDir)) return Enumerable.Empty<string>();
-        return file.Contains('*')
-            ? Directory.EnumerateFiles(searchDir, file, SearchOption.TopDirectoryOnly)
-            : File.Exists(Path.Combine(searchDir, file)) ? new[] { Path.Combine(searchDir, file) } : Enumerable.Empty<string>();
+
+        var recurse = pattern.Split('/').Contains("**");
+        if (!recurse)
+        {
+            var dir = Path.GetDirectoryName(pattern) ?? "";
+            var file = Path.GetFileName(pattern);
+            var searchDir = Path.Combine(baseDir, dir);
+            if (!Directory.Exists(searchDir)) return Enumerable.Empty<GlobMatch>();
+            return file.Contains('*')
+                ? Ordered(Directory.EnumerateFiles(searchDir, file, SearchOption.TopDirectoryOnly).Select(f => new GlobMatch(f, "")))
+                : File.Exists(Path.Combine(searchDir, file)) ? new[] { new GlobMatch(Path.Combine(searchDir, file), "") } : Enumerable.Empty<GlobMatch>();
+        }
+
+        var segments = pattern.Split('/');
+        var at = Array.IndexOf(segments, "**");
+        var tail = segments.Skip(at + 1).ToArray();
+        if (tail.Length > 1) return Enumerable.Empty<GlobMatch>();   // "**" followed by more directories
+
+        var root = Path.Combine(baseDir, string.Join("/", segments.Take(at)));
+        if (!Directory.Exists(root)) return Enumerable.Empty<GlobMatch>();
+
+        var filePattern = tail.Length == 0 || tail[0].Length == 0 ? "*" : tail[0];
+        var rootFull = Path.GetFullPath(root);
+
+        return Ordered(Directory.EnumerateFiles(root, filePattern, SearchOption.AllDirectories)
+            .Select(f => new GlobMatch(f, RelativeDirOf(rootFull, f))));
+
+        static string RelativeDirOf(string rootFull, string file)
+        {
+            var dir = Path.GetDirectoryName(Path.GetFullPath(file))!;
+            var rel = Path.GetRelativePath(rootFull, dir).Replace('\\', '/');
+            return rel == "." ? "" : rel;
+        }
+
+        static IEnumerable<GlobMatch> Ordered(IEnumerable<GlobMatch> matches)
+            => matches.OrderBy(m => m.FullPath.Replace('\\', '/'), StringComparer.Ordinal).ToList();
     }
+
+    /// <summary>Joins a resource group's <c>output</c> directory with the sub-directory a recursive
+    /// glob matched under; either side may be absent. Null (rather than "") when both are, so a
+    /// group without an <c>output</c> still writes <c>"Path": null</c> into the resource manifest.</summary>
+    private static string? JoinOutput(string? destSub, string relativeDir)
+    {
+        var head = (destSub ?? "").Replace('\\', '/').TrimEnd('/');
+        if (relativeDir.Length == 0) return string.IsNullOrEmpty(head) ? destSub : head;
+        return head.Length == 0 ? relativeDir : head + "/" + relativeDir;
+    }
+
+    /// <summary>The manifest key a copy-through resource is embedded under: its file name, prefixed
+    /// with the sub-directory a recursive glob found it in. Two files that share a leaf name in
+    /// different sub-folders (<c>icons/api.svg</c> and <c>icons/logos/api.svg</c>) must not collapse
+    /// onto one manifest entry — the manifest is keyed by name, and <see cref="ResourceEmbedder"/>
+    /// replaces same-named resources.</summary>
+    private static string ResourceKey(string relativeDir, string fileName)
+        => relativeDir.Length == 0 ? fileName : relativeDir + "/" + fileName;
 
     /// <summary>
     /// Writes index.html (formatted scripts) and/or index.min.html (minified scripts), then collapses

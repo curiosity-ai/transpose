@@ -472,6 +472,21 @@ The short version:
   `references`/`referencesPath` (partially covered by `--reference`).
 - **MSBuild evaluation** stays deliberately shallow: `<Import>` is followed (see above) but
   conditions, arbitrary properties, `Directory.Build.props` and item metadata are not evaluated.
+- **Resource globs recurse with `**` (done).** A `resources` group's `files` entry may use a `**` path
+  segment — `assets/img/**`, or `assets/img/**/*.svg` to narrow it — and a copy-through group then
+  reproduces the sub-folder each file was found in, both in the site it writes and in the package DLL
+  it embeds (the sub-directory lands in the manifest entry's `Path`, and *also* qualifies its `Name`,
+  which is the manifest key — two files sharing a leaf name in different folders would otherwise
+  collapse onto one entry). A plain `*` still matches one directory, which is what every tps.json
+  written so far means by it; and because .NET's own search patterns collapse `**` to `*`, an older
+  compiler reads a recursive pattern as the non-recursive one rather than failing.
+
+  This is the *only* channel a package has for its assets: a library that instead let MSBuild's
+  `<None … CopyToOutputDirectory>` carry them ships fine inside its own repository — a content item
+  flows across a `ProjectReference` — and silently ships nothing to anyone consuming it as a NuGet
+  package, which does not pack `None` items. Curiosity.FrontEnd did exactly that, so every application
+  built against the package was missing 243 icons/illustrations, both variable-font families and the
+  favicon.
 - **Wider `tps.json` surface** (outputBy, module formats, locales, before/after build, etc.).
 - **Incremental compilation (done for body-level edits; on by default via the SDK).** `--incremental`
   reuses the previous build of a project: nothing at all is compiled when every input hashes the same
