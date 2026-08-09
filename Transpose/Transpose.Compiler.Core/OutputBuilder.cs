@@ -9,14 +9,18 @@ namespace Transpose.Compiler;
 /// assembly's <c>Transpose.Resources.json</c>), copies the tps.json resource files (CSS/images), and
 /// generates index.html — mirroring what the existing tps compiler produces.
 ///
-/// When <c>outputFormatting</c> is <c>Minified</c> or <c>Both</c>, every compiler-produced JS output
-/// (the extracted runtime, the compiled bundle and its reflection metadata, and referenced library
-/// code) is minified with NUglify into a <c>.min.js</c> sibling. The generated HTML then follows the
-/// legacy compiler's rule: index.html links the formatted variants, index.min.html links the
-/// minified variants, and the active build configuration collapses the pair to a single index.html
-/// (Release keeps the minified one, Debug the formatted one). tps.json resource files are taken as
-/// authored (never re-minified) — a project ships both a <c>foo.js</c> and a <c>foo.min.js</c> group
-/// when it wants both variants, exactly as before.
+/// When <c>outputFormatting</c> is <c>Minified</c> or <c>Both</c>, the JS this compilation itself
+/// produces — the compiled bundle, its reflection metadata and the TransposeR shim — is minified with
+/// NUglify into a <c>.min.js</c> sibling. A referenced package's JS is never minified here: the
+/// package already ships a pre-minified variant of its own compiled code, and that pair is simply
+/// reused. The generated HTML then follows the legacy compiler's rule: index.html links the formatted
+/// variants, index.min.html links the minified variants, and the active build configuration collapses
+/// the pair to a single index.html (Release keeps the minified one, Debug the formatted one).
+///
+/// tps.json resource files are taken as authored — never minified, and never renamed — whether this
+/// build reads them from disk or extracts them from a referenced package: a project ships both a
+/// <c>foo.js</c> and a <c>foo.min.js</c> group when it wants both variants, exactly as before, and a
+/// resource that exists in only one variant keeps that name in every build configuration.
 ///
 /// Stylesheets are the one resource kind that is not copied through verbatim: every CSS file this
 /// build writes — from a resource group, or extracted from a referenced package — has its comments
@@ -121,12 +125,22 @@ internal static class OutputBuilder
             jsOuts.Add(o);
         }
 
-        // Routes a package's already-loaded JS resources (runtime bundles, library code) into the
-        // output. A package ships both a formatted and a pre-minified variant of each file, so we
-        // reuse them as-is: the formatted variant links from index.html, the pre-minified from
-        // index.min.html — no re-minification. Only when a package predates the pre-minified variant
-        // (no .min.js sibling) do we minify the formatted one as a fallback. Files are written to disk
-        // on demand so a Formatted build never materialises the .min.js (and vice-versa).
+        // Routes a package's embedded JS into the output — the runtime bundles and compiled library
+        // code, and the authored JavaScript the library shipped through its own tps.json `resources`.
+        //
+        // Only a file that ships in BOTH variants — `x.js` next to `x.min.js` — takes part in the
+        // formatted/minified switch: the formatted one is written and linked from index.html, the
+        // pre-minified one from index.min.html, and neither is re-minified here. That pair is exactly
+        // what a Transpose-compiled bundle looks like (CollectEmbeddableItems embeds both), and it is
+        // also how a library declares an authored bundle it wants both variants of.
+        //
+        // A file that ships ALONE is an authored resource — Monaco's editor.main.js, a vendored
+        // d3.min.js — and no other variant of it exists to switch to. It is copied through verbatim,
+        // under the name it was authored with, in every build configuration. Renaming editor.main.js to
+        // editor.main.min.js for a Minified build (or leaving d3.min.js out of a Formatted one) breaks
+        // every consumer that fetches the file by path — a module loader, a `new Worker(...)`, an
+        // import map — none of which this compiler rewrites. It matches what the same resource group
+        // does when it is built from disk rather than extracted from a package (ProcessResourceGroup).
         void RoutePackageJs(IReadOnlyList<EmbeddedJs> jsFiles)
         {
             var present = jsFiles.Select(f => f.FileName).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -137,42 +151,28 @@ internal static class OutputBuilder
 
             foreach (var f in jsFiles)
             {
-                if (IsMinifiedName(f.FileName))
+                if (!present.Contains(CounterpartName(f.FileName)))
                 {
-                    // A .min.js whose formatted sibling is also in the package is written by that
-                    // sibling below; a standalone .min.js links only from the minified HTML.
-                    if (present.Contains(CounterpartName(f.FileName))) continue;
-                    if (wantMinified)
-                    {
-                        WriteText(f.Rel, f.Text);
-                        if (f.Load) jsOuts.Add(new JsOut { Path = f.Rel, IsMinified = true });
-                    }
+                    // An authored resource: one variant, copied through under its own name, always.
+                    WriteText(f.Rel, f.Text);
+                    // A standalone .min.js is still a Release-only script as far as index.html goes,
+                    // matching how the same group routes from disk. A .dontload resource is on disk
+                    // (above) but never injected into either HTML.
+                    if (f.Load) jsOuts.Add(new JsOut { Path = f.Rel, IsMinified = IsMinifiedName(f.FileName) });
                     continue;
                 }
+
+                // The minified half of a pair is written below, by its formatted sibling.
+                if (IsMinifiedName(f.FileName)) continue;
 
                 var o = new JsOut { Path = f.Rel };
                 if (wantFormatted) WriteText(f.Rel, f.Text); else o.IsEmpty = true;
                 if (wantMinified)
                 {
-                    var minName = CounterpartName(f.FileName);
-                    if (byName.TryGetValue(minName, out var pre))
-                    {
-                        WriteText(pre.Rel, pre.Text);       // pre-built .min.js shipped in the package
-                        o.MinifiedPath = pre.Rel;
-                    }
-                    else
-                    {
-                        // No pre-built .min.js sibling: this JS was not emitted by *this* compilation
-                        // — it is an authored/third-party resource (e.g. Monaco's editor.main.js, which
-                        // NUglify cannot even parse) or an old package that shipped no .min.js. Only
-                        // Transpose-emitted output is a minification candidate, so ship it as authored
-                        // under the .min name rather than running it through the JS minifier.
-                        var minRel = ToMinName(f.Rel);
-                        WriteText(minRel, f.Text);
-                        o.MinifiedPath = minRel;
-                    }
+                    var pre = byName[CounterpartName(f.FileName)];   // pre-built .min.js from the package
+                    WriteText(pre.Rel, pre.Text);
+                    o.MinifiedPath = pre.Rel;
                 }
-                // A .dontload resource is written to disk (above) but never injected into index.html.
                 if (f.Load) jsOuts.Add(o);
             }
         }

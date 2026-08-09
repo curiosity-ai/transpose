@@ -397,11 +397,20 @@ The short version:
   body) via `JsMinifier`. Packages ship
   their compiled JS in both a formatted and a pre-minified variant — the runtime (`tps.min.js` /
   `tps.meta.min.js`, embedded by `tps --build-runtime`) and library packages (`CollectEmbeddableItems`)
-  — so a site build reuses those and only minifies the per-project bundle/metadata/shim itself (with a
-  compile-time fallback for older packages that predate the `.min.js`). `OutputBuilder` emits
+  — so a site build reuses those and only minifies the per-project bundle/metadata/shim itself; a
+  package's JavaScript is never re-minified. `OutputBuilder` emits
   `index.html` (formatted) and `index.min.html` (minified) and collapses them per build configuration
   (Release keeps the minified one as `index.html`, Debug the formatted one) — a port of the legacy
   `HtmlGenerator`. **Source maps** for the emitted bundle are still remaining.
+
+  **The `.js` ⇄ `.min.js` switch only applies to a file that exists in both variants.** That is what a
+  compiled bundle always looks like, and it is also how a library declares an authored bundle it wants
+  both variants of (Curiosity's `ExternalBundle.js` + `.min.js`). A resource that ships in **one**
+  variant — Monaco's `editor.main.js`, a vendored `d3.min.js` — has no other variant to switch to and
+  is copied through under its authored name in *every* configuration, whether the site build reads it
+  from disk or extracts it from a referenced package. Renaming it would break the app: a module loader,
+  a `new Worker(...)` or an import map fetches that file by a path the compiler does not rewrite
+  (`PackageResourceVariantTests`).
 
   Two NUglify transforms are switched off through `CodeSettings.KillSwitch` because they are unsound
   for the JavaScript we emit, and `JsMinifierTests` guards both. Besides the `??`-under-`&&` collapse
