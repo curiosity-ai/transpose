@@ -339,6 +339,112 @@ public class Program
 }");
         }
 
+        /// <summary>
+        /// An iterator body used to be emitted statement-by-statement instead of through
+        /// <c>EmitStatements</c>, so a local function declared at the END of the body kept its
+        /// textual position — <c>var f = () =&gt; …</c> after the call — and calling it earlier hit
+        /// <c>undefined</c> ("f is not a function"). Curiosity's CSV-import column selector is
+        /// exactly this shape.
+        /// </summary>
+        [TestMethod]
+        public async Task IteratorCallsLocalFunctionDeclaredAfterItRunsAsync()
+        {
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+public class Program
+{
+    static IEnumerable<string> Fields(bool match)
+    {
+        var buf = new List<string>();
+
+        if (match) SetIgnore(); else SetPleaseSelect();
+
+        Func<string> onSelected = () => { SetIgnore(); return string.Join("","", buf); };
+
+        yield return ""first:"" + string.Join("","", buf);
+        yield return ""cb:"" + onSelected();
+
+        void SetPleaseSelect() => buf.Add(""* select a field *"");
+        void SetIgnore()       => buf.Add(""Ignore column"");
+    }
+    public static void Main()
+    {
+        foreach (var s in Fields(false)) Console.WriteLine(s);
+        foreach (var s in Fields(true))  Console.WriteLine(s);
+    }
+}");
+        }
+
+        /// <summary>
+        /// The same bypass meant an iterator body never got the <c>using var</c> → try/finally
+        /// desugaring, so the resource was never disposed.
+        /// </summary>
+        [TestMethod]
+        public async Task IteratorUsingVarDisposesRunsAsync()
+        {
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+public class Res : IDisposable
+{
+    private readonly string _n;
+    public Res(string n) { _n = n; Console.WriteLine(""open "" + n); }
+    public void Dispose() { Console.WriteLine(""close "" + _n); }
+}
+public class Program
+{
+    static IEnumerable<string> Items()
+    {
+        using var r = new Res(""r1"");
+        yield return ""a"";
+        yield return ""b"";
+    }
+    public static void Main()
+    {
+        foreach (var s in Items()) Console.WriteLine(s);
+    }
+}");
+        }
+
+        /// <summary>
+        /// A property getter with <c>yield return</c> is an iterator too. Its accessor body used to
+        /// be emitted into a plain <c>function</c>, so the bare <c>yield</c> was a JavaScript SYNTAX
+        /// error that took the whole bundle down. A local function in a normal getter had the
+        /// hoisting bug above.
+        /// </summary>
+        [TestMethod]
+        public async Task IteratorPropertyGetterAndGetterLocalFunctionRunAsync()
+        {
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+public class Program
+{
+    public static IEnumerable<int> Numbers
+    {
+        get
+        {
+            yield return 1;
+            yield return 2;
+        }
+    }
+    public static string Prop
+    {
+        get
+        {
+            return Fmt(""prop"");
+            string Fmt(string s) => ""<"" + s + "">"";
+        }
+    }
+    public static void Main()
+    {
+        Console.WriteLine(Prop);
+        foreach (var n in Numbers) Console.WriteLine(n);
+    }
+}");
+        }
+
         // ---- compound assignment to a collection indexer ----------------------
 
         [TestMethod]

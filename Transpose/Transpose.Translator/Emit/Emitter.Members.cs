@@ -142,7 +142,7 @@ public sealed partial class Emitter
                         }
                         if (staticCtor?.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() is ConstructorDeclarationSyntax { Body: { } body })
                         {
-                            foreach (var s in body.Statements) EmitStatement(s);
+                            EmitStatements(body.Statements);
                         }
                     });
                     _w.WriteLine();
@@ -632,7 +632,7 @@ public sealed partial class Emitter
             // A generator function can't be an arrow, so it rebinds `this`; bind it to the
             // enclosing instance so an iterator body that reads `this.field` still works.
             _w.Write("return TransposeR.iter((function* () ");
-            _w.Block(() => { foreach (var s in body.Statements) EmitStatement(s); });
+            _w.Block(() => EmitStatements(body.Statements));
             _w.WriteLine(").bind(this));");
         });
     }
@@ -910,7 +910,8 @@ public sealed partial class Emitter
         switch (syntax)
         {
             case AccessorDeclarationSyntax { Body: { } body }:
-                _w.Block(() => { foreach (var s in body.Statements) EmitStatement(s); });
+                if (IsIteratorBody(body)) EmitIteratorBody(body, accessor);
+                else _w.Block(() => EmitStatements(body.Statements));
                 break;
             case AccessorDeclarationSyntax { ExpressionBody: { } arrow }:
             case ArrowExpressionClauseSyntax arrow2 when (arrow2 = (ArrowExpressionClauseSyntax)syntax) != null:
