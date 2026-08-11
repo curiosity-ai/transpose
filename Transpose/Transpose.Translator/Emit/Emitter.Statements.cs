@@ -958,7 +958,7 @@ public sealed partial class Emitter
                 // arrow would be invalid — a bare `yield` outside a generator is a strict-mode syntax
                 // error.
                 _w.Write("return TransposeR.iter((function* () ");
-                _w.Block(() => { foreach (var s in localFn.Body!.Statements) EmitStatement(s); });
+                _w.Block(() => EmitStatements(localFn.Body!.Statements));
                 _w.WriteLine(").bind(this));");
             }
             else
