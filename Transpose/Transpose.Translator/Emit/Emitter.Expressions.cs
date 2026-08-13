@@ -915,6 +915,19 @@ public sealed partial class Emitter
             return;
         }
 
+        // A [Template] method with no `Fn` form still has to expand its template when referenced as a
+        // method group: the bare member reference either points at nothing (an [External] method has no
+        // emitted body) or at a runtime function whose signature is not the template's — e.g.
+        // `values.Select(JsonConvert.DeserializeObject<T>)` emitted
+        // `Newtonsoft.Json.JsonConvert.DeserializeObject`, dropping `{T}` and landing Select's element
+        // INDEX in the runtime's `type` slot. Wrap the expansion in a function whose parameters feed the
+        // template's argument slots.
+        if ((TransposeNaming.GetTemplate(method.OriginalDefinition) ?? TransposeNaming.GetTemplate(method)) is { } template)
+        {
+            EmitTemplateMethodGroup(method, template, thisTarget);
+            return;
+        }
+
         // A generic method that threads its type arguments takes them as LEADING parameters, so a
         // method group has to bind them into the delegate. Without this the delegate's first VALUE
         // argument landed in the T slot: `new[]{1,2}.Select(Show)` called Show(1, undefined), so
@@ -935,6 +948,52 @@ public sealed partial class Emitter
             _w.Write($").{TransposeNaming.MemberJsName(method)}.bind(");
             EmitReceiverExpr(thisTarget);
             _w.Write($"{boundTypeArgs})");
+        }
+    }
+
+    /// <summary>
+    /// Emits a method group over a <c>[Template]</c> method as a function whose parameters are the
+    /// template's argument slots — <c>function ($a0) { return Newtonsoft.Json.JsonConvert.DeserializeObject($a0, Foo); }</c>
+    /// — so the delegate applies the same expansion a direct call would. An instance (or extension)
+    /// receiver is bound with <c>.bind(null, recv)</c> as the leading parameter, which evaluates the
+    /// receiver once, where the method group is written, exactly as C# does.
+    /// </summary>
+    private void EmitTemplateMethodGroup(IMethodSymbol method, string template, ExpressionSyntax? thisTarget)
+    {
+        var reduced   = method is { IsExtensionMethod: true, ReducedFrom: { } r } ? r : null;
+        var argNames  = method.Parameters.Select((_, i) => "$a" + i).ToList();
+        var bindsRecv = !method.IsStatic || reduced is not null;
+        var receiver  = bindsRecv ? "$this" : null;
+
+        var byName    = new Dictionary<string, string>();
+        var byPos     = new List<string>(argNames);
+
+        // Reduced extension method: the receiver binds to the original first parameter (e.g. {source}),
+        // the delegate's own arguments to the remaining ones — mirroring the invocation path.
+        if (reduced is not null)
+        {
+            byName[reduced.Parameters[0].Name] = receiver!;
+            for (var i = 0; i < argNames.Count && i + 1 < reduced.Parameters.Length; i++)
+                byName[reduced.Parameters[i + 1].Name] = argNames[i];
+            byPos = new List<string> { receiver! }.Concat(argNames).ToList();
+            AddTypeArguments(byName, reduced, method);
+        }
+        else
+        {
+            for (var i = 0; i < method.Parameters.Length; i++) byName[method.Parameters[i].Name] = argNames[i];
+            AddTypeArguments(byName, method.OriginalDefinition, method);
+        }
+
+        var body = Capture(() => WriteTemplate(template, method.IsStatic && reduced is null, reduced is not null, receiver, byName, byPos));
+        var ps   = bindsRecv ? new List<string> { receiver! }.Concat(argNames) : argNames;
+
+        _w.Write($"(function ({string.Join(", ", ps)}) {{ return {body}; }})");
+
+        if (bindsRecv)
+        {
+            _w.Write(".bind(null, ");
+            EmitReceiverExpr(thisTarget);
+            _w.Write(")");
         }
     }
 

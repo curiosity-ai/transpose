@@ -27,6 +27,44 @@ using System.Linq;
 using Newtonsoft.Json;
 ";
 
+    /// <summary>
+    /// <c>DeserializeObject&lt;T&gt;</c> passed as a METHOD GROUP, the way AIModelSettings maps a
+    /// setting's valid values (<c>ValidValues.Select(JsonConvert.DeserializeObject&lt;AWSRegionEndpoint&gt;)</c>).
+    /// A regression: a method group of a <c>[Template]</c> method emitted a bare member reference
+    /// instead of expanding the template, so <c>{T}</c> was dropped and Select's element index landed
+    /// in the runtime's <c>type</c> slot — "type is not a constructor" at runtime.
+    /// </summary>
+    [TestMethod]
+    public async Task DeserializeObjectAsAMethodGroupCarriesItsTypeArgument()
+    {
+        var code = Header + @"
+public class AWSRegionEndpoint
+{
+    public string DisplayName { get; set; }
+    public string SystemName  { get; set; }
+}
+
+public class App
+{
+    public static void Main()
+    {
+        var validValues = new[]
+        {
+            ""{\""DisplayName\"":\""Europe (Frankfurt)\"",\""SystemName\"":\""eu-central-1\""}"",
+            ""{\""DisplayName\"":\""US East (N. Virginia)\"",\""SystemName\"":\""us-east-1\""}"",
+        };
+
+        var regions = validValues.Select(JsonConvert.DeserializeObject<AWSRegionEndpoint>).ToArray();
+        foreach (var r in regions) Console.WriteLine(r.DisplayName + "" / "" + r.SystemName);
+
+        // the same conversion held in a delegate and invoked twice
+        Func<string, AWSRegionEndpoint> parse = JsonConvert.DeserializeObject<AWSRegionEndpoint>;
+        Console.WriteLine(parse(validValues[0]).SystemName + ""|"" + parse(validValues[1]).SystemName);
+    }
+}";
+        await RunAndCompare(code);
+    }
+
     /// <summary>A search-response shaped DTO round-tripping the way an <c>API.*</c> call does.</summary>
     [TestMethod]
     public async Task TypedApiResponseRoundTrips()

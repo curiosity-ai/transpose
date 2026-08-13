@@ -3442,6 +3442,52 @@ public class Program
 }", waitForOutput: "<<DONE>>");
         }
 
+        // ---- a method group of a [Template] method expands its template ---------------------
+        //
+        // A [Template] method with no `Fn` fell through to a bare mangled member reference, which either
+        // does not exist ([External], so no body is emitted) or is a differently-shaped runtime function.
+        // The reported case was `values.Select(JsonConvert.DeserializeObject<T>)`, whose template
+        // "…DeserializeObject({value}, {T})" was dropped entirely: the emitted reference landed Select's
+        // element INDEX in the runtime's `type` slot and threw "type is not a constructor". `Task.FromResult`
+        // below is the BCL analogue of that shape (a static generic templated method with a {TResult} slot);
+        // the rest cover the non-generic static, the instance and the enumerated forms. A method group now
+        // wraps the same expansion a direct call emits, with an instance receiver bound once — so `Recv()`
+        // runs exactly once no matter how often the delegate is called, as C# specifies.
+
+        [TestMethod]
+        public async Task TemplateMethodGroupExpandsItsTemplate()
+        {
+            await RunTest(@"
+using System;
+using System.Linq;
+using System.Threading.Tasks;
+public class Program
+{
+    static int _calls;
+    static string Recv() { _calls++; return ""a,b,c""; }
+
+    public static void Main()
+    {
+        Func<int, Task<int>> mk = Task.FromResult;                    // static generic templated group
+        Console.WriteLine(mk(7).Result);
+
+        Func<string, bool> e = string.IsNullOrEmpty;                  // static templated group
+        Console.WriteLine(e("""") + ""/"" + e(""x""));
+        Console.WriteLine(string.Join("","", new[] { """", ""ab"", ""c"" }.Select(string.IsNullOrEmpty)));
+
+        Console.WriteLine(new string(""abc"".ToCharArray().Select(char.ToUpper).ToArray()));
+
+        Func<char, int> idx = Recv().IndexOf;                         // instance templated group
+        Console.WriteLine(idx('b') + ""/"" + idx('c') + ""/calls="" + _calls);
+
+        Func<string, string> fmt = new DateTime(2020, 3, 4).ToString;
+        Console.WriteLine(fmt(""yyyy-MM-dd""));
+
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
         // ---- a plain struct has value equality and value hashing ----------------------------
         //
         // .NET gives every value type field-wise Equals/GetHashCode via ValueType, which is what makes
