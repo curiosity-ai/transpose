@@ -82,6 +82,7 @@ transpile() {
 
 transpile BCL/Transpose.Core/Transpose.Core.csproj
 transpile Packages/Transpose.Newtonsoft.Json/Transpose.Newtonsoft.Json.csproj
+transpile Packages/Transpose.System.Text.Json/Transpose.System.Text.Json.csproj
 transpile Packages/Transpose.Howler/Transpose.Howler.csproj        Transpose.Core
 transpile Packages/Transpose.WebGL2/Transpose.WebGL2.csproj        Transpose.Core
 transpile Packages/Transpose.P2/Transpose.P2.csproj                Transpose.Core
