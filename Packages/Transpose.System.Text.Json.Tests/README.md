@@ -77,7 +77,7 @@ Requirements: **Node** on `PATH` (or `/opt/node22/bin/node`) and a `Transpose.dl
 | `AttributeTests` | `[JsonPropertyName]`, `[JsonIgnore]`, `[JsonInclude]`, `[JsonConstructor]`, `[JsonPropertyOrder]`, `[JsonNumberHandling]` |
 | `OptionsTests` | naming policies, case insensitivity, ignore conditions, read switches, `JsonSerializerDefaults.Web` |
 | `BclTypeTests` | dates, times, GUIDs, URIs, versions, byte arrays, characters, nullables, 64-bit integers |
-| `PolymorphismTests` | `[JsonPolymorphic]` / `[JsonDerivedType]`, `$type` |
+| `PolymorphismTests` | `[JsonPolymorphic]` / `[JsonDerivedType]`, `$type`, run-time registration |
 | `ErrorHandlingTests` | malformed input, type and shape mismatches, depth limit |
 | `CrossPackageTests` | this package vs `Transpose.Newtonsoft.Json` — the migration's risk register |
 | `MosaikShapeTests` | `UID128`, `LanguageDTO`, enum and renamed-member shapes from the Curiosity front-end |
@@ -102,6 +102,16 @@ deliberately stays a JSON number, because the server has no decimal-from-string 
 The last one exists so a store written by Json.NET's `TypeNameHandling` (which wrote
 `"Some.Type, Some.Assembly"` into `$type`) keeps deserializing against a hierarchy that declares the
 bare type name as its discriminator.
+
+## Declaring a hierarchy the attribute cannot reach
+
+`[JsonDerivedType]` has to name the derived types from the base type's own file, so the base must see
+them at compile time. In a layered application it often does not — an interface in a shared,
+low-level project and its implementations in the UI project that references it — and the attribute
+cannot be written at all. `JsonPolymorphicTypes.Register<TBase>(typeof(Derived), "discriminator")`
+declares the same pair at run time, from somewhere that can see both, and behaves exactly as the
+attribute would. The two can be mixed, which is what a project shared between a server (attributes)
+and a Transpose front-end (registration) needs.
 
 ## What the package deliberately does not cover
 
