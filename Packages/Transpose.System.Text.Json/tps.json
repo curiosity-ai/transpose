@@ -1,0 +1,45 @@
+{
+  "output": "Resources/.generated",
+  "cleanOutputFolderBeforeBuild": true,
+  "outputFormatting": "Formatted",
+  "outputBy": "ClassPath",
+  "generateDocumentation": "None",
+  "logging": {
+    "level": "None"
+  },
+  "html": {
+    "disabled": true
+  },
+  "assembly": {
+    "disableInitAssembly": true,
+    "enableReservedNamespaces": true
+  },
+  "fileName": "generated.js",
+  "combineScripts": false,
+  "resources": [
+    {
+      "name": "tps.js",
+      "extract": false
+    },
+    {
+      "name": "tps.meta.js",
+      "extract": false
+    },
+    {
+      "name": "tps.console.js",
+      "extract": false
+    },
+    {
+      // File paths relative to project root
+      "name": "system.text.json.js",
+      "header": "Resources/.auxiliary/Header.js",
+      "remark": "\n\n// @source @{name}\n",
+      "files": [
+        "Resources/.auxiliary/AssemblyBegin.js",
+        "Resources/.generated/generated.js",
+        "Resources/Manual/JsonSerializer.js",
+        "Resources/.auxiliary/AssemblyEnd.js"
+      ]
+    }
+  ]
+}

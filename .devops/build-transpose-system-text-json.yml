@@ -1,0 +1,93 @@
+variables:
+  transposeSystemTextJson: '$(Build.SourcesDirectory)/Packages/Transpose.System.Text.Json/Transpose.System.Text.Json.csproj'
+  transposeSystemTextJsonTests: '$(Build.SourcesDirectory)/Packages/Transpose.System.Text.Json.Tests/Transpose.System.Text.Json.Tests.csproj'
+  buildConfiguration: 'Release'
+  targetVersion: yy.M.$(build.buildId)
+
+pool:
+  vmImage: 'windows-latest'
+
+trigger:
+  branches:
+    include:
+    - master
+  paths:
+    include:
+    - Packages/Transpose.System.Text.Json/*
+    - Packages/Transpose.System.Text.Json.Tests/*
+    - .devops/build-transpose-system-text-json.yml
+
+pr: none
+
+steps:
+- checkout: self
+
+- script: |
+    echo "Commit message: $(Build.SourceVersionMessage)"
+
+- task: UseDotNet@2
+  displayName: 'Use .NET 10.0 SDK'
+  inputs:
+    packageType: sdk
+    version: 10.x
+    includePreviewVersions: false
+    installationPath: $(Agent.ToolsDirectory)/dotnet
+
+- task: PowerShell@2
+  displayName: 'Create CalVer Version'
+  inputs:
+    targetType: 'inline'
+    script: |
+      $dottedDate = (Get-Date).ToString("yy.M")
+      $buildID = $($env:BUILD_BUILDID)
+      $modBuildID = [int]$buildID % 65536  # ensure fits in int16
+      $newTargetVersion = "$dottedDate.$modBuildID"
+      Write-Host "##vso[task.setvariable variable=targetVersion;]$newTargetVersion"
+      Write-Host "Updated targetVersion to '$newTargetVersion'"
+
+- task: CmdLine@2
+  displayName: 'Install Transpose compiler'
+  inputs:
+    script: 'dotnet tool install --global Transpose.Compiler'
+
+- task: DotNetCoreCLI@2
+  displayName: 'restore nuget'
+  inputs:
+    command: 'restore'
+    projects: '$(transposeSystemTextJson)'
+
+- task: DotNetCoreCLI@2
+  displayName: 'build'
+  inputs:
+    command: 'build'
+    projects: '$(transposeSystemTextJson)'
+    arguments: '-c $(buildConfiguration) /p:Version=$(targetVersion)'
+
+# TESTS DISABLED ON CI DUE TO RESOURCE LIMITATION
+# Runs the snippets both natively (against the real System.Text.Json) and as translated JavaScript on Node,
+# and diffs the output — so a change to JsonSerializer.js is checked against System.Text.Json before it ships.
+# The Transpose.dll runtime the tests translate against comes from the Transpose.BCL package the
+# restore above put in the NuGet cache.
+# - task: DotNetCoreCLI@2
+#   displayName: 'test'
+#   inputs:
+#     command: 'test'
+#     projects: '$(transposeSystemTextJsonTests)'
+#     arguments: '-c $(buildConfiguration)'
+
+- task: DotNetCoreCLI@2
+  displayName: 'pack nuget'
+  inputs:
+    command: 'pack'
+    packagesToPack: '$(transposeSystemTextJson)'
+    configuration: '$(buildConfiguration)'
+    versioningScheme: 'off'
+    buildProperties: 'Version="$(targetVersion)";AllowUnsafeBlocks="True";LangVersion="latest"'
+
+- task: NuGetCommand@2
+  displayName: 'push nuget'
+  inputs:
+    command: 'push'
+    packagesToPush: '**/Transpose.System.Text.Json.$(targetVersion).nupkg'
+    nuGetFeedType: 'external'
+    publishFeedCredentials: 'nuget-curiosity-org'

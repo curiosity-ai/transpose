@@ -96,6 +96,16 @@ Packages/                      # Additional binding libraries (all [assembly: Ex
 ├── Transpose.Newtonsoft.Json.Tests/ # MSTest suite for it: every snippet runs natively against the
 │                              #   real Json.NET *and* as translated JS on Node, and the outputs are
 │                              #   diffed (see its README for the documented divergences)
+├── Transpose.System.Text.Json/#   package Transpose.System.Text.Json — the whole-document
+│                              #   JsonSerializer/JsonSerializerOptions surface a browser app uses.
+│                              #   Deliberately *not* the streaming (Utf8JsonReader/Writer), document
+│                              #   (JsonDocument/JsonNode) or source-generated APIs, and no converter
+│                              #   registry. Behaviour lives in Resources/Manual/JsonSerializer.js
+├── Transpose.System.Text.Json.Tests/ # MSTest suite for it, with two oracles: the real
+│                              #   System.Text.Json (it ships in the shared framework, so the same
+│                              #   snippet binds to both), and — for the Curiosity migration —
+│                              #   Transpose.Newtonsoft.Json, so every wire-format change between the
+│                              #   two packages is recorded on both sides (see its README)
 ├── Transpose.Howler/          #   package Transpose.Howler
 ├── Transpose.WebGL2/          #   package Transpose.WebGL2
 ├── Transpose.P2/              #   package Transpose.P2
