@@ -216,4 +216,88 @@ public sealed class PolymorphismTests : JsonTestBase
             }
         }
         """);
+
+    // ---------------------------------------------------------------------------------------------
+    // Registering a hierarchy at run time
+    // ---------------------------------------------------------------------------------------------
+
+    [TestMethod]
+    public async Task AHierarchyCanBeDeclaredAtRunTime() => await RunJs("""
+        using System;
+        using System.Text.Json;
+        using System.Text.Json.Serialization;
+
+        // No [JsonDerivedType] anywhere: this is the shape a layered application is forced into when
+        // the base type sits in a project *below* the one holding its implementations, so it cannot
+        // name them at compile time.
+        public interface INote { }
+
+        public class TextNote : INote { public string Body { get; set; } }
+        public class LinkNote : INote { public string Url  { get; set; } }
+
+        public class Holder { public INote Note { get; set; } }
+
+        public static class Program
+        {
+            public static void Main()
+            {
+                JsonPolymorphicTypes.Register<INote>(typeof(TextNote), "text");
+                JsonPolymorphicTypes.Register<INote>(typeof(LinkNote), "link");
+
+                var json = JsonSerializer.Serialize(new Holder { Note = new LinkNote { Url = "https://x/" } });
+                Console.WriteLine(json);
+
+                var back = JsonSerializer.Deserialize<Holder>(json);
+                Console.WriteLine(back.Note.GetType().Name + "/" + ((LinkNote)back.Note).Url);
+            }
+        }
+        """,
+        expected: "{\"Note\":{\"$type\":\"link\",\"Url\":\"https://x/\"}}\nLinkNote/https://x/");
+
+    [TestMethod]
+    public async Task ARunTimeHierarchyAcceptsAnAssemblyQualifiedDiscriminatorToo() => await RunJs("""
+        using System;
+        using System.Text.Json;
+        using System.Text.Json.Serialization;
+
+        public interface INodeRendererItem { }
+        public class FieldContent : INodeRendererItem { public string Field { get; set; } }
+
+        public static class Program
+        {
+            public static void Main()
+            {
+                JsonPolymorphicTypes.Register<INodeRendererItem>(typeof(FieldContent), "Mosaik.Components.NodeRendering.FieldContent");
+
+                var legacy = "{\"$type\":\"Mosaik.Components.NodeRendering.FieldContent, Mosaik.Graph\",\"Field\":\"Title\"}";
+                var back   = JsonSerializer.Deserialize<INodeRendererItem>(legacy);
+
+                Console.WriteLine(back.GetType().Name + "/" + ((FieldContent)back).Field);
+            }
+        }
+        """,
+        expected: "FieldContent/Title");
+
+    [TestMethod]
+    public async Task ARunTimeRegistrationCanNameItsDiscriminatorMember() => await RunJs("""
+        using System;
+        using System.Text.Json;
+        using System.Text.Json.Serialization;
+
+        public interface IShape { }
+        public class Square : IShape { public int Side { get; set; } }
+
+        public static class Program
+        {
+            public static void Main()
+            {
+                JsonPolymorphicTypes.Register<IShape>(typeof(Square), "square", "kind");
+
+                var json = JsonSerializer.Serialize<IShape>(new Square { Side = 2 });
+                Console.WriteLine(json);
+                Console.WriteLine(JsonSerializer.Deserialize<IShape>(json).GetType().Name);
+            }
+        }
+        """,
+        expected: "{\"kind\":\"square\",\"Side\":2}\nSquare");
 }

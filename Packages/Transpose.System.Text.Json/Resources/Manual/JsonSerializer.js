@@ -631,12 +631,47 @@
                     return all.filter(function (a) { return Transpose.is(a, attributeType); });
                 },
 
+                // The run-time half of the hierarchy declaration (JsonPolymorphicTypes.Register), for
+                // the case where [JsonDerivedType] cannot be written because the base type sits below
+                // its implementations and cannot name them.
+                registerDerivedType: function (baseType, derivedType, id, discriminatorPropertyName) {
+                    var cache = System.Text.Json.JsonSerializer.getCacheByType(baseType),
+                        info  = cache.$registered;
+
+                    if (!info) {
+                        info = { discriminator: discriminatorPropertyName || "$type", unknown: 0, types: [] };
+                        cache.$registered = info;
+                    } else if (discriminatorPropertyName) {
+                        info.discriminator = discriminatorPropertyName;
+                    }
+
+                    for (var i = 0; i < info.types.length; i++) {
+                        if (info.types[i].type === derivedType) {
+                            info.types[i].id = id;
+                            return;
+                        }
+                    }
+
+                    info.types.push({ type: derivedType, id: id });
+
+                    // A hierarchy resolved earlier would have been cached as "not polymorphic".
+                    cache.$poly = undefined;
+                },
+
                 polymorphism: function (type) {
-                    if (!type || !Transpose.getMetadata(type)) {
+                    if (!type) {
                         return null;
                     }
 
                     var cache = System.Text.Json.JsonSerializer.getCacheByType(type);
+
+                    if (cache.$registered) {
+                        return cache.$registered;
+                    }
+
+                    if (!Transpose.getMetadata(type)) {
+                        return null;
+                    }
 
                     if (cache.$poly !== undefined) {
                         return cache.$poly;
