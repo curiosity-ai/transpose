@@ -7,8 +7,10 @@ description: >-
   C# (System.*), when adding a missing BCL method/type (e.g. a LINQ operator, a string/Task API),
   when the emitted metadata/init changes, or when adding a regression test to
   EmitRegressionTests.cs and running the suite. Triggers on "add X to the BCL", "rebuild the
-  runtime", "implement this .NET API in transpose", "add a regression test", or "run the transpose
-  tests". Pairs with transpose-debugging (inspection) and transpose-h5-audit (finding bugs).
+  runtime", "implement this .NET API in transpose", "add a regression test", "run the transpose
+  tests", or "why is my runtime change not taking effect". Covers the two ways a runtime change
+  tests green without ever being loaded (stale bundles, unset TRANSPOSE_DLL_PATH). Pairs with
+  transpose-debugging (inspection) and transpose-h5-audit (finding bugs).
 ---
 
 # Runtime, BCL changes, and regression tests
@@ -39,6 +41,45 @@ This transpiles the BCL into `Resources/.generated/*.js`, stitches the bundles p
 emits `Transpose.dll` with them embedded. Both the runners and the test suite read this DLL via
 `TRANSPOSE_DLL_PATH`. (For a **shim** change, rebuild the translator/compiler instead — the shim is
 embedded there.)
+
+## Prove you are testing the code you changed
+
+A runtime change has two ways to look tested when it is not. Both end in `Passed! - Failed: 0`
+against the *old* JavaScript, so neither announces itself:
+
+- **`dotnet build` on the BCL csproj does not rebuild the bundles.** The SDK passes `--incremental`
+  and its up-to-date check does not watch `Resources/*.js`, so editing runtime JS and running
+  `dotnet build BCL/Transpose.BCL/Transpose.BCL.csproj` prints `Build succeeded` in about a second
+  and leaves the previous JS embedded in `Transpose.dll`. Use the `--build-runtime` command above,
+  which does track them (~10s, and it says `OK — built runtime Transpose.dll`). If you must go
+  through `dotnet build`, `rm -rf BCL/Transpose.BCL/bin BCL/Transpose.BCL/obj` first.
+- **Without `TRANSPOSE_DLL_PATH`, the suite silently uses the published package.**
+  `TransposeAssemblies.Discover()` falls back to the newest `Transpose.BCL` in the NuGet cache, so
+  the tests run green against whatever was last released and never touch your build. Export it in
+  the same shell as `dotnet test` — an `export` in an earlier, separate command does not carry over.
+
+So before believing a green run on a runtime change, **break the code on purpose and watch the suite
+fail**:
+
+```bash
+# 1. sabotage the branch you edited (e.g. append + "SABOTAGE" to a return value)
+# 2. rebuild the runtime with --build-runtime
+# 3. run the relevant filter — it MUST fail
+export TRANSPOSE_DLL_PATH=$PWD/BCL/Transpose.BCL/bin/Debug/netstandard2.0/Transpose.dll
+dotnet test Transpose/Transpose.Translator.Tests/Transpose.Translator.Tests.csproj \
+  -c Debug --no-build --filter "FullyQualifiedName~Enum"
+# 4. revert the sabotage, rebuild, re-run — it MUST pass
+```
+
+If step 3 passes, your edit is not reaching the tests and everything after it is meaningless. This
+costs two minutes and is the only thing that distinguishes "my change is correct" from "my change is
+not loaded" — the failure mode is identical from the outside.
+
+It matters most for a **pure performance change**, where the before and after are behaviourally
+identical by construction: no test can tell them apart, so the suite only proves you did not break
+anything, and the sabotage run is what proves the suite is looking at your code at all. Pair it with
+a measurement of the actual improvement (see **transpose-performance**), because a green suite says
+nothing about whether the change did what you intended.
 
 ## Adding a BCL API — two paths
 
@@ -88,7 +129,8 @@ Harness gotchas:
   run, while Node drains its queue — so a native-comparison test flakes. Use `skipRoslyn: true` and
   assert on the JS output sequence instead.
 - Tests use the DEBUG translator (project reference) and read the runtime via `TRANSPOSE_DLL_PATH` —
-  rebuild the runtime first if your change touched it.
+  rebuild the runtime first if your change touched it, and see "Prove you are testing the code you
+  changed" above for the two ways this goes silently wrong.
 
 Run the suite:
 
