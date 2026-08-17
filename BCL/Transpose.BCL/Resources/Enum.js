@@ -27,6 +27,48 @@
             return name;
         },
 
+        // The declared names of an enum, without the defensive copy getNames() hands to callers.
+        // getNames() is on the hot path of toString()/getName(), and copying $names there means
+        // every single conversion allocates an array as long as the enum.
+        namesOf: function (enumType) {
+            return enumType.$names || System.Enum.getNames(enumType);
+        },
+
+        // value -> name, built once per enum type and cached on the type object. An enum's members
+        // are fixed when Transpose.define() runs, so the map can never go stale. Without it every
+        // ToString() walks the whole name list looking for its value, which is O(n) in the size of
+        // the *enum* — invisible on a hand-written enum, but generated ones (icon sets, error code
+        // tables, unicode categories) run to thousands of members and pay it on every conversion.
+        //
+        // Returns null for a 64-bit enum: those values are Long objects, so they are compared with
+        // .eq() rather than by identity and cannot key a Map. Callers fall back to the scan.
+        valueNames: function (enumType) {
+            if (enumType.$valueNames !== undefined) {
+                return enumType.$valueNames;
+            }
+
+            var names = enumMethods.namesOf(enumType),
+                map = new Map();
+
+            for (var i = 0; i < names.length; i++) {
+                var value = enumType[names[i]];
+
+                if (System.Int64.is64Bit(value)) {
+                    map = null;
+                    break;
+                }
+
+                // First declaration wins, matching the order the linear scan resolved aliases in.
+                if (!map.has(value)) {
+                    map.set(value, names[i]);
+                }
+            }
+
+            enumType.$valueNames = map;
+
+            return map;
+        },
+
         toObject: function (enumType, value) {
             value = Transpose.unbox(value, true);
 
@@ -51,7 +93,7 @@
                     return Transpose.box(intValue.v, enumType, function (obj) { return System.Enum.toString(enumType, obj); });
                 }
 
-                var names = System.Enum.getNames(enumType),
+                var names = enumMethods.namesOf(enumType),
                     values = enumType;
 
                 if (!enumType.prototype || !enumType.prototype.$flags) {
@@ -126,10 +168,21 @@
             System.Enum.checkEnumType(enumType);
 
             var values = enumType,
-                names = System.Enum.getNames(enumType),
                 isLong = System.Int64.is64Bit(value);
 
             if (((!enumType.prototype || !enumType.prototype.$flags) && forceFlags !== true) || (value === 0)) {
+                var map = enumMethods.valueNames(enumType);
+
+                if (map !== null) {
+                    // A Long value against a non-Long enum matches nothing, exactly as the scan below
+                    // would conclude, and Map lookup agrees with === on every value an enum can hold.
+                    var mapped = map.get(value);
+
+                    return mapped !== undefined ? enumMethods.toName(mapped) : value.toString();
+                }
+
+                var names = enumMethods.namesOf(enumType);
+
                 for (var i = 0; i < names.length; i++) {
                     var name = names[i];
 
@@ -188,7 +241,7 @@
             System.Enum.checkEnumType(enumType);
 
             var parts = [],
-                names = System.Enum.getNames(enumType),
+                names = enumMethods.namesOf(enumType),
                 values = enumType;
 
             for (var i = 0; i < names.length; i++) {
@@ -204,7 +257,7 @@
             System.Enum.checkEnumType(enumType);
 
             var parts = [],
-                names = System.Enum.getNames(enumType),
+                names = enumMethods.namesOf(enumType),
                 values = enumType;
 
             for (var i = 0; i < names.length; i++) {
@@ -283,7 +336,19 @@
 
             System.Enum.checkEnumType(enumType);
 
-            var names = System.Enum.getNames(enumType),
+            // Only for a plain numeric value: this scan compares with value.eq(...) whenever the
+            // *value* is a Long, which coerces the enum's number members, and Map lookup would not.
+            if (!isLong) {
+                var map = enumMethods.valueNames(enumType);
+
+                if (map !== null) {
+                    var mapped = map.get(value);
+
+                    return mapped !== undefined ? mapped : null;
+                }
+            }
+
+            var names = enumMethods.namesOf(enumType),
                 values = enumType;
 
             for (var i = 0; i < names.length; i++) {
@@ -310,7 +375,7 @@
             System.Enum.checkEnumType(enumType);
 
             var values = enumType,
-                names = System.Enum.getNames(enumType),
+                names = enumMethods.namesOf(enumType),
                 isString = Transpose.isString(value),
                 isLong = System.Int64.is64Bit(value);
 
