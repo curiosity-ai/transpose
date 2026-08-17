@@ -1,0 +1,273 @@
+# TODO.modules — emitting JavaScript modules per class / per cluster
+
+Investigation into adding an output mode where `tps` emits ES modules (`.mjs`) — one per class, or
+one per *cluster* of classes — that the page loads on demand, instead of the single bundle it emits
+today. Measured end to end against **Tesserae** (`Tesserae.Tests`, the sample gallery), with the
+rendered page diffed against an unmodified build.
+
+Status: **no compiler change has been made.** This is the feasibility report and the evidence behind
+it. The prototype was built by mechanically re-chunking an already-emitted site, which is enough to
+answer every runtime question without touching the emitter.
+
+---
+
+## 1. The short version
+
+| Question | Answer |
+| --- | --- |
+| Can the emitted code be split into ES modules at all? | **Yes**, and cheaply. The output format needs no change beyond a wrapper. |
+| Does the page still render correctly? | **Yes** — 140/140 Tesserae samples structurally identical to the baseline, zero console errors. |
+| Can modules be loaded on demand? | **Yes**, if the chunk boundary is an SCC of the reference graph. Validated. |
+| Does reflection survive? | **Yes**, with eager metadata plus registered *type stubs*. `GetTypes` / `IsAssignableFrom` / `GetCustomAttributes` / `Name` all work against unloaded types. |
+| Can reflection auto-load a module? | **Only asynchronously.** `Activator.CreateInstance` is synchronous C#; there is no sound synchronous ESM load. This is the one hard blocker. |
+| Is it worth it for Tesserae? | **~14% off the initial page** (gzipped). Less than it sounds, and for reasons that are structural — see §6. |
+
+The single most surprising number: **reflection metadata is 25% of the gzipped payload** of the
+Tesserae sample app (274 KB of 1.10 MB) and module splitting does not touch it. There is a much
+cheaper win available there than in code splitting.
+
+---
+
+## 2. Why splitting is easy: the emitted code has no imports to rewrite
+
+Three properties of the current output make this far less work than it would be for a typical
+compiler:
+
+1. **Every type reference is a dotted global.** `TypeRef` (`Emitter.Types.cs:66`) emits
+   `tss.Button`, `System.Collections.Generic.List$1(T)` — never a lexical binding. Splitting a
+   bundle into files therefore requires **no import/export rewriting at all**; a module only has to
+   be *evaluated* before the reference is read.
+2. **Type bodies never touch the assembly wrapper.** `Transpose.assembly("tss", function ($asm, globals) {…})`
+   binds `$asm` and `globals`, and across all 688 types in `tss.js` + `app.js` there is exactly one
+   occurrence of each — the signature itself. A per-type file needs only to name its assembly
+   (one line) so the bare `Transpose.define` registers into the right `$types` map.
+3. **`Emitter.EmitClassPath()` already emits one bare `Transpose.define` per type**, at a
+   `<ns>/<Type>.js` path. That is how `Transpose.BCL` is built. The emit half of "one file per class"
+   exists; it is gated to the base library (`ProjectBuild.cs:250`) and produces plain scripts rather
+   than modules.
+
+So the per-class file layout is a small change. Everything hard is in *load ordering* and
+*reflection*.
+
+## 3. What must be loaded before what
+
+`Transpose.define` resolves `inherits` **eagerly** — `Class.js:471` does `extend = extend()` inside
+`define`, so the lazy-looking `inherits: function () { return [Base]; }` thunk runs immediately. Base
+classes and interfaces must therefore be defined before the type that extends them.
+
+That splits every reference into two kinds:
+
+- **Hard** — the emitted code reaches *into* the type: `new X()`, a static member read, `inherits`,
+  and (non-obviously) **a generic type argument**, because `Foo$1(X)` builds a generic instance whose
+  base class can be `X` itself. A hard reference must be an `import`.
+- **Soft** — a bare mention: `typeof(X)`, an `is`/cast operand, a metadata reference. These only need
+  a *Type object*, which a stub provides (§5). They need not be imports.
+
+ES modules give the ordering guarantee for free: a side-effect `import './Base.mjs';` at the top of a
+module is fully evaluated before the importer's body runs. No name rewriting, no loader.
+
+**But only if the import graph is acyclic.** With a cycle A↔B, whichever module is entered first runs
+its body while the other is still initialising, and a `inherits` reference across the cycle throws.
+The inheritance graph alone is acyclic (measured: every SCC over `inherits` edges is a single type),
+but the *full* reference graph is not, and a purely inheritance-based import graph is unsound —
+proven, see §4.
+
+**The rule that works: a chunk is a strongly-connected component of the hard-reference graph.** The
+condensation of an SCC graph is a DAG, so chunk-level side-effect imports are always safe, and inside
+a chunk the emitter's existing dependency-depth ordering already satisfies `inherits`.
+
+## 4. What was measured
+
+Baseline: `Tesserae.Tests` built with `tps` at `8abfab4`, Debug, into
+`bin/Debug/netstandard2.0/tps/`. 688 source types (526 in `tss.js`, 162 in `app.js`). Correctness
+oracle: headless Chromium loads the page, records the sidebar, clicks all 140 samples and
+fingerprints each rendered pane (element count + text length), plus every console error.
+
+Four chunkings were built by re-chunking that emitted site and re-run through the same oracle:
+
+| Experiment | Chunks | Initial load | Result |
+| --- | --- | --- | --- |
+| **A** one module per type, all imported eagerly | 688 | 3140 KB | **140/140 samples identical, 0 errors** |
+| **B** one module per type, only the entry closure eager | 404 eager | 2058 KB | Renders, but only **3 of 140** samples — reflection cannot see unloaded types, and it fails *silently* |
+| **C** as B + metadata-backed type stubs + sync fault-in | 404 eager | 2058 KB | Full 140-item sidebar restored; **27 errors** — static calls into stubs |
+| **D** chunk = SCC of the full reference graph | 366 (211 eager) | 2053 KB | **140/140 samples identical, 0 errors** |
+
+Experiment A proves the split itself is sound. D is the working design.
+
+Experiment C is the interesting failure: with per-type modules whose imports are only the `inherits`
+edges, a lazily-loaded sample calls `tss.Bind.Bind$2(...)` — a static method on a type that is still
+a stub. There is no interception point for a plain property read on a global, so the chunk boundary
+*must* be closed over hard references. That is what D does.
+
+A fifth experiment (E) refined D by classifying references as hard/soft to break up the chunks. It
+improves granularity on paper — 366 → 499 chunks, eager 2053 → 1979 KB — but the classifier here works
+on *emitted text* and could not be made sound; it kept mis-filing edges (a generic type argument that
+becomes a base class; a second `inherits` inside a `Transpose.definei` block). A real implementation
+classifies on Roslyn symbols at the point `TypeRef` is called and would not have this problem. Left as
+the main open question, because it is where the remaining upside is.
+
+### Compression
+
+Splitting costs bytes. Measured over the same content:
+
+```
+366 chunks, gzipped individually   598 KB
+the same bytes as one file, gzip   519 KB     -> per-file split costs +15%
+```
+
+Small files lose the shared compression dictionary. This is real and must be stated in any pitch.
+
+### Payload, gzipped, for the Tesserae sample app
+
+```
+tps.js        278 KB      the runtime                     not splittable by this work
+tps.meta.js    57 KB      BCL reflection metadata         stays eager
+tss.js        365 KB      Tesserae                        splittable
+tss.meta.js   217 KB      Tesserae reflection metadata    stays eager
+app.js        183 KB      the sample app (incl. 11% inline metadata)   splittable
+              -------
+             1102 KB total initial page
+
+with the SCC split:  eager chunks 376 KB + boot 19 KB  (was 548 KB)
+                     949 KB total initial page  ->  -14%
+```
+
+## 5. Reflection
+
+This was the part flagged as "to be checked", and it resolved better than expected.
+
+**Metadata can stay entirely eager and does not need the code.** `Transpose.setMetadata`
+(`Reflection.js:4`) already defers an entry whose type is not yet defined, and `Transpose.init()`
+re-defers it if the type is still missing. So the whole `$m(...)` block can ship up front and attach
+to each type as its module arrives.
+
+**Type stubs make unloaded types visible to reflection.** Registering, for each unloaded type, a
+function carrying `$$name`, `$kind`, `$isInterface`, `$$inherits`, `$interfaces` and `$assembly` — at
+its global path *and* in the assembly's `$types` map, which is exactly where `Transpose.define` would
+put the real class (`Class.js:818`) — makes all of this work with the code absent:
+
+- `Assembly.GetTypes()` (`getAssemblyTypes` enumerates `$types`)
+- `IsAssignableFrom` (walks `$$inherits`)
+- `IsInterface`, `Name`
+- `GetCustomAttributes(...)`, including *constructing* the attribute instances
+
+Tesserae's sample gallery is discovered entirely through those four calls
+(`Tesserae.Tests/src/App.cs:116`), and it rebuilds its full 140-item sidebar off stubs alone.
+
+Two things the stubs need care with, both found the hard way:
+
+- Register outermost-first. Placing a nested type creates a plain `{}` at its container's path, which
+  the container's own stub then overwrites, silently losing the nested type.
+- Carry `$metadata` across when the real class replaces the stub, and evict the stub from the global
+  path first, or `Transpose.define` reports *"Class X is already defined"*.
+
+**The one thing that cannot work synchronously is using the type.** `Activator.CreateInstance(t)`,
+`new X()`, a static call — these are synchronous C#, and `import()` is asynchronous. The prototype
+bridged it with a synchronous `XMLHttpRequest` + `eval`, which is how it reaches 0 errors; that is
+acceptable for a dev mode and not for production (it blocks the main thread and is deprecated).
+
+So the production answer has to be an **explicit asynchronous boundary** — an attribute marking a
+lazily-loadable type and an `await` at the point the app crosses into it. A `Task<T>`-returning
+`Modules.Load<T>()` fits the existing `Task`→`Promise` mapping. Automatic per-class lazy loading
+cannot be sound for synchronous C# semantics; this is a language-surface change, not just a codegen
+one.
+
+## 6. Why the win is smaller than it looks
+
+Two structural facts, both visible in the chunking:
+
+**The library's own shape sets the floor.** The largest chunk is **1538 KB raw, 192 types** — the
+Tesserae component core. `tss.UI` is a static facade that references every component, and the
+components reference `UI` back, so the entire component library is one strongly-connected component
+and can never be split by any sound automatic rule. That chunk alone is 75% of the eager payload. The
+fix is not in the compiler: it is breaking the `UI` facade cycle in Tesserae.
+
+**Cross-references fuse unrelated code.** 122 of the 131 sample types landed in one 760 KB chunk,
+because each sample's "See Also" list is `typeof(OtherSample)` — emitted as
+`System.Array.init([Tesserae.Tests.Samples.ButtonSample, …])`. Those are *soft* references that a stub
+satisfies, so the hard/soft classification of §3 is what unlocks this; without it the median cost of
+opening one sample is 913 KB, i.e. nearly the whole lazy set.
+
+And a third, which is about where the bytes actually are: **metadata is 25% of the payload**
+(274 KB gz) and 37% of the raw bytes. `tss.meta.js` alone is 2.58 MB raw — the largest single file in
+the site, larger than `tss.js`. It must stay eager for reflection to work over unloaded types, so
+module splitting cannot reduce it. Emitting only the metadata a project actually reflects over, or
+splitting metadata per type alongside the chunks and accepting an async `GetTypes()`, is a
+*separate* and probably higher-value piece of work.
+
+## 7. What the compiler change would be
+
+Ordered by how much of it already exists.
+
+**Already there**
+- Per-class emission: `Emitter.EmitClassPath()`, currently gated to the base library.
+- Per-file packaging: `EmbeddedItem` (`ResourceEmbedder.cs:9`) already carries an `Output`
+  subdirectory and a `Load` flag for "write it, but do not put a `<script>` in index.html" — exactly
+  what N chunk files plus one boot module need.
+- Deferred metadata attachment in the runtime (`Reflection.js`).
+
+**New, in the translator**
+- A **reference-kind classifier**. All 82 `TypeRef(...)` call sites funnel through the single
+  `TypeRef(ITypeSymbol)` in `Emitter.Types.cs:66`, so *recording* an edge is a one-place change; but
+  classifying it hard vs soft needs the calling context, so either those sites pass a kind, or a
+  separate analysis pass walks the symbols. A separate pass is preferable — it keeps the emitter's
+  output byte-identical, which is the standing correctness gate, and `TreeModel` already caches the
+  semantic models it would need.
+- **SCC + condensation** over the hard-reference graph, then a chunk-merge heuristic (a 200-byte
+  chunk per type is worse than useless — see the +15% compression cost).
+- A **chunk manifest**: type → chunk, chunk → chunk deps, plus each type's kind and inherits list so
+  the boot module can build stubs.
+
+**New, in the compiler core**
+- An `outputBy: Module` / `--modules` mode in `TransposeJson` + `ProjectBuild`, writing chunk files
+  and a boot module instead of one bundle.
+- `OutputBuilder`: script-tag only the boot module; write chunks as unlinked files.
+- Package builds: a library must embed its chunks *and* its manifest, and a consuming site build must
+  merge the manifests of every referenced package. This is the fiddliest part — it is a new
+  cross-assembly protocol, versioned by the `BuildStamp` minimum-compiler check.
+
+**New, in the runtime (`Transpose.BCL/Resources`)**
+- `Transpose.$useAssembly(name)` — name the ambient assembly for a bare `define` outside a wrapper.
+- Stub registration, eviction and metadata hand-off.
+- An async `Transpose.loadChunk(url)` and the BCL surface (`Modules.Load<T>()`) that exposes it.
+- A clear error when a stub is used synchronously — the failure today is silent, which is worse.
+
+**Interactions to check that this investigation did not**
+- `--incremental`: the chunk assignment is a *whole-program* property, so a body-only edit that today
+  reuses cached per-type JS could still reshuffle chunks. `TODO.incremental.md`'s guarantee of
+  byte-identical output needs re-examining.
+- `--watch`: a rebuild that moves a type between chunks must invalidate both.
+- Minification: chunks minify independently, so `JsMinifier`'s local-variable renaming stays safe, but
+  the `.js`/`.min.js` variant switch now applies to N files.
+
+## 8. Recommendation
+
+Worth doing, but not as "modules per class" — that granularity is what the measurements argue
+against, on both compression (+15%) and the fact that the largest SCC is 192 types regardless.
+
+Sequence it as:
+
+1. **Hard/soft reference classification on Roslyn symbols**, with SCC chunking and a merge
+   heuristic. This is the whole technical core, and it is measurable on its own.
+2. **An explicit `[LazyModule]`-style boundary** plus `await Modules.Load<T>()`. Without it, lazy
+   loading is only reachable through reflection, and only asynchronously.
+3. **Stubs + eager metadata** in the runtime, so reflection keeps working across the boundary.
+4. Only then, packaging across assembly boundaries.
+
+And separately, ahead of all of it, look at the **metadata**: it is a quarter of the gzipped payload,
+every project pays for it whether it reflects or not, and reducing it needs none of the machinery
+above.
+
+---
+
+### Reproducing
+
+The harness is in `docs/experiments/js-modules/` — see its README. It works on an emitted site, so it
+needs no compiler changes:
+
+```bash
+cd /path/to/tesserae && dotnet build Tesserae.sln -c Debug        # with tps on PATH
+node graph.js  <site>                    # reachability + SCC statistics
+node split3.js <site> out-scc            # the working SCC chunking (experiment D)
+node probe.js  out-scc report            # render, click all 140 samples, fingerprint
+```
