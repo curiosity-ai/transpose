@@ -348,6 +348,26 @@ entry modules, almost all of it the `$m` blocks that used to be `tss.meta.js`. I
 for reflection to see deferred types at all, which is the same conclusion §1 reached from the other
 direction — metadata, not code, is what the split cannot touch.
 
+### Re-measured with the library's reflection turned off
+
+Tesserae subsequently set `reflection.disabled: true` in its own `tps.json` (the library does not
+need to be reflectable; the app still is), which deletes the 2.5 MB `tss.meta.js` the paragraph above
+identified as the floor. Same 628 chunks, same code, re-measured:
+
+| | tss + app JavaScript | whole page |
+| --- | --- | --- |
+| single bundle | 3,473 KB raw / 534 KB gz | 6,938 KB raw / 1,105 KB gz |
+| both as modules | **1,750 KB raw / 323 KB gz** | **5,215 KB raw / 893 KB gz** |
+
+212 chunks eager (207 library, 5 app), 416 on demand; the entry modules are 60 KB (`tss.js`) and
+149 KB (`app.js`). So the split's own contribution went from 29% raw / 31% gz to **50% raw / 40% gz**
+— not because the splitter improved, but because with the metadata gone what remains eager is code,
+and code is what it can move. The two changes compose: eager metadata was the larger of the two
+costs, and neither removes the other's.
+
+139 of 140 samples fingerprint identically; the one that differs (`Avatar`) is the randomised sample
+from the noise floor above. Reflection still enumerates all 528 + 162 types. Zero console errors.
+
 ### Not done
 
 - **`--incremental`.** Chunk assignment is a whole-program property, so a body-only edit that today
