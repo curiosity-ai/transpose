@@ -119,8 +119,11 @@ internal static class OutputBuilder
         void EmitCompilerJs(string rel, string content, bool isModule = false)
         {
             var o = new JsOut { Path = rel, IsModule = isModule };
-            if (wantFormatted) WriteText(rel, content); else o.IsEmpty = true;
-            if (wantMinified)
+            // A module entry is always written formatted: it carries `import` statements, and
+            // minifying ES module syntax is not something JsMinifier is set up for yet. The chunk
+            // files are likewise copied through as authored.
+            if (wantFormatted || isModule) WriteText(rel, content); else o.IsEmpty = true;
+            if (wantMinified && !isModule)
             {
                 var minRel = ToMinName(rel);
                 WriteText(minRel, JsMinifier.Minify(content, Path.GetFileName(rel), minifyLocals));
@@ -162,14 +165,14 @@ internal static class OutputBuilder
                     // A standalone .min.js is still a Release-only script as far as index.html goes,
                     // matching how the same group routes from disk. A .dontload resource is on disk
                     // (above) but never injected into either HTML.
-                    if (f.Load) jsOuts.Add(new JsOut { Path = f.Rel, IsMinified = IsMinifiedName(f.FileName) });
+                    if (f.Load) jsOuts.Add(new JsOut { Path = f.Rel, IsMinified = IsMinifiedName(f.FileName), IsModule = f.Module });
                     continue;
                 }
 
                 // The minified half of a pair is written below, by its formatted sibling.
                 if (IsMinifiedName(f.FileName)) continue;
 
-                var o = new JsOut { Path = f.Rel };
+                var o = new JsOut { Path = f.Rel, IsModule = f.Module };
                 if (wantFormatted) WriteText(f.Rel, f.Text); else o.IsEmpty = true;
                 if (wantMinified)
                 {
@@ -219,6 +222,9 @@ internal static class OutputBuilder
         // outputBy: Module — the chunk files are written but never scripted; the entry module
         // imports the ones it needs and declares the rest to Transpose.Modules, which fetches them
         // on demand. index.html therefore carries exactly one <script type="module">.
+        // A module entry and its chunks are embedded formatted only — they carry `import` syntax,
+        // which the minifier is not set up for — so no .min.js sibling is produced for them and the
+        // consumer's formatted/minified switch simply copies them through.
         if (modules is not null)
         {
             foreach (var (rel, chunkJs) in modules.Chunks)
@@ -267,10 +273,29 @@ internal static class OutputBuilder
     /// </summary>
     public static List<EmbeddedItem> CollectEmbeddableItems(
         string projectDir, TransposeJson config, string mainJsName, string javascript, string? metadataJavascript,
-        bool minifyLocalVariables = false)
+        bool minifyLocalVariables = false, Translator.Emitter.ModuleOutput? modules = null)
     {
         var items = new List<EmbeddedItem>();
         var utf8 = new UTF8Encoding(false);
+
+        // outputBy: Module — the chunk files travel alongside the entry. They are Load=false (never
+        // scripted; the entry imports the ones it needs and Transpose.Modules fetches the rest) and
+        // .mjs, so the consumer copies them through verbatim rather than routing them as bundles.
+        // A module entry and its chunks are embedded formatted only — they carry `import` syntax,
+        // which the minifier is not set up for — so no .min.js sibling is produced for them and the
+        // consumer's formatted/minified switch simply copies them through.
+        if (modules is not null)
+        {
+            foreach (var (rel, chunkJs) in modules.Chunks)
+            {
+                var slash = rel.LastIndexOf('/');
+                items.Add(new EmbeddedItem(
+                    Name: rel.Substring(slash + 1),
+                    Content: utf8.GetBytes(chunkJs),
+                    Output: slash < 0 ? null : rel.Substring(0, slash),
+                    Load: false));
+            }
+        }
         var metaName = metadataJavascript is not null
             ? Path.GetFileNameWithoutExtension(mainJsName) + ".meta.js"
             : null;
@@ -355,8 +380,10 @@ internal static class OutputBuilder
         var defaults = new List<EmbeddedItem>();
         if (!mainDeclared)
         {
-            defaults.Add(new EmbeddedItem(mainJsName, utf8.GetBytes(javascript), null));
-            if (config.OutputFormatting != JsOutputFormatting.Formatted)
+            defaults.Add(new EmbeddedItem(mainJsName, utf8.GetBytes(javascript), null, Module: modules is not null));
+            // No minified sibling for a module entry: it carries `import` syntax the minifier is not
+            // set up for, and with only one variant the consumer copies it through in both configs.
+            if (config.OutputFormatting != JsOutputFormatting.Formatted && modules is null)
                 defaults.Add(new EmbeddedItem(ToMinName(mainJsName), utf8.GetBytes(JsMinifier.Minify(javascript, mainJsName, minifyLocalVariables)), null));
         }
         if (metaName is not null && !metaDeclared)
@@ -386,7 +413,7 @@ internal static class OutputBuilder
     /// <summary>A JavaScript resource loaded from a package (a runtime bundle or embedded library
     /// code), with its file name (for pairing a formatted variant with its <c>.min.js</c>), the
     /// output-relative path it extracts to, and its text.</summary>
-    private readonly record struct EmbeddedJs(string FileName, string Rel, string Text, bool Load = true);
+    private readonly record struct EmbeddedJs(string FileName, string Rel, string Text, bool Load = true, bool Module = false);
 
     /// <summary>
     /// Read-only access to one assembly's embedded resources, opened and closed around the extraction —
@@ -453,7 +480,7 @@ internal static class OutputBuilder
         var manifestName = names.FirstOrDefault(n => n.EndsWith("Transpose.Resources.json", StringComparison.OrdinalIgnoreCase));
         if (manifestName is null) return jsFiles;
 
-        List<(string fileName, string? path, bool load)> entries;
+        List<(string fileName, string? path, bool load, bool module)> entries;
         using (var ms = asm.Open(manifestName))
         using (var sr = new StreamReader(ms))
         using (var doc = JsonDocument.Parse(sr.ReadToEnd(), new JsonDocumentOptions { AllowTrailingCommas = true }))
@@ -462,9 +489,10 @@ internal static class OutputBuilder
                 .Select(e => (
                     fileName: e.TryGetProperty("FileName", out var f) ? f.GetString() : null,
                     path: e.TryGetProperty("Path", out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() : null,
-                    load: !e.TryGetProperty("Load", out var l) || l.ValueKind != JsonValueKind.False))   // absent → true
+                    load: !e.TryGetProperty("Load", out var l) || l.ValueKind != JsonValueKind.False,   // absent → true
+                    module: e.TryGetProperty("Module", out var mo) && mo.ValueKind == JsonValueKind.True))
                 .Where(x => !string.IsNullOrEmpty(x.fileName))
-                .Select(x => (x.fileName!, x.path, x.load))
+                .Select(x => (x.fileName!, x.path, x.load, x.module))
                 .ToList();
         }
 
@@ -474,7 +502,7 @@ internal static class OutputBuilder
         string Rel(string fileName, string? path)
             => string.IsNullOrEmpty(path) ? Path.GetFileName(fileName) : path!.Replace('\\', '/').TrimEnd('/') + "/" + Path.GetFileName(fileName);
 
-        foreach (var (fileName, path, load) in entries)
+        foreach (var (fileName, path, load, module) in entries)
         {
             var resName = names.FirstOrDefault(n => n.Equals(fileName, StringComparison.OrdinalIgnoreCase))
                           ?? names.FirstOrDefault(n => n.EndsWith(fileName, StringComparison.OrdinalIgnoreCase));
@@ -486,7 +514,7 @@ internal static class OutputBuilder
             {
                 using var s = asm.Open(resName);
                 using var reader = new StreamReader(s);
-                jsFiles.Add(new EmbeddedJs(Path.GetFileName(fileName), rel, reader.ReadToEnd(), load));
+                jsFiles.Add(new EmbeddedJs(Path.GetFileName(fileName), rel, reader.ReadToEnd(), load, module));
             }
             else
             {
@@ -842,7 +870,7 @@ internal static class OutputBuilder
         // (Path — null/empty means the site root), and whether it is injected into index.html (Load).
         // A package without a manifest (the base runtime) surfaces only its .js/.css resources at the
         // site root — other resource types can't be identified, nor their output path recovered, without it.
-        List<(string fileName, string? path, bool load)> entries;
+        List<(string fileName, string? path, bool load, bool module)> entries;
         if (manifest is not null)
         {
             using var ms = asm.Open(manifest);
@@ -852,9 +880,10 @@ internal static class OutputBuilder
                 .Select(e => (
                     fileName: e.TryGetProperty("FileName", out var f) ? f.GetString() : null,
                     path: e.TryGetProperty("Path", out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() : null,
-                    load: !e.TryGetProperty("Load", out var l) || l.ValueKind != JsonValueKind.False))   // absent → true
+                    load: !e.TryGetProperty("Load", out var l) || l.ValueKind != JsonValueKind.False,   // absent → true
+                    module: e.TryGetProperty("Module", out var mo) && mo.ValueKind == JsonValueKind.True))
                 .Where(x => !string.IsNullOrEmpty(x.fileName))
-                .Select(x => (x.fileName!, x.path, x.load))
+                .Select(x => (x.fileName!, x.path, x.load, x.module))
                 .ToList();
         }
         else
@@ -862,11 +891,11 @@ internal static class OutputBuilder
             entries = resourceNames
                 .Where(n => n.EndsWith(".js", StringComparison.OrdinalIgnoreCase)
                             || n.EndsWith(".css", StringComparison.OrdinalIgnoreCase))
-                .Select(n => (n, (string?)null, true))
+                .Select(n => (n, (string?)null, true, false))
                 .ToList();
         }
 
-        foreach (var (fileName, path, load) in entries)
+        foreach (var (fileName, path, load, module) in entries)
         {
             var resName = resourceNames.FirstOrDefault(n => n.Equals(fileName, StringComparison.OrdinalIgnoreCase))
                           ?? resourceNames.FirstOrDefault(n => n.EndsWith(fileName, StringComparison.OrdinalIgnoreCase));
@@ -882,7 +911,7 @@ internal static class OutputBuilder
             {
                 using var s = asm.Open(resName);
                 using var reader = new StreamReader(s);
-                jsFiles.Add(new EmbeddedJs(leaf, rel, reader.ReadToEnd(), load));   // JS: placed/minified by RoutePackageJs
+                jsFiles.Add(new EmbeddedJs(leaf, rel, reader.ReadToEnd(), load, module));   // JS: placed/minified by RoutePackageJs
             }
             else
             {

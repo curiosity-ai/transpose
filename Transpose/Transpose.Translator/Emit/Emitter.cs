@@ -72,6 +72,11 @@ public sealed partial class Emitter
     /// dependency set of the type currently being emitted, which module mode chunks on.</summary>
     private HashSet<INamedTypeSymbol>? _recordedRefs;
 
+    /// <summary>Alongside <see cref="_recordedRefs"/>: the define names of types from *referenced*
+    /// Transpose-compiled assemblies, so a chunk can import the referenced assembly's chunk that
+    /// holds them.</summary>
+    private HashSet<string>? _recordedExternalRefs;
+
     /// <summary>Nesting depth of a reference position that only needs a <em>Type object</em> rather
     /// than the type's code — a <c>typeof</c> operand. A stub satisfies those (see Modules.js), so
     /// they are not recorded as dependencies and do not fuse two chunks together.</summary>
@@ -226,9 +231,16 @@ public sealed partial class Emitter
 
     /// <param name="refs">When supplied, receives every source type the emitted body references.</param>
     public static JsWriter EmitOnlyType(Emitter emitter, INamedTypeSymbol type, HashSet<INamedTypeSymbol>? refs)
+        => EmitOnlyType(emitter, type, refs, null);
+
+    /// <param name="externalRefs">When supplied, receives the define names of referenced-assembly
+    /// types the emitted body reaches into.</param>
+    public static JsWriter EmitOnlyType(Emitter emitter, INamedTypeSymbol type,
+        HashSet<INamedTypeSymbol>? refs, HashSet<string>? externalRefs)
     {
         var clonedEmitter = emitter.Clone();
         clonedEmitter._recordedRefs = refs;
+        clonedEmitter._recordedExternalRefs = externalRefs;
         clonedEmitter.EmitType(type);
         return clonedEmitter._w;
     }

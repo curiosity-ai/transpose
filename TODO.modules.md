@@ -304,16 +304,59 @@ asynchronous:
 async () => await Activator.CreateInstanceAsync(t) as IComponent   // and DeferSync -> Defer
 ```
 
+### Packages split too (§7b)
+
+`--emit-package` emits chunks as well, so a *library* splits. Two pieces make that work across the
+assembly boundary:
+
+- **A library defers everything.** It has no entry point to be lazy relative to, so its eager set is
+  just the chunks holding its `[Ready]` handlers (usually none). Its entry module imports nothing and
+  registers the whole manifest as stubs.
+- **It publishes a chunk map** — emitted type name → chunk file — embedded as `Transpose.Modules.json`
+  (embedded but *not* listed in `Transpose.Resources.json`, like the `BuildStamp`, so no consumer
+  extracts it into a site). A consuming build reads the maps of all its references (`ModuleMap.Read`)
+  and, wherever its own code reaches into a library type, emits `import '../<lib>/cN.mjs'` from the
+  chunk that uses it. Without that the reference would land on the library's stub, and a stub cannot
+  be resolved synchronously.
+
+`RecordRef` therefore records two sets: source types (chunked here) and referenced-assembly types
+(chunked over there). BCL types are recorded in neither — they live in `tps.js`, which always loads.
+
+The one non-obvious bug this surfaced: **a stub must be retired in place, not deleted.** `Class.set`
+already copies the members of whatever previously occupied a type's global slot onto the new class,
+which is how a nested type registered onto a stub survives — and it has to survive *before* the
+define resolves `inherits`, because a type's own base can mention its nested type
+(`Nav : ...<Nav.NavLink>`). Deleting the stub and restoring later left `Nav.NavLink` undefined at
+exactly that moment. So `$replaceStub` now clears the stub markers and leaves the object in place,
+keeping `$$name` (a caller holding the stub still has to resolve by name afterwards) and setting
+`$retiredStub` for the redefinition check to look past.
+
+### Measured with both Tesserae and the app split
+
+| | initial JS payload |
+| --- | --- |
+| single bundle (tss.js + tss.meta.js + app.js) | 5,968 KB raw / 762 KB gz |
+| both as modules | **4,235 KB raw / 527 KB gz** |
+
+628 chunks (468 library, 160 app); 210 chunks load up front, 418 on demand. 137 of 140 samples
+fingerprint identically; the other 3 (`Searchable List`, `Searchable Grouped List`, `Avatar`) differ
+run-to-run in the *single-bundle* build too — virtualized list windows and randomised avatars — so
+they are the measurement's noise floor rather than a regression. Zero console errors.
+
+The eager remainder is dominated by **reflection metadata**: 2,708 KB raw of the 4,235 is the two
+entry modules, almost all of it the `$m` blocks that used to be `tss.meta.js`. It has to stay eager
+for reflection to see deferred types at all, which is the same conclusion §1 reached from the other
+direction — metadata, not code, is what the split cannot touch.
+
 ### Not done
 
-- **Packages.** Only a site build emits modules; `--emit-package` still embeds one bundle, so
-  Tesserae itself (`tss.js`, 2.4 MB) is unsplit. Splitting a package means embedding chunk files plus
-  a manifest and merging the manifests of every reference — a new cross-assembly protocol.
 - **`--incremental`.** Chunk assignment is a whole-program property, so a body-only edit that today
   reuses cached per-type JavaScript could still reshuffle chunks. Module mode has not been checked
   against the cache and the two should not be combined yet.
 - **Minification** of chunk files, and the `.js`/`.min.js` variant switch across N files.
 - **Watch mode** with module output.
+- **Minification** — a module entry and its chunks are emitted formatted only (they carry `import`
+  syntax `JsMinifier` is not set up for), and a module-mode package embeds no `.min.js` sibling.
 - Generic base types reach the manifest as their definition name (`Foo$1`), which is all
   `Transpose.unroll` can express, so `IsAssignableFrom` against a *constructed* generic interface is
   not answered from a stub.

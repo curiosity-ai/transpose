@@ -69,7 +69,7 @@ public sealed partial class Emitter
         // chunker can group mutually-referencing types (see Emitter.Modules.cs). Recording here
         // rather than in a separate analysis pass keeps the two in step by construction: an edge
         // exists exactly when a reference was emitted.
-        if (_recordedRefs is not null && _softRefDepth == 0) RecordRef(type);
+        if ((_recordedRefs is not null || _recordedExternalRefs is not null) && _softRefDepth == 0) RecordRef(type);
         return type is ITypeParameterSymbol ? TypeRefCore(type) : UnshadowedTypeRef(TypeRefCore(type));
     }
 
@@ -85,11 +85,26 @@ public sealed partial class Emitter
                 RecordRef(array.ElementType);
                 return;
             case INamedTypeSymbol named:
-                if (named.Locations.Any(l => l.IsInSource) && !TransposeNaming.IsExternalType(named))
+                if (TransposeNaming.IsExternalType(named)) { /* native JS - nothing to load */ }
+                else if (named.Locations.Any(l => l.IsInSource))
                     _recordedRefs!.Add((INamedTypeSymbol)named.OriginalDefinition);
+                else if (_recordedExternalRefs is not null && TransposeNaming.IsTransposeCompiledSource(named))
+                    // A type from a *referenced* Transpose-compiled assembly. If that assembly was
+                    // itself built as modules, the chunk holding this type has to be imported, or the
+                    // reference would land on a stub. Recorded by emitted define name, which is the
+                    // key the referenced assembly's chunk map uses.
+                    _recordedExternalRefs.Add(DefineName(named));
                 foreach (var arg in named.TypeArguments) RecordRef(arg);
                 return;
         }
+    }
+
+    /// <summary>The bare name a type's <c>Transpose.define</c> registers it under — no type
+    /// arguments, arity suffixed. This is the key both the module manifest and the chunk map use.</summary>
+    private string DefineName(INamedTypeSymbol named)
+    {
+        var t = (INamedTypeSymbol)named.OriginalDefinition;
+        return t.Arity > 0 ? _names.TypeFullName(t) + "$" + t.Arity : _names.TypeFullName(t);
     }
 
     private string TypeRefCore(ITypeSymbol type)

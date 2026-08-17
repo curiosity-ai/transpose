@@ -112,14 +112,6 @@
         $loadModule: function (url) {
             if (modules.$pending[url]) return modules.$pending[url];
 
-            // Every type this module owns has to give up its global slot before the module's
-            // Transpose.define calls run, or define reports "Class X is already defined".
-            var owned = [], saved = {};
-            for (var n in modules.$manifest) {
-                if (modules.$manifest[n].m === url) owned.push(n);
-            }
-            for (var i = 0; i < owned.length; i++) saved[owned[i]] = modules.$evict(owned[i]);
-
             var loader = modules.$loader || modules.$defaultLoader;
             var p;
             try {
@@ -131,15 +123,14 @@
             }
 
             p = p.then(function () {
-                // The module's types are defined now; run the queued static initializers and let
-                // any metadata that was deferred while they were stubs attach to the real types.
+                // The module's types are defined now — each retired its own stub as it was defined.
+                // Run the queued static initializers and let any metadata that was deferred while
+                // they were stubs attach to the real types.
                 Transpose.init();
-                for (var k = 0; k < owned.length; k++) modules.$adopt(owned[k], saved[owned[k]]);
                 return true;
             }, function (err) {
-                // A failed fetch must not leave the type missing: put the stubs back and let the
-                // next attempt try again.
-                for (var k = 0; k < owned.length; k++) modules.$restore(owned[k], saved[owned[k]]);
+                // Nothing was evicted, so a failed fetch leaves the stubs exactly as they were and
+                // the type stays visible; just allow another attempt.
                 delete modules.$pending[url];
                 throw err;
             });
@@ -164,27 +155,34 @@
             return modules.$import(url);
         },
 
-        /// Steps a stub aside so the real Transpose.define can take its place, remembering what has
-        /// to be carried over. Called from Class.js at define time, which catches every route a
-        /// chunk can arrive by — the loader below, or a plain static import from another chunk.
+        /// Retires the stub occupying <c>name</c> so the real Transpose.define can take the slot.
+        ///
+        /// The stub object is left in place rather than deleted: Class.set copies the members of
+        /// whatever previously occupied the slot onto the new class, which is how a nested type
+        /// registered onto the stub survives — and it has to survive *before* the define resolves
+        /// `inherits`, which a delete-then-restore-later could not manage (a type whose own base
+        /// mentions its nested type, e.g. Nav : ...&lt;Nav.NavLink&gt;, would see it undefined).
+        /// Only the identity markers are cleared, so the "already defined" check does not fire.
         $replaceStub: function (name) {
-            var saved = modules.$evict(name);
-            if (saved) modules.$adoptPending[name] = saved;
+            var at = modules.$slot(name);
+            var stub = at.scope && at.scope[at.leaf];
+            if (!stub || !stub.$stub) return;
+            // $$name is deliberately kept: a caller that grabbed this stub from Type.GetType() before
+            // the load still has to be resolvable by name afterwards (Modules.load hands them the live
+            // type). Only the stub markers are cleared, plus a flag telling Class.set to step aside.
+            stub.$stub = false;
+            stub.$retiredStub = true;
+            var info = modules.$manifest[name];
+            var asm = info && System.Reflection.Assembly.assemblies[info.a];
+            if (asm) delete asm.$types[name];
         },
 
-        /// Hands the stub's metadata and any nested types to the real type. Called right after the
-        /// define registered it.
+        /// Hands the metadata the stub was holding to the real type, once the define registered it.
         $stubReplaced: function (name, real) {
             if (!real || real.$stub) return;
-            var saved = modules.$adoptPending[name];
-            if (saved) {
-                for (var k in saved.carry) {
-                    if (real[k] === undefined) real[k] = saved.carry[k];
-                }
-                delete modules.$adoptPending[name];
-            }
-            // The metadata comes from the name-keyed record rather than the evicted stub: the stub
-            // may have been taken out by a different route than the one replacing it now.
+            // Keyed by NAME rather than taken off the stub: the stub may have been retired by a
+            // different route than the one replacing it now (the loader, or a plain static import
+            // of the chunk from another chunk).
             if (!real.$metadata && modules.$metaFor[name]) {
                 real.$metadata = modules.$metaFor[name];
                 real.$getMetadata = Transpose.Reflection.getMetadata;
@@ -193,8 +191,6 @@
             delete modules.$manifest[name];
             delete modules.$stubs[name];
         },
-
-        $adoptPending: {},
 
         /// Metadata captured while a type was a stub, keyed by type name (see Reflection.setMetadata).
         $metaFor: {},
@@ -235,54 +231,6 @@
             var parts = name.split("."), scope = Transpose.global;
             for (var i = 0; i < parts.length - 1 && scope; i++) scope = scope[parts[i]];
             return { scope: scope, leaf: parts[parts.length - 1] };
-        },
-
-        $evict: function (name) {
-            var at = modules.$slot(name);
-            var stub = at.scope && at.scope[at.leaf];
-            if (!stub || !stub.$stub) return null;
-            // Anything hung off the stub (nested types registered onto it) has to survive onto the
-            // real type, and so does the metadata that attached while it stood in.
-            var carry = {};
-            for (var k in stub) {
-                if (Object.prototype.hasOwnProperty.call(stub, k) && k.charAt(0) !== "$") carry[k] = stub[k];
-            }
-            delete at.scope[at.leaf];
-            var asm = System.Reflection.Assembly.assemblies[modules.$manifest[name].a];
-            if (asm) delete asm.$types[name];
-            return { stub: stub, carry: carry, metadata: stub.$metadata, getMetadata: stub.$getMetadata };
-        },
-
-        $restore: function (name, saved) {
-            if (!saved) return;
-            var at = modules.$slot(name);
-            if (at.scope && !at.scope[at.leaf]) at.scope[at.leaf] = saved.stub;
-            var asm = System.Reflection.Assembly.assemblies[modules.$manifest[name].a];
-            if (asm) asm.$types[name] = saved.stub;
-        },
-
-        $adopt: function (name, saved) {
-            var real = Transpose.unroll(name);
-            // Class.js may already have swapped the stub out at define time and carried everything
-            // over; nothing left to do then.
-            if (real && !real.$stub && !modules.$adoptPending[name] && !modules.$manifest[name]) return;
-            if (!real || real.$stub) {
-                // The module did not actually define it — leave the stub in place so the error the
-                // caller eventually sees still names the module.
-                modules.$restore(name, saved);
-                return;
-            }
-            if (saved) {
-                for (var k in saved.carry) {
-                    if (real[k] === undefined) real[k] = saved.carry[k];
-                }
-                if (!real.$metadata && saved.metadata) {
-                    real.$metadata = saved.metadata;
-                    real.$getMetadata = saved.getMetadata || Transpose.Reflection.getMetadata;
-                }
-            }
-            delete modules.$manifest[name];
-            delete modules.$stubs[name];
         }
     };
 

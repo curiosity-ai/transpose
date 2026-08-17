@@ -518,9 +518,26 @@ The short version:
   hand-off is keyed by type **name** (`Modules.$metaFor`) rather than held on the stub object, for the
   same reason.
 
-  Still single-bundle: `--emit-package` (a package embeds one bundle, so a *library* cannot be split
-  yet), `--incremental` (chunk assignment is a whole-program property — do not combine them yet),
-  minification of chunk files, and watch mode.
+  **A package splits too.** `--emit-package` emits chunks as well; a library has no entry point to be
+  lazy relative to, so it defers everything (its eager set is just the chunks holding `[Ready]`
+  handlers) and publishes a chunk map — emitted type name → chunk file — embedded as
+  `Transpose.Modules.json` (embedded but *not* listed in `Transpose.Resources.json`, like the
+  `BuildStamp`, so nothing extracts it into a site). A consuming build merges its references' maps
+  (`ModuleMap.Read`) and emits `import '../<lib>/cN.mjs'` from whichever of its own chunks reaches
+  into a library type — without that the reference would land on the library's stub, which cannot be
+  resolved synchronously. Covered by `ModulePackageTests`.
+
+  A fourth load-bearing detail, found the same way as the three above: **a stub is retired in place,
+  never deleted.** `Class.set` already copies the members of whatever previously occupied a type's
+  global slot onto the new class — that is how a nested type registered onto a stub survives — and it
+  has to survive *before* the define resolves `inherits`, because a type's own base can mention its
+  nested type (`Nav : …<Nav.NavLink>`). So `$replaceStub` clears the stub markers and leaves the
+  object where it is, keeping `$$name` (a caller holding the stub must still resolve by name) and
+  setting `$retiredStub` for the redefinition check to look past.
+
+  Still single-bundle: `--incremental` (chunk assignment is a whole-program property — do not combine
+  them yet), minification (a module entry and its chunks are emitted formatted only, since they carry
+  `import` syntax `JsMinifier` does not handle), and watch mode.
 - **The module runtime.** `Resources/Modules.js`
   provides `Transpose.Modules` — a registry of types whose JavaScript lives in a module that has not
   been fetched. `Modules.Register(manifest)` stubs each such type at the same global path and in the

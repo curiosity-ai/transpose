@@ -25,6 +25,12 @@ public sealed partial class Emitter
         public int EagerChunkCount { get; init; }
         public int LazyChunkCount { get; init; }
         public int LazyTypeCount { get; init; }
+
+        /// <summary>Every emitted type's define name → the site-relative chunk file holding it. A
+        /// package embeds this so a consuming build can import the chunk behind a type it uses;
+        /// without it the consumer's reference would land on a stub it cannot resolve synchronously.
+        /// </summary>
+        public Dictionary<string, string> TypeToChunk { get; } = new(StringComparer.Ordinal);
     }
 
     /// <summary>
@@ -44,7 +50,17 @@ public sealed partial class Emitter
     /// unfetched, and are loaded on demand. A project with no entry point (a library) keeps
     /// everything eager — there is nothing to be lazy relative to.
     /// </summary>
-    public ModuleOutput EmitModules(string chunkDirectory = "chunks")
+    /// <param name="chunkDirectory">Site-relative folder the chunk files go in. Per assembly, so two
+    /// module-mode assemblies in one site cannot collide.</param>
+    /// <param name="externalChunks">Define name → site-relative chunk file, merged from every
+    /// referenced assembly that was itself built as modules.</param>
+    /// <param name="packageMode">A library: nothing is eager beyond what its own [Ready] handlers
+    /// need, because there is no entry point to be lazy relative to — the consumer's chunks import
+    /// what they use, and everything else stays a stub until something asks for it.</param>
+    public ModuleOutput EmitModules(
+        string chunkDirectory = "chunks",
+        IReadOnlyDictionary<string, string>? externalChunks = null,
+        bool packageMode = false)
     {
         var types = PhaseTimings.Measure("  ├ collect + order types", CollectTypes);
         var order = new Dictionary<INamedTypeSymbol, int>(SymbolEqualityComparer.Default);
@@ -53,15 +69,18 @@ public sealed partial class Emitter
         // Emit every type once, recording what it references as we go.
         var bodies = new ConcurrentDictionary<INamedTypeSymbol, string>(SymbolEqualityComparer.Default);
         var refs = new ConcurrentDictionary<INamedTypeSymbol, HashSet<INamedTypeSymbol>>(SymbolEqualityComparer.Default);
+        var extRefs = new ConcurrentDictionary<INamedTypeSymbol, HashSet<string>>(SymbolEqualityComparer.Default);
         try
         {
             PhaseTimings.Measure("  ├ emit type bodies (parallel)", () =>
                 Parallel.ForEach(types, type =>
                 {
                     var seen = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
-                    bodies[type] = EmitOnlyType(this, type, seen).ToString();
+                    var ext = externalChunks is null ? null : new HashSet<string>(StringComparer.Ordinal);
+                    bodies[type] = EmitOnlyType(this, type, seen, ext).ToString();
                     seen.Remove(type);
                     refs[type] = seen;
+                    if (ext is not null) extRefs[type] = ext;
                 }));
         }
         catch (AggregateException ex) when (ex.Flatten().InnerExceptions.OfType<TranslationException>().FirstOrDefault() is { } te)
@@ -72,14 +91,31 @@ public sealed partial class Emitter
         var chunks = PhaseTimings.Measure("  ├ chunk (strongly-connected components)",
             () => Chunk(types, refs, order));
 
-        // Eager set: the chunk holding the entry point, plus every chunk it transitively references.
-        var entry = _compilation.GetEntryPoint(default)?.ContainingType?.OriginalDefinition as INamedTypeSymbol;
+        // Eager set: the chunks the entry module has to import, closed over chunk dependencies.
+        //
+        //  - an application: the chunk holding Main;
+        //  - a library (packageMode): only the chunks holding [Ready] handlers, which run on load and
+        //    so cannot be deferred. Everything else waits to be imported by a consumer's chunk or
+        //    fetched on demand — a library has no entry point to be lazy relative to, and making it
+        //    all eager would defeat the split entirely;
+        //  - neither (a site build with no Main): everything, since nothing can be deferred safely.
+        var roots = new List<INamedTypeSymbol>();
+        if (packageMode)
+        {
+            roots.AddRange(types.Where(t => t.GetMembers().OfType<IMethodSymbol>()
+                .Any(m => m.IsStatic && m.GetAttributes().Any(a => TransposeNaming.AttrIs(a, TransposeNaming.ReadyAttr)))));
+        }
+        else if (_compilation.GetEntryPoint(default)?.ContainingType?.OriginalDefinition is INamedTypeSymbol main)
+        {
+            roots.Add(main);
+        }
+
         var eager = new HashSet<int>();
-        if (entry is not null && chunks.IndexOf.TryGetValue(entry, out var entryChunk))
+        if (roots.Count > 0 || packageMode)
         {
             var stack = new Stack<int>();
-            eager.Add(entryChunk);
-            stack.Push(entryChunk);
+            foreach (var r in roots)
+                if (chunks.IndexOf.TryGetValue(r, out var c) && eager.Add(c)) stack.Push(c);
             while (stack.Count > 0)
                 foreach (var d in chunks.Deps[stack.Pop()])
                     if (eager.Add(d)) stack.Push(d);
@@ -100,6 +136,19 @@ public sealed partial class Emitter
             // two builds of the same sources produce byte-identical files.
             foreach (var d in chunks.Deps[i].OrderBy(x => x))
                 w.Append("import '").Append(RelativeImport(ChunkFile(i), ChunkFile(d))).Append("';\n");
+            // Cross-assembly: a referenced module-mode assembly's chunk holding a type this one uses.
+            // Without it the reference would resolve to that assembly's stub, and a stub cannot be
+            // resolved synchronously.
+            if (externalChunks is not null)
+            {
+                var wanted = new SortedSet<string>(StringComparer.Ordinal);
+                foreach (var t in chunks.Members[i])
+                    if (extRefs.TryGetValue(t, out var names))
+                        foreach (var n in names)
+                            if (externalChunks.TryGetValue(n, out var file)) wanted.Add(file);
+                foreach (var file in wanted)
+                    w.Append("import '").Append(RelativeImport(ChunkFile(i), file)).Append("';\n");
+            }
             // A bare Transpose.define outside the Transpose.assembly(...) wrapper has no ambient
             // assembly, so each chunk names its own before defining anything.
             w.Append("Transpose.$useAssembly(\"").Append(_assemblyName).Append("\");\n");
@@ -115,13 +164,15 @@ public sealed partial class Emitter
         for (var i = 0; i < chunks.Members.Count; i++)
             if (!eager.Contains(i)) lazyTypes.AddRange(chunks.Members[i]);
 
-        return new ModuleOutput
+        var result = new ModuleOutput
         {
             EntryJs = BuildEntryModule(types, chunks, eager, lazyTypes, ChunkFile),
             EagerChunkCount = eager.Count,
             LazyChunkCount = chunks.Members.Count - eager.Count,
             LazyTypeCount = lazyTypes.Count,
         }.With(output);
+        foreach (var t in types) result.TypeToChunk[MetaTypeDefName(t)] = ChunkFile(chunks.IndexOf[t]);
+        return result;
     }
 
     private sealed record ChunkGraph(
@@ -316,14 +367,22 @@ public sealed partial class Emitter
         return string.Join("\n", lines);
     }
 
-    /// <summary>A relative specifier from one chunk file to another. Both live in the same folder in
-    /// every layout emitted today, so this is just <c>./name</c>, but it is computed rather than
-    /// assumed so a nested chunk directory keeps working.</summary>
-    private static string RelativeImport(string from, string to)
+    /// <summary>
+    /// An ES module specifier from one site-relative file to another. Both may sit in different
+    /// per-assembly chunk folders (a consumer importing a library's chunk), so this walks up with
+    /// <c>../</c> as needed. Always explicitly relative — a bare name would be a bare specifier,
+    /// which the browser resolves through the import map rather than as a path.
+    /// </summary>
+    internal static string RelativeImport(string from, string to)
     {
-        var fromDir = from.Contains('/') ? from.Substring(0, from.LastIndexOf('/')) : "";
-        var toDir = to.Contains('/') ? to.Substring(0, to.LastIndexOf('/')) : "";
-        return fromDir == toDir ? "./" + to.Substring(toDir.Length == 0 ? 0 : toDir.Length + 1) : "./" + to;
+        var fromParts = from.Split('/');
+        var toParts = to.Split('/');
+        var common = 0;
+        while (common < fromParts.Length - 1 && common < toParts.Length - 1
+               && string.Equals(fromParts[common], toParts[common], StringComparison.Ordinal)) common++;
+        var up = fromParts.Length - 1 - common;
+        var prefix = up == 0 ? "./" : string.Concat(Enumerable.Repeat("../", up));
+        return prefix + string.Join("/", toParts.Skip(common));
     }
 }
 

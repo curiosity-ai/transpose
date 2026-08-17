@@ -86,7 +86,9 @@ public sealed class RoslynTranslator
         bool metadataOnlyAssembly = false,
         IncrementalPlan? incremental = null,
         bool emitModules = false,
-        string chunkDirectory = "chunks")
+        string chunkDirectory = "chunks",
+        IReadOnlyDictionary<string, string>? externalChunks = null,
+        bool packageModules = false)
     {
         CompileProgress.Report("parsing sources + resolving references");
         var compilation = PhaseTimings.Measure("build compilation (parse + references)", () =>
@@ -223,7 +225,8 @@ public sealed class RoslynTranslator
                 // eager and cover every type, including the deferred ones), so there is no separate
                 // metadata script and the "javascript" of this build is the entry module.
                 CompileProgress.Report("emitting JavaScript modules");
-                moduleOutput = PhaseTimings.Measure("emit JavaScript (modules)", () => emitter.EmitModules(chunkDirectory));
+                moduleOutput = PhaseTimings.Measure("emit JavaScript (modules)",
+                    () => emitter.EmitModules(chunkDirectory, externalChunks, packageModules));
                 js = moduleOutput.EntryJs;
             }
             else

@@ -19,12 +19,17 @@ namespace Transpose.Translator.Tests
     [TestClass]
     public class ModuleEmitTests : TranslatorTestBase
     {
-        private static Emitter.ModuleOutput Emit(string source)
+        private static Emitter.ModuleOutput Emit(
+            string source,
+            bool packageModules = false,
+            IReadOnlyDictionary<string, string>? externalChunks = null,
+            string chunkDirectory = "chunks")
         {
             var result = new RoslynTranslator().BuildAssembly(
                 new[] { ("App.cs", source) }, CompilationBuilder.DefaultAssemblyName,
                 extraReferencePaths: null, preprocessorSymbols: new[] { "DEBUG", "TRACE" },
-                emitAssembly: false, emitModules: true);
+                emitAssembly: false, emitModules: true,
+                chunkDirectory: chunkDirectory, externalChunks: externalChunks, packageModules: packageModules);
             if (!result.Success)
                 Assert.Fail("translation failed:\n" + string.Join("\n", result.Errors.Select(d => d.GetMessage())));
             return result.Modules!;
@@ -203,6 +208,74 @@ public class Program { public static void Main() { Console.WriteLine(new One().T
             Assert.AreEqual(a.EntryJs, b.EntryJs);
             CollectionAssert.AreEqual(a.Chunks.Select(c => c.relPath).ToList(), b.Chunks.Select(c => c.relPath).ToList());
             for (var i = 0; i < a.Chunks.Count; i++) Assert.AreEqual(a.Chunks[i].js, b.Chunks[i].js);
+        }
+
+        // ---- packages -----------------------------------------------------------------------
+
+        [TestMethod]
+        public void ALibraryDefersEverythingItDoesNotHaveToRun()
+        {
+            var m = Emit(@"
+public class Widget { public int N; }
+public class Gadget { public Widget W = new Widget(); }
+", packageModules: true);
+
+            // A library has no entry point to be lazy relative to, so nothing is eager: its consumer's
+            // chunks import what they actually use, and the rest waits to be asked for. Making it all
+            // eager instead would produce chunk files that always load, which is strictly worse than
+            // one bundle.
+            Assert.AreEqual(0, m.EagerChunkCount);
+            Assert.AreEqual(m.Chunks.Count, m.LazyChunkCount);
+            StringAssert.Contains(m.EntryJs, "Transpose.Modules.register({");
+            Assert.IsFalse(m.EntryJs.Contains("import './chunks/"), "a library entry imports nothing");
+        }
+
+        [TestMethod]
+        public void ALibraryKeepsItsReadyHandlersEager()
+        {
+            var m = Emit(@"
+public class Widget { public int N; }
+public static class Boot
+{
+    [Transpose.Ready]
+    public static void Start() { System.Console.WriteLine(""up""); }
+}
+", packageModules: true);
+
+            // A [Ready] handler runs on load, so it cannot be deferred — its chunk (and whatever that
+            // chunk needs) is the library's eager set.
+            Assert.IsTrue(m.EagerChunkCount >= 1, "the [Ready] handler's chunk must load up front");
+            StringAssert.Contains(m.EntryJs, "import './chunks/");
+            StringAssert.Contains(m.EntryJs, "Transpose.ready(");
+        }
+
+        [TestMethod]
+        public void EveryEmittedTypeIsInThePublishedChunkMap()
+        {
+            var m = Emit(@"
+public class Alpha { public int N; }
+public class Beta { public Alpha A = new Alpha(); }
+public class Program { public static void Main() { System.Console.WriteLine(new Beta().A.N); } }
+");
+            // This map is what a package embeds for its consumers; a type missing from it would make
+            // the consumer emit no import and hit the library's stub at runtime.
+            foreach (var t in new[] { "Alpha", "Beta", "Program" })
+            {
+                Assert.IsTrue(m.TypeToChunk.ContainsKey(t), $"{t} is missing from the chunk map");
+                Assert.IsTrue(m.Chunks.Any(c => c.relPath == m.TypeToChunk[t]), $"{t} maps to a chunk that was not emitted");
+            }
+        }
+
+        /// <summary>The specifier a chunk uses to reach another chunk, possibly in a different
+        /// assembly's folder. <see cref="ModulePackageTests"/> covers the cross-assembly protocol
+        /// end to end; this pins the path arithmetic it depends on.</summary>
+        [TestMethod]
+        public void RelativeImportWalksBetweenChunkFolders()
+        {
+            Assert.AreEqual("./c2.mjs", Emitter.RelativeImport("chunks/app/c1.mjs", "chunks/app/c2.mjs"));
+            Assert.AreEqual("../lib/c9.mjs", Emitter.RelativeImport("chunks/app/c1.mjs", "chunks/lib/c9.mjs"));
+            Assert.AreEqual("./chunks/app/c1.mjs", Emitter.RelativeImport("app.js", "chunks/app/c1.mjs"));
+            Assert.AreEqual("../../top.mjs", Emitter.RelativeImport("chunks/app/c1.mjs", "top.mjs"));
         }
 
         [TestMethod]

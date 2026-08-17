@@ -886,10 +886,11 @@
                 // import of another chunk — ESM evaluates it directly and the loader never sees it.
                 if (exists.$stub && exists.$$name === className && Transpose.Modules) {
                     Transpose.Modules.$replaceStub(className);
-                    exists = scope[name];
                 }
 
-                if (exists && exists.$$name === className) {
+                // A retired stub keeps its $$name (callers holding it still resolve by name), so the
+                // redefinition check has to look past it rather than at the name alone.
+                if (exists.$$name === className && !exists.$retiredStub) {
                     throw "Class '" + className + "' is already defined";
                 }
             }
