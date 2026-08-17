@@ -13,9 +13,12 @@
     // the module rather than failing obscurely somewhere inside the constructor.
 
     var modules = {
-        // type name -> { m: module url, k: kind, a: assembly name, i: [base/interface type names] }
+        // type name -> { m: module url, k: kind, a: assembly name, i: [base/interface specs] }
         $manifest: {},
         $stubs: {},
+        // type name -> the `i` specs, kept so a stub's bases can be resolved on demand rather than
+        // at registration (see $defineLazyBases)
+        $baseSpecs: {},
         // module url -> the in-flight (or settled) load, so concurrent loads share one fetch
         $pending: {},
         $loader: null,
@@ -45,6 +48,7 @@
                 if (modules.$stubs[name] || Transpose.unroll(name)) continue;   // already real, or already stubbed
                 var info = manifest[name];
                 modules.$manifest[name] = info;
+                modules.$baseSpecs[name] = info.i || [];
                 var stub = modules.$makeStub(name, info);
                 modules.$stubs[name] = stub;
                 modules.$place(name, stub);
@@ -54,30 +58,100 @@
                 added.push(name);
             }
 
-            // Resolve the inheritance chains only once every stub exists — a stub may extend
-            // another stub. IsAssignableFrom walks $$inherits, so this is what makes a
-            // GetTypes().Where(t => typeof(IFoo).IsAssignableFrom(t)) scan work unloaded.
+            // The inheritance chains resolve on FIRST READ rather than here. Two reasons: a base may
+            // be another stub whose own bases are not registered yet (this loop used to run second
+            // to work around that), and a CONSTRUCTED generic base cannot be built at all until its
+            // definition's module has arrived — applying a stub throws. IsAssignableFrom walks
+            // $$inherits, so deferring the resolution is what lets a
+            // GetTypes().Where(t => typeof(IFoo<Bar>).IsAssignableFrom(t)) scan answer correctly.
             for (var j = 0; j < added.length; j++) {
-                var s = modules.$stubs[added[j]], list = [], ifaces = [];
-                var bases = modules.$manifest[added[j]].i || [];
-                for (var k = 0; k < bases.length; k++) {
-                    var b = Transpose.unroll(bases[k]);
-                    if (!b) continue;
-                    list.push(b);
-                    if (b.$isInterface) ifaces.push(b);
-                    if (b.$interfaces) ifaces = ifaces.concat(b.$interfaces);
-                    if (b.$$inherits) {
-                        for (var q = 0; q < b.$$inherits.length; q++) {
-                            if (b.$$inherits[q].$isInterface) ifaces.push(b.$$inherits[q]);
-                        }
-                    }
-                }
-                s.$$inherits = list;
-                s.$interfaces = ifaces;
+                modules.$defineLazyBases(modules.$stubs[added[j]], added[j]);
             }
 
             // Metadata registered before the stub existed was deferred; give it another chance.
             Transpose.init();
+        },
+
+        /// Gives a stub its $$inherits / $interfaces / $allInterfaces, computed the first time
+        /// anything reads one and frozen only once every base resolved. A partial answer is never
+        /// cached: a base whose module has not arrived resolves to nothing now and to the real type
+        /// later, so the next question has to recompute rather than see a stale list.
+        ///
+        /// Non-enumerable on purpose. Class.set walks `for (key in exists)` when a real define takes
+        /// a retired stub's slot, and an enumerable accessor would be invoked by that walk — forcing
+        /// the resolution at exactly the moment the type is mid-definition.
+        $defineLazyBases: function (stub, name) {
+            var resolve = function (wantInterfaces) {
+                var r = modules.$resolveBases(name);
+                if (r.complete) {
+                    modules.$freeze(stub, "$$inherits", r.inherits);
+                    modules.$freeze(stub, "$interfaces", r.interfaces);
+                    modules.$freeze(stub, "$allInterfaces", r.interfaces);
+                }
+                return wantInterfaces ? r.interfaces : r.inherits;
+            };
+            modules.$lazy(stub, "$$inherits", function () { return resolve(false); });
+            modules.$lazy(stub, "$interfaces", function () { return resolve(true); });
+            // getInterfaces() reads $allInterfaces and answers [] without it, so Type.GetInterfaces()
+            // on a deferred type reported nothing at all before this.
+            modules.$lazy(stub, "$allInterfaces", function () { return resolve(true); });
+        },
+
+        $lazy: function (obj, prop, get) {
+            Object.defineProperty(obj, prop, { get: get, configurable: true, enumerable: false });
+        },
+
+        $freeze: function (obj, prop, value) {
+            Object.defineProperty(obj, prop, { value: value, configurable: true, enumerable: false });
+        },
+
+        /// The base class and interfaces a stub reports, resolved from its manifest specs.
+        /// <c>complete</c> is false when any of them could not be resolved yet.
+        $resolveBases: function (name) {
+            var specs = modules.$baseSpecs[name] || [], inherits = [], ifaces = [], complete = true;
+
+            var push = function (list, t) { if (t && list.indexOf(t) < 0) list.push(t); };
+
+            for (var i = 0; i < specs.length; i++) {
+                var b = modules.$resolveType(specs[i]);
+                if (!b) { complete = false; continue; }
+                push(inherits, b);
+                if (b.$isInterface) push(ifaces, b);
+                // A base's own interfaces come along — reading them may resolve ANOTHER stub's
+                // bases, which terminates because an inheritance graph has no cycles.
+                var bi = b.$interfaces || [];
+                for (var k = 0; k < bi.length; k++) push(ifaces, bi[k]);
+                var bh = b.$$inherits || [];
+                for (var q = 0; q < bh.length; q++) {
+                    if (bh[q].$isInterface) push(ifaces, bh[q]);
+                }
+            }
+            return { inherits: inherits, interfaces: ifaces, complete: complete };
+        },
+
+        /// Resolves one manifest spec: a dotted name, or [definition, ...arguments] for a
+        /// constructed generic. Null when it cannot be resolved *yet*, which the caller treats as
+        /// "ask again later" rather than "no such type".
+        $resolveType: function (spec) {
+            if (typeof spec === "string") return Transpose.unroll(spec) || null;
+            if (!spec || !spec.length) return null;
+
+            var def = Transpose.unroll(spec[0]);
+            // A constructed generic is built by APPLYING its definition, and a stub throws when
+            // applied — so this one stays unresolved until that definition's module arrives. (A
+            // caller able to ask about the instantiation at all has already loaded it: writing
+            // typeof(IFoo<Bar>) emits the same application.)
+            if (!def || def.$stub || !Transpose.isFunction(def)) return null;
+            if (spec.length === 1) return def;
+            if (!def.$isGenericTypeDefinition) return def;
+
+            var args = [];
+            for (var i = 1; i < spec.length; i++) {
+                var a = modules.$resolveType(spec[i]);
+                if (!a) return null;
+                args.push(a);
+            }
+            return def.apply(null, args);
         },
 
         isStub: function (type) {
@@ -190,6 +264,7 @@
             }
             delete modules.$manifest[name];
             delete modules.$stubs[name];
+            delete modules.$baseSpecs[name];
         },
 
         /// Metadata captured while a type was a stub, keyed by type name (see Reflection.setMetadata).

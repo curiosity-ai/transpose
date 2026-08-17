@@ -255,7 +255,9 @@ tps/
   types each type's body reaches into, so an edge exists exactly when a reference was emitted. A
   `typeof` operand is the one *soft* position: it wants a Type object, which a stub already answers
   for, so it is not recorded. That distinction is what stops a "see also" list of `typeof(...)` from
-  fusing every type it names into one chunk.
+  fusing every type it names into one chunk. A *constructed* generic is the exception and stays hard
+  even inside a `typeof` — it has no object to point at, it is built by applying its definition, and
+  applying a stub throws (§7c).
 - Iterative Tarjan over that graph; each SCC is a chunk. Components come out in reverse-topological
   order, so numbering them gives a DAG in which every import points at a lower index — which makes
   the import lists and the file names deterministic (`OutputIsDeterministic` guards it).
@@ -377,9 +379,59 @@ from the noise floor above. Reflection still enumerates all 528 + 162 types. Zer
 - **Watch mode** with module output.
 - **Minification** — a module entry and its chunks are emitted formatted only (they carry `import`
   syntax `JsMinifier` is not set up for), and a module-mode package embeds no `.min.js` sibling.
-- Generic base types reach the manifest as their definition name (`Foo$1`), which is all
-  `Transpose.unroll` can express, so `IsAssignableFrom` against a *constructed* generic interface is
-  not answered from a stub.
+- An **open** generic base — `class Relay<T> : IHandler<T>` — reaches the manifest as the bare
+  definition (`IHandler$1`), because there is no `T` to write down until the definition is applied.
+  The definition-level relationship is reported; a question about one instantiation still needs the
+  module. Same for an argument that is an array, or a base nested inside a generic. See §7c for the
+  constructed case, which is answered.
+
+### 7c. Constructed generics from a stub
+
+The first cut flattened every generic base to its definition name (`Foo$1`) because the manifest was
+resolved with `Transpose.unroll`, a dotted-path walk over globals — and a constructed generic
+deliberately has no global path. `Transpose.define` places only the *definition*; the instantiation
+lives in `fn.$cache`, keyed by the argument objects, reachable only by **applying** the definition.
+So a stub reported `IHandler$1` where the caller asked about `IHandler<Order>`, and
+`varianceAssignable` — which matches on `$genericTypeDefinition` + `$typeArguments`, neither of which
+a definition object carries — answered false. Silently: indistinguishable from a real false.
+
+It is **not** interface-specific. `ManifestBaseNames` ran the base class through the same flattening,
+and in Tesserae the most common generic base is a class: 133 of the library's 528 deferred types name
+one, 63 of them `ComponentBase<Self, THTML>`.
+
+Two changes fix it.
+
+- **The manifest carries the arguments.** A base is now either a name (as before) or
+  `[definition, ...arguments]`, nesting for `IFoo<IBar<int>>`:
+  `i: [["tss.CB$2", "tss.Avatar", "HTMLElement"], "tss.IC", …]`. 228 of Tesserae's specs take the
+  array form.
+- **The runtime applies it lazily.** `Modules.$resolveType` builds the instantiation on the *first
+  read* of a stub's `$$inherits`/`$interfaces`/`$allInterfaces`, not at `register` time — because a
+  base may itself be a stub, and applying a stub throws. A partial resolution is never cached, so a
+  base whose module arrives later is picked up on the next question.
+
+Lazy is not just cheaper, it is what makes the eager alternative unnecessary. Forcing every generic
+definition into the eager set (so the manifest could emit a real application) looked attractive —
+only 20 distinct definitions in the library — but it is not needed: **to ask about `IFoo<Bar>` at all
+you must already have the definition**, since `typeof(IFoo<Bar>)` emits the same application. At query
+time it is loaded by construction.
+
+That invariant only holds because of the second half of this change: `typeof` was treated as a soft
+reference, and a soft reference is satisfiable by a stub — but a constructed generic has no object to
+point at, it is *built* by applying the definition, and a stub throws when applied. So
+`typeof(IFoo<Bar>)` on a definition in an unimported chunk was a latent runtime throw, not a wrong
+answer. `RecordConstructedTypeRefs` now records the definition and its arguments as hard references
+from inside a `typeof`; a plain `typeof(X)` and an unbound `typeof(Foo<>)` (which emits the definition
+object, no application) stay soft, so a "see also" list still does not fuse chunks.
+
+`$allInterfaces` was a third, smaller hole found on the way: `getInterfaces` reads it and answers `[]`
+without it, so `Type.GetInterfaces()` on any deferred type — generic or not — reported nothing at all.
+
+Measured on the live gallery: for a still-deferred `tss.Avatar`,
+`IsAssignableFrom(ComponentBase<Avatar, HTMLElement>, …)` is true, `GetInterfaces()` returns 4 rather
+than 0, and the type is still a stub afterwards — the answer came from the manifest, not from a load.
+The eager payload grows 8 KB raw / 2 KB gzipped (a bigger `tps.js` plus the longer specs), and the
+chunk assignment is unchanged at 628/212.
 
 ## 7. What the compiler change would be
 

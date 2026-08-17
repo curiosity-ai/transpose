@@ -311,11 +311,11 @@ public sealed partial class Emitter
             sb.Append("Transpose.Modules.register({\n");
             foreach (var t in lazyTypes)
             {
-                var bases = ManifestBaseNames(t);
+                var bases = ManifestBaseSpecs(t);
                 sb.Append("    \"").Append(MetaTypeDefName(t)).Append("\": { m: \"./")
                   .Append(chunkFile(chunks.IndexOf[t])).Append("\", k: \"").Append(ManifestKind(t))
                   .Append("\", a: \"").Append(_assemblyName).Append("\", i: [")
-                  .Append(string.Join(", ", bases.Select(b => "\"" + b + "\""))).Append("] },\n");
+                  .Append(string.Join(", ", bases)).Append("] },\n");
             }
             sb.Append("});\n\n");
         }
@@ -336,25 +336,73 @@ public sealed partial class Emitter
     };
 
     /// <summary>
-    /// The base class and interfaces a stub reports, as dotted names the runtime resolves with
-    /// <c>Transpose.unroll</c>. Names rather than expressions because a base may itself still be a
-    /// stub when the manifest is registered — only names can be resolved after every stub exists.
-    /// A constructed generic base contributes its definition name (<c>Foo$1</c>); that is all an
-    /// unrolled lookup can express, and it is enough for the common interface-scan case.
+    /// The base class and interfaces a stub reports, as JavaScript literals the runtime resolves
+    /// (see <c>Modules.$resolveType</c>). Specs rather than expressions because a base may itself
+    /// still be a stub when the manifest is registered — a spec can be resolved later, an
+    /// expression is evaluated on the spot.
+    ///
+    /// Two forms. A plain type is its dotted name, resolved with <c>Transpose.unroll</c>:
+    /// <c>"tss.IComponent"</c>. A CONSTRUCTED generic is an array of the definition name followed
+    /// by its arguments (each a spec in turn, so <c>IFoo&lt;IBar&lt;int&gt;&gt;</c> nests):
+    /// <c>["tss.CB$2", "tss.Avatar", "HTMLElement"]</c>. The runtime builds it by applying the
+    /// definition, which is what makes <c>IsAssignableFrom</c> against a constructed generic answer
+    /// from a stub — <c>varianceAssignable</c> matches on <c>$genericTypeDefinition</c> plus
+    /// <c>$typeArguments</c>, neither of which a bare definition object carries.
+    ///
+    /// A base whose arguments cannot be named — an open <c>class Deferred&lt;T&gt; : IFoo&lt;T&gt;</c>
+    /// (there is no T to write down until the definition is applied), an array argument, a type
+    /// nested in a generic — falls back to the definition name alone, which is what this emitted
+    /// before specs existed: the definition-level relationship is still reported, a question about
+    /// one specific instantiation still cannot be answered without loading the module.
     /// </summary>
-    private List<string> ManifestBaseNames(INamedTypeSymbol type)
+    private List<string> ManifestBaseSpecs(INamedTypeSymbol type)
     {
-        var names = new List<string>();
+        var specs = new List<string>();
         void Add(INamedTypeSymbol t)
         {
-            var n = TransposeNaming.IsTransposeCompiledSource(t)
-                ? (t.Arity > 0 ? _names.TypeFullName(t) + "$" + t.Arity : _names.TypeFullName(t))
-                : TransposeNaming.GetName(t);
-            if (!string.IsNullOrEmpty(n) && !names.Contains(n!)) names.Add(n!);
+            var name = ManifestTypeName(t);
+            if (string.IsNullOrEmpty(name)) return;
+            var spec = ManifestConstructedSpec(t) ?? "\"" + name + "\"";
+            if (!specs.Contains(spec)) specs.Add(spec);
         }
         if (type.BaseType is { } bt && bt.SpecialType != SpecialType.System_Object) Add(bt);
         foreach (var i in type.AllInterfaces.Where(TransposeNaming.IsInheritableInterface)) Add(i);
-        return names;
+        return specs;
+    }
+
+    /// <summary>The name a manifest spec resolves through <c>Transpose.unroll</c> — the same
+    /// arity-suffixed define name a reference uses, or the runtime binding of an external type.</summary>
+    private string? ManifestTypeName(INamedTypeSymbol t) =>
+        TransposeNaming.IsTransposeCompiledSource(t)
+            ? (t.Arity > 0 ? _names.TypeFullName(t) + "$" + t.Arity : _names.TypeFullName(t))
+            // The same two-step TypeRefCore uses for an external type: its [Name], else the name it
+            // takes from an enclosing [Scope]/[GlobalMethods] binding (HTMLElement and friends).
+            : TransposeNaming.GetName(t) ?? ScopedExternalName(t);
+
+    /// <summary>
+    /// The array-form spec for a constructed generic, or null when it is not one or cannot be
+    /// expressed (see <see cref="ManifestBaseSpecs"/>). Deliberately narrow: only a type whose own
+    /// arity accounts for every effective type argument, so a type nested in a generic — whose
+    /// define takes the enclosing arguments too — is left to the definition-name fallback rather
+    /// than guessed at.
+    /// </summary>
+    private string? ManifestConstructedSpec(INamedTypeSymbol t)
+    {
+        if (t.Arity == 0 || t.IsUnboundGenericType) return null;
+        if (t.TypeArguments.Length != t.Arity || EffectiveTypeArguments(t).Count != t.Arity) return null;
+        var def = ManifestTypeName(t);
+        if (string.IsNullOrEmpty(def)) return null;
+
+        var parts = new List<string> { "\"" + def + "\"" };
+        foreach (var arg in t.TypeArguments)
+        {
+            if (arg is not INamedTypeSymbol named) return null;      // a type PARAMETER or an array
+            if (ManifestConstructedSpec(named) is { } nested) { parts.Add(nested); continue; }
+            var argName = ManifestTypeName(named);
+            if (string.IsNullOrEmpty(argName) || named.Arity > 0) return null;
+            parts.Add("\"" + argName + "\"");
+        }
+        return "[" + string.Join(", ", parts) + "]";
     }
 
     /// <summary>Removes the four-space indent a type body carries from being emitted inside a

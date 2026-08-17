@@ -299,5 +299,99 @@ public class Program
             StringAssert.Contains(output, "attempts: 2");
             StringAssert.Contains(output, "<<DONE>>");
         }
+
+        /// <summary>A deferred type whose base class AND interface are CONSTRUCTED generics — the
+        /// manifest carries them as [definition, ...arguments] rather than a flattened name, because
+        /// a constructed generic is a distinct runtime object built by applying the definition.</summary>
+        private const string GenericPreamble = @"
+using System;
+using System.Linq;
+using System.Reflection;
+using System.Threading.Tasks;
+using Transpose;
+
+public interface IHandler<T> { void Handle(T item); }
+public class Order { public int Id; }
+public class Repo<T> { public T Get() { return default(T); } }
+
+public class EagerHandler : IHandler<Order> { public void Handle(Order item) { } }
+
+public static class GenericChunk
+{
+    // What a module build emits for a deferred `class LazyHandler : Repo<Order>, IHandler<Order>`.
+    public static void Register()
+    {
+        Modules.Register(Script.Write<object>(
+            @""{ 'LazyHandler': { m: 'chunk-2.mjs', k: 'class', a: 'App', i: [['Repo$1', 'Order'], ['IHandler$1', 'Order']] } }""));
+    }
+}
+";
+
+        [TestMethod]
+        public async Task IsAssignableFromAConstructedGenericAnswersFromAStubAsync()
+        {
+            var output = await RunTest(GenericPreamble + @"
+public class Program
+{
+    public static void Main()
+    {
+        GenericChunk.Register();
+        var t = Type.GetType(""LazyHandler"");
+
+        Console.WriteLine(""iface: "" + typeof(IHandler<Order>).IsAssignableFrom(t));
+        Console.WriteLine(""baseClass: "" + typeof(Repo<Order>).IsAssignableFrom(t));
+        Console.WriteLine(""ifaceCount: "" + t.GetInterfaces().Length);
+        Console.WriteLine(""stillStub: "" + Modules.IsStub(t));
+        Console.WriteLine(""<<DONE>>"");
+    }
+}
+", skipRoslyn: true);
+
+            // Applying the definition is what produces the object varianceAssignable compares
+            // against: it matches on $genericTypeDefinition + $typeArguments, and a bare definition
+            // object carries neither, so a flattened `IHandler$1` in the manifest answered False.
+            StringAssert.Contains(output, "iface: True");
+            StringAssert.Contains(output, "baseClass: True");
+            // getInterfaces() reads $allInterfaces, which a stub did not set at all — so
+            // Type.GetInterfaces() on a deferred type used to report nothing.
+            StringAssert.Contains(output, "ifaceCount: 1");
+            // None of this loaded the module: the answer comes from the manifest.
+            StringAssert.Contains(output, "stillStub: True");
+            StringAssert.Contains(output, "<<DONE>>");
+        }
+
+        [TestMethod]
+        public async Task AnUnresolvableBaseIsRetriedRatherThanCachedAsync()
+        {
+            var output = await RunTest(GenericPreamble + @"
+public class Program
+{
+    public static void Main()
+    {
+        // Both the generic definition AND a type built on top of it are deferred. The base cannot
+        // be built while its own definition is a stub — applying a stub throws — so the answer has
+        // to stay open rather than being frozen as 'no bases'.
+        Modules.Register(Script.Write<object>(@""{
+            'DeferredBase$1': { m: 'chunk-3.mjs', k: 'class', a: 'App', i: [] },
+            'UsesDeferred':   { m: 'chunk-4.mjs', k: 'class', a: 'App', i: [['DeferredBase$1', 'Order']] }
+        }""));
+
+        Console.WriteLine(""before: "" + Script.Write<int>(
+            @""(Transpose.unroll('UsesDeferred').$$inherits || []).length""));
+
+        // The definition's chunk arrives and defines it for real, retiring its stub.
+        Script.Write(@""Transpose.define('DeferredBase$1', function (T) { return { }; });"");
+
+        Console.WriteLine(""after: "" + Script.Write<int>(
+            @""(Transpose.unroll('UsesDeferred').$$inherits || []).length""));
+        Console.WriteLine(""<<DONE>>"");
+    }
+}
+", skipRoslyn: true);
+
+            StringAssert.Contains(output, "before: 0");
+            StringAssert.Contains(output, "after: 1");
+            StringAssert.Contains(output, "<<DONE>>");
+        }
     }
 }

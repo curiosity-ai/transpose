@@ -91,6 +91,77 @@ public class Program { public static void Main() { Console.WriteLine(new Holder(
         }
 
         [TestMethod]
+        public void TypeofAConstructedGenericDoesCreateADependency()
+        {
+            var m = Emit(@"
+using System;
+public class Box<T> { public T Value; }
+public class Item { public int N; }
+public class Holder { public Type What() { return typeof(Box<Item>); } }
+public class Program { public static void Main() { Console.WriteLine(new Holder().What()); } }
+");
+            // typeof is soft because a stub object satisfies it — but a CONSTRUCTED generic has no
+            // object to point at: TypeRefCore emits Box$1(Item), an application of the definition,
+            // and applying a stub throws. So both the definition and the argument are real
+            // dependencies, exactly as they are outside a typeof.
+            var holder = m.Chunks.First(c => c.relPath == ChunkOf(m, "Holder"));
+            var imports = ImportsOf(holder.js).ToList();
+            CollectionAssert.Contains(imports, System.IO.Path.GetFileName(ChunkOf(m, "Box$1")),
+                "typeof(Box<Item>) applies Box$1, so its chunk has to be imported");
+            CollectionAssert.Contains(imports, System.IO.Path.GetFileName(ChunkOf(m, "Item")),
+                "the type argument is applied to the definition, so it is a dependency too");
+        }
+
+        [TestMethod]
+        public void TypeofAnUnboundGenericStaysSoft()
+        {
+            var m = Emit(@"
+using System;
+public class Box<T> { public T Value; }
+public class Holder { public Type What() { return typeof(Box<>); } }
+public class Program { public static void Main() { Console.WriteLine(new Holder().What()); } }
+");
+            // An UNBOUND typeof emits the definition object itself, never an application, so a stub
+            // answers it and the soft-reference exemption still holds.
+            var holder = m.Chunks.First(c => c.relPath == ChunkOf(m, "Holder"));
+            Assert.AreNotEqual(ChunkOf(m, "Box$1"), holder.relPath);
+            CollectionAssert.DoesNotContain(ImportsOf(holder.js).ToList(),
+                System.IO.Path.GetFileName(ChunkOf(m, "Box$1")));
+        }
+
+        [TestMethod]
+        public void AConstructedGenericBaseKeepsItsTypeArgumentsInTheManifest()
+        {
+            var m = Emit(@"
+using System;
+public interface IHandler<T> { void Handle(T item); }
+public class Order { public int Id; }
+public class OrderHandler : IHandler<Order> { public void Handle(Order item) { } }
+public class Program { public static void Main() { Console.WriteLine(""hi""); } }
+");
+            // The stub has to report IHandler<Order>, not the bare definition IHandler$1: a
+            // constructed generic is a distinct runtime object, and varianceAssignable matches on
+            // $genericTypeDefinition + $typeArguments, which a definition object does not carry.
+            // The array form is what the runtime applies (Modules.$resolveType).
+            StringAssert.Contains(m.EntryJs, "i: [[\"IHandler$1\", \"Order\"]]");
+        }
+
+        [TestMethod]
+        public void AnOpenGenericBaseFallsBackToTheDefinitionName()
+        {
+            var m = Emit(@"
+using System;
+public interface IHandler<T> { void Handle(T item); }
+public class Relay<T> : IHandler<T> { public void Handle(T item) { } }
+public class Program { public static void Main() { Console.WriteLine(""hi""); } }
+");
+            // `Relay<T> : IHandler<T>` has no argument to write down — T does not exist until the
+            // definition is applied — so the manifest reports the definition-level relationship and
+            // a question about one instantiation still needs the module.
+            StringAssert.Contains(m.EntryJs, "i: [\"IHandler$1\"]");
+        }
+
+        [TestMethod]
         public void ConstructionAndStaticAccessDoCreateADependency()
         {
             var m = Emit(@"

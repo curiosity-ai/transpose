@@ -504,7 +504,10 @@ The short version:
   resolves `inherits` eagerly, so a per-class split cannot order a reference cycle. Components come
   out of Tarjan in reverse-topological order, so numbering them yields a DAG in which every import
   points at a lower index, which also makes the output deterministic. A `typeof` operand is the one
-  reference that is *not* a dependency: it wants a Type object, which a stub answers for. Chunks
+  reference that is *not* a dependency: it wants a Type object, which a stub answers for — **unless it
+  is a constructed generic**, which has no object to point at (it is built by *applying* its
+  definition, and applying a stub throws), so `typeof(Foo<Bar>)` records the definition and its
+  arguments as hard references while `typeof(Foo)` and unbound `typeof(Foo<>)` stay soft. Chunks
   reachable from the entry point are imported by the entry module; the rest are declared to
   `Transpose.Modules`. See `Emitter.Modules.cs`, `ModuleEmitTests`, and **`TODO.modules.md`** §7a for
   what it measures (Tesserae's sample gallery: the app's initial payload 1,109 KB → 164 KB raw, all
@@ -535,6 +538,18 @@ The short version:
   object where it is, keeping `$$name` (a caller holding the stub must still resolve by name) and
   setting `$retiredStub` for the redefinition check to look past.
 
+  **A stub answers for a constructed generic too.** A base or interface reaches the manifest as either
+  a name or `[definition, ...arguments]` (`["tss.CB$2", "tss.Avatar", "HTMLElement"]`), and the runtime
+  *applies* the definition on the first read of the stub's `$$inherits`/`$interfaces`/`$allInterfaces`
+  — never at `register` time, because a base may itself be a stub, and never caching a partial
+  resolution, so a base whose module arrives later is picked up on the next question. Flattening it to
+  `Foo$1` (all a `Transpose.unroll` path walk can express — a constructed generic deliberately gets no
+  global slot) made `IsAssignableFrom(IFoo<Bar>, stub)` answer false, silently. This is *not*
+  interface-only: a generic base class flattens the same way, and is the more common case
+  (`ComponentBase<Self, THTML>`). An **open** base — `class Relay<T> : IHandler<T>` — still reports
+  only the definition; there is no `T` to write down until the definition is applied. `TODO.modules.md`
+  §7c has the details, `LazyModuleActivatorTests` the coverage.
+
   Still single-bundle: `--incremental` (chunk assignment is a whole-program property — do not combine
   them yet), minification (a module entry and its chunks are emitted formatted only, since they carry
   `import` syntax `JsMinifier` does not handle), and watch mode.
@@ -542,8 +557,8 @@ The short version:
   provides `Transpose.Modules` — a registry of types whose JavaScript lives in a module that has not
   been fetched. `Modules.Register(manifest)` stubs each such type at the same global path and in the
   same assembly `$types` map a real `Transpose.define` would use, so `Assembly.GetTypes()`,
-  `Type.Name`, `IsInterface`, `IsAssignableFrom` and the reflection metadata all keep working while
-  the code is absent. `Modules.LoadAsync(type)` fetches it (default loader: a dynamic `import()`,
+  `Type.Name`, `IsInterface`, `IsAssignableFrom`, `GetInterfaces` and the reflection metadata all keep
+  working while the code is absent. `Modules.LoadAsync(type)` fetches it (default loader: a dynamic `import()`,
   built via `new Function` so `tps.js` stays parseable where one cannot be compiled;
   `Modules.SetLoader` substitutes another), and `Activator.CreateInstanceAsync` loads-then-constructs.
   **Using a deferred type synchronously cannot work** — fetching a module is asynchronous and C#

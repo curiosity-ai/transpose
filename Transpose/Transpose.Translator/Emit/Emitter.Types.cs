@@ -99,6 +99,36 @@ public sealed partial class Emitter
         }
     }
 
+    /// <summary>
+    /// Records, as hard dependencies, every part of <paramref name="type"/> that <see cref="TypeRefCore"/>
+    /// will emit as a CALL on a generic definition (<c>Foo$1(Bar)</c>). Used where the reference is
+    /// otherwise soft — <c>typeof(X)</c> — because a soft reference is only satisfiable by a stub
+    /// object, and a stub cannot be called: building a constructed generic needs the definition's
+    /// real code. An unbound <c>typeof(Foo&lt;&gt;)</c> emits the definition object rather than a
+    /// call and so stays soft, as does any non-generic type.
+    /// </summary>
+    private void RecordConstructedTypeRefs(ITypeSymbol type)
+    {
+        if (_recordedRefs is null && _recordedExternalRefs is null) return;   // not module mode
+        switch (type)
+        {
+            case IArrayTypeSymbol array:
+                // `typeof(Foo<Bar>[])` emits System.Array.type(Foo$1(Bar)) — the call is still there.
+                RecordConstructedTypeRefs(array.ElementType);
+                return;
+            case INamedTypeSymbol named:
+                if (!named.IsUnboundGenericType && EffectiveTypeArguments(named).Count > 0)
+                {
+                    // RecordRef records the definition and recurses through the arguments, which is
+                    // the same set the emitted call touches.
+                    RecordRef(named);
+                    return;
+                }
+                foreach (var arg in named.TypeArguments) RecordConstructedTypeRefs(arg);
+                return;
+        }
+    }
+
     /// <summary>The bare name a type's <c>Transpose.define</c> registers it under — no type
     /// arguments, arity suffixed. This is the key both the module manifest and the chunk map use.</summary>
     private string DefineName(INamedTypeSymbol named)
