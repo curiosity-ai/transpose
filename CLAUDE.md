@@ -497,6 +497,21 @@ The short version:
   package, which does not pack `None` items. Curiosity.FrontEnd did exactly that, so every application
   built against the package was missing 243 icons/illustrations, both variable-font families and the
   favicon.
+- **Lazily-loaded modules: the runtime half is done, the emitter half is not.** `Resources/Modules.js`
+  provides `Transpose.Modules` — a registry of types whose JavaScript lives in a module that has not
+  been fetched. `Modules.Register(manifest)` stubs each such type at the same global path and in the
+  same assembly `$types` map a real `Transpose.define` would use, so `Assembly.GetTypes()`,
+  `Type.Name`, `IsInterface`, `IsAssignableFrom` and the reflection metadata all keep working while
+  the code is absent. `Modules.LoadAsync(type)` fetches it (default loader: a dynamic `import()`,
+  built via `new Function` so `tps.js` stays parseable where one cannot be compiled;
+  `Modules.SetLoader` substitutes another), and `Activator.CreateInstanceAsync` loads-then-constructs.
+  **Using a deferred type synchronously cannot work** — fetching a module is asynchronous and C#
+  construction is not — so `Transpose.createInstance` carries a stub guard that throws naming the
+  module rather than failing obscurely. Covered by `LazyModuleActivatorTests`.
+
+  Nothing emits chunks or a manifest yet, so a host registers them itself. The emitter work — chunking
+  by strongly-connected component of the hard-reference graph, and why a per-class split is unsound —
+  is measured and specified in **`TODO.modules.md`**.
 - **Wider `tps.json` surface** (outputBy, module formats, locales, before/after build, etc.).
 - **Incremental compilation (done for body-level edits; on by default via the SDK).** `--incremental`
   reuses the previous build of a project: nothing at all is compiled when every input hashes the same

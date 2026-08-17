@@ -147,6 +147,9 @@
             "Resources/.generated/System/CharEnumerator.js",
 
             "Resources/Task.js",
+            // After Task.js: the module loader resolves with Promises the Task layer adapts, and
+            // after Reflection/Class so its stubs can register into an assembly's $types map.
+            "Resources/Modules.js",
             "Resources/Validation.js",
             "Resources/Attribute.js",
             "Resources/.generated/System/SerializableAttribute.js",

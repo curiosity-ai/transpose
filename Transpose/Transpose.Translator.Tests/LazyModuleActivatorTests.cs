@@ -1,0 +1,303 @@
+using System.Threading.Tasks;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
+
+namespace Transpose.Translator.Tests
+{
+    /// <summary>
+    /// The lazily-loaded module surface: <c>Transpose.Modules</c> (Resources/Modules.js) and
+    /// <c>Activator.CreateInstanceAsync</c>.
+    ///
+    /// A build that splits its output into JavaScript modules leaves the types it deferred as
+    /// *stubs*: registered at the same global path and in the same assembly <c>$types</c> map a real
+    /// <c>Transpose.define</c> would use, so reflection still enumerates and tests them, but with no
+    /// constructor behind them. Fetching the module is asynchronous, so instantiating such a type
+    /// cannot go through the synchronous <c>Activator.CreateInstance</c> — that throws and names the
+    /// module — and goes through <c>CreateInstanceAsync</c> instead.
+    ///
+    /// Every test runs with <c>skipRoslyn: true</c>: <c>CreateInstanceAsync</c> and
+    /// <c>Transpose.Modules</c> have no native .NET counterpart to diff against, so the assertions
+    /// are on the JS output. The loader is replaced with one that defines the type from C#, which
+    /// keeps the tests free of a real network fetch or a real ESM import.
+    /// </summary>
+    [TestClass]
+    public class LazyModuleActivatorTests : TranslatorTestBase
+    {
+        /// <summary>Shared preamble: a real interface + a real type, then a manifest declaring a
+        /// *second* type that only exists inside "chunk-1.mjs", with a loader that defines it.</summary>
+        private const string Preamble = @"
+using System;
+using System.Linq;
+using System.Reflection;
+using System.Threading.Tasks;
+using Transpose;
+
+public interface IWidget { string Describe(); }
+
+public class EagerWidget : IWidget
+{
+    public string Describe() => ""eager"";
+}
+
+public static class Chunk
+{
+    public static int LoadCount;
+
+    // Stands in for a module the build deferred: registering the manifest creates a stub, and the
+    // loader is what a real build would satisfy with a dynamic import() of the chunk file.
+    public static void Register()
+    {
+        Modules.Register(Script.Write<object>(
+            @""{ 'LazyWidget': { m: 'chunk-1.mjs', k: 'class', a: 'App', i: ['IWidget'] } }""));
+    }
+
+    public static void InstallLoader()
+    {
+        Modules.SetLoader(url =>
+        {
+            LoadCount++;
+            // What the fetched chunk would have executed.
+            Script.Write(@""Transpose.define('LazyWidget', { inherits: [IWidget], alias: ['Describe', 'IWidget$Describe'], methods: { Describe: function () { return 'lazy'; } } });"");
+            return Task.CompletedTask;
+        });
+    }
+}
+";
+
+        [TestMethod]
+        public async Task StubIsVisibleToReflectionBeforeItsModuleLoadsAsync()
+        {
+            var output = await RunTest(Preamble + @"
+public class Program
+{
+    public static void Main()
+    {
+        Chunk.Register();
+
+        var t = Type.GetType(""LazyWidget"");
+        Console.WriteLine(""found: "" + (t != null));
+        Console.WriteLine(""name: "" + t.Name);
+        Console.WriteLine(""isInterface: "" + t.IsInterface);
+        Console.WriteLine(""assignable: "" + typeof(IWidget).IsAssignableFrom(t));
+        Console.WriteLine(""isLoaded: "" + Modules.IsLoaded(t));
+        Console.WriteLine(""isStub: "" + Modules.IsStub(t));
+        Console.WriteLine(""<<DONE>>"");
+    }
+}
+", skipRoslyn: true);
+
+            StringAssert.Contains(output, "found: True");
+            StringAssert.Contains(output, "name: LazyWidget");
+            StringAssert.Contains(output, "isInterface: False");
+            // The point of a stub: an interface scan finds the type while its code is absent.
+            StringAssert.Contains(output, "assignable: True");
+            StringAssert.Contains(output, "isLoaded: False");
+            StringAssert.Contains(output, "isStub: True");
+            StringAssert.Contains(output, "<<DONE>>");
+        }
+
+        [TestMethod]
+        public async Task AssemblyGetTypesSeesAStubbedTypeAsync()
+        {
+            var output = await RunTest(Preamble + @"
+public class Program
+{
+    public static void Main()
+    {
+        var before = typeof(EagerWidget).Assembly.GetTypes()
+            .Count(x => typeof(IWidget).IsAssignableFrom(x) && !x.IsInterface);
+        Chunk.Register();
+        var after = typeof(EagerWidget).Assembly.GetTypes()
+            .Count(x => typeof(IWidget).IsAssignableFrom(x) && !x.IsInterface);
+
+        Console.WriteLine(""before: "" + before);
+        Console.WriteLine(""after: "" + after);
+        Console.WriteLine(""<<DONE>>"");
+    }
+}
+", skipRoslyn: true);
+
+            // This is exactly how Tesserae's sample gallery discovers its samples, and the reason a
+            // module split must not hide a deferred type from Assembly.GetTypes().
+            StringAssert.Contains(output, "before: 1");
+            StringAssert.Contains(output, "after: 2");
+        }
+
+        [TestMethod]
+        public async Task SynchronousCreateInstanceOnAStubThrowsNamingTheModuleAsync()
+        {
+            var output = await RunTest(Preamble + @"
+public class Program
+{
+    public static void Main()
+    {
+        Chunk.Register();
+        var t = Type.GetType(""LazyWidget"");
+        try
+        {
+            Activator.CreateInstance(t);
+            Console.WriteLine(""no throw"");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(""threw: "" + ex.Message);
+        }
+        Console.WriteLine(""<<DONE>>"");
+    }
+}
+", skipRoslyn: true);
+
+            // A silent or obscure failure here is the trap: the sync path must say what is wrong.
+            StringAssert.Contains(output, "threw: ");
+            StringAssert.Contains(output, "LazyWidget");
+            StringAssert.Contains(output, "chunk-1.mjs");
+            StringAssert.Contains(output, "<<DONE>>");
+        }
+
+        [TestMethod]
+        public async Task CreateInstanceAsyncLoadsTheModuleAndConstructsAsync()
+        {
+            var output = await RunTest(Preamble + @"
+public class Program
+{
+    public static async Task Main()
+    {
+        Chunk.Register();
+        Chunk.InstallLoader();
+
+        var t = Type.GetType(""LazyWidget"");
+        Console.WriteLine(""before isLoaded: "" + Modules.IsLoaded(t));
+
+        var instance = await Activator.CreateInstanceAsync(t);
+        Console.WriteLine(""loads: "" + Chunk.LoadCount);
+        Console.WriteLine(""instance null: "" + (instance == null));
+        Console.WriteLine(""describe: "" + ((IWidget)instance).Describe());
+        Console.WriteLine(""after isLoaded: "" + Modules.IsLoaded(Type.GetType(""LazyWidget"")));
+        Console.WriteLine(""<<DONE>>"");
+    }
+}
+", skipRoslyn: true);
+
+            StringAssert.Contains(output, "before isLoaded: False");
+            StringAssert.Contains(output, "loads: 1");
+            StringAssert.Contains(output, "instance null: False");
+            // The real class replaced the stub, and the instance behaves like the real type.
+            StringAssert.Contains(output, "describe: lazy");
+            StringAssert.Contains(output, "after isLoaded: True");
+            StringAssert.Contains(output, "<<DONE>>");
+        }
+
+        [TestMethod]
+        public async Task LoadAsyncIsIdempotentAndFetchesOnceAsync()
+        {
+            var output = await RunTest(Preamble + @"
+public class Program
+{
+    public static async Task Main()
+    {
+        Chunk.Register();
+        Chunk.InstallLoader();
+
+        var t = Type.GetType(""LazyWidget"");
+        var a = await Modules.LoadAsync(t);
+        var b = await Modules.LoadAsync(t);
+        var c = await Modules.LoadAsync(""LazyWidget"");
+
+        Console.WriteLine(""loads: "" + Chunk.LoadCount);
+        Console.WriteLine(""same: "" + (a == b && b == c));
+        Console.WriteLine(""stub now: "" + Modules.IsStub(a));
+
+        // Awaiting a type that was never deferred is a no-op, so a call site can await
+        // unconditionally without knowing whether the type was split out.
+        var eager = await Modules.LoadAsync(typeof(EagerWidget));
+        Console.WriteLine(""eager: "" + (eager == typeof(EagerWidget)));
+        Console.WriteLine(""<<DONE>>"");
+    }
+}
+", skipRoslyn: true);
+
+            StringAssert.Contains(output, "loads: 1");
+            StringAssert.Contains(output, "same: True");
+            StringAssert.Contains(output, "stub now: False");
+            StringAssert.Contains(output, "eager: True");
+            StringAssert.Contains(output, "<<DONE>>");
+        }
+
+        [TestMethod]
+        public async Task CreateInstanceAsyncOnAnAlreadyLoadedTypeJustConstructsAsync()
+        {
+            var output = await RunTest(Preamble + @"
+public class Program
+{
+    public static async Task Main()
+    {
+        Chunk.InstallLoader();
+        var instance = await Activator.CreateInstanceAsync(typeof(EagerWidget));
+        Console.WriteLine(""describe: "" + ((IWidget)instance).Describe());
+        Console.WriteLine(""loads: "" + Chunk.LoadCount);
+
+        var generic = await Activator.CreateInstanceAsync<EagerWidget>();
+        Console.WriteLine(""generic: "" + generic.Describe());
+        Console.WriteLine(""<<DONE>>"");
+    }
+}
+", skipRoslyn: true);
+
+            StringAssert.Contains(output, "describe: eager");
+            // No module was registered for it, so nothing was fetched.
+            StringAssert.Contains(output, "loads: 0");
+            StringAssert.Contains(output, "generic: eager");
+            StringAssert.Contains(output, "<<DONE>>");
+        }
+
+        [TestMethod]
+        public async Task AFailedLoadRestoresTheStubAndCanBeRetriedAsync()
+        {
+            var output = await RunTest(Preamble + @"
+public class Program
+{
+    public static async Task Main()
+    {
+        Chunk.Register();
+
+        var attempts = 0;
+        Modules.SetLoader(url =>
+        {
+            attempts++;
+            if (attempts == 1) throw new InvalidOperationException(""network down"");
+            Script.Write(@""Transpose.define('LazyWidget', { inherits: [IWidget], alias: ['Describe', 'IWidget$Describe'], methods: { Describe: function () { return 'lazy'; } } });"");
+            return Task.CompletedTask;
+        });
+
+        try
+        {
+            await Activator.CreateInstanceAsync(Type.GetType(""LazyWidget""));
+            Console.WriteLine(""no throw"");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(""first threw: "" + ex.Message);
+        }
+
+        // The failure must not have erased the type: reflection still sees the stub, and a retry
+        // is allowed rather than being memoised as permanently failed.
+        var t = Type.GetType(""LazyWidget"");
+        Console.WriteLine(""still found: "" + (t != null));
+        Console.WriteLine(""still stub: "" + Modules.IsStub(t));
+
+        var instance = await Activator.CreateInstanceAsync(t);
+        Console.WriteLine(""retry describe: "" + ((IWidget)instance).Describe());
+        Console.WriteLine(""attempts: "" + attempts);
+        Console.WriteLine(""<<DONE>>"");
+    }
+}
+", skipRoslyn: true);
+
+            StringAssert.Contains(output, "first threw: ");
+            StringAssert.Contains(output, "still found: True");
+            StringAssert.Contains(output, "still stub: True");
+            StringAssert.Contains(output, "retry describe: lazy");
+            StringAssert.Contains(output, "attempts: 2");
+            StringAssert.Contains(output, "<<DONE>>");
+        }
+    }
+}

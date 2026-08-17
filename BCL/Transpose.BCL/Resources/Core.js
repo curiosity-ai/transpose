@@ -516,6 +516,17 @@
                 nonPublic = false;
             }
 
+            // A stub stands in for a type whose module has not been fetched (see Modules.js). It
+            // carries enough for reflection to enumerate and test it, but not the constructor, and
+            // fetching is asynchronous — so say so here rather than failing deeper in with a
+            // "not a constructor" that names nothing.
+            if (type && type.$stub) {
+                throw new System.InvalidOperationException.$ctor1(
+                    "Cannot create an instance of '" + type.$$name + "' synchronously: it lives in module '" +
+                    type.$module + "', which has not been loaded. Use Activator.CreateInstanceAsync, " +
+                    "or await Transpose.Modules.Load(type) first.");
+            }
+
             if (type === System.Decimal) {
                 return System.Decimal.Zero;
             }

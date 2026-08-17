@@ -5,9 +5,11 @@ one per *cluster* of classes — that the page loads on demand, instead of the s
 today. Measured end to end against **Tesserae** (`Tesserae.Tests`, the sample gallery), with the
 rendered page diffed against an unmodified build.
 
-Status: **no compiler change has been made.** This is the feasibility report and the evidence behind
-it. The prototype was built by mechanically re-chunking an already-emitted site, which is enough to
-answer every runtime question without touching the emitter.
+Status: **the runtime/BCL half is implemented** (§5a — `Transpose.Modules`,
+`Activator.CreateInstanceAsync`, type stubs, the synchronous-use guard); **the emitter still emits one
+bundle**. Everything below is the feasibility report and the evidence behind it — the measurements
+were made by mechanically re-chunking an already-emitted site, which answered every runtime question
+without touching the emitter.
 
 ---
 
@@ -19,7 +21,7 @@ answer every runtime question without touching the emitter.
 | Does the page still render correctly? | **Yes** — 140/140 Tesserae samples structurally identical to the baseline, zero console errors. |
 | Can modules be loaded on demand? | **Yes**, if the chunk boundary is an SCC of the reference graph. Validated. |
 | Does reflection survive? | **Yes**, with eager metadata plus registered *type stubs*. `GetTypes` / `IsAssignableFrom` / `GetCustomAttributes` / `Name` all work against unloaded types. |
-| Can reflection auto-load a module? | **Only asynchronously.** `Activator.CreateInstance` is synchronous C#; there is no sound synchronous ESM load. This is the one hard blocker. |
+| Can reflection auto-load a module? | **Only asynchronously** — and that half is now **implemented**: `Transpose.Modules` + `Activator.CreateInstanceAsync` (§5a). `Activator.CreateInstance` stays synchronous and now fails with a message naming the module. |
 | Is it worth it for Tesserae? | **~14% off the initial page** (gzipped). Less than it sounds, and for reasons that are structural — see §6. |
 
 The single most surprising number: **reflection metadata is 25% of the gzipped payload** of the
@@ -161,6 +163,42 @@ Two things the stubs need care with, both found the hard way:
 - Carry `$metadata` across when the real class replaces the stub, and evict the stub from the global
   path first, or `Transpose.define` reports *"Class X is already defined"*.
 
+### 5a. The runtime half, implemented
+
+`Resources/Modules.js` and the `Transpose.Modules` / `Activator.CreateInstanceAsync` bindings now
+ship in the BCL. This is the part that does not depend on the emitter, so it landed first:
+
+- `Modules.Register(manifest)` — declares the types a build deferred (`type name -> { m: module url,
+  k: kind, a: assembly, i: [base type names] }`) and stubs each one, outermost-first, at its global
+  path and in its assembly's `$types`. Resolves the `$$inherits`/`$interfaces` chains afterwards, so
+  a stub may extend another stub, then calls `Transpose.init()` so metadata deferred while the type
+  was missing attaches.
+- `Modules.LoadAsync(type)` / `LoadAsync(name)` — fetches the module and completes with the **real**
+  type. Concurrent calls share one fetch; awaiting a type that was never deferred is a no-op, so a
+  call site can await unconditionally. A caller still holding the stub it got from `Type.GetType()`
+  before the load is handed the live type rather than its own stale reference.
+- `Modules.IsLoaded` / `IsStub`, and `Modules.SetLoader(url => Task)` — the default loader is a
+  dynamic `import()`, built through `new Function` so `tps.js` stays parseable in an engine that
+  cannot compile one; a host that serves chunks another way substitutes its own.
+- `Activator.CreateInstanceAsync(type[, args | nonPublic])` and `CreateInstanceAsync<T>()` — load,
+  then construct.
+- `Transpose.createInstance` gains a stub guard, so the **synchronous** path fails with
+  *"Cannot create an instance of 'X' synchronously: it lives in module 'Y', which has not been
+  loaded"* instead of a `not a constructor` deeper in. The silent-degradation failure mode that
+  experiment B hit is gone.
+- A failed fetch restores the stubs and clears the memoised promise, so reflection still sees the
+  type and a retry is allowed.
+
+Covered by `LazyModuleActivatorTests` (7 tests): a stub is visible to `Type.GetType`, `Name`,
+`IsInterface`, `IsAssignableFrom` and `Assembly.GetTypes()` before its module loads; the synchronous
+path throws naming the module; `CreateInstanceAsync` loads once and returns a working instance;
+`LoadAsync` is idempotent; and a failed load is recoverable. They run with `skipRoslyn: true` — there
+is no native .NET counterpart to diff against — and substitute a loader that defines the type from
+C#, so no test touches the network or a real ESM import.
+
+What is still missing is the *producer*: nothing emits chunks or a manifest yet, so today a host has
+to call `Modules.Register` itself. That is the emitter work in §7.
+
 **The one thing that cannot work synchronously is using the type.** `Activator.CreateInstance(t)`,
 `new X()`, a static call — these are synchronous C#, and `import()` is asynchronous. The prototype
 bridged it with a synchronous `XMLHttpRequest` + `eval`, which is how it reaches 0 errors; that is
@@ -200,6 +238,8 @@ splitting metadata per type alongside the chunks and accepting an async `GetType
 Ordered by how much of it already exists.
 
 **Already there**
+- The whole runtime/BCL half: `Resources/Modules.js`, `Transpose.Modules`,
+  `Activator.CreateInstanceAsync`, the stub guard in `Transpose.createInstance` (§5a).
 - Per-class emission: `Emitter.EmitClassPath()`, currently gated to the base library.
 - Per-file packaging: `EmbeddedItem` (`ResourceEmbedder.cs:9`) already carries an `Output`
   subdirectory and a `Load` flag for "write it, but do not put a `<script>` in index.html" — exactly
@@ -228,9 +268,7 @@ Ordered by how much of it already exists.
 
 **New, in the runtime (`Transpose.BCL/Resources`)**
 - `Transpose.$useAssembly(name)` — name the ambient assembly for a bare `define` outside a wrapper.
-- Stub registration, eviction and metadata hand-off.
-- An async `Transpose.loadChunk(url)` and the BCL surface (`Modules.Load<T>()`) that exposes it.
-- A clear error when a stub is used synchronously — the failure today is silent, which is worse.
+  The only runtime piece still outstanding; everything else in this section is done (§5a).
 
 **Interactions to check that this investigation did not**
 - `--incremental`: the chunk assignment is a *whole-program* property, so a body-only edit that today
@@ -251,7 +289,8 @@ Sequence it as:
    heuristic. This is the whole technical core, and it is measurable on its own.
 2. **An explicit `[LazyModule]`-style boundary** plus `await Modules.Load<T>()`. Without it, lazy
    loading is only reachable through reflection, and only asynchronously.
-3. **Stubs + eager metadata** in the runtime, so reflection keeps working across the boundary.
+3. ~~**Stubs + eager metadata** in the runtime, so reflection keeps working across the boundary.~~
+   **Done** — see §5a.
 4. Only then, packaging across assembly boundaries.
 
 And separately, ahead of all of it, look at the **metadata**: it is a quarter of the gzipped payload,
