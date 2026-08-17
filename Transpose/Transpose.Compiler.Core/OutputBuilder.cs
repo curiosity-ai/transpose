@@ -59,6 +59,10 @@ internal static class OutputBuilder
         public string? MinifiedPath;
         public bool IsEmpty;
         public bool IsMinified;
+        /// <summary>Scripted as &lt;script type="module"&gt; rather than a classic deferred script.
+        /// Only the entry file of an <c>outputBy: Module</c> build sets this; the chunk files are
+        /// reached through its imports and are never scripted at all.</summary>
+        public bool IsModule;
     }
 
     /// <summary>The outcome of assembling a site: the directory it was written to, and every stale
@@ -81,7 +85,7 @@ internal static class OutputBuilder
     /// </summary>
     public readonly record struct CssResource(string OutputRelativePath, IReadOnlyList<string> SourceFiles, bool Concatenated);
 
-    public static SiteBuildResult Build(ResolvedProject project, TransposeJson config, string javascript, string outputDir, string configuration, string? metadataJavascript = null, string? liveReloadScript = null)
+    public static SiteBuildResult Build(ResolvedProject project, TransposeJson config, string javascript, string outputDir, string configuration, string? metadataJavascript = null, string? liveReloadScript = null, Translator.Emitter.ModuleOutput? modules = null)
     {
         Directory.CreateDirectory(outputDir);
 
@@ -112,9 +116,9 @@ internal static class OutputBuilder
 
         // A per-project compiler output (the app bundle, its reflection metadata, the shim): there
         // is no pre-built variant to reuse, so minify at compile time per outputFormatting.
-        void EmitCompilerJs(string rel, string content)
+        void EmitCompilerJs(string rel, string content, bool isModule = false)
         {
-            var o = new JsOut { Path = rel };
+            var o = new JsOut { Path = rel, IsModule = isModule };
             if (wantFormatted) WriteText(rel, content); else o.IsEmpty = true;
             if (wantMinified)
             {
@@ -212,7 +216,21 @@ internal static class OutputBuilder
         }
 
         // 3. The compiled bundle — loads last, after runtime + library deps are in place.
-        EmitCompilerJs(config.FileName, javascript);
+        // outputBy: Module — the chunk files are written but never scripted; the entry module
+        // imports the ones it needs and declares the rest to Transpose.Modules, which fetches them
+        // on demand. index.html therefore carries exactly one <script type="module">.
+        if (modules is not null)
+        {
+            foreach (var (rel, chunkJs) in modules.Chunks)
+            {
+                var dest = Path.Combine(outputDir, rel.Replace('/', Path.DirectorySeparatorChar));
+                Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                File.WriteAllText(dest, chunkJs, utf8);
+                written.Add(Path.GetFullPath(dest));
+            }
+        }
+
+        EmitCompilerJs(config.FileName, javascript, isModule: modules is not null);
 
         // 3b. Reflection metadata as a separate file (reflection.target: "file") — loads right
         //     after the bundle whose types it describes, matching the existing compiler.
@@ -981,7 +999,7 @@ internal static class OutputBuilder
             {
                 // A standalone minified resource — minified HTML only.
                 if (minSeen.Add(o.Path))
-                    jsMin.Append("\n    ").Append($"<script src=\"{o.Path}\" defer></script>");
+                    jsMin.Append("\n    ").Append(ScriptTag(o.Path, o.IsModule));
                 continue;
             }
 
@@ -989,7 +1007,7 @@ internal static class OutputBuilder
             // formatted one was not written (Minified mode) — mirrors the legacy GetOutputPath().
             var formattedPath = o.IsEmpty ? o.MinifiedPath : o.Path;
             if (formattedPath is not null)
-                js.Append("\n    ").Append($"<script src=\"{formattedPath}\" defer></script>");
+                js.Append("\n    ").Append(ScriptTag(formattedPath, o.IsModule));
 
             // Minified HTML links the minified sibling, falling back to the formatted path when no
             // minified variant exists. (The legacy compiler dropped such files from the minified
@@ -997,8 +1015,14 @@ internal static class OutputBuilder
             // load in a Release build. Transpose keeps it: a missing .min just loads the plain file.)
             var minifiedPath = o.MinifiedPath ?? (o.IsEmpty ? null : o.Path);
             if (minifiedPath is not null && minSeen.Add(minifiedPath))
-                jsMin.Append("\n    ").Append($"<script src=\"{minifiedPath}\" defer></script>");
+                jsMin.Append("\n    ").Append(ScriptTag(minifiedPath, o.IsModule));
         }
+
+        // A module script is deferred by definition and executes in document order alongside the
+        // classic `defer` ones, so the entry module still runs after the runtime scripts above it.
+        static string ScriptTag(string path, bool isModule) => isModule
+            ? $"<script type=\"module\" src=\"{path}\"></script>"
+            : $"<script src=\"{path}\" defer></script>";
 
         string? htmlName = (js.Length > 0 || css.Length > 0) ? "index.html" : null;
         string? htmlMinName = jsMin.Length > 0 ? (htmlName is null ? "index.html" : "index.min.html") : null;

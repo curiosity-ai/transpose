@@ -249,7 +249,13 @@ public sealed partial class Emitter
                 EmitConditionalAccess(condAccess);
                 break;
             case TypeOfExpressionSyntax typeOf:
-                _w.Write(TypeRef(_model.GetTypeInfo(typeOf.Type).Type!));
+                // `typeof(X)` wants the Type object, never X's code — a module-mode stub answers
+                // Name/IsInterface/IsAssignableFrom/attributes just as well. Not treating it as a
+                // dependency is what keeps a "see also" list of typeof(...) from fusing every one
+                // of those types into a single chunk.
+                _softRefDepth++;
+                try { _w.Write(TypeRef(_model.GetTypeInfo(typeOf.Type).Type!)); }
+                finally { _softRefDepth--; }
                 break;
             case IsPatternExpressionSyntax isPattern:
                 EmitIsPattern(isPattern);

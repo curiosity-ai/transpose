@@ -68,6 +68,15 @@ public sealed partial class Emitter
     /// top-level emitter consults it; the per-type clones never see it.</summary>
     private IncrementalPlan? _plan;
 
+    /// <summary>When non-null, every source type <see cref="TypeRef"/> emits is recorded here — the
+    /// dependency set of the type currently being emitted, which module mode chunks on.</summary>
+    private HashSet<INamedTypeSymbol>? _recordedRefs;
+
+    /// <summary>Nesting depth of a reference position that only needs a <em>Type object</em> rather
+    /// than the type's code — a <c>typeof</c> operand. A stub satisfies those (see Modules.js), so
+    /// they are not recorded as dependencies and do not fuse two chunks together.</summary>
+    private int _softRefDepth;
+
     /// <param name="models">A semantic-model cache to reuse. Passing the one the
     /// unsupported-feature scan already populated means every member that scan bound is bound
     /// once for the whole build instead of twice.</param>
@@ -213,8 +222,13 @@ public sealed partial class Emitter
     }
 
     public static JsWriter EmitOnlyType(Emitter emitter, INamedTypeSymbol type)
+        => EmitOnlyType(emitter, type, null);
+
+    /// <param name="refs">When supplied, receives every source type the emitted body references.</param>
+    public static JsWriter EmitOnlyType(Emitter emitter, INamedTypeSymbol type, HashSet<INamedTypeSymbol>? refs)
     {
         var clonedEmitter = emitter.Clone();
+        clonedEmitter._recordedRefs = refs;
         clonedEmitter.EmitType(type);
         return clonedEmitter._w;
     }

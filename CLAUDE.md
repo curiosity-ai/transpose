@@ -497,7 +497,31 @@ The short version:
   package, which does not pack `None` items. Curiosity.FrontEnd did exactly that, so every application
   built against the package was missing 243 icons/illustrations, both variable-font families and the
   favicon.
-- **Lazily-loaded modules: the runtime half is done, the emitter half is not.** `Resources/Modules.js`
+- **Lazily-loaded modules (done).** `outputBy: "Module"` in a project's `tps.json` makes a site build
+  emit one ES module per chunk (`chunks/cN.mjs`) plus an entry module, and index.html carries a single
+  `<script type="module">`. A **chunk is a strongly-connected component of the reference graph**
+  `TypeRef` records while emitting each type — the smallest sound unit, because `Transpose.define`
+  resolves `inherits` eagerly, so a per-class split cannot order a reference cycle. Components come
+  out of Tarjan in reverse-topological order, so numbering them yields a DAG in which every import
+  points at a lower index, which also makes the output deterministic. A `typeof` operand is the one
+  reference that is *not* a dependency: it wants a Type object, which a stub answers for. Chunks
+  reachable from the entry point are imported by the entry module; the rest are declared to
+  `Transpose.Modules`. See `Emitter.Modules.cs`, `ModuleEmitTests`, and **`TODO.modules.md`** §7a for
+  what it measures (Tesserae's sample gallery: the app's initial payload 1,109 KB → 164 KB raw, all
+  140 samples rendering identically).
+
+  Three things are load-bearing and were found by running it, not by reasoning: the entry module
+  emits its **reflection metadata before the manifest** (`Modules.register` ends with a
+  `Transpose.init()`, and `init` runs `Main` — anything after it would not exist yet); the stub
+  swap lives in **`Transpose.define` itself** (`Class.set`), because a chunk can also be evaluated as
+  a plain static import from another chunk, which never passes through the loader; and the metadata
+  hand-off is keyed by type **name** (`Modules.$metaFor`) rather than held on the stub object, for the
+  same reason.
+
+  Still single-bundle: `--emit-package` (a package embeds one bundle, so a *library* cannot be split
+  yet), `--incremental` (chunk assignment is a whole-program property — do not combine them yet),
+  minification of chunk files, and watch mode.
+- **The module runtime.** `Resources/Modules.js`
   provides `Transpose.Modules` — a registry of types whose JavaScript lives in a module that has not
   been fetched. `Modules.Register(manifest)` stubs each such type at the same global path and in the
   same assembly `$types` map a real `Transpose.define` would use, so `Assembly.GetTypes()`,
@@ -509,9 +533,8 @@ The short version:
   construction is not — so `Transpose.createInstance` carries a stub guard that throws naming the
   module rather than failing obscurely. Covered by `LazyModuleActivatorTests`.
 
-  Nothing emits chunks or a manifest yet, so a host registers them itself. The emitter work — chunking
-  by strongly-connected component of the hard-reference graph, and why a per-class split is unsound —
-  is measured and specified in **`TODO.modules.md`**.
+  A host can also drive this itself — `Modules.Register` takes a manifest from anywhere — which is how
+  it was validated before the emitter half existed.
 - **Wider `tps.json` surface** (outputBy, module formats, locales, before/after build, etc.).
 - **Incremental compilation (done for body-level edits; on by default via the SDK).** `--incremental`
   reuses the previous build of a project: nothing at all is compiled when every input hashes the same

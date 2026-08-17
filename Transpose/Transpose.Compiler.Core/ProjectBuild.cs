@@ -344,7 +344,10 @@ internal static class ProjectBuild
                 assemblyVersion: options.AssemblyVersion,
                 emitDebugInformation: project.EmitDebugInformation,
                 metadataOnlyAssembly: metadataOnly,
-                incremental: plan);
+                incremental: plan,
+                // Only a site build can emit modules: a package DLL embeds one bundle for its
+                // consumer to extract, and there is no place in that protocol for chunk files yet.
+                emitModules: isSiteBuild && tpscfg is { OutputByModule: true });
         }
         catch (Exception ex)
         {
@@ -398,11 +401,14 @@ internal static class ProjectBuild
 
             var outDir = SiteDirectory(options, config, project);
             var siteResult = PhaseTimings.Measure("write site (minify + resources + html)", () =>
-                OutputBuilder.Build(project, config, js, outDir, configuration, result.MetadataJavascript, options.LiveReloadScript));
+                OutputBuilder.Build(project, config, js, outDir, configuration, result.MetadataJavascript, options.LiveReloadScript, result.Modules));
             // Every file in the site counts as an output: a rebuild must notice if any of them was
             // deleted or edited, otherwise "up to date" would leave a broken site in place.
             SaveCache(cache, plan, result, SiteOutputs(outDir, dllPath));
             log.Info($"\nOK — built site in {outDir} ({js.Length:N0} bytes of {config.FileName}) in {sw.ElapsedMilliseconds} ms.");
+            if (result.Modules is { } mods)
+                log.Info($"  modules:    {mods.Chunks.Count} chunk(s) — {mods.EagerChunkCount} loaded up front, " +
+                         $"{mods.LazyChunkCount} on demand ({mods.LazyTypeCount} type(s) deferred)");
             log.Info($"  index.html: {(config.HtmlDisabled ? "disabled" : "generated")}");
             if (dllPath is not null) log.Info($"  dll:        {dllPath}");
             if (siteResult.RemovedStaleFiles.Count > 0)

@@ -5,11 +5,14 @@ one per *cluster* of classes — that the page loads on demand, instead of the s
 today. Measured end to end against **Tesserae** (`Tesserae.Tests`, the sample gallery), with the
 rendered page diffed against an unmodified build.
 
-Status: **the runtime/BCL half is implemented** (§5a — `Transpose.Modules`,
-`Activator.CreateInstanceAsync`, type stubs, the synchronous-use guard); **the emitter still emits one
-bundle**. Everything below is the feasibility report and the evidence behind it — the measurements
-were made by mechanically re-chunking an already-emitted site, which answered every runtime question
-without touching the emitter.
+Status: **implemented, end to end.** `outputBy: "Module"` in a project's `tps.json` makes `tps` emit
+one ES module per chunk plus an entry module, and the runtime (`Transpose.Modules`,
+`Activator.CreateInstanceAsync`) loads the deferred ones on demand. See §5a for the runtime half and
+§7a for the emitter half and what it measures on Tesserae.
+
+The report below is the original feasibility investigation, kept because it is the reasoning the
+implementation follows and it records what was rejected and why. Its measurements were made by
+mechanically re-chunking an already-emitted site; §7a has the numbers from the real compiler.
 
 ---
 
@@ -232,6 +235,88 @@ the site, larger than `tss.js`. It must stay eager for reflection to work over u
 module splitting cannot reduce it. Emitting only the metadata a project actually reflects over, or
 splitting metadata per type alongside the chunks and accepting an async `GetTypes()`, is a
 *separate* and probably higher-value piece of work.
+
+## 7a. What was built
+
+`outputBy: "Module"` in `tps.json`. One `<script type="module">` in index.html; everything else is
+imports.
+
+```
+tps/
+  app.js            entry module: imports the eager chunks, the reflection metadata for every type,
+                    the manifest of what was deferred, Transpose.init()
+  chunks/c0.mjs …   one file per chunk: side-effect imports of the chunks it references, then the
+                    Transpose.define of each of its types
+```
+
+**Translator** (`Emitter.Modules.cs`, ~300 lines):
+
+- `TypeRef` — the single choke point every emitted type reference goes through — records the source
+  types each type's body reaches into, so an edge exists exactly when a reference was emitted. A
+  `typeof` operand is the one *soft* position: it wants a Type object, which a stub already answers
+  for, so it is not recorded. That distinction is what stops a "see also" list of `typeof(...)` from
+  fusing every type it names into one chunk.
+- Iterative Tarjan over that graph; each SCC is a chunk. Components come out in reverse-topological
+  order, so numbering them gives a DAG in which every import points at a lower index — which makes
+  the import lists and the file names deterministic (`OutputIsDeterministic` guards it).
+- Inside a chunk the emitter's existing dependency-depth ordering is kept, so `inherits` is satisfied
+  without any extra work.
+- Eager set = the entry point's chunk plus its transitive chunk dependencies. A project with no entry
+  point (a library) keeps everything eager — there is nothing to be lazy relative to.
+
+**Runtime** — beyond §5a, two things the prototype had not needed:
+
+- `Transpose.$useAssembly(name)`, so a bare `define` outside the `Transpose.assembly(...)` wrapper
+  registers into the right assembly.
+- **Stub replacement moved into `Transpose.define` itself.** A chunk can be evaluated by two routes:
+  the loader, or a plain static `import` from another chunk that ESM resolves directly. Only the
+  first went through `Modules.load`, so a type arriving by the second hit *"Class X is already
+  defined"* against its own stub. Doing the swap in `Class.set` covers both. For the same reason the
+  metadata hand-off is keyed by type **name** (`Modules.$metaFor`, populated from
+  `Reflection.setMetadata`) rather than held on the stub object — the stub may be taken out by a
+  different route than the one replacing it. Both were found by the Tesserae run, not by reasoning.
+
+**Entry-module ordering is load-bearing.** Metadata is emitted *before* the manifest, because
+`Modules.register` ends with a `Transpose.init()` and `init` runs the entry point — anything emitted
+after it would not exist yet when `Main` runs. That is what keeps `[SampleDetails]` readable off the
+stubs; with the order reversed, Tesserae's whole sidebar collapsed into one "Others" group.
+
+### Measured on the Tesserae sample gallery
+
+Same sources built both ways, both rendered in headless Chromium, all 140 samples clicked:
+
+| | initial JS payload (the app's own) |
+| --- | --- |
+| single bundle | 1,109 KB raw / 183 KB gz |
+| `outputBy: Module` | **164 KB raw / 19 KB gz** |
+
+160 chunks: 5 loaded up front, 155 on demand (157 of 162 types deferred). **All 140 samples render
+with identical element and text counts, and the sidebar is identical, with zero console errors** —
+including the reflection-driven discovery, which reads names, interfaces and attributes off stubs.
+
+That ratio is the best case: a gallery of independent samples is exactly the shape module splitting
+suits. It also required a two-line change in the app, because instantiating a deferred type is
+asynchronous:
+
+```csharp
+// Sample.cs   Func<IComponent>  ->  Func<Task<IComponent>>
+() => Activator.CreateInstance(t) as IComponent
+async () => await Activator.CreateInstanceAsync(t) as IComponent   // and DeferSync -> Defer
+```
+
+### Not done
+
+- **Packages.** Only a site build emits modules; `--emit-package` still embeds one bundle, so
+  Tesserae itself (`tss.js`, 2.4 MB) is unsplit. Splitting a package means embedding chunk files plus
+  a manifest and merging the manifests of every reference — a new cross-assembly protocol.
+- **`--incremental`.** Chunk assignment is a whole-program property, so a body-only edit that today
+  reuses cached per-type JavaScript could still reshuffle chunks. Module mode has not been checked
+  against the cache and the two should not be combined yet.
+- **Minification** of chunk files, and the `.js`/`.min.js` variant switch across N files.
+- **Watch mode** with module output.
+- Generic base types reach the manifest as their definition name (`Foo$1`), which is all
+  `Transpose.unroll` can express, so `IsAssignableFrom` against a *constructed* generic interface is
+  not answered from a stub.
 
 ## 7. What the compiler change would be
 

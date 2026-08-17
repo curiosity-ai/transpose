@@ -64,7 +64,33 @@ public sealed partial class Emitter
     /// PARAMETER never does, because it IS a local binding (the generic define's own parameter).
     /// </summary>
     private string TypeRef(ITypeSymbol type)
-        => type is ITypeParameterSymbol ? TypeRefCore(type) : UnshadowedTypeRef(TypeRefCore(type));
+    {
+        // Module mode records which source types this one's emitted body reaches into, so the
+        // chunker can group mutually-referencing types (see Emitter.Modules.cs). Recording here
+        // rather than in a separate analysis pass keeps the two in step by construction: an edge
+        // exists exactly when a reference was emitted.
+        if (_recordedRefs is not null && _softRefDepth == 0) RecordRef(type);
+        return type is ITypeParameterSymbol ? TypeRefCore(type) : UnshadowedTypeRef(TypeRefCore(type));
+    }
+
+    /// <summary>Adds every source named type inside <paramref name="type"/> (the type itself and,
+    /// recursively, its generic arguments and array element) to the current type's dependency set.
+    /// A generic argument counts: <c>Foo$1(X)</c> builds a generic instance whose base class can be
+    /// <c>X</c> itself, so X has to be defined before the application runs.</summary>
+    private void RecordRef(ITypeSymbol type)
+    {
+        switch (type)
+        {
+            case IArrayTypeSymbol array:
+                RecordRef(array.ElementType);
+                return;
+            case INamedTypeSymbol named:
+                if (named.Locations.Any(l => l.IsInSource) && !TransposeNaming.IsExternalType(named))
+                    _recordedRefs!.Add((INamedTypeSymbol)named.OriginalDefinition);
+                foreach (var arg in named.TypeArguments) RecordRef(arg);
+                return;
+        }
+    }
 
     private string TypeRefCore(ITypeSymbol type)
     {

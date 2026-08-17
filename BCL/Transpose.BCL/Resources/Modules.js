@@ -164,6 +164,41 @@
             return modules.$import(url);
         },
 
+        /// Steps a stub aside so the real Transpose.define can take its place, remembering what has
+        /// to be carried over. Called from Class.js at define time, which catches every route a
+        /// chunk can arrive by — the loader below, or a plain static import from another chunk.
+        $replaceStub: function (name) {
+            var saved = modules.$evict(name);
+            if (saved) modules.$adoptPending[name] = saved;
+        },
+
+        /// Hands the stub's metadata and any nested types to the real type. Called right after the
+        /// define registered it.
+        $stubReplaced: function (name, real) {
+            if (!real || real.$stub) return;
+            var saved = modules.$adoptPending[name];
+            if (saved) {
+                for (var k in saved.carry) {
+                    if (real[k] === undefined) real[k] = saved.carry[k];
+                }
+                delete modules.$adoptPending[name];
+            }
+            // The metadata comes from the name-keyed record rather than the evicted stub: the stub
+            // may have been taken out by a different route than the one replacing it now.
+            if (!real.$metadata && modules.$metaFor[name]) {
+                real.$metadata = modules.$metaFor[name];
+                real.$getMetadata = Transpose.Reflection.getMetadata;
+                delete modules.$metaFor[name];
+            }
+            delete modules.$manifest[name];
+            delete modules.$stubs[name];
+        },
+
+        $adoptPending: {},
+
+        /// Metadata captured while a type was a stub, keyed by type name (see Reflection.setMetadata).
+        $metaFor: {},
+
         $makeStub: function (name, info) {
             var fn = function () {
                 throw new System.InvalidOperationException.$ctor1(
@@ -228,6 +263,9 @@
 
         $adopt: function (name, saved) {
             var real = Transpose.unroll(name);
+            // Class.js may already have swapped the stub out at define time and carried everything
+            // over; nothing left to do then.
+            if (real && !real.$stub && !modules.$adoptPending[name] && !modules.$manifest[name]) return;
             if (!real || real.$stub) {
                 // The module did not actually define it — leave the stub in place so the error the
                 // caller eventually sees still names the module.
@@ -249,6 +287,16 @@
     };
 
     Transpose.Modules = modules;
+
+    /// Names the assembly that a bare Transpose.define registers into. A single-bundle build gets
+    /// this from the Transpose.assembly(...) wrapper it is emitted inside; a per-chunk module has no
+    /// wrapper, so it names its assembly itself before defining anything.
+    Transpose.$useAssembly = function (name) {
+        var asm = System.Reflection.Assembly.assemblies[name];
+        if (!asm) asm = new System.Reflection.Assembly(name, {});
+        Transpose.$currentAssembly = asm;
+        return asm;
+    };
 
     /// Activator.CreateInstance's asynchronous form: loads the type's module if it is still a stub,
     /// then constructs. This is the only way to instantiate a type a build deferred, because
