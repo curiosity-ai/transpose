@@ -256,6 +256,9 @@ public sealed partial class Emitter
             // Built once before the parallel emit and read-only during it (see Emitter.SkipClustering.cs).
             _skipClusterDeps = _skipClusterDeps,
             _externalSkipClusterDeps = _externalSkipClusterDeps,
+            // Same: the assembly's own [assembly: ConstructsTypeArguments(typeof(X))] list, computed
+            // on the parent here so it is scanned once rather than once per emitted type.
+            _declaredActivators = DeclaredActivators,
         };
     }
 

@@ -28,6 +28,12 @@ public sealed partial class Emitter
         // because that is the only place the compiler knows the call happens (Emitter.SkipClustering.cs).
         RecordSkipClusterCall(symbol);
 
+        // A call to a [ConstructsTypeArguments] method — a reflection-driven activator such as
+        // JsonConvert.DeserializeObject<T>. Its type arguments are built from their metadata rather
+        // than named by emitted code, so the call site is the only place that edge exists
+        // (Emitter.ReflectionDeps.cs).
+        RecordActivatedTypeArguments(symbol);
+
         if (symbol is null)
         {
             // A `Script.Write(...)` call with a `dynamic` argument binds as late-bound, so Symbol is

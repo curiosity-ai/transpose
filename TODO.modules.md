@@ -461,12 +461,7 @@ three are ordering problems around code the chunker deliberately does not walk.
   `getMetadata` gives the array one more pass before materializing.
 
 What that application still cannot do is defer the types a **reflection-driven deserializer**
-constructs. Newtonsoft builds an object graph from the metadata — member type by member type — and
-that construction is synchronous, so any DTO in an unfetched chunk throws. Nothing in the reference
-graph records that edge (the deserializer only ever sees a `Type`), so the current answer is to keep
-such an assembly's chunks eager: build it as a site rather than as a package. Making it lazy needs
-either an opt-out attribute for "never defer this type" or a preload pass that walks the metadata
-graph of `T` before deserializing into it.
+constructs — see §7h, which is the answer to it.
 
 ### 7g. The second pass — coalescing components into chunks worth fetching
 
@@ -553,10 +548,73 @@ missing information, and closing it needs the packing to happen where the whole 
   set its own `modules.minChunkSize`; the measured curve on this pair, with the app left at 50 KB, is
   521→329 chunks at +60 KB eager (5 KB band), 521→201 at +133 KB (10 KB), 521→115 at +421 KB (20 KB).
 
+### 7h. `[ConstructsTypeArguments]` and `[NeverDefer]` — the edge an activator hides
+
+The chunker records an edge exactly when a type reference is **emitted**, which is what makes it
+sound: a type stays loadable because some code names it. A reflection-driven deserializer defeats
+that, and §7f above hit it head-on. `JsonConvert.DeserializeObject<Order>(json)` emits nothing about
+`Order` beyond its `Type` object — which a deferred type's stub answers perfectly well — and then
+walks that metadata and `new`s up `Order` and every member type below it. Constructing a stub throws,
+and its module can only be fetched asynchronously, so by then it is too late. Nothing in the
+reference graph records the edge, because the deserializer only ever holds a `Type`.
+
+Two attributes close it, and they are deliberately different instruments.
+
+**`[ConstructsTypeArguments]`** goes on the generic method that does the activating, and puts the edge
+back at the one place the compiler can see it: the **call site**, where the type argument is written
+down. Each call records its type arguments — and, transitively, every type reachable from them
+through the fields and properties reflection describes, looking through arrays and generic arguments
+so a `List<Line>` member reaches `Line` — as real dependencies of the type being emitted. So the
+chunk that deserializes an `Order` imports the chunk that defines it, and the DTO stays deferred for
+every screen that does not deserialize one. It is the same move `[SkipTypeClustering]` makes, in the
+other direction: that one takes edges *away* from a facade, this one adds edges an activator hides.
+
+The walk is an over-approximation on purpose, exactly like `BuildSkipClusterDeps`: it only has to be
+a superset of what the deserializer touches, and over-approximating costs an import that was not
+needed rather than a missing one that throws.
+
+It is read in three places, so whoever knows about the activator can mark it:
+
+```csharp
+// the binding library, on the method or on the activator class
+[ConstructsTypeArguments] public static extern T DeserializeObject<T>(string value);
+
+// or the application, for a library it cannot edit — or has not been re-released yet
+[assembly: Transpose.ConstructsTypeArguments(typeof(Newtonsoft.Json.JsonConvert))]
+[assembly: Transpose.ConstructsTypeArguments(typeof(System.Text.Json.JsonSerializer))]
+```
+
+The assembly-level form applies to every generic method of the named type and only within the
+assembly that declares it — it is a statement about how *this* code calls the activator, so it
+neither travels to a consumer nor needs to.
+
+**`[NeverDefer]`** is the blunt instrument, for what a call site cannot show: `DeserializeObject(json,
+someType)` with a `Type` **value**, a class resolved from a string, a type argument that is itself a
+type parameter. The type joins the eager roots — the same machinery as the attribute classes the
+metadata constructs (§7f) — so it and its own dependencies are in the entry module's imports. Prefer
+`[ConstructsTypeArguments]`: it fetches the DTO with the code that deserializes it instead of making
+it eager for everyone.
+
+Covered by `ModuleReflectionDepsTests`, which starts from the failing case (without the attribute,
+nothing reaches the DTO's members) and includes the cross-assembly shape — the activator compiled
+into a package and the attribute read back out of its metadata.
+
+**Still to do: annotate the shipped bindings.** `Transpose.Newtonsoft.Json`'s four
+`DeserializeObject<T>`/`DeserializeAnonymousType<T>` overloads and `Transpose.System.Text.Json`'s two
+`Deserialize<TValue>` overloads should carry `[ConstructsTypeArguments]` directly, so an application
+gets the behaviour without the assembly-level declaration. That cannot land in the same commit as
+the attribute itself: every `Packages/*` project pins a published `Transpose.BCL` (26.7.3303 today),
+so the annotation only compiles once a BCL carrying the attribute is released and those pins are
+bumped. Until then the assembly-level form is the supported route, and it is the only route for a
+third-party activator anyway.
+
 ### Not done
 
 - **Coalescing across assemblies at the site build** — see §7g. The pass runs per assembly, so a
   package's chunks are packed without knowing which of them its consumer needs at start-up.
+- **`[ConstructsTypeArguments]` on the shipped JSON bindings** — see §7h. The attribute and the
+  emitter support are in; annotating `Transpose.Newtonsoft.Json` and `Transpose.System.Text.Json`
+  waits on a released `Transpose.BCL` that carries it and a bump of those projects' pins.
 - **`--incremental`.** Chunk assignment is a whole-program property, so a body-only edit that today
   reuses cached per-type JavaScript could still reshuffle chunks. Module mode has not been checked
   against the cache and the two should not be combined yet.

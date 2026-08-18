@@ -217,6 +217,9 @@ metadata, not a web resource, so `OutputBuilder` never extracts it into a site.
 - `[Script]` — raw JS body.
 - `[GlobalMethods]` / `[Scope]` — project static members / a type onto ambient JS globals.
 - `[ObjectLiteral]` — treat a class/struct as a plain JS object.
+- `[SkipTypeClustering]` / `[ConstructsTypeArguments]` / `[NeverDefer]` — module-output chunking:
+  keep a facade out of the reference graph, mark a generic method that *constructs* its type
+  arguments reflectively, and pin a type into the initial payload. See the module-output section.
 
 ## Building and bootstrapping
 
@@ -597,6 +600,25 @@ The short version:
   that set the same pass gives 53 chunks *and* 1,055 KB raw / 160 KB gz, so the ceiling is the
   missing information: the fix is to coalesce across assemblies in the site build, where the whole
   program is visible. See `TODO.modules.md` §7g.
+
+  **`[ConstructsTypeArguments]` and `[NeverDefer]` cover the edge an activator hides.** The chunker
+  records an edge exactly when a reference is *emitted*, so a reflection-driven deserializer defeats
+  it: `JsonConvert.DeserializeObject<Order>(json)` emits nothing about `Order` a stub cannot answer,
+  then walks its metadata and constructs it and every member type below it — and constructing a stub
+  throws. `[ConstructsTypeArguments]` on the activating generic method puts the edge back at the
+  **call site**, where the type argument is written down: the call records its type arguments and,
+  transitively, everything reachable through the fields and properties reflection describes (through
+  arrays and generic arguments, so a `List<Line>` member reaches `Line`) as dependencies of the type
+  being emitted. The DTO is fetched with the code that deserializes it and stays deferred for
+  everything else — the same move `[SkipTypeClustering]` makes, in the other direction. It is read on
+  the method, on its containing type, or from the calling assembly
+  (`[assembly: ConstructsTypeArguments(typeof(JsonConvert))]`), which is how an application marks an
+  activator it does not own or that has not been re-released with the annotation.
+  **`[NeverDefer]`** is the blunt fallback for what a call site cannot show — a `Type` *value*, a
+  class resolved from a string: the type joins the eager roots, like the attribute classes the
+  metadata constructs. See `Emitter.ReflectionDeps.cs`, `ModuleReflectionDepsTests` and
+  `TODO.modules.md` §7h; the shipped JSON bindings still have to be annotated, which waits on a BCL
+  release carrying the attribute.
 
   Still single-bundle: `--incremental` (chunk assignment is a whole-program property — do not combine
   them yet), minification (a module entry and its chunks are emitted formatted only, since they carry

@@ -144,6 +144,15 @@ public sealed partial class Emitter
         // metadata is emitted outside the per-type walk), so they join the roots of the eager set.
         if (canDefer && ReflectionEnabled) roots.AddRange(MetadataAttributeClasses(types));
 
+        // [NeverDefer]: something reaches this type purely through reflection — a DTO an activator
+        // builds from a `Type` value, a class resolved by name — so no emitted reference records the
+        // edge and the chunker would leave it a stub that throws when constructed. Prefer
+        // [ConstructsTypeArguments] on the generic method that does the activating, which records the
+        // dependency at the call site instead of making the type eager for everyone; this is the
+        // fallback for what a call site cannot show. See Emitter.ReflectionDeps.cs.
+        if (canDefer)
+            roots.AddRange(types.Where(t => TransposeNaming.HasAttr(t, TransposeNaming.NeverDeferAttr)));
+
         var eager = new HashSet<int>();
         if (canDefer)
         {
