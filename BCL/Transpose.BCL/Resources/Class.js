@@ -595,6 +595,27 @@
                         return i.name;
                     });
                 }
+
+                // A large *dense* enum — members numbered 0..n-1 in declaration order — ships its
+                // names as one delimited string instead of a member-per-name object literal, because
+                // then each name's value is simply its index and the literal was writing down what
+                // the order already said. See TryDenseEnumNames in the emitter.
+                //
+                // Expanded here rather than lazily so a member stays an ordinary own property of the
+                // type: everything that reads one (getValues, parse, valueNames, hand-written JS)
+                // keeps working with no idea which form the enum arrived in. The saving is on the
+                // side that scales — the parser no longer builds a property per member, and the
+                // names arrive already ordered so the sort above is skipped. Tesserae's 5,372-member
+                // icon table is 212 KB of object literal against 100 KB of string.
+                if (prop.$kind === "enum" && typeof Class.$denseNames === "string") {
+                    var denseNames = Class.$denseNames.length > 0 ? Class.$denseNames.split(",") : [];
+
+                    for (var d = 0; d < denseNames.length; d++) {
+                        Class[denseNames[d]] = d;
+                    }
+
+                    Class.$names = denseNames;
+                }
             }
 
             if (!extend) {
