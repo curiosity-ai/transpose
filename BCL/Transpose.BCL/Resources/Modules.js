@@ -168,6 +168,18 @@
             return def.apply(null, args);
         },
 
+        /// A constructed generic named by reflection METADATA rather than by code.
+        ///
+        /// Metadata is read while a module may still be absent — that is the whole point of it being
+        /// emitted eagerly — and a constructed generic is built by APPLYING its definition, which
+        /// throws for a stub. So answer with the stub itself: a Type object carrying the right name,
+        /// kind and interfaces, which is exactly what reflection gets for every other deferred type.
+        /// Once the definition's module has arrived the real instantiation is built instead.
+        $metaType: function (def) {
+            if (!def || def.$stub || !def.$isGenericTypeDefinition) return def;
+            return def.apply(null, Array.prototype.slice.call(arguments, 1));
+        },
+
         /// Applies a generic definition to its own placeholder type parameters, which is the shape
         /// a loaded type records for an open base. $typeArguments is what $staticInit builds (from
         /// Reflection.createTypeParams, reading the definition function's parameter names); reading

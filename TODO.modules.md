@@ -370,6 +370,69 @@ costs, and neither removes the other's.
 139 of 140 samples fingerprint identically; the one that differs (`Avatar`) is the randomised sample
 from the noise floor above. Reflection still enumerates all 528 + 162 types. Zero console errors.
 
+### 7d. Reflection metadata and constructed generics
+
+Metadata is emitted **once for the whole assembly, outside the per-type walk**, so its type
+references never take part in chunking — the chunker cannot see them, and nothing imports what they
+name. That is fine for a plain type (a stub answers) and fatal for a constructed generic, which is
+built by applying its definition: reading the metadata of a type whose signature mentions
+`IconToggle<ComposerMode>` threw "Type 'tss.IconToggle$1' lives in module …, which has not been
+loaded" from inside `GetCustomAttributes`.
+
+`MetaTypeName` now routes a deferrable constructed generic through `Transpose.Modules.$metaType`,
+which applies the definition when it is loaded and answers with the stub when it is not — the same
+degradation every other deferred type already gets from reflection. Two details cost a round each:
+
+- the arguments are named by recursing through `MetaTypeName` rather than letting `TypeRef` format
+  the whole reference, because the outer type is often a BCL generic that is always loaded while the
+  argument is not (`List<OmniResult<Hit>>` is the shape that found it);
+- an external generic is only rebuilt when its emitted form really *is* an application. `Func<…>`
+  binds to the JS global `Function`, and "applying" that calls the Function **constructor**, which
+  compiles its arguments as source — a `SyntaxError` at metadata-read time.
+
+Only in module mode; a single-bundle build keeps emitting the plain application byte for byte.
+
+### 7e. `[SkipTypeClustering]` — a facade need not fuse the library
+
+A chunk is an SCC, so a static facade whose members construct half the library fuses that half into
+one chunk: the facade reaches every component, every component reaches the facade for a helper, and
+the cycle makes them one unit. Tesserae's `UI` — 300 static factories — is the canonical case, and
+removing it was previously the only answer.
+
+`[SkipTypeClustering]` says instead: **a static method body only runs when someone calls it**, so the
+edges out of the facade belong at the call sites.
+
+```
+before   Caller -> UI,  UI -> {Card, TextBlock, …}      one SCC
+after    Caller -> UI,  Caller -> deps(UI.Card)          a DAG
+```
+
+The facade still becomes a chunk and its callers still import it; only the component edges move.
+Cross-assembly, the facade's source is not available to a consumer, so a package publishes its
+per-member sets keyed by documentation-comment id (`Transpose.SkipCluster.json`, embedded beside the
+chunk map and likewise absent from `Transpose.Resources.json`); a consuming build merges them and a
+call site turns into the same imports it would have produced in-assembly.
+
+Measured on **master** — the tree that still has the whole facade — with the sample gallery built as
+modules and every sample rendering identically (141 of 141, zero console errors):
+
+| | eager chunks | tss + app eager | largest library chunk |
+| --- | --- | --- | --- |
+| facade kept, no attribute | 213 | 2,304 KB raw / 403 KB gz | **193 types, 1,612 KB** |
+| facade kept, `[SkipTypeClustering]` | **121** | **1,055 KB raw / 188 KB gz** | 5 types, 67 KB |
+| facade *removed* (this branch) | 208 | 1,788 KB raw / 328 KB gz | — |
+
+So the attribute is not merely a cheaper alternative to deleting the facade — it is **better than
+deleting it** (1,055 KB vs 1,788 KB eager, 188 KB vs 328 KB gzipped), because it also moves the
+`Div`/`VStack`-style helper edges that survive a facade removal. 513 of the 521 library chunks end up
+holding exactly one type.
+
+Status: **prototype.** It is sound for the shape it targets (a static class of factory/helper methods)
+and does nothing without the attribute. Not yet settled: what to do about a facade member that is
+itself generic, a diagnostic when the attribute is put on a type that is instantiated or inherited
+from (where the edges really are needed at definition time), and whether the published map should be
+folded into `Transpose.Modules.json` rather than shipping a second sidecar.
+
 ### Not done
 
 - **`--incremental`.** Chunk assignment is a whole-program property, so a body-only edit that today

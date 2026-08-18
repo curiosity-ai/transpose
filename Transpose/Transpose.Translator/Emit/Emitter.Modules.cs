@@ -31,6 +31,12 @@ public sealed partial class Emitter
         /// without it the consumer's reference would land on a stub it cannot resolve synchronously.
         /// </summary>
         public Dictionary<string, string> TypeToChunk { get; } = new(StringComparer.Ordinal);
+
+        /// <summary>For a <c>[SkipTypeClustering]</c> facade: each member's documentation-comment id
+        /// → the emitted define names its body reaches. A consuming build cannot see the facade's
+        /// source, so without this it would import the facade's chunk and none of the chunks the
+        /// member it calls actually needs. See Emitter.SkipClustering.cs.</summary>
+        public Dictionary<string, List<string>> SkipClusterDeps { get; } = new(StringComparer.Ordinal);
     }
 
     /// <summary>
@@ -60,11 +66,21 @@ public sealed partial class Emitter
     public ModuleOutput EmitModules(
         string chunkDirectory = "chunks",
         IReadOnlyDictionary<string, string>? externalChunks = null,
-        bool packageMode = false)
+        bool packageMode = false,
+        IReadOnlyDictionary<string, List<string>>? externalSkipClusterDeps = null)
     {
+        _externalSkipClusterDeps = externalSkipClusterDeps;
+        // Reflection metadata is emitted once for the whole assembly, outside the per-type walk, so
+        // its type references never take part in chunking — see MetaTypeName.
+        _moduleMetadata = true;
         var types = PhaseTimings.Measure("  ├ collect + order types", CollectTypes);
         var order = new Dictionary<INamedTypeSymbol, int>(SymbolEqualityComparer.Default);
         for (var i = 0; i < types.Count; i++) order[types[i]] = i;
+
+        // [SkipTypeClustering]: a facade's member dependencies belong to its callers, so they have to
+        // be known before any caller is emitted.
+        _skipClusterDeps = PhaseTimings.Measure("  ├ skip-clustering member deps",
+            () => BuildSkipClusterDeps(types));
 
         // Emit every type once, recording what it references as we go.
         var bodies = new ConcurrentDictionary<INamedTypeSymbol, string>(SymbolEqualityComparer.Default);
@@ -79,7 +95,7 @@ public sealed partial class Emitter
                     var ext = externalChunks is null ? null : new HashSet<string>(StringComparer.Ordinal);
                     bodies[type] = EmitOnlyType(this, type, seen, ext).ToString();
                     seen.Remove(type);
-                    refs[type] = seen;
+                    refs[type] = ClusterRefsFor(type, seen);
                     if (ext is not null) extRefs[type] = ext;
                 }));
         }
@@ -87,6 +103,8 @@ public sealed partial class Emitter
         {
             throw te;
         }
+
+        var skipDeps = PublishedSkipClusterDeps();
 
         var chunks = PhaseTimings.Measure("  ├ chunk (strongly-connected components)",
             () => Chunk(types, refs, order));
@@ -172,6 +190,7 @@ public sealed partial class Emitter
             LazyTypeCount = lazyTypes.Count,
         }.With(output);
         foreach (var t in types) result.TypeToChunk[MetaTypeDefName(t)] = ChunkFile(chunks.IndexOf[t]);
+        foreach (var kv in skipDeps) result.SkipClusterDeps[kv.Key] = kv.Value;
         return result;
     }
 

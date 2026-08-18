@@ -82,6 +82,10 @@ public sealed partial class Emitter
     /// they are not recorded as dependencies and do not fuse two chunks together.</summary>
     private int _softRefDepth;
 
+    /// <summary>Emitting an <c>outputBy: Module</c> build, where reflection metadata must tolerate a
+    /// type whose module has not been fetched (Emitter.Reflection.cs, MetaTypeName).</summary>
+    private bool _moduleMetadata;
+
     /// <param name="models">A semantic-model cache to reuse. Passing the one the
     /// unsupported-feature scan already populated means every member that scan bound is bound
     /// once for the whole build instead of twice.</param>
@@ -247,7 +251,12 @@ public sealed partial class Emitter
 
     private Emitter Clone()
     {
-        return new Emitter(_compilation, _assemblyName, _names, _model);
+        return new Emitter(_compilation, _assemblyName, _names, _model)
+        {
+            // Built once before the parallel emit and read-only during it (see Emitter.SkipClustering.cs).
+            _skipClusterDeps = _skipClusterDeps,
+            _externalSkipClusterDeps = _externalSkipClusterDeps,
+        };
     }
 
     /// <summary>The result of an <c>outputBy: ClassPath</c> emission: one bare

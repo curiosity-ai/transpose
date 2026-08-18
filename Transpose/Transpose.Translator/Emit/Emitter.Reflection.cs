@@ -518,11 +518,47 @@ public sealed partial class Emitter
         if (type is IArrayTypeSymbol arr)
             return $"System.Array.type({MetaTypeName(arr.ElementType)})";
 
-        var full = TypeRef(type);
-        var ns = type.ContainingNamespace?.ToDisplayString();
-        if (!string.IsNullOrEmpty(ns) && ns != "<global namespace>" && full.StartsWith(ns + ".", StringComparison.Ordinal))
-            return $"$n[{NsIndex(ns!)}]" + full.Substring(ns!.Length);
-        return full;
+        // In module mode a constructed generic cannot be named by applying its definition: metadata is
+        // read while that definition's module may still be absent, and applying a stub throws. Route
+        // a deferrable one through the runtime, which answers with the stub until the module arrives.
+        //
+        // The arguments are named by recursing HERE rather than letting TypeRef format the whole
+        // thing, because the outer type is often a BCL generic that is always loaded while the
+        // argument is not — List<OmniResult<Hit>> is the shape that found this.
+        //
+        // Only in module mode: a single-bundle build must keep emitting the plain application, byte
+        // for byte. IsTransposeCompiledSource, not "declared in source" — a referenced package built
+        // as modules defers its types too, and an app naming a library's generic component is the
+        // common case.
+        if (_moduleMetadata && type is INamedTypeSymbol { Arity: > 0, IsUnboundGenericType: false } g
+            && g.TypeArguments.Length == g.Arity
+            && (g.ContainingType is null || !g.ContainingType.IsGenericType))
+        {
+            var def = Compact(TypeRef(g.ConstructUnboundGenericType()), g);
+            var args = string.Join(", ", g.TypeArguments.Select(MetaTypeName));
+            if (TransposeNaming.IsTransposeCompiledSource(g))
+                return $"Transpose.Modules.$metaType({def}, {args})";
+
+            // An external generic is always loaded, so it needs no guard — but its ARGUMENTS may
+            // not be, so rebuild it with them named through here. Only when its emitted form really
+            // is an application of the definition: a binding like Func<…> -> the JS global
+            // `Function` names a plain object, and "applying" it would call the Function
+            // constructor, which compiles its arguments as source.
+            var full = Compact(TypeRef(type), type);
+            return full.StartsWith(def + "(", StringComparison.Ordinal) ? $"{def}({args})" : full;
+        }
+
+        return Compact(TypeRef(type), type);
+
+        // The namespace of an emitted name folded into the metadata block's shared $n table.
+        string Compact(string full, ITypeSymbol of)
+        {
+            var ns = of.ContainingNamespace?.ToDisplayString();
+            return !string.IsNullOrEmpty(ns) && ns != "<global namespace>"
+                   && full.StartsWith(ns + ".", StringComparison.Ordinal)
+                ? $"$n[{NsIndex(ns!)}]" + full.Substring(ns!.Length)
+                : full;
+        }
     }
 
     /// <summary>Replaces every METHOD-level generic type parameter in <paramref name="type"/> (at any

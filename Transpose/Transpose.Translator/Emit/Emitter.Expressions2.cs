@@ -24,6 +24,10 @@ public sealed partial class Emitter
 
         var symbol = _model.GetSymbolInfo(invocation).Symbol as IMethodSymbol;
 
+        // A call into a [SkipTypeClustering] facade: the types that member builds are needed HERE,
+        // because that is the only place the compiler knows the call happens (Emitter.SkipClustering.cs).
+        RecordSkipClusterCall(symbol);
+
         if (symbol is null)
         {
             // A `Script.Write(...)` call with a `dynamic` argument binds as late-bound, so Symbol is

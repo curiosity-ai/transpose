@@ -162,6 +162,78 @@ public class Program { public static void Main() { Console.WriteLine(""hi""); } 
         }
 
         [TestMethod]
+        public void SkipTypeClusteringMovesAFacadesEdgesToItsCallers()
+        {
+            // The real shape: a facade builds the components, and the components call back into it
+            // for a helper. That cycle is what fuses them — a facade nothing referenced back would
+            // already be a leaf.
+            const string source = @"
+using System;
+public class Card { public int N; public string Tag() { return Hub.Helper(); } }
+public class Badge { public int N; public string Tag() { return Hub.Helper(); } }
+public class Hub
+{
+    public static string Helper() { return ""x""; }
+    public static Card MakeCard() { return new Card(); }
+    public static Badge MakeBadge() { return new Badge(); }
+}
+public class UsesCard { public Card Get() { return Hub.MakeCard(); } }
+public class Program { public static void Main() { Console.WriteLine(new UsesCard().Get()); } }
+";
+            var plain = Emit(source);
+            Assert.AreEqual(ChunkOf(plain, "Card"), ChunkOf(plain, "Badge"),
+                "a facade that builds both should fuse them into one chunk");
+
+            var skipped = Emit(source.Replace("public class Hub", "[Transpose.SkipTypeClustering] public class Hub"));
+            Assert.AreNotEqual(ChunkOf(skipped, "Card"), ChunkOf(skipped, "Badge"),
+                "with the attribute the components must not be fused by the facade");
+
+            // The dependency did not vanish: it moved to the caller, which is where the call happens.
+            var caller = skipped.Chunks.First(c => c.relPath == ChunkOf(skipped, "UsesCard"));
+            CollectionAssert.Contains(ImportsOf(caller.js).ToList(),
+                System.IO.Path.GetFileName(ChunkOf(skipped, "Card")),
+                "the caller of Hub.MakeCard() has to import Card's chunk");
+            CollectionAssert.DoesNotContain(ImportsOf(caller.js).ToList(),
+                System.IO.Path.GetFileName(ChunkOf(skipped, "Badge")),
+                "...and only that one: it never calls MakeBadge()");
+        }
+
+        [TestMethod]
+        public void SkipTypeClusteringPublishesItsMemberDepsForConsumers()
+        {
+            var m = Emit(@"
+using System;
+public class Card { public int N; }
+[Transpose.SkipTypeClustering]
+public class Hub { public static Card MakeCard() { return new Card(); } }
+public class Program { public static void Main() { Console.WriteLine(""hi""); } }
+", packageModules: true);
+
+            // A consumer has the facade only as metadata: it can neither walk the member body nor
+            // name what it builds, so the package publishes the sets keyed by the one name both
+            // compilations can compute - the documentation comment id.
+            var entry = m.SkipClusterDeps.FirstOrDefault(kv => kv.Key.Contains("MakeCard"));
+            Assert.IsNotNull(entry.Key, "the facade member deps must be published");
+            CollectionAssert.Contains(entry.Value, "Card");
+        }
+
+        [TestMethod]
+        public void MetadataNamesAConstructedGenericThroughTheRuntime()
+        {
+            var m = Emit(@"
+using System;
+public class Box<T> { public T Value; }
+public class Holder { public Box<string> Boxed; }
+public class Program { public static void Main() { Console.WriteLine(typeof(Holder).Name); } }
+");
+            // Reflection metadata is emitted once for the whole assembly, outside the per-type walk,
+            // so its references never take part in chunking - the type it names can sit in a chunk
+            // nothing imported. Applying a stub throws, so it goes through $metaType, which answers
+            // with the stub until the module arrives.
+            StringAssert.Contains(m.EntryJs, "Transpose.Modules.$metaType(Box$1,");
+        }
+
+        [TestMethod]
         public void ConstructionAndStaticAccessDoCreateADependency()
         {
             var m = Emit(@"

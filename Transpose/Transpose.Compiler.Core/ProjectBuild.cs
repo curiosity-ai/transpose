@@ -333,6 +333,9 @@ internal static class ProjectBuild
         var wantsModules = tpscfg is { OutputByModule: true } && (isSiteBuild || options.EmitPackage);
         // Every referenced assembly that was itself built as modules contributes its type → chunk map.
         var externalChunks = wantsModules ? ModuleMap.Read(project.ReferencePaths) : null;
+        // ...and, for a [SkipTypeClustering] facade in one of them, the per-member dependency sets a
+        // call site here has to turn into imports (the facade's own chunk carries none of them).
+        var externalSkipDeps = wantsModules ? ModuleMap.ReadSkipClusterDeps(project.ReferencePaths) : null;
 
         var translator = new RoslynTranslator();
         AssemblyBuildResult result;
@@ -355,6 +358,7 @@ internal static class ProjectBuild
                 // Per assembly, so two module-mode assemblies in one site cannot collide.
                 chunkDirectory: "chunks/" + project.AssemblyName,
                 externalChunks: externalChunks,
+                externalSkipClusterDeps: externalSkipDeps,
                 // A library has no entry point to be lazy relative to: nothing is eager beyond its
                 // [Ready] handlers, and its consumers pull in what they actually use.
                 packageModules: options.EmitPackage);
@@ -804,6 +808,7 @@ internal static class ProjectBuild
                 emitModules: tpscfg is { OutputByModule: true },
                 chunkDirectory: "chunks/" + project.AssemblyName,
                 externalChunks: tpscfg is { OutputByModule: true } ? ModuleMap.Read(project.ReferencePaths) : null,
+                externalSkipClusterDeps: tpscfg is { OutputByModule: true } ? ModuleMap.ReadSkipClusterDeps(project.ReferencePaths) : null,
                 packageModules: true);
         }
         catch (Exception ex) { ReportCrash($"Translator on '{Path.GetFileName(csproj)}'", ex, log); return false; }
@@ -864,7 +869,7 @@ internal static class ProjectBuild
         // next to this DLL).
         // Writes the DLL — the emitted assembly plus the embedded resources — in one pass.
         PhaseTimings.Measure("embed resources into DLL (Cecil)",
-            () => ResourceEmbedder.Embed(dllPath, result.AssemblyBytes!, items, project.ReferencePaths, result.Modules?.TypeToChunk));
+            () => ResourceEmbedder.Embed(dllPath, result.AssemblyBytes!, items, project.ReferencePaths, result.Modules?.TypeToChunk, result.Modules?.SkipClusterDeps));
         // Record what a consumer's compilation actually depends on — this assembly's metadata — so a
         // rebuild of this project does not force a rebuild of everything referencing it when only its
         // method bodies moved. Cecil restamps the DLL's MVID on every embed, so its bytes cannot serve.
