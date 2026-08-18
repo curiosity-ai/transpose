@@ -113,7 +113,7 @@
             var push = function (list, t) { if (t && list.indexOf(t) < 0) list.push(t); };
 
             for (var i = 0; i < specs.length; i++) {
-                var b = modules.$resolveType(specs[i]);
+                var b = modules.$resolveType(specs[i], true);
                 if (!b) { complete = false; continue; }
                 push(inherits, b);
                 if (b.$isInterface) push(ifaces, b);
@@ -132,8 +132,22 @@
         /// Resolves one manifest spec: a dotted name, or [definition, ...arguments] for a
         /// constructed generic. Null when it cannot be resolved *yet*, which the caller treats as
         /// "ask again later" rather than "no such type".
-        $resolveType: function (spec) {
-            if (typeof spec === "string") return Transpose.unroll(spec) || null;
+        $resolveType: function (spec, basePosition) {
+            if (typeof spec === "string") {
+                var named = Transpose.unroll(spec) || null;
+                // A generic base named WITHOUT arguments is an OPEN one — `class Relay<T> :
+                // IHandler<T>`, where there is no T to write down until the definition is applied,
+                // so the manifest can only carry the definition's name. The loaded form is not the
+                // definition either: $staticInit applies it to placeholder type parameters, so a
+                // stub has to do the same or it answers differently from the type it stands in for
+                // (IsAssignableFrom(IFoo<>, ...) would match on the bare definition, and
+                // GetInterfaces() would skip it — a definition object carries $kind "class"
+                // whether or not it defines an interface).
+                if (basePosition && named && !named.$stub && named.$isGenericTypeDefinition) {
+                    return modules.$applyOpen(named) || named;
+                }
+                return named;
+            }
             if (!spec || !spec.length) return null;
 
             var def = Transpose.unroll(spec[0]);
@@ -152,6 +166,19 @@
                 args.push(a);
             }
             return def.apply(null, args);
+        },
+
+        /// Applies a generic definition to its own placeholder type parameters, which is the shape
+        /// a loaded type records for an open base. $typeArguments is what $staticInit builds (from
+        /// Reflection.createTypeParams, reading the definition function's parameter names); reading
+        /// the definition through Transpose.unroll normally triggers that, so this only forces it
+        /// when something reached the definition another way. Null when it cannot be produced, and
+        /// the caller then falls back to the bare definition rather than dropping the base.
+        $applyOpen: function (def) {
+            if (!def.$typeArguments && def.$staticInit) def.$staticInit();
+            var params = def.$typeArguments;
+            if (!params || !params.length) return null;
+            return def.apply(null, params);
         },
 
         isStub: function (type) {

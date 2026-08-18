@@ -379,11 +379,10 @@ from the noise floor above. Reflection still enumerates all 528 + 162 types. Zer
 - **Watch mode** with module output.
 - **Minification** — a module entry and its chunks are emitted formatted only (they carry `import`
   syntax `JsMinifier` is not set up for), and a module-mode package embeds no `.min.js` sibling.
-- An **open** generic base — `class Relay<T> : IHandler<T>` — reaches the manifest as the bare
-  definition (`IHandler$1`), because there is no `T` to write down until the definition is applied.
-  The definition-level relationship is reported; a question about one instantiation still needs the
-  module. Same for an argument that is an array, or a base nested inside a generic. See §7c for the
-  constructed case, which is answered.
+- Nothing outstanding on the generic front: §7c covers the constructed case and the open one. A base
+  whose arguments cannot be *named* (an open `IHandler<T>`, an array argument, a base nested inside a
+  generic) reaches the manifest as the bare definition and the runtime applies it to placeholder type
+  parameters, which is the same shape the loaded type records.
 
 ### 7c. Constructed generics from a stub
 
@@ -409,6 +408,30 @@ Two changes fix it.
   read* of a stub's `$$inherits`/`$interfaces`/`$allInterfaces`, not at `register` time — because a
   base may itself be a stub, and applying a stub throws. A partial resolution is never cached, so a
   base whose module arrives later is picked up on the next question.
+
+#### The open case
+
+`class Relay<T> : IHandler<T>` has no argument to write down — `T` does not exist until the definition
+is applied — so the spec is the bare definition name. Reporting it *bare* is wrong, though, because a
+loaded definition does not record `IHandler$1` either: `$staticInit` applies it to placeholder type
+parameters built by `Reflection.createTypeParams`, so the real `$$inherits` holds `IHandler$1(T)`. A
+stub that reported the definition answered differently from the type it stands in for, in two
+directions at once (measured against a genuinely loaded `Relay<T>`):
+
+| question | loaded | bare definition | applied to placeholders |
+| --- | --- | --- | --- |
+| `IsAssignableFrom(IHandler<Order>, X)` | false | false | false |
+| `IsAssignableFrom(IHandler<>, X)` | false | **true** | false |
+| `GetInterfaces(X).Length` | 1 | **0** | 1 |
+
+Over-matching an unbound `typeof` (the bare definition is identity-equal to it, the real
+instantiation is not) and under-reporting `GetInterfaces` (a definition object carries
+`$kind: "class"` whether or not it defines an interface, so it never lands in the interface list).
+`Modules.$applyOpen` closes both by applying the definition to its own `$typeArguments`. The
+placeholder is not the same object the deferred type would have used — it comes from the *base's*
+parameter names rather than the deriving type's — but nothing compares placeholders across types, and
+every question above lands on the loaded answer. That also makes the idiomatic .NET test,
+`GetInterfaces().Any(i => i.GetGenericTypeDefinition() == typeof(IFoo<>))`, work unloaded.
 
 Lazy is not just cheaper, it is what makes the eager alternative unnecessary. Forcing every generic
 definition into the eager set (so the manifest could emit a real application) looked attractive —

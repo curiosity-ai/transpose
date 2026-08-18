@@ -393,5 +393,66 @@ public class Program
             StringAssert.Contains(output, "after: 1");
             StringAssert.Contains(output, "<<DONE>>");
         }
+
+        /// <summary>An OPEN generic base — `class Relay&lt;T&gt; : IHandler&lt;T&gt;` — has no
+        /// argument to write into the manifest, so the spec is the bare definition name. The stub
+        /// still has to answer exactly what the loaded definition answers, which means applying that
+        /// definition to its own placeholder type parameters rather than reporting it bare.</summary>
+        private const string OpenBasePreamble = @"
+using System;
+using System.Linq;
+using System.Reflection;
+using System.Threading.Tasks;
+using Transpose;
+
+public interface IHandler<T> { void Handle(T item); }
+public class Order { public int Id; }
+public class Relay<T> : IHandler<T> { public void Handle(T item) { } }
+
+public static class OpenChunk
+{
+    public static void Register()
+    {
+        Modules.Register(Script.Write<object>(
+            @""{ 'StubRelay$1': { m: 'chunk-5.mjs', k: 'class', a: 'App', i: ['IHandler$1'] } }""));
+    }
+}
+";
+
+        [TestMethod]
+        public async Task AnOpenGenericBaseAnswersAsTheLoadedDefinitionDoesAsync()
+        {
+            var output = await RunTest(OpenBasePreamble + @"
+public class Program
+{
+    public static void Main()
+    {
+        OpenChunk.Register();
+
+        // Relay<T> is really here; StubRelay<T> is the same shape, deferred.
+        var loaded = typeof(Relay<>);
+        var stub   = Type.GetType(""StubRelay$1"");
+
+        Console.WriteLine(""constructed: "" + typeof(IHandler<Order>).IsAssignableFrom(loaded)
+                                             + ""/"" + typeof(IHandler<Order>).IsAssignableFrom(stub));
+        Console.WriteLine(""open: "" + typeof(IHandler<>).IsAssignableFrom(loaded)
+                                     + ""/"" + typeof(IHandler<>).IsAssignableFrom(stub));
+        Console.WriteLine(""ifaces: "" + loaded.GetInterfaces().Length + ""/"" + stub.GetInterfaces().Length);
+        Console.WriteLine(""stillStub: "" + Modules.IsStub(stub));
+        Console.WriteLine(""<<DONE>>"");
+    }
+}
+", skipRoslyn: true);
+
+            // Every answer is the loaded one. Reporting the bare definition instead made the middle
+            // row True/False — a stub matching an unbound typeof that the real type does not match —
+            // and left GetInterfaces() empty, because a definition object carries $kind "class"
+            // whether or not it defines an interface.
+            StringAssert.Contains(output, "constructed: False/False");
+            StringAssert.Contains(output, "open: False/False");
+            StringAssert.Contains(output, "ifaces: 1/1");
+            StringAssert.Contains(output, "stillStub: True");
+            StringAssert.Contains(output, "<<DONE>>");
+        }
     }
 }

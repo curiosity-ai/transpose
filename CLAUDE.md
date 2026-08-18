@@ -546,9 +546,11 @@ The short version:
   `Foo$1` (all a `Transpose.unroll` path walk can express — a constructed generic deliberately gets no
   global slot) made `IsAssignableFrom(IFoo<Bar>, stub)` answer false, silently. This is *not*
   interface-only: a generic base class flattens the same way, and is the more common case
-  (`ComponentBase<Self, THTML>`). An **open** base — `class Relay<T> : IHandler<T>` — still reports
-  only the definition; there is no `T` to write down until the definition is applied. `TODO.modules.md`
-  §7c has the details, `LazyModuleActivatorTests` the coverage.
+  (`ComponentBase<Self, THTML>`). An **open** base — `class Relay<T> : IHandler<T>` — has no argument
+  to write down, so the spec is the bare definition and the runtime applies it to placeholder type
+  parameters (`$applyOpen`), which is the shape a loaded type records: reporting the definition itself
+  instead both over-matched an unbound `typeof(IFoo<>)` and left `GetInterfaces()` empty.
+  `TODO.modules.md` §7c has the details, `LazyModuleActivatorTests` the coverage.
 
   Still single-bundle: `--incremental` (chunk assignment is a whole-program property — do not combine
   them yet), minification (a module entry and its chunks are emitted formatted only, since they carry
