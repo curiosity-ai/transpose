@@ -237,6 +237,30 @@ public class Program { public static void Main() { Console.WriteLine(new UsesBui
         }
 
         [TestMethod]
+        public void SkipTypeClusteringFollowsACallIntoASecondFacade()
+        {
+            // The same hole as the sibling case, one type over: the callee's containing type is also
+            // one whose edges are dropped, so its dependencies have nowhere to live either. Found by
+            // running the app after attributing a second facade — App.Sidenav.Initialize built a
+            // LogoSidenavItem whose chunk nothing had imported.
+            var m = Emit(@"
+using System;
+public class Logo { public int N; }
+[Transpose.SkipTypeClustering]
+public class Rail { public static object Build() { return new Logo(); } }
+[Transpose.SkipTypeClustering]
+public class Shell { public static object Start() { return Rail.Build(); } }
+public class UsesShell { public object Get() { return Shell.Start(); } }
+public class Program { public static void Main() { Console.WriteLine(new UsesShell().Get()); } }
+");
+            var imports = ImportsOf(m.Chunks.First(c => c.relPath == ChunkOf(m, "UsesShell")).js).ToList();
+            CollectionAssert.Contains(imports, System.IO.Path.GetFileName(ChunkOf(m, "Logo")),
+                "Shell.Start() reaches Rail.Build(), which builds a Logo — the call site has to import it");
+            CollectionAssert.Contains(imports, System.IO.Path.GetFileName(ChunkOf(m, "Rail")),
+                "...and Rail itself, which it names directly");
+        }
+
+        [TestMethod]
         public void SkipTypeClusteringFollowsASiblingCycle()
         {
             // Members of a facade call each other freely, cycles included, so the closure is a
@@ -260,10 +284,13 @@ public class Program { public static void Main() { Console.WriteLine(new UsesB()
         }
 
         [TestMethod]
-        public void SkipTypeClusteringKeepsEagerStaticStateOnTheFacade()
+        public void SkipTypeClusteringCarriesStaticStateToEveryCaller()
         {
-            // A static field initializer runs when the facade's own chunk evaluates — there is no
-            // call site to move that edge to — so it stays on the facade and the two land together.
+            // A static field initializer does not run with the member that happens to be called — the
+            // runtime hangs $staticInit off the getter of the type's global slot, so it fires the
+            // first time anything reads the class. Following sibling calls alone would therefore miss
+            // it, and keeping it on the facade would rebuild the cycle the attribute exists to break.
+            // So it belongs to every way in: whoever touches Hub first must have Registry.
             var m = Emit(@"
 using System;
 public class Registry { public int N; }
@@ -273,16 +300,15 @@ public class Hub
     private static readonly Registry _all = new Registry();
     public static int Count() { return _all.N; }
 }
-public class Program { public static void Main() { Console.WriteLine(Hub.Count()); } }
+public class UsesCount { public int Get() { return Hub.Count(); } }
+public class Program { public static void Main() { Console.WriteLine(new UsesCount().Get()); } }
 ");
-            var hubChunk = ChunkOf(m, "Hub");
-            var registryChunk = ChunkOf(m, "Registry");
-            Assert.IsTrue(
-                hubChunk == registryChunk
-                || ImportsOf(m.Chunks.First(c => c.relPath == hubChunk).js)
-                       .Contains(System.IO.Path.GetFileName(registryChunk)),
-                "the facade's static initializer needs Registry the moment Hub is defined, so Hub's "
-                + $"chunk ({hubChunk}) has to carry or import Registry's ({registryChunk})");
+            CollectionAssert.Contains(
+                ImportsOf(m.Chunks.First(c => c.relPath == ChunkOf(m, "UsesCount")).js).ToList(),
+                System.IO.Path.GetFileName(ChunkOf(m, "Registry")),
+                "reading Hub at all runs its static initializer, so its caller has to import Registry");
+            Assert.AreNotEqual(ChunkOf(m, "Registry"), ChunkOf(m, "Hub"),
+                "...and the facade itself must not keep the edge, or it is back in Registry's component");
         }
 
         [TestMethod]

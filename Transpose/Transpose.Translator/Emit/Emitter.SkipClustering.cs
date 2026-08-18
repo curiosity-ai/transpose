@@ -29,16 +29,23 @@ namespace Transpose.Translator;
 /// "<c>… lives in module './chunks/…', which has not been loaded</c>" rather than at build time:
 ///
 /// <list type="number">
-/// <item><b>A call to a sibling on the same facade.</b> The sibling's containing type IS the facade,
-/// which is exactly the edge being dropped — so member <c>A</c> calling <c>B</c> contributed only
-/// <c>B</c>'s return type, never the types <c>B</c>'s own body constructs. Nothing then imported
-/// them: the facade's chunk doesn't (its edges are dropped) and <c>A</c>'s callers didn't know to.
-/// <see cref="BuildSkipClusterDeps"/> therefore takes a <b>transitive closure over the facade's own
-/// members</b> before attributing anything to a call site, so <c>deps(A) ⊇ deps(B)</c>.</item>
-/// <item><b>Eager static state.</b> A static field initializer or a static constructor runs when the
-/// facade's own chunk evaluates, not when someone calls into it — there is no call site to move that
-/// edge to. <see cref="ClusterRefsFor"/> therefore keeps exactly those members' dependencies on the
-/// facade itself, and drops only the ones that genuinely wait for a call.</item>
+/// <item><b>A call to another skipped member</b> — a sibling on the same facade, or a member of a
+/// second facade. Either way the callee's containing type is one whose edges are being dropped, so
+/// member <c>A</c> calling <c>B</c> contributed only <c>B</c>'s return type, never the types
+/// <c>B</c>'s own body constructs. Nothing then imported them: <c>B</c>'s chunk doesn't (its edges
+/// are dropped), and <c>A</c>'s callers didn't know to. <see cref="BuildSkipClusterDeps"/> therefore
+/// takes a <b>transitive closure over every skipped member</b> before attributing anything to a call
+/// site, so <c>deps(A) ⊇ deps(B)</c>. Both halves were found by running it: the sibling case killed
+/// <c>#/home</c>, and the cross-facade case killed <c>App.Sidenav.Initialize</c> once <c>App</c> and
+/// <c>AppSidenav</c> were both attributed.</item>
+/// <item><b>Static state.</b> A static field initializer and a static constructor do not run with the
+/// member that happens to be called, so following sibling calls alone misses them. They are not
+/// needed when the facade's chunk <em>evaluates</em> either: the runtime hangs <c>$staticInit</c> off
+/// the getter of the type's global slot (<c>Class.js</c>), so it fires the first time anything reads
+/// the class — which is a call site like any other. So those dependencies are folded into
+/// <b>every</b> member's set, and reach whoever touches the facade first. Keeping them on the facade
+/// instead would be sound and would rebuild the very cycle the attribute exists to break: the app
+/// shell's static tables alone re-fused 170 types into one chunk.</item>
 /// </list>
 /// </summary>
 public sealed partial class Emitter
@@ -46,12 +53,6 @@ public sealed partial class Emitter
     /// <summary>Per-member dependency sets for every <c>[SkipTypeClustering]</c> type in this
     /// compilation, built once before the parallel emit and only read during it.</summary>
     private IReadOnlyDictionary<ISymbol, HashSet<INamedTypeSymbol>>? _skipClusterDeps;
-
-    /// <summary>For each <c>[SkipTypeClustering]</c> facade, the dependencies that must exist when
-    /// the facade's own chunk evaluates: everything reached from a static field/property initializer
-    /// or a static constructor, closed over sibling calls. <see cref="ClusterRefsFor"/> hands these
-    /// back to the graph instead of dropping them.</summary>
-    private IReadOnlyDictionary<INamedTypeSymbol, HashSet<INamedTypeSymbol>>? _skipClusterEagerDeps;
 
     internal static bool IsSkipClustered(INamedTypeSymbol? type) =>
         type is not null && TransposeNaming.HasAttr(type, TransposeNaming.SkipTypeClusteringAttr);
@@ -73,19 +74,21 @@ public sealed partial class Emitter
     private Dictionary<ISymbol, HashSet<INamedTypeSymbol>> BuildSkipClusterDeps(
         IReadOnlyList<INamedTypeSymbol> types)
     {
+        var facades = types.Where(IsSkipClustered).ToList();
         var result = new Dictionary<ISymbol, HashSet<INamedTypeSymbol>>(SymbolEqualityComparer.Default);
-        var eager = new Dictionary<INamedTypeSymbol, HashSet<INamedTypeSymbol>>(SymbolEqualityComparer.Default);
+        if (facades.Count == 0) return result;
 
-        foreach (var type in types)
+        // Pass 1 — each member's own syntax: the types it names directly, and the skipped members it
+        // calls (whose dependencies are transitively its own). "Skipped member" spans every facade,
+        // not just this one: a call from one facade into another loses the callee's dependencies the
+        // same way a sibling call does, because both callees' edges are being dropped.
+        var members = new List<ISymbol>();
+        var owner = new Dictionary<ISymbol, INamedTypeSymbol>(SymbolEqualityComparer.Default);
+        var skippedCalls = new Dictionary<ISymbol, HashSet<ISymbol>>(SymbolEqualityComparer.Default);
+        var deps = new Dictionary<ISymbol, HashSet<INamedTypeSymbol>>(SymbolEqualityComparer.Default);
+
+        foreach (var type in facades)
         {
-            if (!IsSkipClustered(type)) continue;
-
-            // Pass 1 — each member's own syntax: the types it names directly, and the siblings on
-            // this same facade it reaches (whose dependencies are transitively its own).
-            var members = new List<ISymbol>();
-            var siblingCalls = new Dictionary<ISymbol, HashSet<ISymbol>>(SymbolEqualityComparer.Default);
-            var deps = new Dictionary<ISymbol, HashSet<INamedTypeSymbol>>(SymbolEqualityComparer.Default);
-
             foreach (var raw in type.GetMembers())
             {
                 if (raw is not (IMethodSymbol or IPropertySymbol or IFieldSymbol)) continue;
@@ -107,68 +110,77 @@ public sealed partial class Emitter
                         Add(own, symbol?.ContainingType);
                         if (symbol is IMethodSymbol m) Add(own, m.ReturnType);
 
-                        // …unless that declaring type is this very facade, in which case the edge
-                        // being followed is a sibling call and the dependency is the sibling's set.
+                        // …and when that declaring type is a facade, the call also inherits whatever
+                        // the callee's body reaches — nothing else is going to import it.
                         if (symbol is (IMethodSymbol or IPropertySymbol or IFieldSymbol)
-                            && SymbolEqualityComparer.Default.Equals(symbol.ContainingType?.OriginalDefinition, type))
+                            && IsSkipClustered(symbol.ContainingType?.OriginalDefinition))
                         {
-                            var sibling = MemberKey(symbol);
-                            if (!SymbolEqualityComparer.Default.Equals(sibling, member)) calls.Add(sibling);
+                            var callee = MemberKey(symbol);
+                            if (!SymbolEqualityComparer.Default.Equals(callee, member)) calls.Add(callee);
                         }
                     }
                 }
 
                 own.Remove(type);
                 members.Add(member);
+                owner[member] = type;
                 deps[member] = own;
-                siblingCalls[member] = calls;
+                skippedCalls[member] = calls;
             }
-
-            // Pass 2 — transitive closure over the sibling graph. A facade's members freely form
-            // cycles (A calls B, B calls A), so this is a plain worklist fixpoint rather than a
-            // topological walk: a member is re-queued whenever one of its callees grows, and the sets
-            // only ever grow within a finite universe, so it terminates.
-            var callers = new Dictionary<ISymbol, List<ISymbol>>(SymbolEqualityComparer.Default);
-            foreach (var member in members)
-            {
-                foreach (var callee in siblingCalls[member])
-                {
-                    if (!deps.ContainsKey(callee)) continue;
-                    if (!callers.TryGetValue(callee, out var waiting)) callers[callee] = waiting = new List<ISymbol>();
-                    waiting.Add(member);
-                }
-            }
-
-            var queue = new Queue<ISymbol>(members);
-            var queued = new HashSet<ISymbol>(members, SymbolEqualityComparer.Default);
-            while (queue.Count > 0)
-            {
-                var member = queue.Dequeue();
-                queued.Remove(member);
-
-                var set = deps[member];
-                var grew = false;
-                foreach (var callee in siblingCalls[member])
-                    if (deps.TryGetValue(callee, out var calleeDeps))
-                        foreach (var dep in calleeDeps) grew |= set.Add(dep);
-
-                if (!grew || !callers.TryGetValue(member, out var waiting)) continue;
-                foreach (var caller in waiting)
-                    if (queued.Add(caller)) queue.Enqueue(caller);
-            }
-
-            foreach (var member in members)
-                if (deps[member].Count > 0) result[member] = deps[member];
-
-            // Whatever the facade's own definition needs before anyone calls into it. A static
-            // initializer has no call site, so its edges stay where the graph can see them.
-            var eagerDeps = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
-            foreach (var member in members)
-                if (RunsAtTypeDefinition(member)) eagerDeps.UnionWith(deps[member]);
-            if (eagerDeps.Count > 0) eager[type] = eagerDeps;
         }
 
-        _skipClusterEagerDeps = eager;
+        // Pass 2 — transitive closure over the call graph among skipped members. They freely form
+        // cycles (A calls B, B calls A), so this is a plain worklist fixpoint rather than a
+        // topological walk: a member is re-queued whenever one of its callees grows, and the sets
+        // only ever grow within a finite universe, so it terminates.
+        var callers = new Dictionary<ISymbol, List<ISymbol>>(SymbolEqualityComparer.Default);
+        foreach (var member in members)
+        {
+            foreach (var callee in skippedCalls[member])
+            {
+                if (!deps.ContainsKey(callee)) continue;
+                if (!callers.TryGetValue(callee, out var waiting)) callers[callee] = waiting = new List<ISymbol>();
+                waiting.Add(member);
+            }
+        }
+
+        var queue = new Queue<ISymbol>(members);
+        var queued = new HashSet<ISymbol>(members, SymbolEqualityComparer.Default);
+        while (queue.Count > 0)
+        {
+            var member = queue.Dequeue();
+            queued.Remove(member);
+
+            var set = deps[member];
+            var grew = false;
+            foreach (var callee in skippedCalls[member])
+                if (deps.TryGetValue(callee, out var calleeDeps))
+                    foreach (var dep in calleeDeps) grew |= set.Add(dep);
+
+            if (!grew || !callers.TryGetValue(member, out var waiting)) continue;
+            foreach (var caller in waiting)
+                if (queued.Add(caller)) queue.Enqueue(caller);
+        }
+
+        // Pass 3 — the static state, per facade. It runs on the first *read* of the type's global
+        // slot rather than with any particular member, so it belongs to every way into that facade.
+        var onFirstTouch = new Dictionary<INamedTypeSymbol, HashSet<INamedTypeSymbol>>(SymbolEqualityComparer.Default);
+        foreach (var member in members)
+        {
+            if (!RunsOnFirstTouch(member)) continue;
+            var type = owner[member];
+            if (!onFirstTouch.TryGetValue(type, out var set))
+                onFirstTouch[type] = set = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
+            set.UnionWith(deps[member]);
+        }
+
+        foreach (var member in members)
+        {
+            var set = deps[member];
+            if (onFirstTouch.TryGetValue(owner[member], out var touch)) set.UnionWith(touch);
+            if (set.Count > 0) result[member] = set;
+        }
+
         return result;
     }
 
@@ -177,12 +189,13 @@ public sealed partial class Emitter
     private static ISymbol MemberKey(ISymbol member) => member.OriginalDefinition;
 
     /// <summary>
-    /// Whether this member's dependencies are needed the moment the facade's type is defined, rather
-    /// than when something calls it: a static constructor, or a static field/property with an
-    /// initializer. Those run as part of the define, so there is no call site to move their edges to
-    /// and <see cref="ClusterRefsFor"/> keeps them on the facade.
+    /// Whether this member runs on the first *touch* of the facade rather than with a call to it: a
+    /// static constructor, or a static field/property with an initializer. The runtime hangs
+    /// <c>$staticInit</c> off the getter of the type's global slot, so reading the class at all runs
+    /// the lot — which means these dependencies belong to every member's set rather than to any one
+    /// of them.
     /// </summary>
-    private static bool RunsAtTypeDefinition(ISymbol member) => member switch
+    private static bool RunsOnFirstTouch(ISymbol member) => member switch
     {
         IMethodSymbol { MethodKind: MethodKind.StaticConstructor } => true,
         IFieldSymbol { IsStatic: true } f => f.DeclaringSyntaxReferences
@@ -238,19 +251,13 @@ public sealed partial class Emitter
     /// module-mode package that has a <c>[SkipTypeClustering]</c> facade.</summary>
     private IReadOnlyDictionary<string, List<string>>? _externalSkipClusterDeps;
 
-    /// <summary>The reference set a type contributes to the graph. A skipped type contributes only
-    /// what its own definition needs — static initializers and a static constructor, which run
-    /// without anyone calling in. Everything else was attributed to the callers instead, and keeping
-    /// it here as well would re-form the very cycle the attribute exists to break.</summary>
-    private HashSet<INamedTypeSymbol> ClusterRefsFor(
-        INamedTypeSymbol type, HashSet<INamedTypeSymbol> recorded)
-    {
-        if (!IsSkipClustered(type)) return recorded;
-        var kept = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
-        if (_skipClusterEagerDeps is not null && _skipClusterEagerDeps.TryGetValue(type, out var eager))
-            kept.UnionWith(eager);
-        return kept;
-    }
+    /// <summary>The reference set a type contributes to the graph. A skipped type contributes
+    /// nothing: every one of its dependencies — including the ones its static state needs — was
+    /// attributed to the callers instead, and keeping any of them here would re-form the very cycle
+    /// the attribute exists to break.</summary>
+    private static HashSet<INamedTypeSymbol> ClusterRefsFor(
+        INamedTypeSymbol type, HashSet<INamedTypeSymbol> recorded) =>
+        IsSkipClustered(type) ? new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default) : recorded;
 }
 
 public sealed partial class Emitter

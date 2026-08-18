@@ -594,20 +594,31 @@ The short version:
   2,304 KB to 1,055 KB raw — better than deleting the facade (1,788 KB), which is the invasive change
   it makes unnecessary. See `TODO.modules.md` §7e.
 
-  Two edges of that move are load-bearing, and both fail at *runtime* (`… lives in module
-  './chunks/…', which has not been loaded`) rather than at build time, which is why they were only
-  found by applying the attribute to a second facade:
+  Two edges of that move are load-bearing. Both fail at *runtime* (`… lives in module './chunks/…',
+  which has not been loaded`) rather than at build time, which is why each was only found by applying
+  the attribute to another facade and then clicking through the app:
 
-  - **A call to a sibling on the same facade.** The sibling's containing type IS the facade, the one
-    type the pass removes from every dependency set, so member `A` calling `B` contributed only `B`'s
-    return type — never what `B`'s own body constructs — and nothing then imported it. So
-    `BuildSkipClusterDeps` takes a **transitive closure over the facade's own members** (a worklist
-    fixpoint, because facade members freely form cycles) before attributing anything to a call site.
-    This is the shape that used to kill `Mosaik.UI`, `App.Sidenav` and `App.DefaultRouting`.
-  - **Eager static state.** A static field/property initializer or a static constructor runs when the
-    facade's chunk evaluates — there is no call site to move that edge to — so `ClusterRefsFor` keeps
-    exactly those members' dependencies on the facade and drops only the ones that really do wait for
-    a call.
+  - **A call to another skipped member** — a sibling on the same facade, or a member of a second
+    facade. Either way the callee's containing type is one whose edges are being dropped, so `A`
+    calling `B` contributed only `B`'s return type, never what `B`'s own body constructs, and nothing
+    imported it. `BuildSkipClusterDeps` therefore takes a **transitive closure over every skipped
+    member** (a worklist fixpoint, because they freely form cycles) before attributing anything to a
+    call site. The sibling half killed `#/home` (a route lambda calling `ShowHomeView`); the
+    cross-facade half killed `App.Sidenav.Initialize` once `App` and `AppSidenav` were both
+    attributed.
+  - **Static state.** A static field/property initializer and a static constructor do not run with the
+    member that happens to be called — but they do not run when the facade's chunk *evaluates* either.
+    The runtime hangs `$staticInit` off the getter of the type's global slot (`Class.js`), so it fires
+    the first time anything **reads** the class, which is a call site like any other. Those
+    dependencies are therefore folded into every member's set. Keeping them on the facade instead is
+    sound and rebuilds the very cycle the attribute exists to break: on the Curiosity front-end the
+    app shell's static tables alone re-fused 170 types into one chunk.
+
+  Measured on the Curiosity front-end, attributing `App`, `AppRouting`, `AppSidebar`, `AppSidenav` and
+  `CommandManager`: the boot closure's single largest contributor drops from **768 of 782 chunks to
+  11**, and the biggest chunk from 3,900 KB to 3,375 KB. What is left is a genuine view↔view cycle
+  the attribute cannot help with — a route table that constructs its views synchronously — not a
+  facade.
 
   **A second pass merges the components into chunks worth fetching.** An SCC is the smallest *sound*
   unit and a far too small *useful* one: Tesserae's gallery emitted 682 chunks with a **2.2 KB
