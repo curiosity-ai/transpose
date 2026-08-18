@@ -574,6 +574,30 @@ The short version:
   2,304 KB to 1,055 KB raw — better than deleting the facade (1,788 KB), which is the invasive change
   it makes unnecessary. See `TODO.modules.md` §7e for what is not yet settled.
 
+  **A second pass merges the components into chunks worth fetching.** An SCC is the smallest *sound*
+  unit and a far too small *useful* one: Tesserae's gallery emitted 682 chunks with a **2.2 KB
+  median**, half under 1 KB, so a screen needing twenty types paid twenty requests.
+  `Emitter.ModuleChunks.cs` groups them by **load signature** — the set of roots (chunks nothing
+  imports, i.e. what an application can ask for) that reach a chunk, which *is* its load condition —
+  orders the classes reverse-topologically with a Jaccard-similarity tie-break so nearly-co-loaded
+  classes end up adjacent, and cuts that sequence into contiguous buckets in a size band
+  (`modules.minChunkSize`/`maxChunkSize` in tps.json, default **50–100 KB**; 0 restores one chunk per
+  component). A bucket only spans a class boundary while it is under the minimum — that is the one
+  place over-fetch is traded for size. **Sizes are exact**: bodies are emitted before chunking (which
+  needs the graph the emit records), so nothing is estimated and nothing is emitted twice. The result
+  is still a DAG by construction — `i → d` implies `sig(d) ⊇ sig(i)`, so the class graph is acyclic,
+  and within a class members keep the first pass's already-topological index order — and the
+  lower-index invariant is re-checked, falling back to the unmerged graph if it ever fails. The eager
+  group is bucketed separately, so deferred code is never pulled into the initial payload.
+
+  Measured: 682 → **56 chunks, 52 KB median**, all 132 samples rendering identically. The cost is
+  entirely on the *package* side: the app's 161 → 18 chunks leaves its eager payload untouched,
+  while the library's 521 → 38 raises it from 1,055 KB to 1,816 KB raw, because a package has no
+  entry point and cannot see which of its chunks a consumer needs at start-up. With an oracle for
+  that set the same pass gives 53 chunks *and* 1,055 KB raw / 160 KB gz, so the ceiling is the
+  missing information: the fix is to coalesce across assemblies in the site build, where the whole
+  program is visible. See `TODO.modules.md` §7f.
+
   Still single-bundle: `--incremental` (chunk assignment is a whole-program property — do not combine
   them yet), minification (a module entry and its chunks are emitted formatted only, since they carry
   `import` syntax `JsMinifier` does not handle), and watch mode.

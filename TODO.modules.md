@@ -433,8 +433,95 @@ itself generic, a diagnostic when the attribute is put on a type that is instant
 from (where the edges really are needed at definition time), and whether the published map should be
 folded into `Transpose.Modules.json` rather than shipping a second sidecar.
 
+### 7f. The second pass — coalescing components into chunks worth fetching
+
+An SCC is the smallest **sound** unit, and it turned out to be far too small a **useful** one. With
+`[SkipTypeClustering]` in place, Tesserae's gallery emitted **682 chunks with a median of 2.2 KB**,
+half of them under 1 KB — so a sample that needs twenty types paid twenty requests to fetch 30 KB.
+That is what the second pass (`Emitter.ModuleChunks.cs`) merges back up, to a size band that
+defaults to **50–100 KB** (`modules.minChunkSize` / `modules.maxChunkSize` in tps.json; 0 turns the
+pass off and restores one chunk per component).
+
+**Sizes are exact, not estimated.** The type bodies are already emitted when chunking runs — chunking
+needs the reference graph the emit records — so the byte count of every component is known. There is
+no complexity heuristic and no emit-measure-regroup round trip.
+
+What it merges by is *what loads together*:
+
+- **Load signature.** A chunk nothing imports is a **root**: it is only ever fetched because the
+  application asked for it. Every other chunk is fetched exactly when one of the roots that reaches
+  it is — so the set of roots reaching a chunk *is* its load condition, and two chunks with the same
+  set are always fetched together. Merging those costs nothing.
+- **Ordering.** Signature classes come out in a reverse-topological order of the class graph, and
+  among the classes ready at each step the one whose root set is most similar (Jaccard) to the one
+  just emitted goes next — so classes that *nearly* always load together end up adjacent.
+- **Bucketing.** The sequence is cut into contiguous buckets inside the band. A bucket only spans a
+  class boundary while it is still under the minimum: below that a chunk is not worth a request of
+  its own, and its neighbour in the load order is the least-bad thing to pay for. That is the one
+  place the pass trades over-fetch for size.
+
+**The merged graph is still a DAG, by construction rather than by checking.** If chunk `i` depends on
+chunk `d` then every root reaching `i` reaches `d`, i.e. `sig(d) ⊇ sig(i)`; a cycle among signature
+classes would force all of them equal, so the class graph is acyclic and reverse-topological order
+places every dependency first. Within a class (and within the eager group) members keep the first
+pass's index order, which is already topological, and a contiguous run of a topological order cannot
+contain a forward edge. The invariant "every import points at a lower-numbered chunk" is re-checked
+before the merged graph is returned; a violation falls back to the unmerged graph rather than
+emitting a site that cannot evaluate.
+
+**The eager group is never mixed with the lazy one.** The eager set is closed under dependencies, so
+merging an eager chunk with a lazy one would move deferred code into the initial payload. Eager
+chunks are bucketed first and on their own, purely by size — they all load anyway, so there is no
+over-fetch to trade against.
+
+#### Measured on the Tesserae sample gallery
+
+| | chunks | median chunk | eager payload |
+| --- | --- | --- | --- |
+| one chunk per SCC | 682 | 2.2 KB | 1,055 KB raw / 187 KB gz |
+| coalesced 50–100 KB | **56** | **52.4 KB** | 1,816 KB raw / 296 KB gz |
+
+All 132 samples render identically (`textdiff-samples.js`, 127 identical and the other five —
+`Charts`, `Masonry`, `Pivot`, `Date Time Picker`, `Time Histogram Picker` — differing exactly the
+same way when the *same* build is compared against itself, i.e. the wall-clock/randomised noise
+floor), zero console errors from `all-samples.js`.
+
+#### Where the eager growth comes from, and what would remove it
+
+The two halves of that build behave completely differently, and the difference is **information, not
+algorithm**:
+
+- The **application** goes 161 → 18 chunks and its eager payload does not move at all. It knows its
+  entry point, so it knows which of its chunks are eager, and the pass never merges across that line.
+- The **library** goes 521 → 38 chunks, and that is where the whole +761 KB comes from. A package has
+  no entry point to be lazy relative to and cannot see its consumer, so it does not know which of its
+  chunks that consumer needs at start-up. Measured on this pair: 116 library chunks (822 KB) are in
+  the app's eager set; 92 of them are the library's widely-reached core (reached by more than 16
+  roots — that tier is 100% eager and merges cleanly), but 24 of them (138 KB) are near-leaves the
+  app's shell happens to use directly, and there is nothing in the library's own graph that
+  distinguishes those from the 331 leaves nobody loads at start-up. Merging each of the 24 into a
+  ~55 KB bucket is the ~1 MB.
+
+Simulating the same pass with an oracle for the app's eager set gives **53 chunks, median 54.5 KB,
+and 1,055 KB raw / 160 KB gz** — the same chunk count *and* a smaller payload than the unmerged
+build, because bigger files compress better. So the ceiling here is not the packing, it is the
+missing information, and closing it needs the packing to happen where the whole program is visible:
+
+- **The follow-up: coalesce across assemblies in the site build.** Chunk assignment is a whole-program
+  property (the same reason `--incremental` is not combined with module mode), and a library alone is
+  not the whole program. The site build has every chunk file on disk — its own and every reference's,
+  extracted from the package — plus the merged chunk map, so it can build the cross-assembly chunk
+  graph, run this same pass over it, and write the merged files. It would have to rewrite the
+  `import '…';` prologues and the `m: "./chunks/…"` entries of each entry module's
+  `Transpose.Modules.register` manifest, both of which are emitted in a fixed one-per-line form.
+- **Until then the band is per project.** A library that knows it is consumed by one application can
+  set its own `modules.minChunkSize`; the measured curve on this pair, with the app left at 50 KB, is
+  521→329 chunks at +60 KB eager (5 KB band), 521→201 at +133 KB (10 KB), 521→115 at +421 KB (20 KB).
+
 ### Not done
 
+- **Coalescing across assemblies at the site build** — see §7f. The pass runs per assembly, so a
+  package's chunks are packed without knowing which of them its consumer needs at start-up.
 - **`--incremental`.** Chunk assignment is a whole-program property, so a body-only edit that today
   reuses cached per-type JavaScript could still reshuffle chunks. Module mode has not been checked
   against the cache and the two should not be combined yet.
