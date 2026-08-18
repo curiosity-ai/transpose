@@ -36,6 +36,27 @@ internal static class ModuleMap
         return merged;
     }
 
+    /// <summary>The <c>[SkipTypeClustering]</c> member dependency sets of every reference that
+    /// publishes them, merged. Same first-wins rule as <see cref="Read"/>; a documentation comment id
+    /// identifies exactly one member, so a collision would mean two copies of the same assembly.</summary>
+    public static Dictionary<string, List<string>> ReadSkipClusterDeps(IEnumerable<string> referencePaths)
+    {
+        var merged = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach (var dll in referencePaths)
+        {
+            var json = TryReadResource(dll, ResourceEmbedder.SkipClusterMapName);
+            if (json is null) continue;
+            try
+            {
+                var map = JsonSerializer.Deserialize<Dictionary<string, List<string>>>(json);
+                if (map is null) continue;
+                foreach (var kv in map) merged.TryAdd(kv.Key, kv.Value);
+            }
+            catch (JsonException) { /* as above: a malformed map must not fail a build */ }
+        }
+        return merged;
+    }
+
     private static string? TryReadResource(string dllPath, string name)
     {
         try

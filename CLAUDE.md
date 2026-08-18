@@ -552,6 +552,28 @@ The short version:
   instead both over-matched an unbound `typeof(IFoo<>)` and left `GetInterfaces()` empty.
   `TODO.modules.md` §7c has the details, `LazyModuleActivatorTests` the coverage.
 
+  **Reflection metadata names a constructed generic through the runtime.** Metadata is emitted once
+  per assembly, *outside* the per-type walk, so its references never take part in chunking and nothing
+  imports what they name. A plain type is fine (a stub answers); a constructed generic is built by
+  applying its definition, so `MetaTypeName` routes a deferrable one through
+  `Transpose.Modules.$metaType`, which answers with the stub until the module arrives. Its arguments
+  recurse through `MetaTypeName` (the outer type is often an always-loaded BCL generic wrapping a
+  deferred argument), and an external generic is only rebuilt when its emitted form really is an
+  application — `Func<…>` binds to the JS global `Function`, and applying *that* calls the Function
+  constructor, which compiles its arguments as source. Module mode only; a single-bundle build is
+  byte-identical.
+
+  **`[SkipTypeClustering]` keeps a static facade from fusing the library (prototype).** A chunk is an
+  SCC, so a facade whose members construct half the library fuses that half into one chunk — the
+  facade reaches every component and every component calls back into it. The attribute drops the edges
+  *out of* the facade and attributes each member's dependencies to its callers, which is where a
+  static method body actually runs. A package publishes those per-member sets keyed by
+  documentation-comment id (`Transpose.SkipCluster.json`) so a consumer, which cannot see the facade's
+  source, produces the same imports. Measured on Tesserae **master**, facade intact: the largest
+  library chunk drops from 193 types / 1,612 KB to 5 types / 67 KB and the eager payload from
+  2,304 KB to 1,055 KB raw — better than deleting the facade (1,788 KB), which is the invasive change
+  it makes unnecessary. See `TODO.modules.md` §7e for what is not yet settled.
+
   Still single-bundle: `--incremental` (chunk assignment is a whole-program property — do not combine
   them yet), minification (a module entry and its chunks are emitted formatted only, since they carry
   `import` syntax `JsMinifier` does not handle), and watch mode.

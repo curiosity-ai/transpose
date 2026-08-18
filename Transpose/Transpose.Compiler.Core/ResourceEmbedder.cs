@@ -33,6 +33,12 @@ internal static class ResourceEmbedder
     /// the next compiler, not a web resource, so no consumer extracts it into a site.
     /// </summary>
     public const string ModuleMapName = "Transpose.Modules.json";
+
+    /// <summary>Per-member dependency sets of a <c>[SkipTypeClustering]</c> facade (documentation
+    /// comment id → emitted define names). Embedded but, like the chunk map and the build stamp,
+    /// deliberately absent from Transpose.Resources.json — it is compiler metadata, not a web
+    /// resource, so no site build ever extracts it.</summary>
+    public const string SkipClusterMapName = "Transpose.SkipCluster.json";
     private static readonly UTF8Encoding Utf8NoBom = new(false);
 
     /// <summary>True if the assembly already carries the embedded Transpose resource manifest — i.e. it
@@ -56,10 +62,11 @@ internal static class ResourceEmbedder
     /// with the JS, CSS and fonts embedded, a package DLL runs to tens of megabytes, and writing it
     /// once and then reading it straight back only to rewrite it was pure I/O.
     /// </summary>
-    public static void Embed(string assemblyPath, byte[] assemblyBytes, IReadOnlyList<EmbeddedItem> items, IEnumerable<string>? referencePaths = null, IReadOnlyDictionary<string, string>? moduleMap = null)
+    public static void Embed(string assemblyPath, byte[] assemblyBytes, IReadOnlyList<EmbeddedItem> items, IEnumerable<string>? referencePaths = null, IReadOnlyDictionary<string, string>? moduleMap = null,
+        IReadOnlyDictionary<string, List<string>>? skipClusterMap = null)
     {
         using var output = File.Create(assemblyPath);
-        Embed(output, assemblyBytes, items, referencePaths, contextDirectory: Path.GetDirectoryName(Path.GetFullPath(assemblyPath)), moduleMap: moduleMap);
+        Embed(output, assemblyBytes, items, referencePaths, contextDirectory: Path.GetDirectoryName(Path.GetFullPath(assemblyPath)), moduleMap: moduleMap, skipClusterMap: skipClusterMap);
     }
 
     /// <summary>
@@ -72,7 +79,8 @@ internal static class ResourceEmbedder
     /// </summary>
     public static void Embed(Stream output, byte[] assemblyBytes, IReadOnlyList<EmbeddedItem> items,
         IEnumerable<string>? referencePaths = null, string? contextDirectory = null,
-        IReadOnlyDictionary<string, string>? moduleMap = null)
+        IReadOnlyDictionary<string, string>? moduleMap = null,
+        IReadOnlyDictionary<string, List<string>>? skipClusterMap = null)
     {
         // Cecil resolves referenced assemblies when it re-serializes metadata on Write() — e.g. to
         // determine the underlying type of a parameter's default value whose type is a referenced
@@ -117,6 +125,9 @@ internal static class ResourceEmbedder
 
         if (moduleMap is { Count: > 0 })
             Replace(ModuleMapName, Utf8NoBom.GetBytes(JsonSerializer.Serialize(moduleMap)));
+
+        if (skipClusterMap is { Count: > 0 })
+            Replace(SkipClusterMapName, Utf8NoBom.GetBytes(JsonSerializer.Serialize(skipClusterMap)));
 
         asm.Write(output);
     }

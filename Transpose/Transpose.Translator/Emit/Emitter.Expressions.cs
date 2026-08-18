@@ -1040,6 +1040,9 @@ public sealed partial class Emitter
 
     private void EmitMemberAccess(MemberAccessExpressionSyntax member)
     {
+        // A property/field read on a [SkipTypeClustering] facade, same reasoning as a call.
+        RecordSkipClusterCall(_model.GetSymbolInfo(member).Symbol);
+
         // `Transpose.Script.ToDynamic().Transpose.global.console` — ToDynamic() is the JS global
         // root ([GlobalTarget]); a member access on it is a plain global reference, so drop the
         // elided call and its dot and emit the member as a root identifier (→ Transpose.global.console).

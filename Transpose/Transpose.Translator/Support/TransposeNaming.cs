@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Linq;
 using Microsoft.CodeAnalysis;
@@ -20,6 +20,7 @@ internal static class TransposeNaming
     public const string ScopeAttr = "Transpose.ScopeAttribute";
     public const string GlobalMethodsAttr = "Transpose.GlobalMethodsAttribute";
     public const string ReadyAttr = "Transpose.ReadyAttribute";
+    public const string SkipTypeClusteringAttr = "Transpose.SkipTypeClusteringAttribute";
 
     /// <summary>Allocation-free equivalent of <c>a.AttributeClass?.ToDisplayString() == fullName</c>.
     /// Attribute matching runs for every symbol reference during emit; <c>ToDisplayString</c> builds a
