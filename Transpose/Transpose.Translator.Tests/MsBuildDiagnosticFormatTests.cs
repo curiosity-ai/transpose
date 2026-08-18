@@ -150,7 +150,7 @@ public sealed class MsBuildDiagnosticFormatTests
             "  timing breakdown:",
             "      120 ms   12.0%     30 MB alloc  bind + diagnostics (error path)",
             "  dependency up-to-date: Tesserae",
-            "OK — built package app.dll (1,234 bytes) with 2 embedded resource(s) in 900 ms.",
+            "OK — built package app.dll (1,234 bytes, 900 of it in 2 embedded resource(s)) in 900 ms.",
             "--- inner System.InvalidOperationException",
             "   at Transpose.Translator.Emit.Emitter.Emit() in /src/Emitter.cs:line 42",
         ];
