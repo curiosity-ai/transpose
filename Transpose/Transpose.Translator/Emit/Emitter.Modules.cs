@@ -104,6 +104,7 @@ public sealed partial class Emitter
                     var seen = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
                     var ext = externalChunks is null ? null : new HashSet<string>(StringComparer.Ordinal);
                     bodies[type] = EmitOnlyType(this, type, seen, ext).ToString();
+                    TypeSizeReport.Record(_assemblyName, type.ToDisplayString(), bodies[type]);
                     seen.Remove(type);
                     refs[type] = ClusterRefsFor(type, seen);
                     if (ext is not null) extRefs[type] = ext;

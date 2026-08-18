@@ -166,6 +166,7 @@ public sealed partial class Emitter
                             results[type] = EmitOnlyType(this, type).ToString();
                             _plan?.RecordReemitted();
                         }
+                        TypeSizeReport.Record(_assemblyName, type.ToDisplayString(), results[type]);
                         var count = Interlocked.Increment(ref done);
                         CompileProgress.ReportStep("emitting JavaScript", count, types.Count);
                     }));
@@ -296,6 +297,7 @@ public sealed partial class Emitter
                 continue;
             }
             if (js.Length == 0) continue;
+            TypeSizeReport.Record(_assemblyName, type.ToDisplayString(), js);
             outp.Files.Add((ClassPathRelPath(type), js + "\n"));
         }
         return outp;

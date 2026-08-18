@@ -48,19 +48,20 @@ internal static class MsBuildDiagnostic
     // Codes for the compiler's own diagnostics — the ones that are not Roslyn's and so have no id of
     // their own. TPS0001-0099 are errors, TPS0100+ warnings. They are part of the tool's contract
     // once shipped (a build can suppress or escalate by code), so retire a code rather than reuse it.
-    public const string CodeInvalidCommandLine     = "TPS0001";
-    public const string CodeProjectNotFound        = "TPS0002";
-    public const string CodeProjectResolveFailed   = "TPS0003";
-    public const string CodeInternalError          = "TPS0004";
-    public const string CodeDependencyBuildFailed  = "TPS0005";
-    public const string CodeAssemblyEmitFailed     = "TPS0006";
-    public const string CodeWatchRequiresSiteBuild = "TPS0007";
-    public const string CodeCompilerTooOld         = "TPS0008";
-    public const string CodeReferenceNotFound      = "TPS0100";
-    public const string CodeMissingRuntimeBundle   = "TPS0101";
-    public const string CodeTimingJsonNotWritten   = "TPS0102";
-    public const string CodeCacheNotWritten        = "TPS0103";
-    public const string CodeWatchServerFailed      = "TPS0104";
+    public const string CodeInvalidCommandLine      = "TPS0001";
+    public const string CodeProjectNotFound         = "TPS0002";
+    public const string CodeProjectResolveFailed    = "TPS0003";
+    public const string CodeInternalError           = "TPS0004";
+    public const string CodeDependencyBuildFailed   = "TPS0005";
+    public const string CodeAssemblyEmitFailed      = "TPS0006";
+    public const string CodeWatchRequiresSiteBuild  = "TPS0007";
+    public const string CodeCompilerTooOld          = "TPS0008";
+    public const string CodeReferenceNotFound       = "TPS0100";
+    public const string CodeMissingRuntimeBundle    = "TPS0101";
+    public const string CodeTimingJsonNotWritten    = "TPS0102";
+    public const string CodeCacheNotWritten         = "TPS0103";
+    public const string CodeWatchServerFailed       = "TPS0104";
+    public const string CodeTypeSizesJsonNotWritten = "TPS0105";
 
     /// <summary>Formats a Roslyn diagnostic, pointing at its source location when it has one.</summary>
     public static string Format(Diagnostic d)

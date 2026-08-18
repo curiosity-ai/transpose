@@ -304,6 +304,9 @@ property is not guessed at: such an import or item is skipped, which is why SDK-
 `--define/-D <SYM>`, `--assembly-version <v>`, `--project/-p`, `--quiet/-q`,
 `--incremental` / `--no-incremental` / `--cache-dir <dir>` (reuse the previous build; off by default),
 `--timing` (per-phase time + allocations), `--timing-json <file>`,
+`--type-sizes [n]` / `--type-sizes-json <file>` (how many bytes of JavaScript each type emitted, largest
+first; also `TRANSPOSE_TYPE_SIZES=1`/`=20` and `TRANSPOSE_TYPE_SIZES_JSON=<file>`, which reach an
+MSBuild-driven build),
 `--metadata-only-assembly` / `--no-metadata-only-assembly`,
 `--max-errors <n>` (a cap; by default **every** error is reported, ordered by file and line),
 `--watch` / `--watch-port <n>` (rebuild a site on every source change — root project and every
