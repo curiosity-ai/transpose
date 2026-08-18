@@ -17225,7 +17225,7 @@ namespace Transpose.Core
 
         [CombinedClass]
         [FormerInterface]
-        public class Element : dom.Node, dom.GlobalEventHandlers.Interface, IObject, dom.ElementTraversal.Interface, dom.ParentNode.Interface, dom.ChildNode.Interface
+        public partial class Element : dom.Node, dom.GlobalEventHandlers.Interface, IObject, dom.ElementTraversal.Interface, dom.ParentNode.Interface, dom.ChildNode.Interface
         {
 
 
