@@ -361,7 +361,9 @@ internal static class ProjectBuild
                 externalSkipClusterDeps: externalSkipDeps,
                 // A library has no entry point to be lazy relative to: nothing is eager beyond its
                 // [Ready] handlers, and its consumers pull in what they actually use.
-                packageModules: options.EmitPackage);
+                packageModules: options.EmitPackage,
+                minChunkBytes: tpscfg?.ModuleMinChunkBytes ?? Emitter.DefaultMinChunkBytes,
+                maxChunkBytes: tpscfg?.ModuleMaxChunkBytes ?? Emitter.DefaultMaxChunkBytes);
         }
         catch (Exception ex)
         {
@@ -396,7 +398,7 @@ internal static class ProjectBuild
             log.Info($"  dll:      {dllPath}");
             if (result.Modules is { } pkgMods)
                 log.Info($"  modules:    {pkgMods.Chunks.Count} chunk(s) — {pkgMods.EagerChunkCount} loaded up front, " +
-                         $"{pkgMods.LazyChunkCount} on demand ({pkgMods.LazyTypeCount} type(s) deferred)");
+                         $"{pkgMods.LazyChunkCount} on demand ({pkgMods.LazyTypeCount} type(s) deferred){ChunkSizes(pkgMods)}");
             log.Info($"  embedded: {string.Join(", ", items.Take(6).Select(i => i.Name))}{(items.Count > 6 ? ", …" : "")}");
             return BuildOutcome.NoSite(0, result.Diagnostics);
         }
@@ -425,7 +427,7 @@ internal static class ProjectBuild
             log.Info($"\nOK — built site in {outDir} ({js.Length:N0} bytes of {config.FileName}) in {sw.ElapsedMilliseconds} ms.");
             if (result.Modules is { } mods)
                 log.Info($"  modules:    {mods.Chunks.Count} chunk(s) — {mods.EagerChunkCount} loaded up front, " +
-                         $"{mods.LazyChunkCount} on demand ({mods.LazyTypeCount} type(s) deferred)");
+                         $"{mods.LazyChunkCount} on demand ({mods.LazyTypeCount} type(s) deferred){ChunkSizes(mods)}");
             log.Info($"  index.html: {(config.HtmlDisabled ? "disabled" : "generated")}");
             if (dllPath is not null) log.Info($"  dll:        {dllPath}");
             if (siteResult.RemovedStaleFiles.Count > 0)
@@ -551,6 +553,15 @@ internal static class ProjectBuild
         if (tpscfg is not null)
             foreach (var file in tpscfg.Resources.SelectMany(g => g.Files).OrderBy(n => n, StringComparer.Ordinal))
                 yield return "res=" + file + "=" + BuildCache.FileContentFingerprint(Path.Combine(project.ProjectDir, file));
+    }
+
+    /// <summary>The chunk size distribution, so a `modules.minChunkSize` setting can be judged from
+    /// the build's own output rather than by measuring the site afterwards.</summary>
+    private static string ChunkSizes(Translator.Emitter.ModuleOutput modules)
+    {
+        if (modules.Chunks.Count == 0) return "";
+        var sizes = modules.Chunks.Select(c => c.js.Length).OrderBy(n => n).ToList();
+        return $", median {sizes[sizes.Count / 2] / 1024.0:N1} KB, largest {sizes[^1] / 1024.0:N1} KB";
     }
 
     /// <summary>What shape of output this build produces — the distributable package DLL, a runnable
@@ -809,7 +820,9 @@ internal static class ProjectBuild
                 chunkDirectory: "chunks/" + project.AssemblyName,
                 externalChunks: tpscfg is { OutputByModule: true } ? ModuleMap.Read(project.ReferencePaths) : null,
                 externalSkipClusterDeps: tpscfg is { OutputByModule: true } ? ModuleMap.ReadSkipClusterDeps(project.ReferencePaths) : null,
-                packageModules: true);
+                packageModules: true,
+                minChunkBytes: tpscfg?.ModuleMinChunkBytes ?? Emitter.DefaultMinChunkBytes,
+                maxChunkBytes: tpscfg?.ModuleMaxChunkBytes ?? Emitter.DefaultMaxChunkBytes);
         }
         catch (Exception ex) { ReportCrash($"Translator on '{Path.GetFileName(csproj)}'", ex, log); return false; }
 

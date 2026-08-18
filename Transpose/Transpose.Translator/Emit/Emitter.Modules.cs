@@ -63,11 +63,17 @@ public sealed partial class Emitter
     /// <param name="packageMode">A library: nothing is eager beyond what its own [Ready] handlers
     /// need, because there is no entry point to be lazy relative to — the consumer's chunks import
     /// what they use, and everything else stays a stub until something asks for it.</param>
+    /// <param name="minChunkBytes">The second pass's target band: an SCC chunk smaller than this is
+    /// merged with whatever loads alongside it (see Emitter.ModuleChunks.cs). 0 emits one chunk per
+    /// SCC, which is what the first pass produces on its own.</param>
+    /// <param name="maxChunkBytes">The ceiling a merged chunk is kept under.</param>
     public ModuleOutput EmitModules(
         string chunkDirectory = "chunks",
         IReadOnlyDictionary<string, string>? externalChunks = null,
         bool packageMode = false,
-        IReadOnlyDictionary<string, List<string>>? externalSkipClusterDeps = null)
+        IReadOnlyDictionary<string, List<string>>? externalSkipClusterDeps = null,
+        int minChunkBytes = DefaultMinChunkBytes,
+        int maxChunkBytes = DefaultMaxChunkBytes)
     {
         _externalSkipClusterDeps = externalSkipClusterDeps;
         // Reflection metadata is emitted once for the whole assembly, outside the per-type walk, so
@@ -138,6 +144,15 @@ public sealed partial class Emitter
         // metadata is emitted outside the per-type walk), so they join the roots of the eager set.
         if (canDefer && ReflectionEnabled) roots.AddRange(MetadataAttributeClasses(types));
 
+        // [NeverDefer]: something reaches this type purely through reflection — a DTO an activator
+        // builds from a `Type` value, a class resolved by name — so no emitted reference records the
+        // edge and the chunker would leave it a stub that throws when constructed. Prefer
+        // [ConstructsTypeArguments] on the generic method that does the activating, which records the
+        // dependency at the call site instead of making the type eager for everyone; this is the
+        // fallback for what a call site cannot show. See Emitter.ReflectionDeps.cs.
+        if (canDefer)
+            roots.AddRange(types.Where(t => TransposeNaming.HasAttr(t, TransposeNaming.NeverDeferAttr)));
+
         var eager = new HashSet<int>();
         if (canDefer)
         {
@@ -151,6 +166,26 @@ public sealed partial class Emitter
         else
         {
             for (var i = 0; i < chunks.Members.Count; i++) eager.Add(i);
+        }
+
+        // Second pass: merge the SCCs into chunks worth fetching. An SCC is the smallest sound
+        // unit, not a useful one — a real library comes out with a median chunk of a couple of KB,
+        // so a screen that needs twenty types pays twenty requests. Coalesce groups them by what is
+        // loaded together and cuts the result into the target size band. Sizes are exact: the type
+        // bodies are already emitted at this point (chunking needs the graph the emit records), so
+        // nothing is estimated and nothing is emitted twice. See Emitter.ModuleChunks.cs.
+        if (minChunkBytes > 0 && chunks.Members.Count > 1)
+        {
+            var sizes = new int[chunks.Members.Count];
+            for (var i = 0; i < chunks.Members.Count; i++)
+                foreach (var t in chunks.Members[i]) sizes[i] += bodies[t].Length + 1;
+
+            chunks = PhaseTimings.Measure("  ├ coalesce chunks (co-load signature)", () =>
+            {
+                var merged = Coalesce(chunks, sizes, eager, order, minChunkBytes, maxChunkBytes, out var mergedEager);
+                eager = mergedEager;
+                return merged;
+            });
         }
 
         var dir = string.IsNullOrEmpty(chunkDirectory) ? "" : chunkDirectory.TrimEnd('/') + "/";

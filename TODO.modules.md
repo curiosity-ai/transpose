@@ -461,15 +461,160 @@ three are ordering problems around code the chunker deliberately does not walk.
   `getMetadata` gives the array one more pass before materializing.
 
 What that application still cannot do is defer the types a **reflection-driven deserializer**
-constructs. Newtonsoft builds an object graph from the metadata — member type by member type — and
-that construction is synchronous, so any DTO in an unfetched chunk throws. Nothing in the reference
-graph records that edge (the deserializer only ever sees a `Type`), so the current answer is to keep
-such an assembly's chunks eager: build it as a site rather than as a package. Making it lazy needs
-either an opt-out attribute for "never defer this type" or a preload pass that walks the metadata
-graph of `T` before deserializing into it.
+constructs — see §7h, which is the answer to it.
+
+### 7g. The second pass — coalescing components into chunks worth fetching
+
+An SCC is the smallest **sound** unit, and it turned out to be far too small a **useful** one. With
+`[SkipTypeClustering]` in place, Tesserae's gallery emitted **682 chunks with a median of 2.2 KB**,
+half of them under 1 KB — so a sample that needs twenty types paid twenty requests to fetch 30 KB.
+That is what the second pass (`Emitter.ModuleChunks.cs`) merges back up, to a size band that
+defaults to **50–100 KB** (`modules.minChunkSize` / `modules.maxChunkSize` in tps.json; 0 turns the
+pass off and restores one chunk per component).
+
+**Sizes are exact, not estimated.** The type bodies are already emitted when chunking runs — chunking
+needs the reference graph the emit records — so the byte count of every component is known. There is
+no complexity heuristic and no emit-measure-regroup round trip.
+
+What it merges by is *what loads together*:
+
+- **Load signature.** A chunk nothing imports is a **root**: it is only ever fetched because the
+  application asked for it. Every other chunk is fetched exactly when one of the roots that reaches
+  it is — so the set of roots reaching a chunk *is* its load condition, and two chunks with the same
+  set are always fetched together. Merging those costs nothing.
+- **Ordering.** Signature classes come out in a reverse-topological order of the class graph, and
+  among the classes ready at each step the one whose root set is most similar (Jaccard) to the one
+  just emitted goes next — so classes that *nearly* always load together end up adjacent.
+- **Bucketing.** The sequence is cut into contiguous buckets inside the band. A bucket only spans a
+  class boundary while it is still under the minimum: below that a chunk is not worth a request of
+  its own, and its neighbour in the load order is the least-bad thing to pay for. That is the one
+  place the pass trades over-fetch for size.
+
+**The merged graph is still a DAG, by construction rather than by checking.** If chunk `i` depends on
+chunk `d` then every root reaching `i` reaches `d`, i.e. `sig(d) ⊇ sig(i)`; a cycle among signature
+classes would force all of them equal, so the class graph is acyclic and reverse-topological order
+places every dependency first. Within a class (and within the eager group) members keep the first
+pass's index order, which is already topological, and a contiguous run of a topological order cannot
+contain a forward edge. The invariant "every import points at a lower-numbered chunk" is re-checked
+before the merged graph is returned; a violation falls back to the unmerged graph rather than
+emitting a site that cannot evaluate.
+
+**The eager group is never mixed with the lazy one.** The eager set is closed under dependencies, so
+merging an eager chunk with a lazy one would move deferred code into the initial payload. Eager
+chunks are bucketed first and on their own, purely by size — they all load anyway, so there is no
+over-fetch to trade against.
+
+#### Measured on the Tesserae sample gallery
+
+| | chunks | median chunk | eager payload |
+| --- | --- | --- | --- |
+| one chunk per SCC | 682 | 2.2 KB | 1,055 KB raw / 187 KB gz |
+| coalesced 50–100 KB | **56** | **52.4 KB** | 1,816 KB raw / 296 KB gz |
+
+All 132 samples render identically (`textdiff-samples.js`, 127 identical and the other five —
+`Charts`, `Masonry`, `Pivot`, `Date Time Picker`, `Time Histogram Picker` — differing exactly the
+same way when the *same* build is compared against itself, i.e. the wall-clock/randomised noise
+floor), zero console errors from `all-samples.js`.
+
+#### Where the eager growth comes from, and what would remove it
+
+The two halves of that build behave completely differently, and the difference is **information, not
+algorithm**:
+
+- The **application** goes 161 → 18 chunks and its eager payload does not move at all. It knows its
+  entry point, so it knows which of its chunks are eager, and the pass never merges across that line.
+- The **library** goes 521 → 38 chunks, and that is where the whole +761 KB comes from. A package has
+  no entry point to be lazy relative to and cannot see its consumer, so it does not know which of its
+  chunks that consumer needs at start-up. Measured on this pair: 116 library chunks (822 KB) are in
+  the app's eager set; 92 of them are the library's widely-reached core (reached by more than 16
+  roots — that tier is 100% eager and merges cleanly), but 24 of them (138 KB) are near-leaves the
+  app's shell happens to use directly, and there is nothing in the library's own graph that
+  distinguishes those from the 331 leaves nobody loads at start-up. Merging each of the 24 into a
+  ~55 KB bucket is the ~1 MB.
+
+Simulating the same pass with an oracle for the app's eager set gives **53 chunks, median 54.5 KB,
+and 1,055 KB raw / 160 KB gz** — the same chunk count *and* a smaller payload than the unmerged
+build, because bigger files compress better. So the ceiling here is not the packing, it is the
+missing information, and closing it needs the packing to happen where the whole program is visible:
+
+- **The follow-up: coalesce across assemblies in the site build.** Chunk assignment is a whole-program
+  property (the same reason `--incremental` is not combined with module mode), and a library alone is
+  not the whole program. The site build has every chunk file on disk — its own and every reference's,
+  extracted from the package — plus the merged chunk map, so it can build the cross-assembly chunk
+  graph, run this same pass over it, and write the merged files. It would have to rewrite the
+  `import '…';` prologues and the `m: "./chunks/…"` entries of each entry module's
+  `Transpose.Modules.register` manifest, both of which are emitted in a fixed one-per-line form.
+- **Until then the band is per project.** A library that knows it is consumed by one application can
+  set its own `modules.minChunkSize`; the measured curve on this pair, with the app left at 50 KB, is
+  521→329 chunks at +60 KB eager (5 KB band), 521→201 at +133 KB (10 KB), 521→115 at +421 KB (20 KB).
+
+### 7h. `[ConstructsTypeArguments]` and `[NeverDefer]` — the edge an activator hides
+
+The chunker records an edge exactly when a type reference is **emitted**, which is what makes it
+sound: a type stays loadable because some code names it. A reflection-driven deserializer defeats
+that, and §7f above hit it head-on. `JsonConvert.DeserializeObject<Order>(json)` emits nothing about
+`Order` beyond its `Type` object — which a deferred type's stub answers perfectly well — and then
+walks that metadata and `new`s up `Order` and every member type below it. Constructing a stub throws,
+and its module can only be fetched asynchronously, so by then it is too late. Nothing in the
+reference graph records the edge, because the deserializer only ever holds a `Type`.
+
+Two attributes close it, and they are deliberately different instruments.
+
+**`[ConstructsTypeArguments]`** goes on the generic method that does the activating, and puts the edge
+back at the one place the compiler can see it: the **call site**, where the type argument is written
+down. Each call records its type arguments — and, transitively, every type reachable from them
+through the fields and properties reflection describes, looking through arrays and generic arguments
+so a `List<Line>` member reaches `Line` — as real dependencies of the type being emitted. So the
+chunk that deserializes an `Order` imports the chunk that defines it, and the DTO stays deferred for
+every screen that does not deserialize one. It is the same move `[SkipTypeClustering]` makes, in the
+other direction: that one takes edges *away* from a facade, this one adds edges an activator hides.
+
+The walk is an over-approximation on purpose, exactly like `BuildSkipClusterDeps`: it only has to be
+a superset of what the deserializer touches, and over-approximating costs an import that was not
+needed rather than a missing one that throws.
+
+It is read in three places, so whoever knows about the activator can mark it:
+
+```csharp
+// the binding library, on the method or on the activator class
+[ConstructsTypeArguments] public static extern T DeserializeObject<T>(string value);
+
+// or the application, for a library it cannot edit — or has not been re-released yet
+[assembly: Transpose.ConstructsTypeArguments(typeof(Newtonsoft.Json.JsonConvert))]
+[assembly: Transpose.ConstructsTypeArguments(typeof(System.Text.Json.JsonSerializer))]
+```
+
+The assembly-level form applies to every generic method of the named type and only within the
+assembly that declares it — it is a statement about how *this* code calls the activator, so it
+neither travels to a consumer nor needs to.
+
+**`[NeverDefer]`** is the blunt instrument, for what a call site cannot show: `DeserializeObject(json,
+someType)` with a `Type` **value**, a class resolved from a string, a type argument that is itself a
+type parameter. The type joins the eager roots — the same machinery as the attribute classes the
+metadata constructs (§7f) — so it and its own dependencies are in the entry module's imports. Prefer
+`[ConstructsTypeArguments]`: it fetches the DTO with the code that deserializes it instead of making
+it eager for everyone.
+
+Covered by `ModuleReflectionDepsTests`, which starts from the failing case (without the attribute,
+nothing reaches the DTO's members) and includes the cross-assembly shape — the activator compiled
+into a package and the attribute read back out of its metadata.
+
+**Still to do: annotate the shipped bindings.** `Transpose.Newtonsoft.Json`'s four
+`DeserializeObject<T>`/`DeserializeAnonymousType<T>` overloads and `Transpose.System.Text.Json`'s two
+`Deserialize<TValue>` overloads should carry `[ConstructsTypeArguments]` directly, so an application
+gets the behaviour without the assembly-level declaration. That cannot land in the same commit as
+the attribute itself: every `Packages/*` project pins a published `Transpose.BCL` (26.7.3303 today),
+so the annotation only compiles once a BCL carrying the attribute is released and those pins are
+bumped. Until then the assembly-level form is the supported route, and it is the only route for a
+third-party activator anyway.
 
 ### Not done
 
+- **Coalescing across assemblies at the site build** — see §7g. The pass runs per assembly, so a
+  package's chunks are packed without knowing which of them its consumer needs at start-up.
+- **`[ConstructsTypeArguments]` on the shipped JSON bindings** — see §7h. The attribute and the
+  emitter support are in; annotating `Transpose.Newtonsoft.Json` and `Transpose.System.Text.Json`
+  waits on a released `Transpose.BCL` that carries it and a bump of those projects' pins.
 - **`--incremental`.** Chunk assignment is a whole-program property, so a body-only edit that today
   reuses cached per-type JavaScript could still reshuffle chunks. Module mode has not been checked
   against the cache and the two should not be combined yet.

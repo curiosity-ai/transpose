@@ -89,7 +89,9 @@ public sealed class RoslynTranslator
         string chunkDirectory = "chunks",
         IReadOnlyDictionary<string, string>? externalChunks = null,
         bool packageModules = false,
-        IReadOnlyDictionary<string, List<string>>? externalSkipClusterDeps = null)
+        IReadOnlyDictionary<string, List<string>>? externalSkipClusterDeps = null,
+        int minChunkBytes = Emitter.DefaultMinChunkBytes,
+        int maxChunkBytes = Emitter.DefaultMaxChunkBytes)
     {
         CompileProgress.Report("parsing sources + resolving references");
         var compilation = PhaseTimings.Measure("build compilation (parse + references)", () =>
@@ -227,7 +229,8 @@ public sealed class RoslynTranslator
                 // metadata script and the "javascript" of this build is the entry module.
                 CompileProgress.Report("emitting JavaScript modules");
                 moduleOutput = PhaseTimings.Measure("emit JavaScript (modules)",
-                    () => emitter.EmitModules(chunkDirectory, externalChunks, packageModules, externalSkipClusterDeps));
+                    () => emitter.EmitModules(chunkDirectory, externalChunks, packageModules, externalSkipClusterDeps,
+                                              minChunkBytes, maxChunkBytes));
                 js = moduleOutput.EntryJs;
             }
             else

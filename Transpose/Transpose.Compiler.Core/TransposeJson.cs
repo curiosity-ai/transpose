@@ -61,6 +61,19 @@ internal sealed class TransposeJson
     public bool OutputByModule => string.Equals(OutputBy, "Module", System.StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
+    /// <c>modules.minChunkSize</c> / <c>modules.maxChunkSize</c> — the size band the second chunking
+    /// pass merges towards, in bytes of emitted JavaScript. The first pass emits one chunk per
+    /// strongly-connected component, which is the smallest <em>sound</em> unit and far too fine to
+    /// fetch (a real library lands around a 2 KB median); the second groups components that load
+    /// together until each chunk is worth its own request. Set <c>minChunkSize</c> to 0 to turn the
+    /// second pass off and get one chunk per component. Only read in <c>outputBy: Module</c>.
+    /// </summary>
+    public int ModuleMinChunkBytes { get; init; } = Emitter.DefaultMinChunkBytes;
+
+    /// <inheritdoc cref="ModuleMinChunkBytes"/>
+    public int ModuleMaxChunkBytes { get; init; } = Emitter.DefaultMaxChunkBytes;
+
+    /// <summary>
     /// <c>cleanOutputFolder</c> — prune stale files from the site output folder after a build:
     /// any file left over from a previous build that <em>this</em> build did not (re)write is
     /// deleted, and directories it empties are removed. This is the improved take on the legacy h5
@@ -145,6 +158,8 @@ internal sealed class TransposeJson
             CleanOutputFolderExclude = merged.CleanOutputFolderExclude,
             ReflectionDisabled = merged.ReflectionDisabled ?? false,
             ReflectionTarget = merged.ReflectionTarget ?? "file",
+            ModuleMinChunkBytes = merged.ModuleMinChunkBytes ?? Emitter.DefaultMinChunkBytes,
+            ModuleMaxChunkBytes = merged.ModuleMaxChunkBytes ?? Emitter.DefaultMaxChunkBytes,
         };
     }
 
@@ -166,6 +181,8 @@ internal sealed class TransposeJson
         public List<string> CleanOutputFolderExclude = new();
         public bool? ReflectionDisabled;
         public string? ReflectionTarget;
+        public int? ModuleMinChunkBytes;
+        public int? ModuleMaxChunkBytes;
 
         public static Draft Merge(Draft b, Draft? o)
         {
@@ -185,6 +202,8 @@ internal sealed class TransposeJson
                 CleanOutputFolderExclude = b.CleanOutputFolderExclude.Concat(o.CleanOutputFolderExclude).ToList(),
                 ReflectionDisabled = o.ReflectionDisabled ?? b.ReflectionDisabled,
                 ReflectionTarget = o.ReflectionTarget  ?? b.ReflectionTarget,
+                ModuleMinChunkBytes = o.ModuleMinChunkBytes ?? b.ModuleMinChunkBytes,
+                ModuleMaxChunkBytes = o.ModuleMaxChunkBytes ?? b.ModuleMaxChunkBytes,
             };
         }
     }
@@ -205,6 +224,11 @@ internal sealed class TransposeJson
 
         var html = root.TryGetProperty("html", out var h) && h.ValueKind == JsonValueKind.Object ? h : default;
         var reflection = root.TryGetProperty("reflection", out var rfl) && rfl.ValueKind == JsonValueKind.Object ? rfl : default;
+        var modules = root.TryGetProperty("modules", out var mdl) && mdl.ValueKind == JsonValueKind.Object ? mdl : default;
+
+        int? Int(JsonElement e, string name)
+            => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v)
+               && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var i) ? i : (int?)null;
 
         var cleanExclude = new List<string>();
         if (root.TryGetProperty("cleanOutputFolderExclude", out var ce) && ce.ValueKind == JsonValueKind.Array)
@@ -249,6 +273,8 @@ internal sealed class TransposeJson
                 ? rd.ValueKind == JsonValueKind.True
                 : (bool?)null,
             ReflectionTarget = reflection.ValueKind == JsonValueKind.Object ? Str(reflection, "target") : null,
+            ModuleMinChunkBytes = Int(modules, "minChunkSize"),
+            ModuleMaxChunkBytes = Int(modules, "maxChunkSize"),
         };
     }
 

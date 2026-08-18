@@ -217,6 +217,9 @@ metadata, not a web resource, so `OutputBuilder` never extracts it into a site.
 - `[Script]` — raw JS body.
 - `[GlobalMethods]` / `[Scope]` — project static members / a type onto ambient JS globals.
 - `[ObjectLiteral]` — treat a class/struct as a plain JS object.
+- `[SkipTypeClustering]` / `[ConstructsTypeArguments]` / `[NeverDefer]` — module-output chunking:
+  keep a facade out of the reference graph, mark a generic method that *constructs* its type
+  arguments reflectively, and pin a type into the initial payload. See the module-output section.
 
 ## Building and bootstrapping
 
@@ -573,6 +576,49 @@ The short version:
   library chunk drops from 193 types / 1,612 KB to 5 types / 67 KB and the eager payload from
   2,304 KB to 1,055 KB raw — better than deleting the facade (1,788 KB), which is the invasive change
   it makes unnecessary. See `TODO.modules.md` §7e for what is not yet settled.
+
+  **A second pass merges the components into chunks worth fetching.** An SCC is the smallest *sound*
+  unit and a far too small *useful* one: Tesserae's gallery emitted 682 chunks with a **2.2 KB
+  median**, half under 1 KB, so a screen needing twenty types paid twenty requests.
+  `Emitter.ModuleChunks.cs` groups them by **load signature** — the set of roots (chunks nothing
+  imports, i.e. what an application can ask for) that reach a chunk, which *is* its load condition —
+  orders the classes reverse-topologically with a Jaccard-similarity tie-break so nearly-co-loaded
+  classes end up adjacent, and cuts that sequence into contiguous buckets in a size band
+  (`modules.minChunkSize`/`maxChunkSize` in tps.json, default **50–100 KB**; 0 restores one chunk per
+  component). A bucket only spans a class boundary while it is under the minimum — that is the one
+  place over-fetch is traded for size. **Sizes are exact**: bodies are emitted before chunking (which
+  needs the graph the emit records), so nothing is estimated and nothing is emitted twice. The result
+  is still a DAG by construction — `i → d` implies `sig(d) ⊇ sig(i)`, so the class graph is acyclic,
+  and within a class members keep the first pass's already-topological index order — and the
+  lower-index invariant is re-checked, falling back to the unmerged graph if it ever fails. The eager
+  group is bucketed separately, so deferred code is never pulled into the initial payload.
+
+  Measured: 682 → **56 chunks, 52 KB median**, all 132 samples rendering identically. The cost is
+  entirely on the *package* side: the app's 161 → 18 chunks leaves its eager payload untouched,
+  while the library's 521 → 38 raises it from 1,055 KB to 1,816 KB raw, because a package has no
+  entry point and cannot see which of its chunks a consumer needs at start-up. With an oracle for
+  that set the same pass gives 53 chunks *and* 1,055 KB raw / 160 KB gz, so the ceiling is the
+  missing information: the fix is to coalesce across assemblies in the site build, where the whole
+  program is visible. See `TODO.modules.md` §7g.
+
+  **`[ConstructsTypeArguments]` and `[NeverDefer]` cover the edge an activator hides.** The chunker
+  records an edge exactly when a reference is *emitted*, so a reflection-driven deserializer defeats
+  it: `JsonConvert.DeserializeObject<Order>(json)` emits nothing about `Order` a stub cannot answer,
+  then walks its metadata and constructs it and every member type below it — and constructing a stub
+  throws. `[ConstructsTypeArguments]` on the activating generic method puts the edge back at the
+  **call site**, where the type argument is written down: the call records its type arguments and,
+  transitively, everything reachable through the fields and properties reflection describes (through
+  arrays and generic arguments, so a `List<Line>` member reaches `Line`) as dependencies of the type
+  being emitted. The DTO is fetched with the code that deserializes it and stays deferred for
+  everything else — the same move `[SkipTypeClustering]` makes, in the other direction. It is read on
+  the method, on its containing type, or from the calling assembly
+  (`[assembly: ConstructsTypeArguments(typeof(JsonConvert))]`), which is how an application marks an
+  activator it does not own or that has not been re-released with the annotation.
+  **`[NeverDefer]`** is the blunt fallback for what a call site cannot show — a `Type` *value*, a
+  class resolved from a string: the type joins the eager roots, like the attribute classes the
+  metadata constructs. See `Emitter.ReflectionDeps.cs`, `ModuleReflectionDepsTests` and
+  `TODO.modules.md` §7h; the shipped JSON bindings still have to be annotated, which waits on a BCL
+  release carrying the attribute.
 
   Still single-bundle: `--incremental` (chunk assignment is a whole-program property — do not combine
   them yet), minification (a module entry and its chunks are emitted formatted only, since they carry

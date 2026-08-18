@@ -19,24 +19,31 @@ namespace Transpose.Translator.Tests
     [TestClass]
     public class ModuleEmitTests : TranslatorTestBase
     {
-        private static Emitter.ModuleOutput Emit(
+        /// <param name="minChunkBytes">Off by default: these snippets are a few hundred bytes each, so
+        /// the real 50 KB coalescing band would merge every one of them into a single chunk and there
+        /// would be nothing left to assert about the component split. The second pass has its own
+        /// suite (<see cref="ModuleChunkCoalescingTests"/>), which sets a band the snippets can reach.</param>
+        internal static Emitter.ModuleOutput Emit(
             string source,
             bool packageModules = false,
             IReadOnlyDictionary<string, string>? externalChunks = null,
-            string chunkDirectory = "chunks")
+            string chunkDirectory = "chunks",
+            int minChunkBytes = 0,
+            int maxChunkBytes = 0)
         {
             var result = new RoslynTranslator().BuildAssembly(
                 new[] { ("App.cs", source) }, CompilationBuilder.DefaultAssemblyName,
                 extraReferencePaths: null, preprocessorSymbols: new[] { "DEBUG", "TRACE" },
                 emitAssembly: false, emitModules: true,
-                chunkDirectory: chunkDirectory, externalChunks: externalChunks, packageModules: packageModules);
+                chunkDirectory: chunkDirectory, externalChunks: externalChunks, packageModules: packageModules,
+                minChunkBytes: minChunkBytes, maxChunkBytes: maxChunkBytes);
             if (!result.Success)
                 Assert.Fail("translation failed:\n" + string.Join("\n", result.Errors.Select(d => d.GetMessage())));
             return result.Modules!;
         }
 
         /// <summary>The chunk a type's <c>Transpose.define</c> was emitted into.</summary>
-        private static string ChunkOf(Emitter.ModuleOutput m, string typeName) =>
+        internal static string ChunkOf(Emitter.ModuleOutput m, string typeName) =>
             m.Chunks.First(c => Regex.IsMatch(c.js, @"Transpose\.definei?\(""" + Regex.Escape(typeName) + @"""")).relPath;
 
         private static IEnumerable<string> ImportsOf(string js) =>
