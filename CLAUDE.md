@@ -630,8 +630,29 @@ The short version:
   while the library's 521 → 38 raises it from 1,055 KB to 1,816 KB raw, because a package has no
   entry point and cannot see which of its chunks a consumer needs at start-up. With an oracle for
   that set the same pass gives 53 chunks *and* 1,055 KB raw / 160 KB gz, so the ceiling is the
-  missing information: the fix is to coalesce across assemblies in the site build, where the whole
-  program is visible. See `TODO.modules.md` §7g.
+  missing information. See `TODO.modules.md` §7g.
+
+  **`tps.chunks.json` supplies that missing information by measurement.** The load signature — the
+  set of roots that reach a chunk — is as good as static analysis gets at guessing what is fetched
+  together, and it is still a guess: a screen showing a chart beside a table pulls two subtrees the
+  reference graph has no reason to associate. A run of the real application knows exactly. The file
+  lists one group of emitted type names per captured step (a route, a view, boot), the chunker
+  propagates group membership down the dependency edges and folds it into the load signature as extra
+  bits, and the existing coalescer does the rest — so the addition can only *refine* the partition,
+  which is what keeps the pass's acyclicity argument intact. A group marked `"eager": true` becomes
+  eager roots in a **package** build, which is the one thing a library genuinely cannot work out for
+  itself.
+
+  **Parsing it never fails.** The file is generated from a running application and checked in beside
+  code that keeps moving, so a stale group, a renamed type or a hand-broken comma costs the oracle a
+  hint and never costs anyone a build: a malformed file reads as empty and an unmatched name is
+  skipped. Covered by `ChunkOracleTests`.
+
+  The capture itself needs `--no-chunk-coalescing` (or `TRANSPOSE_NO_CHUNK_COALESCING=1`, which
+  reaches an MSBuild-driven build), which restores one chunk per component — 522 chunks at a 1.0 KB
+  median for Tesserae, against 37 coalesced. That is the wrong thing to *serve* and the only thing
+  worth *measuring*: a coalesced build has already made the grouping decision, so a capture of it can
+  only confirm it. See the **`chunk-oracle`** skill for the whole loop.
 
   **`[ConstructsTypeArguments]` and `[NeverDefer]` cover the edge an activator hides.** The chunker
   records an edge exactly when a reference is *emitted*, so a reflection-driven deserializer defeats

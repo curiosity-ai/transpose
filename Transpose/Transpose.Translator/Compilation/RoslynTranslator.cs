@@ -92,7 +92,8 @@ public sealed class RoslynTranslator
         IReadOnlyDictionary<string, List<string>>? externalSkipClusterDeps = null,
         int minChunkBytes = Emitter.DefaultMinChunkBytes,
         int maxChunkBytes = Emitter.DefaultMaxChunkBytes,
-        bool alsoEmitBundle = false)
+        bool alsoEmitBundle = false,
+        ChunkOracle? chunkOracle = null)
     {
         CompileProgress.Report("parsing sources + resolving references");
         var compilation = PhaseTimings.Measure("build compilation (parse + references)", () =>
@@ -232,7 +233,7 @@ public sealed class RoslynTranslator
                 CompileProgress.Report("emitting JavaScript modules");
                 moduleOutput = PhaseTimings.Measure("emit JavaScript (modules)",
                     () => emitter.EmitModules(chunkDirectory, externalChunks, packageModules, externalSkipClusterDeps,
-                                              minChunkBytes, maxChunkBytes));
+                                              minChunkBytes, maxChunkBytes, chunkOracle));
                 js = moduleOutput.EntryJs;
             }
 

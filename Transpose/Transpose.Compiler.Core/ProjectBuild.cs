@@ -78,6 +78,19 @@ internal sealed record BuildOptions
     /// decision to the csproj property and then the configuration default.</summary>
     public bool? MetadataOnlyAssembly { get; init; }
 
+    /// <summary>
+    /// Emit one chunk per strongly-connected component instead of coalescing them into the size band
+    /// (<c>--no-chunk-coalescing</c>, or <c>TRANSPOSE_NO_CHUNK_COALESCING=1</c>).
+    ///
+    /// This is a build for <em>measuring</em>, not for shipping: hundreds of ~2 KB chunks are the
+    /// wrong thing to serve, but they are the only way to see what is really fetched together. A
+    /// coalesced build has already made the grouping decision, so a capture of it can only confirm
+    /// that decision — the fine-grained build is what produces the evidence a <c>tps.chunks.json</c>
+    /// oracle is written from. See the <c>chunk-oracle</c> skill.
+    /// </summary>
+    public bool NoChunkCoalescing { get; init; }
+        = Environment.GetEnvironmentVariable("TRANSPOSE_NO_CHUNK_COALESCING") is "1" or "true" or "TRUE";
+
     /// <summary>Reuse the previous build of this project where its inputs are unchanged.</summary>
     public bool Incremental { get; init; }
 
@@ -293,7 +306,7 @@ internal static class ProjectBuild
                 // else about the build did, and an "up to date" verdict skips writing it altogether.
                 BuildSettingsFingerprint(project, configuration, tpscfg, reflectionEnabled, metadataTarget,
                     metadataOnly, options.EmitPackage, isSiteBuild, options.SeparateAssemblies, options.WithRuntime,
-                    options.OutPath, options.SiteDir, options.AssemblyVersion)
+                    options.OutPath, options.SiteDir, options.AssemblyVersion, options.NoChunkCoalescing)
                     .Append($"watch={options.LiveReloadScript is not null}"),
                 BuildContentFingerprint(project),
                 options.CacheDir);
@@ -342,6 +355,11 @@ internal static class ProjectBuild
         // A package emits the single bundle alongside its chunks, because it cannot know whether the
         // application that references it will be built Debug (one bundle) or Release (chunks).
         var alsoEmitBundle = wantsModules && options.EmitPackage;
+        // Measured co-load groups from a capture of the running application, if the project keeps one.
+        // Never fails a build: an unreadable or stale file simply contributes nothing (ChunkOracle).
+        var chunkOracle = wantsModules ? ChunkOracle.TryLoad(project.ProjectDir) : null;
+        if (chunkOracle is { IsEmpty: false })
+            log.Info($"  chunks:     {ChunkOracle.FileName} — {chunkOracle.Groups.Count} measured group(s)");
         // Every referenced assembly that was itself built as modules contributes its type → chunk map.
         var externalChunks = wantsModules ? ModuleMap.Read(project.ReferencePaths) : null;
         // ...and, for a [SkipTypeClustering] facade in one of them, the per-member dependency sets a
@@ -373,9 +391,10 @@ internal static class ProjectBuild
                 // A library has no entry point to be lazy relative to: nothing is eager beyond its
                 // [Ready] handlers, and its consumers pull in what they actually use.
                 packageModules: options.EmitPackage,
-                minChunkBytes: tpscfg?.ModuleMinChunkBytes ?? Emitter.DefaultMinChunkBytes,
+                minChunkBytes: MinChunkBytes(options, tpscfg),
                 maxChunkBytes: tpscfg?.ModuleMaxChunkBytes ?? Emitter.DefaultMaxChunkBytes,
-                alsoEmitBundle: alsoEmitBundle);
+                alsoEmitBundle: alsoEmitBundle,
+                chunkOracle: chunkOracle);
         }
         catch (Exception ex)
         {
@@ -462,6 +481,13 @@ internal static class ProjectBuild
         return BuildOutcome.NoSite(0, result.Diagnostics);
     }
 
+    /// <summary>The coalescing floor for this build: the project's <c>modules.minChunkSize</c>, or 0
+    /// when the build asked for one chunk per component (see <see cref="BuildOptions.NoChunkCoalescing"/>).
+    /// The switch is applied to the whole project closure, so a capture sees every assembly at the
+    /// same granularity.</summary>
+    private static int MinChunkBytes(BuildOptions options, TransposeJson? config)
+        => options.NoChunkCoalescing ? 0 : config?.ModuleMinChunkBytes ?? Emitter.DefaultMinChunkBytes;
+
     /// <summary>The directory a site build writes to: <c>--site-dir</c> when given, otherwise the path
     /// tps.json's <c>output</c> resolves to.</summary>
     private static string SiteDirectory(BuildOptions options, TransposeJson config, ResolvedProject project)
@@ -525,7 +551,8 @@ internal static class ProjectBuild
     private static IEnumerable<string> BuildSettingsFingerprint(
         ResolvedProject project, string configuration, TransposeJson? tpscfg, bool reflectionEnabled,
         MetadataTarget metadataTarget, bool metadataOnly, bool emitPackage, bool isSiteBuild,
-        bool separateAssemblies, bool withRuntime, string? outPath, string? siteDir, string? assemblyVersion)
+        bool separateAssemblies, bool withRuntime, string? outPath, string? siteDir, string? assemblyVersion,
+        bool noChunkCoalescing)
     {
         yield return $"configuration={configuration}";
         yield return $"assembly={project.AssemblyName}";
@@ -538,9 +565,11 @@ internal static class ProjectBuild
         yield return $"minifyLocals={project.MinifyLocalVariables}";
         yield return $"assemblyVersion={assemblyVersion}";
         yield return $"mode={OutputMode(emitPackage, isSiteBuild)}";
+        yield return $"chunkCoalescing={!noChunkCoalescing}";
         yield return $"separate={separateAssemblies};runtime={withRuntime}";
         yield return $"out={outPath};siteDir={siteDir}";
         yield return $"tpsjson={tpscfg is null}";
+        yield return "tps.chunks.json=" + BuildCache.FileContentFingerprint(Path.Combine(project.ProjectDir, ChunkOracle.FileName));
 
         // The project file and its tps.json (plus the per-configuration overlay) by content: they
         // decide which files compile, what gets embedded and how the site is laid out.
@@ -792,7 +821,8 @@ internal static class ProjectBuild
                 OutputMode(emitPackage: true, isSiteBuild: false),
                 BuildSettingsFingerprint(project, configuration, tpscfg, reflectionEnabled, metadataTarget,
                     metadataOnly, emitPackage: true, isSiteBuild: false, separateAssemblies: true,
-                    withRuntime: false, outPath: null, siteDir: null, assemblyVersion: assemblyVersion),
+                    withRuntime: false, outPath: null, siteDir: null, assemblyVersion: assemblyVersion,
+                    noChunkCoalescing: options.NoChunkCoalescing),
                 BuildContentFingerprint(project),
                 options.CacheDir);
             (verdict, changedSources, var reason) = cache.Decide();
@@ -833,8 +863,9 @@ internal static class ProjectBuild
                 externalChunks: tpscfg is { OutputByModule: true } ? ModuleMap.Read(project.ReferencePaths) : null,
                 externalSkipClusterDeps: tpscfg is { OutputByModule: true } ? ModuleMap.ReadSkipClusterDeps(project.ReferencePaths) : null,
                 packageModules: true,
-                minChunkBytes: tpscfg?.ModuleMinChunkBytes ?? Emitter.DefaultMinChunkBytes,
+                minChunkBytes: MinChunkBytes(options, tpscfg),
                 maxChunkBytes: tpscfg?.ModuleMaxChunkBytes ?? Emitter.DefaultMaxChunkBytes,
+                chunkOracle: ChunkOracle.TryLoad(project.ProjectDir),
                 // …and the single bundle alongside them, for the same reason: a package ships every
                 // variant, because which one is wanted is the consuming build's decision.
                 alsoEmitBundle: tpscfg is { OutputByModule: true });

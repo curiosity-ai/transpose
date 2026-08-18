@@ -83,6 +83,9 @@ public sealed partial class Emitter
     /// <param name="eager">Chunks the entry module imports. Never merged with the rest.</param>
     /// <param name="order">The emitter's dependency-depth ordering, which decides the order of types
     /// inside a merged chunk — it already guarantees a type's bases are defined before it.</param>
+    /// <param name="oracleBits">Per chunk, the <c>tps.chunks.json</c> groups it belongs to, already
+    /// propagated down the dependency edges. Null when there is no oracle. See
+    /// <see cref="OracleBits"/> for what it means and why it is safe to fold into the signature.</param>
     private static ChunkGraph Coalesce(
         ChunkGraph chunks,
         IReadOnlyList<int> sizes,
@@ -90,7 +93,8 @@ public sealed partial class Emitter
         Dictionary<INamedTypeSymbol, int> order,
         int minBytes,
         int maxBytes,
-        out HashSet<int> coalescedEager)
+        out HashSet<int> coalescedEager,
+        ulong[][]? oracleBits = null)
     {
         coalescedEager = eager;
         var n = chunks.Members.Count;
@@ -122,11 +126,21 @@ public sealed partial class Emitter
         // sweep is a complete propagation: when i is read, every chunk that could contribute to it
         // has already been read.
         var words = Math.Max(1, (rootCount + 63) / 64);
+        // A measured oracle contributes extra bits of the same kind: "the running application
+        // fetched this chunk on screen X" is a load condition exactly like "root R reaches it", and
+        // OracleBits has already propagated it down the dependency edges so the sig(d) ⊇ sig(i)
+        // property the whole pass rests on still holds. Appending them therefore only *refines* the
+        // partition — it can split a signature class, never merge two — so the acyclicity argument in
+        // the type remarks carries over unchanged.
+        var oracleWords = oracleBits is null ? 0 : oracleBits[0].Length;
+        var total = words + oracleWords;
         var sig = new ulong[n][];
         for (var i = 0; i < n; i++)
         {
-            sig[i] = new ulong[words];
+            sig[i] = new ulong[total];
             if (rootId[i] >= 0) sig[i][rootId[i] >> 6] |= 1UL << (rootId[i] & 63);
+            if (oracleBits is not null)
+                Array.Copy(oracleBits[i], 0, sig[i], words, oracleWords);
         }
         for (var i = n - 1; i >= 0; i--)
             foreach (var d in chunks.Deps[i])
@@ -233,6 +247,60 @@ public sealed partial class Emitter
 
         coalescedEager = new HashSet<int>(Enumerable.Range(0, eagerBuckets));
         return new ChunkGraph(members, deps, indexOf);
+    }
+
+    /// <summary>
+    /// Turns a <c>tps.chunks.json</c> oracle into one bit per group per chunk: bit <c>g</c> is set on
+    /// chunk <c>i</c> when the application, at capture step <c>g</c>, had a type of <c>i</c> loaded.
+    ///
+    /// The bits are then propagated <b>down the dependency edges</b> — if step <c>g</c> loaded chunk
+    /// <c>i</c>, it necessarily also loaded everything <c>i</c> imports — which is both true of the
+    /// run being described and the property <see cref="Coalesce"/> needs: its acyclicity argument
+    /// rests on <c>sig(d) ⊇ sig(i)</c> for every edge <c>i → d</c>, and a bit set on <c>i</c> but not
+    /// on its dependency would break exactly that.
+    ///
+    /// Names that match no emitted type are skipped: a checked-in capture goes stale as the code
+    /// moves, and a renamed type must cost the oracle one hint, not the build.
+    /// Null when there is no oracle to apply, so nothing is allocated on the normal path.
+    /// </summary>
+    private ulong[][]? OracleBits(ChunkGraph chunks, ChunkOracle? oracle)
+    {
+        if (oracle is null || oracle.IsEmpty) return null;
+
+        var n = chunks.Members.Count;
+        var groups = oracle.Groups;
+        var words = (groups.Count + 63) / 64;
+
+        // Emitted define name → chunk. The name is what a capture can see (it is what the chunk map
+        // and the runtime registry are keyed by), so it is what the file records.
+        var chunkOfName = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (var i = 0; i < n; i++)
+            foreach (var t in chunks.Members[i])
+            {
+                var name = DefineName(t);
+                if (!string.IsNullOrEmpty(name)) chunkOfName[name] = i;
+            }
+
+        var bits = new ulong[n][];
+        for (var i = 0; i < n; i++) bits[i] = new ulong[words];
+
+        var matched = 0;
+        for (var g = 0; g < groups.Count; g++)
+            foreach (var name in groups[g].Types)
+                if (chunkOfName.TryGetValue(name, out var i))
+                {
+                    bits[i][g >> 6] |= 1UL << (g & 63);
+                    matched++;
+                }
+
+        if (matched == 0) return null;
+
+        // Deps always have a lower index, so one descending sweep is a complete propagation.
+        for (var i = n - 1; i >= 0; i--)
+            foreach (var d in chunks.Deps[i])
+                for (var w = 0; w < words; w++) bits[d][w] |= bits[i][w];
+
+        return bits;
     }
 
     /// <summary>

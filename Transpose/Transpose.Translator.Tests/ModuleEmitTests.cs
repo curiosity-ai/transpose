@@ -29,14 +29,15 @@ namespace Transpose.Translator.Tests
             IReadOnlyDictionary<string, string>? externalChunks = null,
             string chunkDirectory = "chunks",
             int minChunkBytes = 0,
-            int maxChunkBytes = 0)
+            int maxChunkBytes = 0,
+            ChunkOracle? chunkOracle = null)
         {
             var result = new RoslynTranslator().BuildAssembly(
                 new[] { ("App.cs", source) }, CompilationBuilder.DefaultAssemblyName,
                 extraReferencePaths: null, preprocessorSymbols: new[] { "DEBUG", "TRACE" },
                 emitAssembly: false, emitModules: true,
                 chunkDirectory: chunkDirectory, externalChunks: externalChunks, packageModules: packageModules,
-                minChunkBytes: minChunkBytes, maxChunkBytes: maxChunkBytes);
+                minChunkBytes: minChunkBytes, maxChunkBytes: maxChunkBytes, chunkOracle: chunkOracle);
             if (!result.Success)
                 Assert.Fail("translation failed:\n" + string.Join("\n", result.Errors.Select(d => d.GetMessage())));
             return result.Modules!;
