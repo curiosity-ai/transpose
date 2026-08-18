@@ -217,7 +217,12 @@ public sealed class PackageResourceVariantTests
         // The entry lands under the bundle's name: three variants need three names inside the DLL and
         // one name in the site, because application code fetches it by that name.
         AssertInOutput("Lib.js", "…and its module entry, under the name a consumer's own code fetches");
-        Assert.AreEqual("import './chunks/Lib/c0.mjs';\n", File.ReadAllText(Path.Combine(_outputDir, "Lib.js")));
+        // Minified, and under its own name - there is no .min.mjs, because only a chunked Release site
+        // ever loads an entry. What has to survive verbatim is the specifier: it is the path the
+        // runtime fetches the chunk by.
+        var entry = File.ReadAllText(Path.Combine(_outputDir, "Lib.js"));
+        StringAssert.Contains(entry, "./chunks/Lib/c0.mjs", "the import specifier is a path, and must survive minification");
+        Assert.IsFalse(entry.Contains("import '"), "…and the entry is minified rather than copied through formatted");
         AssertNotInOutput("Lib.min.js", "…and neither classic bundle");
         AssertNotInOutput("Lib.mjs", "the in-DLL name of the entry is not a name the site uses");
         StringAssert.Contains(html, "<script type=\"module\" src=\"Lib.js\">",
