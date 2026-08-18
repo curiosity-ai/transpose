@@ -97,6 +97,7 @@ namespace Newtonsoft.Json
         /// <typeparam name="T">The type of the object to deserialize to.</typeparam>
         /// <param name="value">The JSON to deserialize.</param>
         /// <returns>The deserialized object from the JSON string.</returns>
+        [ConstructsTypeArguments]
         [Template("Newtonsoft.Json.JsonConvert.DeserializeObject({value}, {T})")]
         public static extern T DeserializeObject<T>(string value);
 
@@ -111,6 +112,7 @@ namespace Newtonsoft.Json
         /// <param name="value">The JSON to deserialize.</param>
         /// <param name="anonymousTypeObject">The anonymous type object.</param>
         /// <returns>The deserialized anonymous type from the JSON string.</returns>
+        [ConstructsTypeArguments]
         [Template("Newtonsoft.Json.JsonConvert.DeserializeObject({value}, Transpose.getType({anonymousTypeObject}))")]
         public static extern T DeserializeAnonymousType<T>(string value, T anonymousTypeObject);
 
@@ -129,6 +131,7 @@ namespace Newtonsoft.Json
         /// If this is <c>null</c>, default serialization settings will be used.
         /// </param>
         /// <returns>The deserialized anonymous type from the JSON string.</returns>
+        [ConstructsTypeArguments]
         [Template("Newtonsoft.Json.JsonConvert.DeserializeObject({value}, Transpose.getType({anonymousTypeObject}), {settings})")]
         public static extern T DeserializeAnonymousType<T>(string value, T anonymousTypeObject, JsonSerializerSettings settings);
 
@@ -142,6 +145,7 @@ namespace Newtonsoft.Json
         /// If this is <c>null</c>, default serialization settings will be used.
         /// </param>
         /// <returns>The deserialized object from the JSON string.</returns>
+        [ConstructsTypeArguments]
         [Template("Newtonsoft.Json.JsonConvert.DeserializeObject({value}, {T}, {settings})")]
         public static extern T DeserializeObject<T>(string value, JsonSerializerSettings settings);
 
