@@ -1,4 +1,4 @@
-using Transpose.Compiler;
+﻿using Transpose.Compiler;
 
 namespace Transpose.Translator.Tests;
 
@@ -161,5 +161,35 @@ public sealed class JsMinifierTests
             else if (s[i] == '}') depth--;
         }
         return depth;
+    }
+
+
+    /// <summary>
+    /// A module entry and its chunks are minified like everything else, and keep their own names while
+    /// being so. This was believed impossible for a long time — the emitter's own notes said the module
+    /// output was "formatted only" because it carries `import` syntax — and it simply is not: NUglify
+    /// parses ES module syntax and preserves the specifiers verbatim, which is all that is needed,
+    /// since the runtime fetches a chunk by the path written in the import.
+    /// </summary>
+    [TestMethod]
+    public void ModuleSyntaxSurvivesMinification()
+    {
+        const string source = @"import './chunks/c0.mjs';
+import './chunks/lib/c9.mjs';
+
+Transpose.define(""App.Widget"", { statics: { methods: {
+    Go: function (x) {
+        let doubled = x + x;
+        return doubled;
+    }
+} } });
+";
+        var min = JsMinifier.Minify(source, "c2.mjs");
+
+        StringAssert.Contains(min, "./chunks/c0.mjs", "the specifier is the path the runtime fetches — it must survive verbatim");
+        StringAssert.Contains(min, "./chunks/lib/c9.mjs");
+        StringAssert.Contains(min, "\"App.Widget\"", "the define name is the chunk map's key");
+        Assert.IsTrue(min.Length < source.Length, $"it should actually shrink (got {min.Length} from {source.Length})");
+        Assert.IsFalse(min.Contains("\n\n"), "and be minified rather than merely reprinted");
     }
 }

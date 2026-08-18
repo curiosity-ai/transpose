@@ -431,8 +431,14 @@ The short version:
   in NUglify 1.21.14 — not the newer 1.22.0, which regressed by inserting a stray empty statement when
   unwrapping a braced if/else body. A package's JavaScript is never re-minified by its consumer: the
   pre-minified variant it ships is simply extracted (the runtime's `tps.min.js` / `tps.meta.min.js` come
-  from `tps --build-runtime`, a library's from `CollectEmbeddableItems`). A module entry and its chunks
-  are emitted **formatted only** — they carry `import` syntax the minifier does not handle.
+  from `tps --build-runtime`, a library's from `CollectEmbeddableItems`). **A module entry and its chunks
+  are always minified, and keep their own names while being so** — there is no `.min.mjs`, because only a
+  chunked Release site ever loads one (a Debug build is a single readable bundle, and a Debug consumer of
+  a package takes that bundle rather than its chunks), so the readable form is never the form served and
+  there is nothing for the formatted/minified switch to choose between. NUglify parses ES module syntax
+  and preserves the specifiers verbatim, which is all that is required, since the runtime fetches a chunk
+  by the path written in its import; minification is nonetheless wrapped so a parser error falls back to
+  the readable text rather than failing a build (`OutputBuilder.MinifyModule`, `JsMinifierTests`).
   `OutputBuilder` writes exactly one `index.html`, linking the variant this build produced.
   **Source maps** for the emitted bundle are still remaining.
 
@@ -658,6 +664,13 @@ The short version:
   eager roots in a **package** build, which is the one thing a library genuinely cannot work out for
   itself.
 
+  **A measured group outranks `maxChunkSize`.** The ceiling is a guess about what makes a request worth
+  sending; a group is an observation that the running application fetched those chunks together, so a
+  bucket is never flushed on size while it is inside a class the oracle contributed bits to. Splitting a
+  group to respect the band would hand back exactly the extra requests the measurement existed to
+  remove — and the larger the group, the likelier it matters. Everything else is unchanged: the
+  class-boundary rule, the minimum, the eager pass, and the ceiling for chunks no capture grouped.
+
   **Parsing it never fails.** The file is generated from a running application and checked in beside
   code that keeps moving, so a stale group, a renamed type or a hand-broken comma costs the oracle a
   hint and never costs anyone a build: a malformed file reads as empty and an unmatched name is
@@ -706,8 +719,7 @@ The short version:
   it on the spot.
 
   Still single-bundle: `--incremental` (chunk assignment is a whole-program property — do not combine
-  them yet), minification (a module entry and its chunks are emitted formatted only, since they carry
-  `import` syntax `JsMinifier` does not handle), and watch mode.
+  them yet) and watch mode.
 - **The module runtime.** `Resources/Modules.js`
   provides `Transpose.Modules` — a registry of types whose JavaScript lives in a module that has not
   been fetched. `Modules.Register(manifest)` stubs each such type at the same global path and in the

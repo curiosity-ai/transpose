@@ -166,6 +166,17 @@ public sealed partial class Emitter
             classMembers[c].Add(i);      // ascending, because i ascends
         }
 
+        // A class whose signature carries oracle bits is one the running application was *measured*
+        // fetching together. That is a stronger statement than anything the reference graph can make,
+        // so it outranks the size band: see Take.
+        var classMeasured = new bool[classSig.Count];
+        if (oracleWords > 0)
+        {
+            for (var c = 0; c < classSig.Count; c++)
+                for (var w = words; w < total; w++)
+                    if (classSig[c][w] != 0) { classMeasured[c] = true; break; }
+        }
+
         // --- 3. order the classes ---------------------------------------------------------------
         var classOrder = OrderClasses(chunks, classOf, classSig, classMembers);
         if (classOrder is null) return chunks;
@@ -186,10 +197,16 @@ public sealed partial class Emitter
 
         void Take(int chunk, int cls)
         {
-            // Start a new bucket when this one is full, or when the load condition changes and the
-            // bucket already earns its request. Crossing a class boundary under the minimum is the
-            // deliberate over-fetch: it is what buys the size band.
-            if (current.Count > 0 && (currentBytes + sizes[chunk] > maxBytes
+            // A measured group is never cut. maxChunkSize is a guess about what makes a request worth
+            // sending; a tps.chunks.json group is an observation that the application fetched these
+            // together, so splitting one to respect the band hands back exactly the extra requests the
+            // measurement existed to remove. The group's own size is the answer, whatever it is.
+            var keepTogether = cls >= 0 && cls == currentClass && classMeasured[cls];
+
+            // Otherwise: start a new bucket when this one is full, or when the load condition changes
+            // and the bucket already earns its request. Crossing a class boundary under the minimum is
+            // the deliberate over-fetch: it is what buys the size band.
+            if (current.Count > 0 && ((currentBytes + sizes[chunk] > maxBytes && !keepTogether)
                                       || (cls != currentClass && currentBytes >= minBytes)))
                 Flush();
             current.Add(chunk);

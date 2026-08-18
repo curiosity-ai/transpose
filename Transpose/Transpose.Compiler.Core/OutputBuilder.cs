@@ -27,6 +27,31 @@ namespace Transpose.Compiler;
 /// </summary>
 internal static class OutputBuilder
 {
+    /// <summary>
+    /// Minifies a module entry or chunk. Both keep their own names while being minified — there is no
+    /// <c>.min.mjs</c>, because only a chunked Release site ever loads one: a Debug build is a single
+    /// readable bundle, and a Debug consumer of a package takes that package's bundle rather than its
+    /// chunks. So the readable form of a module file is never the form being served, and there is
+    /// nothing for a formatted/minified switch to choose between.
+    /// </summary>
+    /// <remarks>
+    /// NUglify parses and preserves <c>import</c> statements, so no special settings are needed for the
+    /// module form. What this must never do is fail a build: a chunk that could not be squeezed is still
+    /// perfectly good JavaScript, so a parser error falls back to the readable text and the build carries
+    /// on a little larger.
+    /// </remarks>
+    private static string MinifyModule(string content, string name, bool crunchLocals = false)
+    {
+        try
+        {
+            return JsMinifier.Minify(content, Path.GetFileName(name), crunchLocals);
+        }
+        catch (Exception)
+        {
+            return content;
+        }
+    }
+
     // Matches the legacy compiler's HtmlGenerator template.
     private const string HtmlTemplate =
 @"<!doctype html>
@@ -122,10 +147,14 @@ internal static class OutputBuilder
         void EmitCompilerJs(string rel, string content, bool isModule = false)
         {
             var o = new JsOut { Path = rel, IsModule = isModule };
-            // A module entry is always written formatted: it carries `import` statements, and
-            // minifying ES module syntax is not something JsMinifier is set up for yet. The chunk
-            // files are likewise copied through as authored.
-            if (wantFormatted || isModule) WriteText(rel, content); else o.IsEmpty = true;
+            // A module entry is always minified, and keeps its own name while being so: only a
+            // chunked Release site ever loads one (a Debug build is a single readable bundle and a
+            // Debug consumer of a package takes that bundle), so there is no configuration in which
+            // the readable form of an entry is the one being served. It has no .min sibling for the
+            // same reason - there is nothing to choose between.
+            if (isModule) WriteText(rel, MinifyModule(content, rel));
+            else if (wantFormatted) WriteText(rel, content);
+            else o.IsEmpty = true;
             if (wantMinified && !isModule)
             {
                 var minRel = ToMinName(rel);
@@ -283,16 +312,15 @@ internal static class OutputBuilder
         // outputBy: Module — the chunk files are written but never scripted; the entry module
         // imports the ones it needs and declares the rest to Transpose.Modules, which fetches them
         // on demand. index.html therefore carries exactly one <script type="module">.
-        // A module entry and its chunks are embedded formatted only — they carry `import` syntax,
-        // which the minifier is not set up for — so no .min.js sibling is produced for them and the
-        // consumer's formatted/minified switch simply copies them through.
+        // A chunk is minified and keeps its .mjs name: it is only ever fetched by a chunked Release
+        // site, so there is no build that wants to read one, and no .min sibling to switch to.
         if (modules is not null)
         {
             foreach (var (rel, chunkJs) in modules.Chunks)
             {
                 var dest = Path.Combine(outputDir, rel.Replace('/', Path.DirectorySeparatorChar));
                 Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-                File.WriteAllText(dest, chunkJs, utf8);
+                File.WriteAllText(dest, MinifyModule(chunkJs, rel), utf8);
                 written.Add(Path.GetFullPath(dest));
             }
         }
@@ -348,9 +376,9 @@ internal static class OutputBuilder
         // outputBy: Module — the chunk files travel alongside the entry. They are Load=false (never
         // scripted; the entry imports the ones it needs and Transpose.Modules fetches the rest) and
         // .mjs, so the consumer copies them through verbatim rather than routing them as bundles.
-        // A module entry and its chunks are embedded formatted only — they carry `import` syntax,
-        // which the minifier is not set up for — so no .min.js sibling is produced for them and the
-        // consumer's formatted/minified switch simply copies them through.
+        // A chunk is embedded minified. It has no formatted/minified pair for the consumer to choose
+        // between, because only a chunked Release site ever fetches one - a Debug consumer takes this
+        // package's readable bundle instead - so the readable form of a chunk would never be served.
         if (modules is not null)
         {
             foreach (var (rel, chunkJs) in modules.Chunks)
@@ -358,7 +386,7 @@ internal static class OutputBuilder
                 var slash = rel.LastIndexOf('/');
                 items.Add(new EmbeddedItem(
                     Name: rel.Substring(slash + 1),
-                    Content: utf8.GetBytes(chunkJs),
+                    Content: utf8.GetBytes(MinifyModule(chunkJs, rel, minifyLocalVariables)),
                     Output: slash < 0 ? null : rel.Substring(0, slash),
                     Load: false,
                     Variant: JsVariant.ModuleChunk));
@@ -460,10 +488,11 @@ internal static class OutputBuilder
         // fetch it in pieces. None of the three is conditional — the choice belongs to the consumer.
         var defaults = new List<EmbeddedItem>();
 
-        // The module entry is emitted formatted only: it carries `import` syntax the minifier is not
-        // set up for, so there is no minified sibling of it to choose between.
+        // The entry is minified for the same reason its chunks are: it is the module variant, and only
+        // a chunked Release site loads that. There is no minified sibling of it to choose between.
         if (modules is not null)
-            defaults.Add(new EmbeddedItem(moduleEntryName, utf8.GetBytes(modules.EntryJs), null,
+            defaults.Add(new EmbeddedItem(moduleEntryName,
+                utf8.GetBytes(MinifyModule(modules.EntryJs, moduleEntryName, minifyLocalVariables)), null,
                 Load: mainLoad, Module: true, Variant: JsVariant.ModuleEntry, SiteName: mainJsName));
 
         defaults.Add(new EmbeddedItem(mainJsName, utf8.GetBytes(javascript), null,
