@@ -115,6 +115,10 @@ public static class CompilationBuilder
     /// Any <paramref name="extraReferencePaths"/> (e.g. tps.core, tps.Newtonsoft.Json for a
     /// real project) are added alongside it.
     /// </summary>
+    /// <summary>Assembly name of the base library. Its package id is Transpose.BCL, but the assembly
+    /// it ships stays <c>Transpose</c> — that is what a reference has to be matched on.</summary>
+    private const string BaseLibraryAssemblyName = "Transpose";
+
     private static IReadOnlyList<MetadataReference> GetReferenceAssemblies(IEnumerable<string>? extraReferencePaths)
     {
         var refs = new List<MetadataReference> { ReadReference(TransposeAssemblies.TransposeDllPath) };
@@ -125,6 +129,21 @@ public static class CompilationBuilder
             {
                 if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) continue;
                 if (string.Equals(Path.GetFullPath(path), tpsDll, StringComparison.OrdinalIgnoreCase)) continue;
+
+                // …and a SECOND copy of the base library at a different path, which is what a project
+                // whose Transpose.BCL PackageReference is not the version TransposeAssemblies
+                // discovered resolves to (a newer one in the NuGet cache, or a TRANSPOSE_DLL_PATH
+                // pointing at a locally built runtime). Both would bind, and the damage is silent:
+                // overload numbering asks whether a method has an IL body by looking its metadata
+                // TOKEN up in a set read from TransposeDllPath (see TransposeNaming.HasNoBody), and a
+                // token from the other file names an unrelated method. Members are then misread as
+                // extern JS-backed ones and emitted under their bare, unsuffixed names, so a call
+                // binds to whichever overload happens to hold that name — List&lt;T&gt;.Sort(Comparison&lt;T&gt;)
+                // compiled to Sort(), sorting with the default comparer and throwing "Cannot compare
+                // items" on the first element type that is not IComparable.
+                if (string.Equals(TransposeAssemblies.AssemblySimpleName(path), BaseLibraryAssemblyName, StringComparison.Ordinal))
+                    continue;
+
                 refs.Add(ReadReference(path));
             }
         }

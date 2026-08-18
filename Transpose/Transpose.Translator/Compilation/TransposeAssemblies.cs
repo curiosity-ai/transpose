@@ -159,6 +159,25 @@ public static class TransposeAssemblies
         }
     }
 
+    /// <summary>
+    /// The simple assembly name of a reference file, or null if it cannot be read as one. Used to
+    /// recognise a second copy of the base library among a project's resolved references — see
+    /// <c>CompilationBuilder.GetReferenceAssemblies</c> for why one is fatal.
+    /// </summary>
+    public static string? AssemblySimpleName(string path)
+    {
+        try
+        {
+            using var fs = File.OpenRead(path);
+            using var pe = new PEReader(fs);
+            if (!pe.HasMetadata) return null;
+            var mr = pe.GetMetadataReader();
+            return mr.IsAssembly ? mr.GetString(mr.GetAssemblyDefinition().Name) : null;
+        }
+        catch (BadImageFormatException) { return null; }
+        catch (IOException) { return null; }
+    }
+
     /// <summary>The embedded Transpose JavaScript runtime (tps.js), read once from Transpose.dll.</summary>
     public static string RuntimeJs
     {
