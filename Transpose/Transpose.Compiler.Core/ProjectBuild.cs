@@ -328,9 +328,20 @@ internal static class ProjectBuild
 
         var plan = replayed is not null ? null : cache?.CreatePlan(verdict, changedSources, canReuseAssembly: metadataOnly);
 
+        // What shape of JavaScript this build produces — derived from the build itself, never from
+        // tps.json (see JsOutputProfile). A package ships every variant; a Release site ships one; a
+        // Debug site ships one readable bundle and no chunks at all.
+        var profile = JsOutputProfiles.For(options.EmitPackage, configuration);
+
         // Module mode applies to a site build AND to a package (--emit-package): a library emits its
         // chunks and publishes the map, and its consumer imports the chunks behind the types it uses.
-        var wantsModules = tpscfg is { OutputByModule: true } && (isSiteBuild || options.EmitPackage);
+        // A Debug site build opts out however tps.json is written: stepping through one bundle is the
+        // point of a Debug build, and a stack trace spread over sixty on-demand chunks is not.
+        var wantsModules = tpscfg is { OutputByModule: true } && (isSiteBuild || options.EmitPackage)
+                           && profile.WantsModules(true);
+        // A package emits the single bundle alongside its chunks, because it cannot know whether the
+        // application that references it will be built Debug (one bundle) or Release (chunks).
+        var alsoEmitBundle = wantsModules && options.EmitPackage;
         // Every referenced assembly that was itself built as modules contributes its type → chunk map.
         var externalChunks = wantsModules ? ModuleMap.Read(project.ReferencePaths) : null;
         // ...and, for a [SkipTypeClustering] facade in one of them, the per-member dependency sets a
@@ -363,7 +374,8 @@ internal static class ProjectBuild
                 // [Ready] handlers, and its consumers pull in what they actually use.
                 packageModules: options.EmitPackage,
                 minChunkBytes: tpscfg?.ModuleMinChunkBytes ?? Emitter.DefaultMinChunkBytes,
-                maxChunkBytes: tpscfg?.ModuleMaxChunkBytes ?? Emitter.DefaultMaxChunkBytes);
+                maxChunkBytes: tpscfg?.ModuleMaxChunkBytes ?? Emitter.DefaultMaxChunkBytes,
+                alsoEmitBundle: alsoEmitBundle);
         }
         catch (Exception ex)
         {
@@ -822,7 +834,10 @@ internal static class ProjectBuild
                 externalSkipClusterDeps: tpscfg is { OutputByModule: true } ? ModuleMap.ReadSkipClusterDeps(project.ReferencePaths) : null,
                 packageModules: true,
                 minChunkBytes: tpscfg?.ModuleMinChunkBytes ?? Emitter.DefaultMinChunkBytes,
-                maxChunkBytes: tpscfg?.ModuleMaxChunkBytes ?? Emitter.DefaultMaxChunkBytes);
+                maxChunkBytes: tpscfg?.ModuleMaxChunkBytes ?? Emitter.DefaultMaxChunkBytes,
+                // …and the single bundle alongside them, for the same reason: a package ships every
+                // variant, because which one is wanted is the consuming build's decision.
+                alsoEmitBundle: tpscfg is { OutputByModule: true });
         }
         catch (Exception ex) { ReportCrash($"Translator on '{Path.GetFileName(csproj)}'", ex, log); return false; }
 
@@ -867,14 +882,6 @@ internal static class ProjectBuild
             ? OutputBuilder.CollectEmbeddableItems(project.ProjectDir, config, mainJsName, result.Javascript!, result.MetadataJavascript, project.MinifyLocalVariables, result.Modules)
             : new List<EmbeddedItem> { new(mainJsName, System.Text.Encoding.UTF8.GetBytes(result.Javascript!), null) });
 
-        // A module-mode package's entry file is an ES module (it imports its eager chunks), so the
-        // consumer has to script it as one rather than as a classic deferred script.
-        if (result.Modules is not null)
-        {
-            for (var i = 0; i < items.Count; i++)
-                if (string.Equals(items[i].Name, mainJsName, StringComparison.OrdinalIgnoreCase))
-                    items[i] = items[i] with { Module = true };
-        }
         // Cecil re-serializes the assembly's metadata when embedding the resources; encoding a
         // parameter's default value whose type lives in a referenced assembly (e.g. a Tesserae enum)
         // makes it resolve that assembly. Seed the resolver with the reference directories so those

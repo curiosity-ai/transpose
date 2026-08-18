@@ -206,6 +206,85 @@ public class Program { public static void Main() { Console.WriteLine(new UsesCar
         }
 
         [TestMethod]
+        public void SkipTypeClusteringFollowsACallToASiblingOnTheSameFacade()
+        {
+            // The shape that broke Mosaik.UI and DefaultRouting: a facade member does not construct
+            // the type itself, it delegates to a sibling that does. The sibling reference names only
+            // the facade — the one type this pass removes from every set — so without a transitive
+            // closure over the facade's members the caller imports the facade and nothing else, and
+            // Card's chunk is left with no importer at all.
+            var m = Emit(@"
+using System;
+public class Card { public int N; }
+public class Badge { public int N; }
+[Transpose.SkipTypeClustering]
+public class Hub
+{
+    public static Card MakeCard() { return new Card(); }
+    public static object Build() { return MakeCard(); }
+    public static Badge MakeBadge() { return new Badge(); }
+}
+public class UsesBuild { public object Get() { return Hub.Build(); } }
+public class Program { public static void Main() { Console.WriteLine(new UsesBuild().Get()); } }
+");
+            var caller = m.Chunks.First(c => c.relPath == ChunkOf(m, "UsesBuild"));
+            var imports = ImportsOf(caller.js).ToList();
+            CollectionAssert.Contains(imports, System.IO.Path.GetFileName(ChunkOf(m, "Card")),
+                "Hub.Build() calls the sibling that makes a Card, so its caller has to import Card's chunk");
+            CollectionAssert.DoesNotContain(imports, System.IO.Path.GetFileName(ChunkOf(m, "Badge")),
+                "...and still only that one: nothing on the path to Build() reaches MakeBadge()");
+        }
+
+        [TestMethod]
+        public void SkipTypeClusteringFollowsASiblingCycle()
+        {
+            // Members of a facade call each other freely, cycles included, so the closure is a
+            // fixpoint rather than a topological walk. Both directions must see Card either way.
+            var m = Emit(@"
+using System;
+public class Card { public int N; }
+[Transpose.SkipTypeClustering]
+public class Hub
+{
+    public static object A(int n) { return n > 0 ? B(n - 1) : new Card(); }
+    public static object B(int n) { return A(n - 1); }
+}
+public class UsesB { public object Get() { return Hub.B(3); } }
+public class Program { public static void Main() { Console.WriteLine(new UsesB().Get()); } }
+");
+            CollectionAssert.Contains(
+                ImportsOf(m.Chunks.First(c => c.relPath == ChunkOf(m, "UsesB")).js).ToList(),
+                System.IO.Path.GetFileName(ChunkOf(m, "Card")),
+                "B -> A -> new Card() has to survive the cycle between A and B");
+        }
+
+        [TestMethod]
+        public void SkipTypeClusteringKeepsEagerStaticStateOnTheFacade()
+        {
+            // A static field initializer runs when the facade's own chunk evaluates — there is no
+            // call site to move that edge to — so it stays on the facade and the two land together.
+            var m = Emit(@"
+using System;
+public class Registry { public int N; }
+[Transpose.SkipTypeClustering]
+public class Hub
+{
+    private static readonly Registry _all = new Registry();
+    public static int Count() { return _all.N; }
+}
+public class Program { public static void Main() { Console.WriteLine(Hub.Count()); } }
+");
+            var hubChunk = ChunkOf(m, "Hub");
+            var registryChunk = ChunkOf(m, "Registry");
+            Assert.IsTrue(
+                hubChunk == registryChunk
+                || ImportsOf(m.Chunks.First(c => c.relPath == hubChunk).js)
+                       .Contains(System.IO.Path.GetFileName(registryChunk)),
+                "the facade's static initializer needs Registry the moment Hub is defined, so Hub's "
+                + $"chunk ({hubChunk}) has to carry or import Registry's ({registryChunk})");
+        }
+
+        [TestMethod]
         public void SkipTypeClusteringPublishesItsMemberDepsForConsumers()
         {
             var m = Emit(@"
