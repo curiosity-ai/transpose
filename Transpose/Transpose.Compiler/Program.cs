@@ -66,6 +66,19 @@ public static class Program
                 case "--define" or "-D": extraDefines.Add(args[++i]); break;
                 case "--timing": PhaseTimings.Enabled = true; break;
                 case "--timing-json": _timingJsonPath = args[++i]; PhaseTimings.Enabled = true; break;
+                case "--type-sizes":
+                    TypeSizeReport.Enabled = true;
+                    // The count is optional, so only swallow the next argument when it is one.
+                    if (i + 1 < args.Length && int.TryParse(args[i + 1], out var typeSizeLimit) && typeSizeLimit > 0)
+                    {
+                        TypeSizeReport.Limit = typeSizeLimit;
+                        i++;
+                    }
+                    break;
+                case "--type-sizes-json":
+                    TypeSizeReport.JsonPath = args[++i];
+                    TypeSizeReport.Enabled = true;
+                    break;
                 case "--no-chunk-coalescing": noChunkCoalescing = true; break;
                 case "--chunk-coalescing": noChunkCoalescing = false; break;
                 case "--incremental": incremental = true; break;
@@ -141,8 +154,72 @@ public static class Program
         }
 
         var outcome = ProjectBuild.Run(options);
+        PrintTypeSizes();
         PrintTimings(sw.ElapsedMilliseconds);
         return outcome.ExitCode;
+    }
+
+    /// <summary>
+    /// Prints how many bytes of JavaScript each type contributed, largest first, when
+    /// <c>--type-sizes</c> (or <c>TRANSPOSE_TYPE_SIZES</c>) is set. The bundle's own size says
+    /// nothing about which declarations produced it, and a chunk is a group of types rather than
+    /// one, so this is the only view that names the code worth shrinking.
+    ///
+    /// The rows sum to the emitted payload minus the prelude and the reflection metadata; the
+    /// footer says how much that is, so a small measured total is visible as such rather than
+    /// mistaken for a small build.
+    /// </summary>
+    private static void PrintTypeSizes()
+    {
+        if (!TypeSizeReport.Enabled) return;
+        var sizes = TypeSizeReport.Snapshot();
+        if (sizes.Count == 0) return;
+
+        long total = 0;
+        foreach (var (_, _, bytes) in sizes) total += bytes;
+        var denom = total == 0 ? 1 : total;
+        var multiAssembly = sizes.Select(x => x.assembly).Distinct().Count() > 1;
+
+        var shown = TypeSizeReport.Limit > 0 ? Math.Min(TypeSizeReport.Limit, sizes.Count) : sizes.Count;
+        Console.WriteLine($"\n  JavaScript emitted per type ({shown:N0} of {sizes.Count:N0} types, largest first):");
+        long running = 0;
+        for (var i = 0; i < shown; i++)
+        {
+            var (assembly, type, bytes) = sizes[i];
+            running += bytes;
+            var name = multiAssembly ? $"{type}  [{assembly}]" : type;
+            Console.WriteLine($"    {i + 1,5}  {Kb(bytes),10}  {bytes * 100.0 / denom,5:F1}%  {running * 100.0 / denom,5:F1}% cum  {name}");
+        }
+        Console.WriteLine($"           {Kb(total),10}  100.0%          total type bodies across {sizes.Count:N0} types");
+
+        if (TypeSizeReport.JsonPath is not null) WriteTypeSizesJson(TypeSizeReport.JsonPath, sizes);
+    }
+
+    private static string Kb(long bytes) => $"{bytes / 1024.0:N1} KB";
+
+    /// <summary>Writes every recorded type — not just the printed rows — so a report over several
+    /// projects can be assembled without re-running the builds.</summary>
+    private static void WriteTypeSizesJson(string path, IReadOnlyList<(string assembly, string type, long bytes)> sizes)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.Append("{\n  \"types\": [\n");
+        for (var i = 0; i < sizes.Count; i++)
+        {
+            var (assembly, type, bytes) = sizes[i];
+            sb.Append($"    {{ \"assembly\": {JsonString(assembly)}, \"type\": {JsonString(type)}, \"bytes\": {bytes} }}");
+            sb.Append(i == sizes.Count - 1 ? "\n" : ",\n");
+        }
+        sb.Append("  ]\n}\n");
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+            File.WriteAllText(path, sb.ToString());
+        }
+        catch (Exception ex)
+        {
+            MsBuildDiagnostic.WriteWarning(MsBuildDiagnostic.CodeTypeSizesJsonNotWritten,
+                $"could not write --type-sizes-json: {ex.Message}");
+        }
     }
 
     /// <summary>Prints the per-phase timing breakdown gathered when <c>--timing</c> (or
@@ -309,6 +386,15 @@ public static class Program
               --watch-port <n>      Port for --watch's HTTP server and websocket (default 4300)
               --timing              Print a per-phase timing/allocation breakdown of the build
               --timing-json <file>  Also write that breakdown (plus GC/memory totals) as JSON
+              --type-sizes [n]      Print how many bytes of JavaScript each type emitted, largest
+                                    first — the view that names which declarations a big bundle is
+                                    made of. Optionally cap the table at <n> rows (the whole table
+                                    otherwise). Also settable with TRANSPOSE_TYPE_SIZES=1 (or =20 for
+                                    the top 20), which reaches a build driven by MSBuild.
+              --type-sizes-json <file>
+                                    Write every type's size as JSON (implies --type-sizes, and dumps
+                                    all types regardless of the printed row cap). Also settable with
+                                    TRANSPOSE_TYPE_SIZES_JSON=<file>.
               -q, --quiet           Suppress warning output
               -h, --help            Show this help
             """);
