@@ -105,6 +105,18 @@ internal static class ProjectResolver
         // DEBUG in the Debug configuration. Without these, `#if DEBUG` never compiles in a `-c Debug`
         // build (it silently took the #else branch — e.g. loading the minified bundle instead of the
         // dev one). Additive with the project's own <DefineConstants>; add only if not already present.
+        // TRANSPOSE_DEFINE: extra preprocessor symbols for the whole build, semicolon- or
+        // comma-separated. tps reads the csproj as raw XML and evaluates no conditions (see
+        // ProjectXml), so a project cannot express "define X for this build only" the way MSBuild
+        // would — a conditional <DefineConstants> is either always applied or never seen. This is the
+        // way in for a build variant that has to reach every project in a closure at once: an
+        // instrumented build, a capture run. Equivalent to passing --define to each project by hand.
+        foreach (var symbol in (Environment.GetEnvironmentVariable("TRANSPOSE_DEFINE") ?? "")
+                     .Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries)
+                     .Select(x => x.Trim())
+                     .Where(x => x.Length > 0))
+            if (!defines.Contains(symbol)) defines.Add(symbol);
+
         if (!defines.Contains("TRACE")) defines.Add("TRACE");
         if (string.Equals(configuration, "Debug", StringComparison.OrdinalIgnoreCase) && !defines.Contains("DEBUG"))
             defines.Add("DEBUG");

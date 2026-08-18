@@ -29,14 +29,15 @@ namespace Transpose.Translator.Tests
             IReadOnlyDictionary<string, string>? externalChunks = null,
             string chunkDirectory = "chunks",
             int minChunkBytes = 0,
-            int maxChunkBytes = 0)
+            int maxChunkBytes = 0,
+            ChunkOracle? chunkOracle = null)
         {
             var result = new RoslynTranslator().BuildAssembly(
                 new[] { ("App.cs", source) }, CompilationBuilder.DefaultAssemblyName,
                 extraReferencePaths: null, preprocessorSymbols: new[] { "DEBUG", "TRACE" },
                 emitAssembly: false, emitModules: true,
                 chunkDirectory: chunkDirectory, externalChunks: externalChunks, packageModules: packageModules,
-                minChunkBytes: minChunkBytes, maxChunkBytes: maxChunkBytes);
+                minChunkBytes: minChunkBytes, maxChunkBytes: maxChunkBytes, chunkOracle: chunkOracle);
             if (!result.Success)
                 Assert.Fail("translation failed:\n" + string.Join("\n", result.Errors.Select(d => d.GetMessage())));
             return result.Modules!;
@@ -203,6 +204,111 @@ public class Program { public static void Main() { Console.WriteLine(new UsesCar
             CollectionAssert.DoesNotContain(ImportsOf(caller.js).ToList(),
                 System.IO.Path.GetFileName(ChunkOf(skipped, "Badge")),
                 "...and only that one: it never calls MakeBadge()");
+        }
+
+        [TestMethod]
+        public void SkipTypeClusteringFollowsACallToASiblingOnTheSameFacade()
+        {
+            // The shape that broke Mosaik.UI and DefaultRouting: a facade member does not construct
+            // the type itself, it delegates to a sibling that does. The sibling reference names only
+            // the facade — the one type this pass removes from every set — so without a transitive
+            // closure over the facade's members the caller imports the facade and nothing else, and
+            // Card's chunk is left with no importer at all.
+            var m = Emit(@"
+using System;
+public class Card { public int N; }
+public class Badge { public int N; }
+[Transpose.SkipTypeClustering]
+public class Hub
+{
+    public static Card MakeCard() { return new Card(); }
+    public static object Build() { return MakeCard(); }
+    public static Badge MakeBadge() { return new Badge(); }
+}
+public class UsesBuild { public object Get() { return Hub.Build(); } }
+public class Program { public static void Main() { Console.WriteLine(new UsesBuild().Get()); } }
+");
+            var caller = m.Chunks.First(c => c.relPath == ChunkOf(m, "UsesBuild"));
+            var imports = ImportsOf(caller.js).ToList();
+            CollectionAssert.Contains(imports, System.IO.Path.GetFileName(ChunkOf(m, "Card")),
+                "Hub.Build() calls the sibling that makes a Card, so its caller has to import Card's chunk");
+            CollectionAssert.DoesNotContain(imports, System.IO.Path.GetFileName(ChunkOf(m, "Badge")),
+                "...and still only that one: nothing on the path to Build() reaches MakeBadge()");
+        }
+
+        [TestMethod]
+        public void SkipTypeClusteringFollowsACallIntoASecondFacade()
+        {
+            // The same hole as the sibling case, one type over: the callee's containing type is also
+            // one whose edges are dropped, so its dependencies have nowhere to live either. Found by
+            // running the app after attributing a second facade — App.Sidenav.Initialize built a
+            // LogoSidenavItem whose chunk nothing had imported.
+            var m = Emit(@"
+using System;
+public class Logo { public int N; }
+[Transpose.SkipTypeClustering]
+public class Rail { public static object Build() { return new Logo(); } }
+[Transpose.SkipTypeClustering]
+public class Shell { public static object Start() { return Rail.Build(); } }
+public class UsesShell { public object Get() { return Shell.Start(); } }
+public class Program { public static void Main() { Console.WriteLine(new UsesShell().Get()); } }
+");
+            var imports = ImportsOf(m.Chunks.First(c => c.relPath == ChunkOf(m, "UsesShell")).js).ToList();
+            CollectionAssert.Contains(imports, System.IO.Path.GetFileName(ChunkOf(m, "Logo")),
+                "Shell.Start() reaches Rail.Build(), which builds a Logo — the call site has to import it");
+            CollectionAssert.Contains(imports, System.IO.Path.GetFileName(ChunkOf(m, "Rail")),
+                "...and Rail itself, which it names directly");
+        }
+
+        [TestMethod]
+        public void SkipTypeClusteringFollowsASiblingCycle()
+        {
+            // Members of a facade call each other freely, cycles included, so the closure is a
+            // fixpoint rather than a topological walk. Both directions must see Card either way.
+            var m = Emit(@"
+using System;
+public class Card { public int N; }
+[Transpose.SkipTypeClustering]
+public class Hub
+{
+    public static object A(int n) { return n > 0 ? B(n - 1) : new Card(); }
+    public static object B(int n) { return A(n - 1); }
+}
+public class UsesB { public object Get() { return Hub.B(3); } }
+public class Program { public static void Main() { Console.WriteLine(new UsesB().Get()); } }
+");
+            CollectionAssert.Contains(
+                ImportsOf(m.Chunks.First(c => c.relPath == ChunkOf(m, "UsesB")).js).ToList(),
+                System.IO.Path.GetFileName(ChunkOf(m, "Card")),
+                "B -> A -> new Card() has to survive the cycle between A and B");
+        }
+
+        [TestMethod]
+        public void SkipTypeClusteringCarriesStaticStateToEveryCaller()
+        {
+            // A static field initializer does not run with the member that happens to be called — the
+            // runtime hangs $staticInit off the getter of the type's global slot, so it fires the
+            // first time anything reads the class. Following sibling calls alone would therefore miss
+            // it, and keeping it on the facade would rebuild the cycle the attribute exists to break.
+            // So it belongs to every way in: whoever touches Hub first must have Registry.
+            var m = Emit(@"
+using System;
+public class Registry { public int N; }
+[Transpose.SkipTypeClustering]
+public class Hub
+{
+    private static readonly Registry _all = new Registry();
+    public static int Count() { return _all.N; }
+}
+public class UsesCount { public int Get() { return Hub.Count(); } }
+public class Program { public static void Main() { Console.WriteLine(new UsesCount().Get()); } }
+");
+            CollectionAssert.Contains(
+                ImportsOf(m.Chunks.First(c => c.relPath == ChunkOf(m, "UsesCount")).js).ToList(),
+                System.IO.Path.GetFileName(ChunkOf(m, "Registry")),
+                "reading Hub at all runs its static initializer, so its caller has to import Registry");
+            Assert.AreNotEqual(ChunkOf(m, "Registry"), ChunkOf(m, "Hub"),
+                "...and the facade itself must not keep the edge, or it is back in Registry's component");
         }
 
         [TestMethod]

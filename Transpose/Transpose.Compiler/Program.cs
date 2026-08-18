@@ -44,6 +44,7 @@ public static class Program
         // rules in BuildCache/IncrementalPlan hold, and a stale cache is a silently wrong build rather
         // than a failed one. TRANSPOSE_INCREMENTAL=1 turns it on for a whole session.
         var incremental = Environment.GetEnvironmentVariable("TRANSPOSE_INCREMENTAL") is "1" or "true";
+        var noChunkCoalescing = Environment.GetEnvironmentVariable("TRANSPOSE_NO_CHUNK_COALESCING") is "1" or "true" or "TRUE";
         string? cacheDir = null;
         var watch = false;
         var watchPort = 4300;
@@ -65,6 +66,8 @@ public static class Program
                 case "--define" or "-D": extraDefines.Add(args[++i]); break;
                 case "--timing": PhaseTimings.Enabled = true; break;
                 case "--timing-json": _timingJsonPath = args[++i]; PhaseTimings.Enabled = true; break;
+                case "--no-chunk-coalescing": noChunkCoalescing = true; break;
+                case "--chunk-coalescing": noChunkCoalescing = false; break;
                 case "--incremental": incremental = true; break;
                 case "--no-incremental": incremental = false; break;
                 case "--cache-dir": cacheDir = args[++i]; incremental = true; break;
@@ -112,6 +115,7 @@ public static class Program
             AssemblyVersion = assemblyVersion,
             MetadataOnlyAssembly = metadataOnlyAssembly,
             Incremental = incremental,
+            NoChunkCoalescing = noChunkCoalescing,
             CacheDir = cacheDir,
         });
 
@@ -271,6 +275,15 @@ public static class Program
                                     can pin it with <TransposeMetadataOnlyAssembly>. The Transpose SDK
                                     refuses to pack a Debug build, so a metadata-only assembly cannot
                                     reach a NuGet feed.
+              --no-chunk-coalescing Emit one ES module per strongly-connected component instead of
+                                    coalescing them into the size band (outputBy: "Module" only; also
+                                    settable with TRANSPOSE_NO_CHUNK_COALESCING=1, which reaches a
+                                    build driven by MSBuild). This is a build for MEASURING: hundreds
+                                    of ~2 KB chunks are the wrong thing to serve, but they are the
+                                    only way to see what a running application really fetches
+                                    together — a coalesced build has already made that decision, so a
+                                    capture of it can only confirm it. The evidence a
+                                    tps.chunks.json oracle is written from comes from this build.
               --incremental, --no-incremental
                                     Reuse the previous build of this project where its inputs are
                                     unchanged (off by default). A build whose files all hash the same

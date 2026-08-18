@@ -3,29 +3,19 @@ using System.Text.Json;
 namespace Transpose.Compiler;
 
 /// <summary>
-/// Which variants of the emitted JavaScript the build produces — mirrors the legacy compiler's
-/// <c>JavaScriptOutputType</c> (the <c>outputFormatting</c> tps.json setting).
-/// </summary>
-internal enum JsOutputFormatting
-{
-    /// <summary>Only the formatted (beautified) JS. Good for debugging.</summary>
-    Formatted = 1,
-    /// <summary>Only the minified JS. Good for production.</summary>
-    Minified = 2,
-    /// <summary>Both variants — a referencing build (or index.html generation) then picks one.</summary>
-    Both = 3,
-}
-
-/// <summary>
 /// The subset of a project's <c>tps.json</c> the CLI acts on: where output goes, the bundle
 /// file name, HTML generation, and the resource files (CSS/images) copied into the output
 /// and linked from index.html. JSONC (comments + trailing commas) is tolerated.
 ///
 /// A configuration-specific overlay (<c>tps.&lt;Configuration&gt;.json</c>, e.g. <c>tps.Release.json</c>)
-/// is merged on top of the base <c>tps.json</c> when present, matching the legacy compiler's
-/// <c>ConfigHelper.ReadConfig</c>: scalar settings from the overlay win, and resource arrays are
-/// concatenated (base first, then overlay). This is how the front-end projects flip
-/// <c>outputFormatting</c> to <c>Both</c> for Release while keeping <c>Formatted</c> for Debug.
+/// is merged on top of the base <c>tps.json</c> when present: scalar settings from the overlay win,
+/// and resource arrays are concatenated (base first, then overlay). It is the hook for a resource
+/// that only one configuration ships.
+///
+/// What it deliberately cannot configure is the <em>shape</em> of the emitted JavaScript — formatted
+/// vs minified vs chunked modules. That follows from the build alone (see
+/// <see cref="JsOutputProfile"/>), so a project cannot ship a Release site unminified, and a package
+/// always carries every variant its consumers might ask for.
 /// </summary>
 internal sealed class TransposeJson
 {
@@ -43,12 +33,6 @@ internal sealed class TransposeJson
     public List<ResourceGroup> Resources { get; init; } = new();
 
     /// <summary>
-    /// <c>outputFormatting</c> — whether to emit the formatted JS, the minified JS, or both.
-    /// Defaults to <see cref="JsOutputFormatting.Both"/>, matching the legacy compiler.
-    /// </summary>
-    public JsOutputFormatting OutputFormatting { get; init; } = JsOutputFormatting.Both;
-
-    /// <summary>
     /// <c>outputBy</c> — the file-layout mode (Class/ClassPath/Namespace/…). The base runtime
     /// library (Transpose.BCL) uses <c>ClassPath</c>: this is the marker that the project *defines*
     /// the BCL and must be compiled self-contained (no Transpose.dll reference) into the tps.js
@@ -57,7 +41,8 @@ internal sealed class TransposeJson
     public string? OutputBy { get; init; }
 
     /// <summary>True when <c>outputBy</c> asks for the ES-module layout: one file per chunk plus an
-    /// entry module, instead of a single bundle. See TODO.modules.md.</summary>
+    /// entry module, instead of a single bundle. See TODO.modules.md. This is a <em>request</em>, not
+    /// the verdict: a Debug site build ignores it (<see cref="JsOutputProfile"/>).</summary>
     public bool OutputByModule => string.Equals(OutputBy, "Module", System.StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
@@ -92,6 +77,19 @@ internal sealed class TransposeJson
     /// of the legacy h5 <c>!</c> skip patterns, but only consulted for files the build didn't write.
     /// </summary>
     public List<string> CleanOutputFolderExclude { get; init; } = new();
+
+    /// <summary>
+    /// <c>loadCompiledOutput</c> — whether a project that <em>references</em> this one references its
+    /// compiled bundle from the generated <c>index.html</c>. Defaults to <c>true</c>, which is what a
+    /// normal library wants. Set it to <c>false</c> for a package the application fetches itself: the
+    /// bundle (in every variant) is still embedded and still copied into the site, it is simply not
+    /// scripted — Curiosity's Admin package is loaded on demand, long after the page is up.
+    ///
+    /// This replaces the older spelling of the same intent, a resource group re-declaring the
+    /// project's own output under a <c>.dontload</c> name. That still works and still only sets this
+    /// flag, but it no longer has to be written out per variant: the package ships all of them.
+    /// </summary>
+    public bool LoadCompiledOutput { get; init; } = true;
 
     /// <summary>reflection.disabled — when true, no reflection metadata is emitted.</summary>
     public bool ReflectionDisabled { get; init; }
@@ -147,7 +145,6 @@ internal sealed class TransposeJson
             OutputBy = merged.OutputBy,
             FileName = merged.FileName ?? "app.js",
             ExplicitFileName = merged.FileName,
-            OutputFormatting = merged.OutputFormatting ?? JsOutputFormatting.Both,
             HtmlDisabled = merged.HtmlDisabled ?? false,
             HtmlTitle = merged.HtmlTitle,
             HtmlBody = merged.HtmlBody ?? "",
@@ -155,6 +152,7 @@ internal sealed class TransposeJson
             HtmlMeta = merged.HtmlMeta ?? "",
             Resources = merged.Resources,
             CleanOutputFolder = merged.CleanOutputFolder ?? true,
+            LoadCompiledOutput = merged.LoadCompiledOutput ?? true,
             CleanOutputFolderExclude = merged.CleanOutputFolderExclude,
             ReflectionDisabled = merged.ReflectionDisabled ?? false,
             ReflectionTarget = merged.ReflectionTarget ?? "file",
@@ -170,7 +168,6 @@ internal sealed class TransposeJson
         public string? Output;
         public string? OutputBy;
         public string? FileName;
-        public JsOutputFormatting? OutputFormatting;
         public bool? HtmlDisabled;
         public string? HtmlTitle;
         public string? HtmlBody;
@@ -178,6 +175,7 @@ internal sealed class TransposeJson
         public string? HtmlMeta;
         public List<ResourceGroup> Resources = new();
         public bool? CleanOutputFolder;
+        public bool? LoadCompiledOutput;
         public List<string> CleanOutputFolderExclude = new();
         public bool? ReflectionDisabled;
         public string? ReflectionTarget;
@@ -192,13 +190,13 @@ internal sealed class TransposeJson
                 Output           = o.Output           ?? b.Output,
                 OutputBy         = o.OutputBy          ?? b.OutputBy,
                 FileName         = o.FileName          ?? b.FileName,
-                OutputFormatting = o.OutputFormatting  ?? b.OutputFormatting,
                 HtmlDisabled     = o.HtmlDisabled      ?? b.HtmlDisabled,
                 HtmlTitle        = o.HtmlTitle         ?? b.HtmlTitle,
                 HtmlBody         = o.HtmlBody          ?? b.HtmlBody,
                 HtmlHead         = o.HtmlHead          ?? b.HtmlHead,
                 Resources        = b.Resources.Concat(o.Resources).ToList(),
                 CleanOutputFolder = o.CleanOutputFolder ?? b.CleanOutputFolder,
+                LoadCompiledOutput = o.LoadCompiledOutput ?? b.LoadCompiledOutput,
                 CleanOutputFolderExclude = b.CleanOutputFolderExclude.Concat(o.CleanOutputFolderExclude).ToList(),
                 ReflectionDisabled = o.ReflectionDisabled ?? b.ReflectionDisabled,
                 ReflectionTarget = o.ReflectionTarget  ?? b.ReflectionTarget,
@@ -258,7 +256,6 @@ internal sealed class TransposeJson
             Output = Str(root, "output"),
             OutputBy = Str(root, "outputBy"),
             FileName = Str(root, "fileName"),
-            OutputFormatting = ParseFormatting(Str(root, "outputFormatting")),
             HtmlDisabled = html.ValueKind == JsonValueKind.Object && html.TryGetProperty("disabled", out var d)
                 ? d.ValueKind == JsonValueKind.True
                 : (bool?)null,
@@ -268,6 +265,7 @@ internal sealed class TransposeJson
             HtmlMeta = html.ValueKind == JsonValueKind.Object ? Str(html, "meta") : null,
             Resources = resources,
             CleanOutputFolder = Bool(root, "cleanOutputFolder"),
+            LoadCompiledOutput = Bool(root, "loadCompiledOutput"),
             CleanOutputFolderExclude = cleanExclude,
             ReflectionDisabled = reflection.ValueKind == JsonValueKind.Object && reflection.TryGetProperty("disabled", out var rd)
                 ? rd.ValueKind == JsonValueKind.True
@@ -277,14 +275,4 @@ internal sealed class TransposeJson
             ModuleMaxChunkBytes = Int(modules, "maxChunkSize"),
         };
     }
-
-    /// <summary>Parses the <c>outputFormatting</c> string (case-insensitive) into the enum; null/unknown → absent.</summary>
-    private static JsOutputFormatting? ParseFormatting(string? s)
-        => s?.Trim().ToLowerInvariant() switch
-        {
-            "formatted" => JsOutputFormatting.Formatted,
-            "minified" => JsOutputFormatting.Minified,
-            "both" => JsOutputFormatting.Both,
-            _ => null,
-        };
 }

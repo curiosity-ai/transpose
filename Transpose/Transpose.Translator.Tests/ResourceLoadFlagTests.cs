@@ -126,7 +126,6 @@ public sealed class ResourceLoadFlagTests
 
         var html = BuildSite(Config(@"{
             ""fileName"": ""app.js"",
-            ""outputFormatting"": ""Formatted"",
             ""resources"": [
                 { ""name"": ""eager.js"", ""files"": [ ""assets/eager.js"" ] },
                 { ""name"": ""lazy.js"",  ""files"": [ ""assets/lazy.js"" ], ""load"": false }
@@ -147,7 +146,6 @@ public sealed class ResourceLoadFlagTests
 
         var html = BuildSite(Config(@"{
             ""fileName"": ""app.js"",
-            ""outputFormatting"": ""Formatted"",
             ""resources"": [
                 { ""name"": ""site.css"",       ""files"": [ ""assets/site.css"" ] },
                 { ""name"": ""theme-dark.css"", ""files"": [ ""assets/theme-dark.css"" ], ""load"": false }
@@ -170,7 +168,6 @@ public sealed class ResourceLoadFlagTests
 
         var html = BuildSite(Config(@"{
             ""fileName"": ""app.js"",
-            ""outputFormatting"": ""Formatted"",
             ""resources"": [
                 { ""name"": ""vendor"", ""files"": [ ""vendor/*.js"", ""vendor/*.css"" ], ""output"": ""vendor"", ""load"": false }
             ]
@@ -189,7 +186,6 @@ public sealed class ResourceLoadFlagTests
 
         var html = BuildSite(Config(@"{
             ""fileName"": ""app.js"",
-            ""outputFormatting"": ""Formatted"",
             ""resources"": [
                 { ""name"": ""lazy.js.dontload"", ""files"": [ ""assets/lazy.js"" ] }
             ]
@@ -209,7 +205,6 @@ public sealed class ResourceLoadFlagTests
 
         var config = Config(@"{
             ""fileName"": ""Lib.js"",
-            ""outputFormatting"": ""Formatted"",
             ""resources"": [
                 { ""name"": ""site.css"", ""files"": [ ""assets/site.css"" ] },
                 { ""name"": ""lazy.js"",  ""files"": [ ""assets/lazy.js"" ], ""load"": false }
@@ -241,7 +236,6 @@ public sealed class ResourceLoadFlagTests
 
         var libConfig = Config(@"{
             ""fileName"": ""Lib.js"",
-            ""outputFormatting"": ""Formatted"",
             ""resources"": [
                 { ""name"": ""site.css"",       ""files"": [ ""assets/site.css"" ] },
                 { ""name"": ""lazy.js"",        ""files"": [ ""assets/lazy.js"" ], ""load"": false },
@@ -252,7 +246,7 @@ public sealed class ResourceLoadFlagTests
         var dll = PackageDll("Lib", OutputBuilder.CollectEmbeddableItems(_projectDir, libConfig, "Lib.js", "var lib = 1;", null));
 
         // The consuming project has no resources of its own — everything below comes from the package.
-        var appConfig = Config(@"{ ""fileName"": ""app.js"", ""outputFormatting"": ""Formatted"" }");
+        var appConfig = Config(@"{ ""fileName"": ""app.js"" }");
         var html = BuildSite(appConfig, Project(dll));
 
         AssertInOutput("lazy.js", "a non-loaded package script must still be extracted");

@@ -402,28 +402,45 @@ The short version:
   (`lib/netstandard2.0/Transpose.dll`), and the translator tests run end-to-end against it.
 - **`outputBy` file-layout modes** (Class/ClassPath/Namespace/…): `ClassPath` (used by the runtime
   build above) is implemented; the other layouts still emit a single bundle.
-- **Bundle minification (done).** `outputFormatting` (`Formatted`/`Minified`/`Both`, read from
-  `tps.json` and a merged `tps.<Configuration>.json` overlay) drives NUglify-based minification
-  (pinned to `NUglify 1.21.15`; the legacy compiler used 1.20.7, but that version mis-parenthesised
-  a `??` operand of `&&`/`||` and emitted invalid JS, fixed in NUglify 1.21.14 — not the newer
-  1.22.0, which regressed by inserting a stray empty statement when unwrapping a braced if/else
-  body) via `JsMinifier`. Packages ship
-  their compiled JS in both a formatted and a pre-minified variant — the runtime (`tps.min.js` /
-  `tps.meta.min.js`, embedded by `tps --build-runtime`) and library packages (`CollectEmbeddableItems`)
-  — so a site build reuses those and only minifies the per-project bundle/metadata/shim itself; a
-  package's JavaScript is never re-minified. `OutputBuilder` emits
-  `index.html` (formatted) and `index.min.html` (minified) and collapses them per build configuration
-  (Release keeps the minified one as `index.html`, Debug the formatted one) — a port of the legacy
-  `HtmlGenerator`. **Source maps** for the emitted bundle are still remaining.
+- **The output shape follows the build, not tps.json (`JsOutputProfile`).** There is no
+  `outputFormatting` setting; it was removed because it let a project decide something that is not its
+  to decide. A **Debug** site is one formatted bundle and is *never* chunked, whatever `outputBy` says
+  — stepping through one readable file is what a Debug build is for, and a stack trace spread over
+  sixty on-demand chunks is not. A **Release** site is one minified bundle, or the chunked module
+  output when `outputBy: "Module"` asks for it. A **package** (`--emit-package`, i.e. any library)
+  ships **all three** — the formatted bundle, the pre-minified bundle, and the module entry with its
+  chunks — because it cannot know how it will be consumed; each is tagged with a `JsVariant` in
+  `Transpose.Resources.json`, and a referencing site build keeps exactly the set its own profile calls
+  for. That is what lets one published Tesserae be debugged as a single readable bundle by one
+  application and fetched in pieces by another, with no rebuild in between.
 
-  **The `.js` ⇄ `.min.js` switch only applies to a file that exists in both variants.** That is what a
-  compiled bundle always looks like, and it is also how a library declares an authored bundle it wants
-  both variants of (Curiosity's `ExternalBundle.js` + `.min.js`). A resource that ships in **one**
-  variant — Monaco's `editor.main.js`, a vendored `d3.min.js` — has no other variant to switch to and
-  is copied through under its authored name in *every* configuration, whether the site build reads it
-  from disk or extracts it from a referenced package. Renaming it would break the app: a module loader,
-  a `new Worker(...)` or an import map fetches that file by a path the compiler does not rewrite
-  (`PackageResourceVariantTests`).
+  Two consequences worth knowing. The three variants need distinct names *inside* the DLL and the same
+  name *in the site* (application code fetches the bundle by name), so the module entry travels as
+  `<Assembly>.mjs` and the manifest's `SiteName` renames it to `<Assembly>.js` on the way out. And a
+  library no longer declares its own compiled output in `resources` to force both variants into the
+  package — that was a Bridge-era workaround for a consumer that could not choose, and such a group now
+  contributes only its load flag; `"loadCompiledOutput": false` is the direct way to say "copy my
+  bundle but do not script it" (Curiosity's Admin package, which the app fetches itself).
+
+  Minification is NUglify-based (`JsMinifier`), pinned to `NUglify 1.21.15`; the legacy compiler used
+  1.20.7, but that version mis-parenthesised a `??` operand of `&&`/`||` and emitted invalid JS, fixed
+  in NUglify 1.21.14 — not the newer 1.22.0, which regressed by inserting a stray empty statement when
+  unwrapping a braced if/else body. A package's JavaScript is never re-minified by its consumer: the
+  pre-minified variant it ships is simply extracted (the runtime's `tps.min.js` / `tps.meta.min.js` come
+  from `tps --build-runtime`, a library's from `CollectEmbeddableItems`). A module entry and its chunks
+  are emitted **formatted only** — they carry `import` syntax the minifier does not handle.
+  `OutputBuilder` writes exactly one `index.html`, linking the variant this build produced.
+  **Source maps** for the emitted bundle are still remaining.
+
+  **The `.js` ⇄ `.min.js` switch only applies to a file that exists in both variants.** For a compiled
+  bundle that is now decided by the variant tag; for *authored* JavaScript it is still decided by the
+  name, which is how a library declares a vendored bundle it wants both variants of (Tesserae's
+  `tss-dep.js` + `tss-dep.min.js`, Curiosity's `ExternalBundle` pair) — and the same rule applies
+  whether the site build reads the pair from disk or extracts it from a package, so neither path
+  scripts both halves. A resource that ships in **one** variant — Monaco's `editor.main.js`, a vendored
+  `d3.min.js` — has no other variant to switch to and is copied through under its authored name in
+  *every* configuration. Renaming it would break the app: a module loader, a `new Worker(...)` or an
+  import map fetches that file by a path the compiler does not rewrite (`PackageResourceVariantTests`).
 
   Two NUglify transforms are switched off through `CodeSettings.KillSwitch` because they are unsound
   for the JavaScript we emit, and `JsMinifierTests` guards both. Besides the `??`-under-`&&` collapse
@@ -566,7 +583,7 @@ The short version:
   constructor, which compiles its arguments as source. Module mode only; a single-bundle build is
   byte-identical.
 
-  **`[SkipTypeClustering]` keeps a static facade from fusing the library (prototype).** A chunk is an
+  **`[SkipTypeClustering]` keeps a static facade from fusing the library.** A chunk is an
   SCC, so a facade whose members construct half the library fuses that half into one chunk — the
   facade reaches every component and every component calls back into it. The attribute drops the edges
   *out of* the facade and attributes each member's dependencies to its callers, which is where a
@@ -575,7 +592,33 @@ The short version:
   source, produces the same imports. Measured on Tesserae **master**, facade intact: the largest
   library chunk drops from 193 types / 1,612 KB to 5 types / 67 KB and the eager payload from
   2,304 KB to 1,055 KB raw — better than deleting the facade (1,788 KB), which is the invasive change
-  it makes unnecessary. See `TODO.modules.md` §7e for what is not yet settled.
+  it makes unnecessary. See `TODO.modules.md` §7e.
+
+  Two edges of that move are load-bearing. Both fail at *runtime* (`… lives in module './chunks/…',
+  which has not been loaded`) rather than at build time, which is why each was only found by applying
+  the attribute to another facade and then clicking through the app:
+
+  - **A call to another skipped member** — a sibling on the same facade, or a member of a second
+    facade. Either way the callee's containing type is one whose edges are being dropped, so `A`
+    calling `B` contributed only `B`'s return type, never what `B`'s own body constructs, and nothing
+    imported it. `BuildSkipClusterDeps` therefore takes a **transitive closure over every skipped
+    member** (a worklist fixpoint, because they freely form cycles) before attributing anything to a
+    call site. The sibling half killed `#/home` (a route lambda calling `ShowHomeView`); the
+    cross-facade half killed `App.Sidenav.Initialize` once `App` and `AppSidenav` were both
+    attributed.
+  - **Static state.** A static field/property initializer and a static constructor do not run with the
+    member that happens to be called — but they do not run when the facade's chunk *evaluates* either.
+    The runtime hangs `$staticInit` off the getter of the type's global slot (`Class.js`), so it fires
+    the first time anything **reads** the class, which is a call site like any other. Those
+    dependencies are therefore folded into every member's set. Keeping them on the facade instead is
+    sound and rebuilds the very cycle the attribute exists to break: on the Curiosity front-end the
+    app shell's static tables alone re-fused 170 types into one chunk.
+
+  Measured on the Curiosity front-end, attributing `App`, `AppRouting`, `AppSidebar`, `AppSidenav` and
+  `CommandManager`: the boot closure's single largest contributor drops from **768 of 782 chunks to
+  11**, and the biggest chunk from 3,900 KB to 3,375 KB. What is left is a genuine view↔view cycle
+  the attribute cannot help with — a route table that constructs its views synchronously — not a
+  facade.
 
   **A second pass merges the components into chunks worth fetching.** An SCC is the smallest *sound*
   unit and a far too small *useful* one: Tesserae's gallery emitted 682 chunks with a **2.2 KB
@@ -598,8 +641,29 @@ The short version:
   while the library's 521 → 38 raises it from 1,055 KB to 1,816 KB raw, because a package has no
   entry point and cannot see which of its chunks a consumer needs at start-up. With an oracle for
   that set the same pass gives 53 chunks *and* 1,055 KB raw / 160 KB gz, so the ceiling is the
-  missing information: the fix is to coalesce across assemblies in the site build, where the whole
-  program is visible. See `TODO.modules.md` §7g.
+  missing information. See `TODO.modules.md` §7g.
+
+  **`tps.chunks.json` supplies that missing information by measurement.** The load signature — the
+  set of roots that reach a chunk — is as good as static analysis gets at guessing what is fetched
+  together, and it is still a guess: a screen showing a chart beside a table pulls two subtrees the
+  reference graph has no reason to associate. A run of the real application knows exactly. The file
+  lists one group of emitted type names per captured step (a route, a view, boot), the chunker
+  propagates group membership down the dependency edges and folds it into the load signature as extra
+  bits, and the existing coalescer does the rest — so the addition can only *refine* the partition,
+  which is what keeps the pass's acyclicity argument intact. A group marked `"eager": true` becomes
+  eager roots in a **package** build, which is the one thing a library genuinely cannot work out for
+  itself.
+
+  **Parsing it never fails.** The file is generated from a running application and checked in beside
+  code that keeps moving, so a stale group, a renamed type or a hand-broken comma costs the oracle a
+  hint and never costs anyone a build: a malformed file reads as empty and an unmatched name is
+  skipped. Covered by `ChunkOracleTests`.
+
+  The capture itself needs `--no-chunk-coalescing` (or `TRANSPOSE_NO_CHUNK_COALESCING=1`, which
+  reaches an MSBuild-driven build), which restores one chunk per component — 522 chunks at a 1.0 KB
+  median for Tesserae, against 37 coalesced. That is the wrong thing to *serve* and the only thing
+  worth *measuring*: a coalesced build has already made the grouping decision, so a capture of it can
+  only confirm it. See the **`chunk-oracle`** skill for the whole loop.
 
   **`[ConstructsTypeArguments]` and `[NeverDefer]` cover the edge an activator hides.** The chunker
   records an edge exactly when a reference is *emitted*, so a reflection-driven deserializer defeats

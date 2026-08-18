@@ -153,7 +153,6 @@ public sealed class CssCommentStrippingTests
 
         BuildSite(Config(@"{
             ""fileName"": ""app.js"",
-            ""outputFormatting"": ""Formatted"",
             ""resources"": [
                 { ""name"": ""site.css"", ""files"": [ ""css/one.css"", ""css/two.css"" ] }
             ]
@@ -171,7 +170,6 @@ public sealed class CssCommentStrippingTests
 
         BuildSite(Config(@"{
             ""fileName"": ""app.js"",
-            ""outputFormatting"": ""Formatted"",
             ""resources"": [
                 { ""name"": ""vendor"", ""files"": [ ""vendor/*"" ], ""output"": ""vendor"" }
             ]
@@ -192,7 +190,6 @@ public sealed class CssCommentStrippingTests
 
         var config = Config(@"{
             ""fileName"": ""Lib.js"",
-            ""outputFormatting"": ""Formatted"",
             ""resources"": [
                 { ""name"": ""site.css"", ""files"": [ ""css/site.css"" ] },
                 { ""name"": ""assets"",   ""files"": [ ""css/extra.css"" ], ""output"": ""assets"" }
@@ -222,7 +219,7 @@ public sealed class CssCommentStrippingTests
             new("nested.css", utf8.GetBytes("/* also */\n.nested { }\n"), "assets"),
         });
 
-        var html = BuildSite(Config(@"{ ""fileName"": ""app.js"", ""outputFormatting"": ""Formatted"" }"), Project(dll));
+        var html = BuildSite(Config(@"{ ""fileName"": ""app.js"" }"), Project(dll));
 
         Assert.AreEqual(".legacy { color: red }\n", OutputText("legacy.css"));
         Assert.AreEqual(".nested { }\n", OutputText("assets/nested.css"));

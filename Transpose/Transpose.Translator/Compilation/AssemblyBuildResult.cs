@@ -33,11 +33,18 @@ public sealed class AssemblyBuildResult
     public IReadOnlyDictionary<string, string>? DeclarationHashes { get; init; }
 
     /// <summary>
-    /// The ES-module form of the same output, when the build asked for it (<c>outputBy: Module</c>).
-    /// <see cref="Javascript"/> then holds the entry module rather than a single bundle, and this
-    /// carries the chunk files alongside it. Null for an ordinary single-bundle build.
+    /// The ES-module form of the same output, when the build asked for it (<c>outputBy: Module</c>):
+    /// the entry module and the chunk files. Null for an ordinary single-bundle build.
     /// </summary>
     public Emitter.ModuleOutput? Modules { get; init; }
+
+    /// <summary>
+    /// Whether <see cref="Javascript"/> is a classic single bundle (with <see cref="MetadataJavascript"/>
+    /// beside it) rather than <see cref="Modules"/>' entry module. A package emits both — it cannot know
+    /// which one its consumers will want — so the two are not mutually exclusive; false means this build
+    /// produced <em>only</em> modules, and <see cref="Javascript"/> is then the entry module itself.
+    /// </summary>
+    public bool HasBundle { get; init; } = true;
 
     public IEnumerable<Diagnostic> Errors => Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error);
     public bool Success => Javascript is not null && !Errors.Any();

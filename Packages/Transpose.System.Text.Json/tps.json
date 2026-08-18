@@ -1,7 +1,6 @@
 {
   "output": "Resources/.generated",
   "cleanOutputFolderBeforeBuild": true,
-  "outputFormatting": "Formatted",
   "outputBy": "ClassPath",
   "generateDocumentation": "None",
   "logging": {

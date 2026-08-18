@@ -91,7 +91,9 @@ public sealed class RoslynTranslator
         bool packageModules = false,
         IReadOnlyDictionary<string, List<string>>? externalSkipClusterDeps = null,
         int minChunkBytes = Emitter.DefaultMinChunkBytes,
-        int maxChunkBytes = Emitter.DefaultMaxChunkBytes)
+        int maxChunkBytes = Emitter.DefaultMaxChunkBytes,
+        bool alsoEmitBundle = false,
+        ChunkOracle? chunkOracle = null)
     {
         CompileProgress.Report("parsing sources + resolving references");
         var compilation = PhaseTimings.Measure("build compilation (parse + references)", () =>
@@ -216,12 +218,13 @@ public sealed class RoslynTranslator
         TranslationException? emitterFailure = null;
         try
         {
-            var emitter = new Emitter(compilation, assemblyName, models, incremental)
+            Emitter NewEmitter() => new Emitter(compilation, assemblyName, models, incremental)
             {
                 ReflectionEnabled = reflectionEnabled,
                 MetadataTarget = metadataTarget,
                 AssemblyVersion = string.IsNullOrWhiteSpace(assemblyVersion) ? "1.0.0.0" : assemblyVersion!,
             };
+            var emitter = NewEmitter();
             if (emitModules)
             {
                 // Module mode carries its reflection metadata inside the entry module (it has to be
@@ -230,14 +233,22 @@ public sealed class RoslynTranslator
                 CompileProgress.Report("emitting JavaScript modules");
                 moduleOutput = PhaseTimings.Measure("emit JavaScript (modules)",
                     () => emitter.EmitModules(chunkDirectory, externalChunks, packageModules, externalSkipClusterDeps,
-                                              minChunkBytes, maxChunkBytes));
+                                              minChunkBytes, maxChunkBytes, chunkOracle));
                 js = moduleOutput.EntryJs;
             }
-            else
+
+            // A package ships every variant a consumer might ask for, so it emits the single bundle
+            // ALONGSIDE the chunks: whoever references it decides, at their own build time, whether
+            // they want one readable file or on-demand modules, and neither answer should require
+            // rebuilding the library. The second pass is a second walk of an already-bound
+            // compilation — the expensive half (parse, references, Roslyn's own emit) is shared — and
+            // it runs on its own Emitter because EmitModules leaves per-run state behind.
+            if (!emitModules || alsoEmitBundle)
             {
                 CompileProgress.Report("emitting JavaScript");
-                js = PhaseTimings.Measure("emit JavaScript", () => emitter.Emit());
-                metadataJs = emitter.MetadataScript;
+                var bundleEmitter = emitModules ? NewEmitter() : emitter;
+                js = PhaseTimings.Measure("emit JavaScript", () => bundleEmitter.Emit());
+                metadataJs = bundleEmitter.MetadataScript;
             }
         }
         catch (TranslationException ex)
@@ -286,6 +297,7 @@ public sealed class RoslynTranslator
         {
             DeclarationHashes = declarationHashes,
             Modules = moduleOutput,
+            HasBundle = !emitModules || alsoEmitBundle,
         };
     }
 

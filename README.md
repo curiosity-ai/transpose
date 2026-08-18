@@ -76,7 +76,10 @@ dotnet new transpose
 resolves `PackageReference`s from the NuGet cache, transpiles, and writes either
 a runnable site or — for a library — a .NET DLL with the compiled JS embedded.
 Behavior is configured per project by a **`tps.json`** file (output path,
-`fileName`, `html`, `reflection`, `resources`, `outputFormatting`).
+`fileName`, `html`, `reflection`, `resources`). Whether the emitted JavaScript is
+formatted, minified or split into on-demand modules is *not* configured there: it
+follows from the build — formatted in Debug, minified (or chunked) in Release, and
+all three variants in a library package, so each consumer picks its own.
 
 When a project references another project, the site build consumes the
 referenced project's already-built package DLL (extracting its compiled JS)

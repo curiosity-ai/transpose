@@ -9,13 +9,11 @@ namespace Transpose.Compiler;
 /// assembly's <c>Transpose.Resources.json</c>), copies the tps.json resource files (CSS/images), and
 /// generates index.html — mirroring what the existing tps compiler produces.
 ///
-/// When <c>outputFormatting</c> is <c>Minified</c> or <c>Both</c>, the JS this compilation itself
-/// produces — the compiled bundle, its reflection metadata and the TransposeR shim — is minified with
-/// NUglify into a <c>.min.js</c> sibling. A referenced package's JS is never minified here: the
-/// package already ships a pre-minified variant of its own compiled code, and that pair is simply
-/// reused. The generated HTML then follows the legacy compiler's rule: index.html links the formatted
-/// variants, index.min.html links the minified variants, and the active build configuration collapses
-/// the pair to a single index.html (Release keeps the minified one, Debug the formatted one).
+/// Which variants are produced is decided by <see cref="JsOutputProfile"/> — the build, not the
+/// tps.json: a Debug site is one formatted bundle, a Release site is one minified bundle or (when the
+/// project asked for <c>outputBy: Module</c>) the chunked module output. A referenced package's JS is
+/// never minified here: a package ships every variant, and this build extracts the one matching its
+/// own profile. Exactly one <c>index.html</c> is generated, linking that variant.
 ///
 /// tps.json resource files are taken as authored — never minified, and never renamed — whether this
 /// build reads them from disk or extracts them from a referenced package: a project ships both a
@@ -89,10 +87,15 @@ internal static class OutputBuilder
     {
         Directory.CreateDirectory(outputDir);
 
-        var fmt = config.OutputFormatting;
-        var wantFormatted = fmt != JsOutputFormatting.Minified;   // Formatted or Both
-        var wantMinified  = fmt != JsOutputFormatting.Formatted;  // Minified or Both
+        // A site build is Debug or Release; a package never reaches here (it goes through
+        // CollectEmbeddableItems instead), so exactly one of the two flags below is set.
+        var profile       = JsOutputProfiles.For(emitPackage: false, configuration);
+        var wantFormatted = profile.WantsFormatted();
+        var wantMinified  = profile.WantsMinified();
         var minifyLocals  = project.MinifyLocalVariables;
+        // Whether this site is itself chunked. A package's module entry + chunks are only worth
+        // extracting when they are — otherwise its classic bundle is the right payload.
+        var siteIsChunked = modules is not null;
 
         var jsOuts = new List<JsOut>();    // JS in load order (runtime → libs → resources → app)
         var cssLinks = new List<string>();
@@ -132,12 +135,50 @@ internal static class OutputBuilder
             jsOuts.Add(o);
         }
 
+        // The variant-tagged form of the routing below: a package ships the formatted bundle, the
+        // minified bundle and (when it was built as modules) the entry plus its chunks, and this build
+        // keeps exactly one of those sets — the one its own profile calls for. A package that offers
+        // no module variant falls back to its minified/formatted bundle even in a chunked site, which
+        // is how a plain library (Transpose.Newtonsoft.Json, a vendored binding) keeps working.
+        void RouteTaggedPackageJs(IReadOnlyList<EmbeddedJs> jsFiles)
+        {
+            var takeModules = siteIsChunked && jsFiles.Any(f => f.Variant == JsVariant.ModuleEntry);
+
+            foreach (var f in jsFiles)
+            {
+                switch (f.Variant)
+                {
+                    case JsVariant.ModuleEntry or JsVariant.ModuleChunk:
+                        if (!takeModules) continue;
+                        break;
+                    case JsVariant.Formatted:
+                        if (takeModules || !wantFormatted) continue;
+                        break;
+                    case JsVariant.Minified:
+                        if (takeModules || !wantMinified) continue;
+                        break;
+                }
+
+                WriteText(f.Rel, f.Text);
+                if (!f.Load) continue;
+                jsOuts.Add(new JsOut
+                {
+                    Path = f.Rel,
+                    IsModule = f.Module,
+                    // A minified bundle belongs in the minified HTML only; everything else this build
+                    // kept is what the formatted HTML wants, and WriteHtml then emits whichever list
+                    // matches the configuration.
+                    IsMinified = f.Variant == JsVariant.Minified,
+                });
+            }
+        }
+
         // Routes a package's embedded JS into the output — the runtime bundles and compiled library
         // code, and the authored JavaScript the library shipped through its own tps.json `resources`.
         //
         // Only a file that ships in BOTH variants — `x.js` next to `x.min.js` — takes part in the
         // formatted/minified switch: the formatted one is written and linked from index.html, the
-        // pre-minified one from index.min.html, and neither is re-minified here. That pair is exactly
+        // pre-minified one in a Release build, and neither is re-minified here. That pair is exactly
         // what a Transpose-compiled bundle looks like (CollectEmbeddableItems embeds both), and it is
         // also how a library declares an authored bundle it wants both variants of.
         //
@@ -150,6 +191,19 @@ internal static class OutputBuilder
         // does when it is built from disk rather than extracted from a package (ProcessResourceGroup).
         void RoutePackageJs(IReadOnlyList<EmbeddedJs> jsFiles)
         {
+            // A package says which of ITS OWN compiled files are interchangeable and what each one is
+            // for, so those are chosen by a filter rather than a guess. Its authored resources carry no
+            // such tag — nor does any file of a package published before variants existed — and go on
+            // being paired by file name below. Tagged first, which is the order they are embedded in
+            // (the compiled bundle leads the manifest), so the load order in index.html is unchanged.
+            var tagged = jsFiles.Where(f => f.Variant is not null).ToList();
+            if (tagged.Count > 0)
+            {
+                RouteTaggedPackageJs(tagged);
+                jsFiles = jsFiles.Where(f => f.Variant is null).ToList();
+                if (jsFiles.Count == 0) return;
+            }
+
             var present = jsFiles.Select(f => f.FileName).ToHashSet(StringComparer.OrdinalIgnoreCase);
             // Tolerate a duplicate file name in an older/hand-authored manifest (last wins) instead of
             // throwing — the embed side dedupes, but a package built before that fix could still carry one.
@@ -158,7 +212,10 @@ internal static class OutputBuilder
 
             foreach (var f in jsFiles)
             {
-                if (!present.Contains(CounterpartName(f.FileName)))
+                var counterpart = CounterpartName(f.FileName);
+                // No distinct counterpart to switch to — an .mjs chunk, or a name the pairing rule
+                // does not recognise — is an authored resource, same as one whose sibling is absent.
+                if (counterpart == f.FileName || !present.Contains(counterpart))
                 {
                     // An authored resource: one variant, copied through under its own name, always.
                     WriteText(f.Rel, f.Text);
@@ -176,7 +233,7 @@ internal static class OutputBuilder
                 if (wantFormatted) WriteText(f.Rel, f.Text); else o.IsEmpty = true;
                 if (wantMinified)
                 {
-                    var pre = byName[CounterpartName(f.FileName)];   // pre-built .min.js from the package
+                    var pre = byName[counterpart];   // pre-built .min.js from the package
                     WriteText(pre.Rel, pre.Text);
                     o.MinifiedPath = pre.Rel;
                 }
@@ -208,14 +265,18 @@ internal static class OutputBuilder
         //    first (a library's JS deps load before the app that uses them). A resource group
         //    whose name is a .js/.css file concatenates its files into that one bundle; other
         //    groups (globbed images, etc.) copy each file through. Resource JS is taken as authored:
-        //    a .js group routes to index.html, a .min.js group to index.min.html. Resource CSS is
+        //    a .js group is scripted in a Debug build, a .min.js group in a Release one. Resource CSS is
         //    taken as authored too, minus its comments (CssProcessor).
         foreach (var projectDir in Enumerable.Reverse(project.ProjectDirs))
         {
             var cfg = projectDir == project.ProjectDir ? config : TransposeJson.TryLoad(projectDir, configuration);
             if (cfg is null) continue;
+            // Which bundle names this project declares, so a group that has a declared counterpart
+            // (an authored `x.js` next to an authored `x.min.js`) takes part in the variant switch
+            // instead of both halves being written and both being scripted.
+            var declared = cfg.Resources.Select(g => ResolveResource(g).fileName).ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (var group in cfg.Resources)
-                ProcessResourceGroup(projectDir, outputDir, group, jsOuts, cssLinks, written);
+                ProcessResourceGroup(projectDir, outputDir, group, jsOuts, cssLinks, written, declared, wantFormatted, wantMinified);
         }
 
         // 3. The compiled bundle — loads last, after runtime + library deps are in place.
@@ -246,7 +307,7 @@ internal static class OutputBuilder
             EmitCompilerJs(metaName, metadataJavascript);
         }
 
-        // 4. index.html (and index.min.html when both variants exist).
+        // 4. index.html — one per build, linking the variant this configuration produced.
         if (!config.HtmlDisabled)
             WriteHtml(project, config, outputDir, jsOuts, cssLinks, configuration, utf8, written, liveReloadScript);
 
@@ -266,10 +327,16 @@ internal static class OutputBuilder
 
     /// <summary>
     /// The resources a library assembly embeds so a referencing project can extract them: the
-    /// compiled JS (and its .meta.js) plus every tps.json resource group (bundled or copied),
-    /// each tagged with its output subdirectory. The compiled JS is embedded in both a formatted
-    /// and a pre-minified (<c>.min.js</c>) variant, so a referencing build never has to minify
-    /// library code itself — it just extracts the variant the build configuration calls for.
+    /// compiled JS (and its .meta.js) plus every tps.json resource group (bundled or copied), each
+    /// tagged with its output subdirectory.
+    ///
+    /// A package cannot know how it will be consumed, so it ships <b>every</b> variant of its own
+    /// compiled code and lets the consumer choose: the formatted bundle, the pre-minified bundle, and
+    /// — when its tps.json asked for <c>outputBy: Module</c> — the module entry plus its chunk files.
+    /// Each is tagged with a <see cref="JsVariant"/> in the manifest, so a referencing site build
+    /// keeps exactly the set its own <see cref="JsOutputProfile"/> calls for and never minifies
+    /// library code itself. This is what lets one published package be debugged as a single readable
+    /// bundle by one application and shipped as on-demand chunks by another.
     /// </summary>
     public static List<EmbeddedItem> CollectEmbeddableItems(
         string projectDir, TransposeJson config, string mainJsName, string javascript, string? metadataJavascript,
@@ -293,35 +360,40 @@ internal static class OutputBuilder
                     Name: rel.Substring(slash + 1),
                     Content: utf8.GetBytes(chunkJs),
                     Output: slash < 0 ? null : rel.Substring(0, slash),
-                    Load: false));
+                    Load: false,
+                    Variant: JsVariant.ModuleChunk));
             }
         }
         var metaName = metadataJavascript is not null
             ? Path.GetFileNameWithoutExtension(mainJsName) + ".meta.js"
             : null;
+        // The module entry needs a name of its own inside the DLL — `<Assembly>.js` is already taken
+        // by the formatted bundle — but has to land in the site under the name a consumer's own code
+        // fetches, which is the bundle's. That is what the manifest's SiteName carries.
+        var moduleEntryName = Path.GetFileNameWithoutExtension(mainJsName) + ".mjs";
 
-        // A tps.json `resources` group may re-declare the project's OWN compiled output — e.g.
+        // Whether index.html should reference the compiled output at all. `loadCompiledOutput: false`
+        // says it should not — the application fetches its own bundle (Curiosity's Admin package is
+        // loaded on demand, long after the page is up).
+        //
+        // A tps.json `resources` group may also re-declare the project's OWN compiled output — e.g.
         //   { "name": "<Assembly>.js.dontload", "files": [ "$(OutDir)tps/<Assembly>.js" ] } —
-        // which isn't on disk during compilation. Such a self-reference maps to the in-memory bundle
-        // (or its .meta.js), and its parsed name/load flag win: the `.dontload` variant is embedded so
-        // consumers copy it but don't auto-load it (the module is lazy-loaded at runtime). When the
-        // resources section re-declares a bundle this way, the default auto-embed of that same bundle
-        // is suppressed — matching the legacy compiler, where a `resources` section opts out of the
-        // default embed and must re-list exactly what it wants (min and/or formatted).
-        bool mainDeclared = false, metaDeclared = false;
+        // which is the older spelling of exactly that, and is still honoured: such a group contributes
+        // nothing but its load flag. It no longer suppresses the default embed the way the legacy
+        // compiler's did, because a package now always ships every variant: re-listing them by hand
+        // was only ever a workaround for a consumer that could not pick, and picking is now the
+        // consumer's job.
+        bool mainLoad = config.LoadCompiledOutput, metaLoad = config.LoadCompiledOutput;
 
-        // Maps a self-referenced compiled-output leaf name to its in-memory text, or null if the leaf
-        // isn't one of this project's own outputs. Also records which bundle was referenced.
-        string? SelfText(string leaf)
+        // Whether a leaf name is one of this project's own compiled outputs, in any variant. Such a
+        // file is not on disk during compilation, and it is embedded by the defaults below regardless.
+        bool IsSelf(string leaf, out bool isMeta)
         {
-            if (SameFile(leaf, mainJsName)) { mainDeclared = true; return javascript; }
-            if (SameFile(leaf, ToMinName(mainJsName))) { mainDeclared = true; return JsMinifier.Minify(javascript, mainJsName, minifyLocalVariables); }
-            if (metaName is not null)
-            {
-                if (SameFile(leaf, metaName)) { metaDeclared = true; return metadataJavascript!; }
-                if (SameFile(leaf, ToMinName(metaName))) { metaDeclared = true; return JsMinifier.Minify(metadataJavascript!, metaName, minifyLocalVariables); }
-            }
-            return null;
+            isMeta = false;
+            if (SameFile(leaf, mainJsName) || SameFile(leaf, ToMinName(mainJsName)) || SameFile(leaf, moduleEntryName)) return true;
+            if (metaName is null) return false;
+            isMeta = SameFile(leaf, metaName) || SameFile(leaf, ToMinName(metaName));
+            return isMeta;
         }
 
         foreach (var group in config.Resources)
@@ -342,15 +414,23 @@ internal static class OutputBuilder
 
             if (isBundle)
             {
-                // Resolve each declared file to text, mapping a self-reference to the in-memory bundle.
+                // Resolve each declared file to text. A file that IS one of this project's own compiled
+                // outputs contributes only its load flag: the defaults below embed every variant of it,
+                // so re-listing one here would duplicate it — untagged, which is worse, because the
+                // consumer would no longer know which variant it is looking at.
                 var texts = new List<string>();
+                var selfOnly = group.Files.Count > 0;
                 foreach (var raw in group.Files)
                 {
-                    var self = SelfText(Path.GetFileName(raw.Replace('\\', '/')));
-                    if (self is not null) texts.Add(self);
-                    else texts.AddRange(ExpandGlob(projectDir, raw).Select(m => ReadResourceText(m.FullPath, css)));
+                    if (IsSelf(Path.GetFileName(raw.Replace('\\', '/')), out var isMeta))
+                    {
+                        if (isMeta) metaLoad = load; else mainLoad = load;
+                        continue;
+                    }
+                    selfOnly = false;
+                    texts.AddRange(ExpandGlob(projectDir, raw).Select(m => ReadResourceText(m.FullPath, css)));
                 }
-                if (texts.Count == 0) continue;
+                if (selfOnly || texts.Count == 0) continue;
                 items.Add(new EmbeddedItem(name, utf8.GetBytes(string.Join("\n", texts)), destSub, load));
             }
             else
@@ -373,24 +453,32 @@ internal static class OutputBuilder
             }
         }
 
-        // Default embed of the compiled bundle + reflection metadata (each in a formatted and a
-        // pre-minified variant), prepended so the main bundle stays first — UNLESS the resources
-        // section already re-declared it above. Shipping the .min.js is deliberate: minifying library
-        // code is work the consumer would otherwise repeat on every build.
+        // Every variant of the compiled output, prepended so the main bundle stays first. Shipping the
+        // .min.js is deliberate: minifying library code is work the consumer would otherwise repeat on
+        // every build. Shipping the formatted one alongside it is what lets a Debug application step
+        // through this library; shipping the module entry and its chunks is what lets a Release one
+        // fetch it in pieces. None of the three is conditional — the choice belongs to the consumer.
         var defaults = new List<EmbeddedItem>();
-        if (!mainDeclared)
+
+        // The module entry is emitted formatted only: it carries `import` syntax the minifier is not
+        // set up for, so there is no minified sibling of it to choose between.
+        if (modules is not null)
+            defaults.Add(new EmbeddedItem(moduleEntryName, utf8.GetBytes(modules.EntryJs), null,
+                Load: mainLoad, Module: true, Variant: JsVariant.ModuleEntry, SiteName: mainJsName));
+
+        defaults.Add(new EmbeddedItem(mainJsName, utf8.GetBytes(javascript), null,
+            Load: mainLoad, Variant: JsVariant.Formatted));
+        defaults.Add(new EmbeddedItem(ToMinName(mainJsName),
+            utf8.GetBytes(JsMinifier.Minify(javascript, mainJsName, minifyLocalVariables)), null,
+            Load: mainLoad, Variant: JsVariant.Minified));
+
+        if (metaName is not null)
         {
-            defaults.Add(new EmbeddedItem(mainJsName, utf8.GetBytes(javascript), null, Module: modules is not null));
-            // No minified sibling for a module entry: it carries `import` syntax the minifier is not
-            // set up for, and with only one variant the consumer copies it through in both configs.
-            if (config.OutputFormatting != JsOutputFormatting.Formatted && modules is null)
-                defaults.Add(new EmbeddedItem(ToMinName(mainJsName), utf8.GetBytes(JsMinifier.Minify(javascript, mainJsName, minifyLocalVariables)), null));
-        }
-        if (metaName is not null && !metaDeclared)
-        {
-            defaults.Add(new EmbeddedItem(metaName, utf8.GetBytes(metadataJavascript!), null));
-            if (config.OutputFormatting != JsOutputFormatting.Formatted)
-                defaults.Add(new EmbeddedItem(ToMinName(metaName), utf8.GetBytes(JsMinifier.Minify(metadataJavascript!, metaName, minifyLocalVariables)), null));
+            defaults.Add(new EmbeddedItem(metaName, utf8.GetBytes(metadataJavascript!), null,
+                Load: metaLoad, Variant: JsVariant.Formatted));
+            defaults.Add(new EmbeddedItem(ToMinName(metaName),
+                utf8.GetBytes(JsMinifier.Minify(metadataJavascript!, metaName, minifyLocalVariables)), null,
+                Load: metaLoad, Variant: JsVariant.Minified));
         }
 
         defaults.AddRange(items);
@@ -412,8 +500,10 @@ internal static class OutputBuilder
 
     /// <summary>A JavaScript resource loaded from a package (a runtime bundle or embedded library
     /// code), with its file name (for pairing a formatted variant with its <c>.min.js</c>), the
-    /// output-relative path it extracts to, and its text.</summary>
-    private readonly record struct EmbeddedJs(string FileName, string Rel, string Text, bool Load = true, bool Module = false);
+    /// output-relative path it extracts to, and its text. <see cref="Variant"/> is what the package
+    /// declared this file to be (null for an authored resource, and for every file of a package built
+    /// before variants were recorded).</summary>
+    private readonly record struct EmbeddedJs(string FileName, string Rel, string Text, bool Load = true, bool Module = false, JsVariant? Variant = null);
 
     /// <summary>
     /// Read-only access to one assembly's embedded resources, opened and closed around the extraction —
@@ -480,20 +570,12 @@ internal static class OutputBuilder
         var manifestName = names.FirstOrDefault(n => n.EndsWith("Transpose.Resources.json", StringComparison.OrdinalIgnoreCase));
         if (manifestName is null) return jsFiles;
 
-        List<(string fileName, string? path, bool load, bool module)> entries;
+        List<ManifestEntry> entries;
         using (var ms = asm.Open(manifestName))
         using (var sr = new StreamReader(ms))
         using (var doc = JsonDocument.Parse(sr.ReadToEnd(), new JsonDocumentOptions { AllowTrailingCommas = true }))
         {
-            entries = doc.RootElement.EnumerateArray()
-                .Select(e => (
-                    fileName: e.TryGetProperty("FileName", out var f) ? f.GetString() : null,
-                    path: e.TryGetProperty("Path", out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() : null,
-                    load: !e.TryGetProperty("Load", out var l) || l.ValueKind != JsonValueKind.False,   // absent → true
-                    module: e.TryGetProperty("Module", out var mo) && mo.ValueKind == JsonValueKind.True))
-                .Where(x => !string.IsNullOrEmpty(x.fileName))
-                .Select(x => (x.fileName!, x.path, x.load, x.module))
-                .ToList();
+            entries = ReadManifestEntries(doc.RootElement);
         }
 
         // The entry's Path already carries the sub-directory a recursive glob matched under, so the
@@ -502,25 +584,29 @@ internal static class OutputBuilder
         string Rel(string fileName, string? path)
             => string.IsNullOrEmpty(path) ? Path.GetFileName(fileName) : path!.Replace('\\', '/').TrimEnd('/') + "/" + Path.GetFileName(fileName);
 
-        foreach (var (fileName, path, load, module) in entries)
+        foreach (var entry in entries)
         {
-            var resName = names.FirstOrDefault(n => n.Equals(fileName, StringComparison.OrdinalIgnoreCase))
-                          ?? names.FirstOrDefault(n => n.EndsWith(fileName, StringComparison.OrdinalIgnoreCase));
+            var resName = names.FirstOrDefault(n => n.Equals(entry.FileName, StringComparison.OrdinalIgnoreCase))
+                          ?? names.FirstOrDefault(n => n.EndsWith(entry.FileName, StringComparison.OrdinalIgnoreCase));
             if (resName is null) continue;
 
-            var rel = Rel(fileName, path);
+            // SiteName renames a resource on the way out: the three interchangeable bundles need
+            // distinct names inside the DLL and the same name in the site, so the module entry travels
+            // as <Assembly>.mjs and lands as <Assembly>.js — the name a consumer's own code fetches.
+            var rel = Rel(entry.SiteName ?? entry.FileName, entry.Path);
 
-            if (rel.EndsWith(".js", StringComparison.OrdinalIgnoreCase))
+            if (IsJavaScript(rel))
             {
                 using var s = asm.Open(resName);
                 using var reader = new StreamReader(s);
-                jsFiles.Add(new EmbeddedJs(Path.GetFileName(fileName), rel, reader.ReadToEnd(), load, module));
+                jsFiles.Add(new EmbeddedJs(Path.GetFileName(entry.SiteName ?? entry.FileName), rel,
+                                           reader.ReadToEnd(), entry.Load, entry.Module, entry.Variant));
             }
             else
             {
                 // CSS and copy-through resources (images, fonts): write to disk now.
                 ExtractResourceFile(asm, resName, outputDir, rel, written);
-                if (load && IsCss(rel)) cssLinks.Add(rel);
+                if (entry.Load && IsCss(rel)) cssLinks.Add(rel);
             }
         }
         return jsFiles;
@@ -603,6 +689,47 @@ internal static class OutputBuilder
         return (name, load);
     }
 
+    /// <summary>One row of a package's <c>Transpose.Resources.json</c>, as a site build reads it:
+    /// the embedded resource's key (<see cref="FileName"/>), the output sub-directory it extracts to,
+    /// the name to write it under when that differs, whether index.html references it, whether it is
+    /// scripted as an ES module, and which interchangeable variant it is (null for an authored
+    /// resource — and for every row of a package built before variants were recorded, which is what
+    /// keeps such a package routing by the older file-name pairing).</summary>
+    private readonly record struct ManifestEntry(
+        string FileName, string? Path, string? SiteName, bool Load, bool Module, JsVariant? Variant);
+
+    private static List<ManifestEntry> ReadManifestEntries(JsonElement root)
+    {
+        var entries = new List<ManifestEntry>();
+        if (root.ValueKind != JsonValueKind.Array) return entries;
+
+        static string? Str(JsonElement e, string name)
+            => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+
+        foreach (var e in root.EnumerateArray())
+        {
+            if (e.ValueKind != JsonValueKind.Object) continue;
+            var fileName = Str(e, "FileName");
+            if (string.IsNullOrEmpty(fileName)) continue;
+            entries.Add(new ManifestEntry(
+                FileName: fileName!,
+                Path: Str(e, "Path"),
+                SiteName: Str(e, "SiteName"),
+                Load: !e.TryGetProperty("Load", out var l) || l.ValueKind != JsonValueKind.False,   // absent → true
+                Module: e.TryGetProperty("Module", out var mo) && mo.ValueKind == JsonValueKind.True,
+                Variant: JsVariants.Parse(Str(e, "Variant"))));
+        }
+        return entries;
+    }
+
+    /// <summary>Whether a file name is JavaScript the site build routes rather than copies blind —
+    /// a classic bundle (<c>.js</c>) or an ES module (<c>.mjs</c>, i.e. a chunk or a module entry).
+    /// Both have to go through the variant filter, or a Debug site would carry the chunk files of
+    /// every module-mode package it references and never load one of them.</summary>
+    private static bool IsJavaScript(string name)
+        => name.EndsWith(".js", StringComparison.OrdinalIgnoreCase)
+           || name.EndsWith(".mjs", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>A file name for a minified bundle (ends in <c>.min.js</c>/<c>.min.css</c>).</summary>
     private static bool IsMinifiedName(string name)
         => name.EndsWith(".min.js", StringComparison.OrdinalIgnoreCase)
@@ -640,13 +767,25 @@ internal static class OutputBuilder
 
     private static void ProcessResourceGroup(
         string projectDir, string outputDir, TransposeJson.ResourceGroup group,
-        List<JsOut> jsOuts, List<string> cssLinks, HashSet<string> written)
+        List<JsOut> jsOuts, List<string> cssLinks, HashSet<string> written,
+        IReadOnlySet<string> declaredNames, bool wantFormatted, bool wantMinified)
     {
         // The output name (the group name minus its "module#" grouping prefix and ".dontload" suffix)
         // plus the effective load flag: a non-loaded resource is written to the output but never
         // referenced from index.html — neither as a <script> nor as a stylesheet <link>.
         var (name, load) = ResolveResource(group);
         var isBundle = IsBundleName(name);
+
+        // A JavaScript bundle the project declares in BOTH variants is one resource with two spellings
+        // — Tesserae's `tss-dep.js` / `tss-dep.min.js`, Curiosity's `ExternalBundle` pair — so only the
+        // one this build wants is produced. (Writing both put 700 KB on disk twice and, once a build
+        // generates a single index.html, scripted the same library twice.) A group with no declared
+        // counterpart is an authored resource in the only variant that exists, and is written always.
+        if (name.EndsWith(".js", StringComparison.OrdinalIgnoreCase) && declaredNames.Contains(CounterpartName(name)))
+        {
+            var wanted = IsMinifiedName(name) ? wantMinified : wantFormatted;
+            if (!wanted) return;
+        }
 
         foreach (var (rel, sources) in ResourceGroupOutputs(projectDir, group))
         {
@@ -655,7 +794,7 @@ internal static class OutputBuilder
 
             if (IsCss(rel)) cssLinks.Add(rel);
             // Resource JS is taken as authored (never re-minified): a .min.js links only from
-            // index.min.html; a plain .js links only from index.html — matching the legacy compiler.
+            // a Release build; a plain .js is scripted in both — matching the legacy compiler.
             else if (rel.EndsWith(".js", StringComparison.OrdinalIgnoreCase))
                 jsOuts.Add(new JsOut { Path = rel, IsMinified = IsMinifiedName(rel) });
         }
@@ -870,55 +1009,47 @@ internal static class OutputBuilder
         // (Path — null/empty means the site root), and whether it is injected into index.html (Load).
         // A package without a manifest (the base runtime) surfaces only its .js/.css resources at the
         // site root — other resource types can't be identified, nor their output path recovered, without it.
-        List<(string fileName, string? path, bool load, bool module)> entries;
+        List<ManifestEntry> entries;
         if (manifest is not null)
         {
             using var ms = asm.Open(manifest);
             using var sr = new StreamReader(ms);
             using var doc = JsonDocument.Parse(sr.ReadToEnd(), new JsonDocumentOptions { AllowTrailingCommas = true });
-            entries = doc.RootElement.EnumerateArray()
-                .Select(e => (
-                    fileName: e.TryGetProperty("FileName", out var f) ? f.GetString() : null,
-                    path: e.TryGetProperty("Path", out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() : null,
-                    load: !e.TryGetProperty("Load", out var l) || l.ValueKind != JsonValueKind.False,   // absent → true
-                    module: e.TryGetProperty("Module", out var mo) && mo.ValueKind == JsonValueKind.True))
-                .Where(x => !string.IsNullOrEmpty(x.fileName))
-                .Select(x => (x.fileName!, x.path, x.load, x.module))
-                .ToList();
+            entries = ReadManifestEntries(doc.RootElement);
         }
         else
         {
             entries = resourceNames
-                .Where(n => n.EndsWith(".js", StringComparison.OrdinalIgnoreCase)
-                            || n.EndsWith(".css", StringComparison.OrdinalIgnoreCase))
-                .Select(n => (n, (string?)null, true, false))
+                .Where(n => IsJavaScript(n) || n.EndsWith(".css", StringComparison.OrdinalIgnoreCase))
+                .Select(n => new ManifestEntry(n, null, null, true, false, null))
                 .ToList();
         }
 
-        foreach (var (fileName, path, load, module) in entries)
+        foreach (var entry in entries)
         {
-            var resName = resourceNames.FirstOrDefault(n => n.Equals(fileName, StringComparison.OrdinalIgnoreCase))
-                          ?? resourceNames.FirstOrDefault(n => n.EndsWith(fileName, StringComparison.OrdinalIgnoreCase));
+            var resName = resourceNames.FirstOrDefault(n => n.Equals(entry.FileName, StringComparison.OrdinalIgnoreCase))
+                          ?? resourceNames.FirstOrDefault(n => n.EndsWith(entry.FileName, StringComparison.OrdinalIgnoreCase));
             if (resName is null) continue;
 
             // Place the resource under its declared output subdirectory (Path). The manifest FileName
             // may carry an assembly-qualified prefix, so use just its leaf; an empty Path (runtime
             // bundles, or a resource group without an `output`) leaves the resource at the site root.
-            var leaf = Path.GetFileName(fileName);
-            var rel = string.IsNullOrEmpty(path) ? leaf : path!.Replace('\\', '/').TrimEnd('/') + "/" + leaf;
+            // SiteName, when present, is the name to write it under instead (see the project-DLL path).
+            var leaf = Path.GetFileName(entry.SiteName ?? entry.FileName);
+            var rel = string.IsNullOrEmpty(entry.Path) ? leaf : entry.Path!.Replace('\\', '/').TrimEnd('/') + "/" + leaf;
 
-            if (rel.EndsWith(".js", StringComparison.OrdinalIgnoreCase))
+            if (IsJavaScript(rel))
             {
                 using var s = asm.Open(resName);
                 using var reader = new StreamReader(s);
-                jsFiles.Add(new EmbeddedJs(leaf, rel, reader.ReadToEnd(), load, module));   // JS: placed/minified by RoutePackageJs
+                jsFiles.Add(new EmbeddedJs(leaf, rel, reader.ReadToEnd(), entry.Load, entry.Module, entry.Variant));   // placed by RoutePackageJs
             }
             else
             {
                 // CSS and copy-through resources (fonts, images): copy the raw bytes to disk so binary
                 // assets stay intact, and link stylesheets. These must never reach the JS minifier.
                 ExtractResourceFile(asm, resName, outputDir, rel, written);
-                if (load && IsCss(rel)) cssLinks.Add(rel);
+                if (entry.Load && IsCss(rel)) cssLinks.Add(rel);
             }
         }
         return jsFiles;
@@ -1005,10 +1136,10 @@ internal static class OutputBuilder
         => relativeDir.Length == 0 ? fileName : relativeDir + "/" + fileName;
 
     /// <summary>
-    /// Writes index.html (formatted scripts) and/or index.min.html (minified scripts), then collapses
-    /// the pair to a single index.html for the active build configuration — a port of the legacy
-    /// HtmlGenerator: Release keeps the minified variant as index.html, Debug keeps the formatted one,
-    /// and an empty configuration keeps both (index.html + index.min.html).
+    /// Writes index.html, linking the script variant this build produced — one file, because one build
+    /// now produces one set of scripts. (The legacy compiler wrote index.html and index.min.html side
+    /// by side and collapsed the pair afterwards, which only made sense while a single build emitted
+    /// both variants of everything.)
     /// </summary>
     private static void WriteHtml(
         ResolvedProject project, TransposeJson config, string outputDir,
@@ -1053,18 +1184,13 @@ internal static class OutputBuilder
             ? $"<script type=\"module\" src=\"{path}\"></script>"
             : $"<script src=\"{path}\" defer></script>";
 
-        string? htmlName = (js.Length > 0 || css.Length > 0) ? "index.html" : null;
-        string? htmlMinName = jsMin.Length > 0 ? (htmlName is null ? "index.html" : "index.min.html") : null;
-
-        // Collapse to a single index.html for the requested configuration (legacy behaviour).
-        if (string.Equals(configuration, "Release", StringComparison.OrdinalIgnoreCase))
-        {
-            if (htmlMinName is not null) { htmlName = null; htmlMinName = "index.html"; }
-        }
-        else if (string.Equals(configuration, "Debug", StringComparison.OrdinalIgnoreCase))
-        {
-            if (htmlMinName is not null && htmlName is not null) htmlMinName = null;
-        }
+        // One HTML per build, because one build now produces one set of scripts. The two lists above
+        // are still both assembled — a resource group can declare a script for only one of them — and
+        // the build's configuration picks which one is written. (The legacy compiler emitted
+        // index.html and index.min.html side by side and collapsed the pair afterwards; there is
+        // nothing left to collapse now that the scripts themselves come in one variant.)
+        var scripts = JsOutputProfiles.IsDebug(configuration) ? js : jsMin;
+        string? htmlName = (scripts.Length > 0 || css.Length > 0) ? "index.html" : null;
 
         // Watch mode (--watch) passes a small inline script that opens a websocket back to the tps
         // dev server and reloads the page when a rebuild completes. Appended right before </body> so
@@ -1085,13 +1211,7 @@ internal static class OutputBuilder
         if (htmlName is not null)
         {
             var dest = Path.Combine(outputDir, htmlName);
-            File.WriteAllText(dest, Render(js.ToString()), utf8);
-            written.Add(Path.GetFullPath(dest));
-        }
-        if (htmlMinName is not null)
-        {
-            var dest = Path.Combine(outputDir, htmlMinName);
-            File.WriteAllText(dest, Render(jsMin.ToString()), utf8);
+            File.WriteAllText(dest, Render(scripts.ToString()), utf8);
             written.Add(Path.GetFullPath(dest));
         }
     }

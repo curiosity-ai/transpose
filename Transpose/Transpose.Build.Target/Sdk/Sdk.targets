@@ -481,9 +481,19 @@
        online check. It is invoked once per project. Install it as a global dotnet tool
        (`dotnet tool install -g Transpose.Compiler`) or reference it as a local tool and set
        UseLocalTranspose=true. -->
+  <!-- The compiler's own configuration files are build inputs like any source file: tps.json decides
+       what is emitted and what is embedded, its per-configuration overlay refines that, and
+       tps.chunks.json changes how the emitted modules are grouped. Without them here, editing one and
+       rebuilding is a no-op — MSBuild judges the project up to date and never invokes tps at all. -->
+  <ItemGroup>
+    <_TransposeConfigFile Include="$(ProjectDir)tps.json"                      Condition="Exists('$(ProjectDir)tps.json')" />
+    <_TransposeConfigFile Include="$(ProjectDir)tps.$(Configuration).json"     Condition="Exists('$(ProjectDir)tps.$(Configuration).json')" />
+    <_TransposeConfigFile Include="$(ProjectDir)tps.chunks.json"               Condition="Exists('$(ProjectDir)tps.chunks.json')" />
+  </ItemGroup>
+
   <Target Name="_TransposeBuild"
       DependsOnTargets="SourceFilesProjectOutputGroup;GenerateBuildDependencyFile;GenerateBuildRuntimeConfigurationFiles;_ComputeReferenceAssemblies;_ComputeUserRuntimeAssemblies;_CopyReferenceOnlyAssembliesForBuild"
-      Inputs="@(UserRuntimeAssembly);@(_ReferenceAssemblies);@(SourceFilesProjectOutputGroupOutput);$(MSBuildAllProjects);$(ProjectDepsFilePath)"
+      Inputs="@(UserRuntimeAssembly);@(_ReferenceAssemblies);@(SourceFilesProjectOutputGroupOutput);$(MSBuildAllProjects);$(ProjectDepsFilePath);@(_TransposeConfigFile)"
       Outputs="$(ProjectDir)$(OutputPath)$(TargetName)$(TargetExt)">
 
     <Message Importance="high" Text="Deleting previous assembly: $(ProjectDir)$(OutputPath)$(TargetName)$(TargetExt)"/>

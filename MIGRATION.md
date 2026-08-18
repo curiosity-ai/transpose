@@ -88,8 +88,8 @@ Notes:
 ## Step 2 — Rename `h5.json` → `tps.json`
 
 Rename the config file and update the token inside it. The schema is otherwise
-the same (`output`, `fileName`, `html`, `reflection`, `resources`,
-`outputFormatting`, …).
+the same (`output`, `fileName`, `html`, `reflection`, `resources`, …) minus
+`outputFormatting`, which no longer exists — see below.
 
 - `output`: `"$(OutDir)/h5/"` → `"$(OutDir)/tps/"`
 - Any resource `files`/paths that referenced an `h5/…` asset folder now
@@ -100,7 +100,6 @@ the same (`output`, `fileName`, `html`, `reflection`, `resources`,
 {
     "output": "$(OutDir)/tps/",
     "fileName": "app.js",
-    "outputFormatting": "Both",          // Formatted + Minified
     "resources": [
         { "name": "app.css", "files": [ "tps/assets/css/app.css" ] }
     ]
@@ -109,6 +108,16 @@ the same (`output`, `fileName`, `html`, `reflection`, `resources`,
 
 A per-configuration overlay is supported: `tps.Release.json` (or
 `tps.<Configuration>.json`) is merged on top of `tps.json` for that build.
+
+**`outputFormatting` is gone.** What shape the JavaScript takes follows from the
+build instead: a Debug site is one formatted bundle (and never chunked modules,
+whatever `outputBy` says), a Release site is one minified bundle — or chunked
+modules if `outputBy` asks for them — and a **library ships all three**, so the
+application referencing it picks the variant matching its own configuration. An
+h5/Bridge project that declared its own compiled `.js` and `.min.js` as resources
+to force both into the package can simply delete those entries; if such an entry
+was there to keep the bundle *out* of index.html (a `.dontload` name), say
+`"loadCompiledOutput": false` instead.
 
 ### Resources you load yourself
 
@@ -206,8 +215,8 @@ dotnet build
 ```
 
 Output lands under `bin/<Configuration>/<tfm>/tps/` (a runnable site: the `tps.js`
-runtime + your `app.js` bundle + resources + `index.html`, in both formatted and
-minified variants per `outputFormatting`). Serve it like before:
+runtime + your `app.js` bundle + resources + `index.html`, formatted in Debug and
+minified in Release). Serve it like before:
 
 ```bash
 cd bin/Debug/netstandard2.0/tps/
@@ -236,8 +245,7 @@ than recompiling **A**'s sources into **B**'s bundle. `dotnet build` compiles
 - **Source maps** for the emitted bundle are not emitted yet.
 - Some `tps.json` surface is still narrowing in (module formats, locales,
   before/after-build hooks); the common `output` / `fileName` / `html` /
-  `reflection` / `resources` / `outputFormatting` / `cleanOutputFolder` fields
-  are supported.
+  `reflection` / `resources` / `cleanOutputFolder` fields are supported.
 - Reference resolution beyond the NuGet cache (`<Reference HintPath>` and
   `tps.json` `references`/`referencesPath`) is partial; the `tps --reference`
   flag covers the common cases.

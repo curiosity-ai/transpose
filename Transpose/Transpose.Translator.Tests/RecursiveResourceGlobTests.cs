@@ -103,7 +103,6 @@ public sealed class RecursiveResourceGlobTests
 
     private const string ImagesRecursively = @"{
         ""fileName"": ""app.js"",
-        ""outputFormatting"": ""Formatted"",
         ""resources"": [
             { ""name"": ""images"", ""files"": [ ""tps/assets/img/**"" ], ""output"": ""assets/img/"" }
         ]
@@ -120,7 +119,6 @@ public sealed class RecursiveResourceGlobTests
 
         BuildSite(Config(@"{
             ""fileName"": ""app.js"",
-            ""outputFormatting"": ""Formatted"",
             ""resources"": [
                 { ""name"": ""images"", ""files"": [ ""tps/assets/img/*"" ], ""output"": ""assets/img/"" }
             ]
@@ -153,7 +151,6 @@ public sealed class RecursiveResourceGlobTests
 
         BuildSite(Config(@"{
             ""fileName"": ""app.js"",
-            ""outputFormatting"": ""Formatted"",
             ""resources"": [
                 { ""name"": ""images"", ""files"": [ ""tps/assets/img/**/*.svg"" ], ""output"": ""assets/img/"" }
             ]
@@ -171,7 +168,6 @@ public sealed class RecursiveResourceGlobTests
 
         BuildSite(Config(@"{
             ""fileName"": ""app.js"",
-            ""outputFormatting"": ""Formatted"",
             ""resources"": [
                 { ""name"": ""images"", ""files"": [ ""tps/assets/img/**"" ] }
             ]
@@ -191,7 +187,6 @@ public sealed class RecursiveResourceGlobTests
 
         BuildSite(Config(@"{
             ""fileName"": ""app.js"",
-            ""outputFormatting"": ""Formatted"",
             ""resources"": [
                 { ""name"": ""bundle.css"", ""files"": [ ""tps/assets/css/**/*.css"" ], ""output"": ""assets/css"" }
             ]
@@ -246,7 +241,6 @@ public sealed class RecursiveResourceGlobTests
 
         var items = OutputBuilder.CollectEmbeddableItems(_projectDir, Config(@"{
             ""fileName"": ""Lib.js"",
-            ""outputFormatting"": ""Formatted"",
             ""resources"": [
                 { ""name"": ""images"", ""files"": [ ""tps/assets/img/*"" ] }
             ]
@@ -267,7 +261,6 @@ public sealed class RecursiveResourceGlobTests
 
         var libConfig = Config(@"{
             ""fileName"": ""Lib.js"",
-            ""outputFormatting"": ""Formatted"",
             ""resources"": [
                 { ""name"": ""images"", ""files"": [ ""tps/assets/img/**"" ], ""output"": ""assets/img/"" }
             ]
@@ -275,7 +268,7 @@ public sealed class RecursiveResourceGlobTests
         var dll = PackageDll("Lib", OutputBuilder.CollectEmbeddableItems(_projectDir, libConfig, "Lib.js", "var lib = 1;", null));
 
         // The consuming project declares no resources of its own — everything below comes from the package.
-        BuildSite(Config(@"{ ""fileName"": ""app.js"", ""outputFormatting"": ""Formatted"" }"), Project(dll));
+        BuildSite(Config(@"{ ""fileName"": ""app.js"" }"), Project(dll));
 
         Assert.AreEqual("<svg id='logo'/>", SiteFile("assets/img/logo.svg"));
         Assert.AreEqual("<svg id='icons-api'/>", SiteFile("assets/img/icons/api.svg"));
@@ -293,7 +286,6 @@ public sealed class RecursiveResourceGlobTests
 
         BuildSite(Config(@"{
             ""fileName"": ""app.js"",
-            ""outputFormatting"": ""Formatted"",
             ""resources"": [
                 { ""name"": ""styles"", ""files"": [ ""tps/assets/css/**/*.css"" ], ""output"": ""assets/css"" }
             ]

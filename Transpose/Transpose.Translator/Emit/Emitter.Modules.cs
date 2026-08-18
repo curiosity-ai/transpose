@@ -67,13 +67,17 @@ public sealed partial class Emitter
     /// merged with whatever loads alongside it (see Emitter.ModuleChunks.cs). 0 emits one chunk per
     /// SCC, which is what the first pass produces on its own.</param>
     /// <param name="maxChunkBytes">The ceiling a merged chunk is kept under.</param>
+    /// <param name="oracle">Measured co-load groups from <c>tps.chunks.json</c> — what a run of the
+    /// real application actually fetched together. Refines the chunker's static guess; see
+    /// <see cref="ChunkOracle"/>.</param>
     public ModuleOutput EmitModules(
         string chunkDirectory = "chunks",
         IReadOnlyDictionary<string, string>? externalChunks = null,
         bool packageMode = false,
         IReadOnlyDictionary<string, List<string>>? externalSkipClusterDeps = null,
         int minChunkBytes = DefaultMinChunkBytes,
-        int maxChunkBytes = DefaultMaxChunkBytes)
+        int maxChunkBytes = DefaultMaxChunkBytes,
+        ChunkOracle? oracle = null)
     {
         _externalSkipClusterDeps = externalSkipClusterDeps;
         // Reflection metadata is emitted once for the whole assembly, outside the per-type walk, so
@@ -153,6 +157,18 @@ public sealed partial class Emitter
         if (canDefer)
             roots.AddRange(types.Where(t => TransposeNaming.HasAttr(t, TransposeNaming.NeverDeferAttr)));
 
+        // A capture can also record what the application needed before it was usable at all. That is
+        // the one thing a *package* cannot work out for itself — it has no entry point to be lazy
+        // relative to, so it defers everything and its consumer pays for the start-up set in extra
+        // round trips. An "eager" group in tps.chunks.json is that missing information.
+        if (canDefer && oracle is { IsEmpty: false })
+        {
+            var eagerNames = new HashSet<string>(
+                oracle.Groups.Where(g => g.Eager).SelectMany(g => g.Types), StringComparer.Ordinal);
+            if (eagerNames.Count > 0)
+                roots.AddRange(types.Where(t => eagerNames.Contains(DefineName(t))));
+        }
+
         var eager = new HashSet<int>();
         if (canDefer)
         {
@@ -180,9 +196,11 @@ public sealed partial class Emitter
             for (var i = 0; i < chunks.Members.Count; i++)
                 foreach (var t in chunks.Members[i]) sizes[i] += bodies[t].Length + 1;
 
+            var oracleBits = OracleBits(chunks, oracle);
+
             chunks = PhaseTimings.Measure("  ├ coalesce chunks (co-load signature)", () =>
             {
-                var merged = Coalesce(chunks, sizes, eager, order, minChunkBytes, maxChunkBytes, out var mergedEager);
+                var merged = Coalesce(chunks, sizes, eager, order, minChunkBytes, maxChunkBytes, out var mergedEager, oracleBits);
                 eager = mergedEager;
                 return merged;
             });
