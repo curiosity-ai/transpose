@@ -15,6 +15,14 @@
             ns = Transpose.unroll(ns);
             type.$getMetadata = Transpose.Reflection.getMetadata;
             type.$metadata = metadata;
+
+            // A module-mode stub holds the metadata for a type whose code has not arrived. Remember
+            // it against the type NAME as well, so whichever route eventually replaces the stub —
+            // the module loader, or a plain static import evaluating the chunk directly — the real
+            // class gets its metadata back. Keying on the stub object alone was not enough.
+            if (type.$stub && Transpose.Modules) {
+                Transpose.Modules.$metaFor[type.$$name] = metadata;
+            }
         },
 
         initMetaData: function (type, metadata) {

@@ -84,7 +84,11 @@ public sealed class RoslynTranslator
         string? assemblyVersion = null,
         bool emitDebugInformation = true,
         bool metadataOnlyAssembly = false,
-        IncrementalPlan? incremental = null)
+        IncrementalPlan? incremental = null,
+        bool emitModules = false,
+        string chunkDirectory = "chunks",
+        IReadOnlyDictionary<string, string>? externalChunks = null,
+        bool packageModules = false)
     {
         CompileProgress.Report("parsing sources + resolving references");
         var compilation = PhaseTimings.Measure("build compilation (parse + references)", () =>
@@ -205,6 +209,7 @@ public sealed class RoslynTranslator
             return new AssemblyBuildResult(null, null, null, diagnostics);
 
         string? js = null, metadataJs = null;
+        Emitter.ModuleOutput? moduleOutput = null;
         TranslationException? emitterFailure = null;
         try
         {
@@ -214,9 +219,22 @@ public sealed class RoslynTranslator
                 MetadataTarget = metadataTarget,
                 AssemblyVersion = string.IsNullOrWhiteSpace(assemblyVersion) ? "1.0.0.0" : assemblyVersion!,
             };
-            CompileProgress.Report("emitting JavaScript");
-            js = PhaseTimings.Measure("emit JavaScript", () => emitter.Emit());
-            metadataJs = emitter.MetadataScript;
+            if (emitModules)
+            {
+                // Module mode carries its reflection metadata inside the entry module (it has to be
+                // eager and cover every type, including the deferred ones), so there is no separate
+                // metadata script and the "javascript" of this build is the entry module.
+                CompileProgress.Report("emitting JavaScript modules");
+                moduleOutput = PhaseTimings.Measure("emit JavaScript (modules)",
+                    () => emitter.EmitModules(chunkDirectory, externalChunks, packageModules));
+                js = moduleOutput.EntryJs;
+            }
+            else
+            {
+                CompileProgress.Report("emitting JavaScript");
+                js = PhaseTimings.Measure("emit JavaScript", () => emitter.Emit());
+                metadataJs = emitter.MetadataScript;
+            }
         }
         catch (TranslationException ex)
         {
@@ -263,6 +281,7 @@ public sealed class RoslynTranslator
         return new AssemblyBuildResult(js, metadataJs, assemblyBytes, diagnostics)
         {
             DeclarationHashes = declarationHashes,
+            Modules = moduleOutput,
         };
     }
 

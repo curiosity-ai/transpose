@@ -56,6 +56,10 @@ internal sealed class TransposeJson
     /// </summary>
     public string? OutputBy { get; init; }
 
+    /// <summary>True when <c>outputBy</c> asks for the ES-module layout: one file per chunk plus an
+    /// entry module, instead of a single bundle. See TODO.modules.md.</summary>
+    public bool OutputByModule => string.Equals(OutputBy, "Module", System.StringComparison.OrdinalIgnoreCase);
+
     /// <summary>
     /// <c>cleanOutputFolder</c> — prune stale files from the site output folder after a build:
     /// any file left over from a previous build that <em>this</em> build did not (re)write is

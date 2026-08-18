@@ -818,6 +818,12 @@
                 Transpose.$currentAssembly.$types[className] = cls;
                 cls.$assembly = Transpose.$currentAssembly;
             }
+
+            // If this type was standing in as a module stub until now, hand its metadata (and any
+            // nested types registered onto it) over to the real class.
+            if (Transpose.Modules) {
+                Transpose.Modules.$stubReplaced(className, cls);
+            }
         },
 
         addExtend: function (cls, extend) {
@@ -874,9 +880,22 @@
             exists = scope[name];
 
             if (exists) {
-                if (exists.$$name === className) {
+                // A module-mode stub standing in for this very type: the real definition has just
+                // arrived, so step aside for it. This has to happen here rather than only in
+                // Transpose.Modules.load, because a chunk can also be pulled in as a plain static
+                // import of another chunk — ESM evaluates it directly and the loader never sees it.
+                if (exists.$stub && exists.$$name === className && Transpose.Modules) {
+                    Transpose.Modules.$replaceStub(className);
+                }
+
+                // A retired stub keeps its $$name (callers holding it still resolve by name), so the
+                // redefinition check has to look past it rather than at the name alone.
+                if (exists.$$name === className && !exists.$retiredStub) {
                     throw "Class '" + className + "' is already defined";
                 }
+            }
+
+            if (exists) {
 
                 for (key in exists) {
                     var o = exists[key];

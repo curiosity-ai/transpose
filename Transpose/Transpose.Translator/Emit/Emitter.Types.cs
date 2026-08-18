@@ -64,7 +64,78 @@ public sealed partial class Emitter
     /// PARAMETER never does, because it IS a local binding (the generic define's own parameter).
     /// </summary>
     private string TypeRef(ITypeSymbol type)
-        => type is ITypeParameterSymbol ? TypeRefCore(type) : UnshadowedTypeRef(TypeRefCore(type));
+    {
+        // Module mode records which source types this one's emitted body reaches into, so the
+        // chunker can group mutually-referencing types (see Emitter.Modules.cs). Recording here
+        // rather than in a separate analysis pass keeps the two in step by construction: an edge
+        // exists exactly when a reference was emitted.
+        if ((_recordedRefs is not null || _recordedExternalRefs is not null) && _softRefDepth == 0) RecordRef(type);
+        return type is ITypeParameterSymbol ? TypeRefCore(type) : UnshadowedTypeRef(TypeRefCore(type));
+    }
+
+    /// <summary>Adds every source named type inside <paramref name="type"/> (the type itself and,
+    /// recursively, its generic arguments and array element) to the current type's dependency set.
+    /// A generic argument counts: <c>Foo$1(X)</c> builds a generic instance whose base class can be
+    /// <c>X</c> itself, so X has to be defined before the application runs.</summary>
+    private void RecordRef(ITypeSymbol type)
+    {
+        switch (type)
+        {
+            case IArrayTypeSymbol array:
+                RecordRef(array.ElementType);
+                return;
+            case INamedTypeSymbol named:
+                if (TransposeNaming.IsExternalType(named)) { /* native JS - nothing to load */ }
+                else if (named.Locations.Any(l => l.IsInSource))
+                    _recordedRefs!.Add((INamedTypeSymbol)named.OriginalDefinition);
+                else if (_recordedExternalRefs is not null && TransposeNaming.IsTransposeCompiledSource(named))
+                    // A type from a *referenced* Transpose-compiled assembly. If that assembly was
+                    // itself built as modules, the chunk holding this type has to be imported, or the
+                    // reference would land on a stub. Recorded by emitted define name, which is the
+                    // key the referenced assembly's chunk map uses.
+                    _recordedExternalRefs.Add(DefineName(named));
+                foreach (var arg in named.TypeArguments) RecordRef(arg);
+                return;
+        }
+    }
+
+    /// <summary>
+    /// Records, as hard dependencies, every part of <paramref name="type"/> that <see cref="TypeRefCore"/>
+    /// will emit as a CALL on a generic definition (<c>Foo$1(Bar)</c>). Used where the reference is
+    /// otherwise soft — <c>typeof(X)</c> — because a soft reference is only satisfiable by a stub
+    /// object, and a stub cannot be called: building a constructed generic needs the definition's
+    /// real code. An unbound <c>typeof(Foo&lt;&gt;)</c> emits the definition object rather than a
+    /// call and so stays soft, as does any non-generic type.
+    /// </summary>
+    private void RecordConstructedTypeRefs(ITypeSymbol type)
+    {
+        if (_recordedRefs is null && _recordedExternalRefs is null) return;   // not module mode
+        switch (type)
+        {
+            case IArrayTypeSymbol array:
+                // `typeof(Foo<Bar>[])` emits System.Array.type(Foo$1(Bar)) — the call is still there.
+                RecordConstructedTypeRefs(array.ElementType);
+                return;
+            case INamedTypeSymbol named:
+                if (!named.IsUnboundGenericType && EffectiveTypeArguments(named).Count > 0)
+                {
+                    // RecordRef records the definition and recurses through the arguments, which is
+                    // the same set the emitted call touches.
+                    RecordRef(named);
+                    return;
+                }
+                foreach (var arg in named.TypeArguments) RecordConstructedTypeRefs(arg);
+                return;
+        }
+    }
+
+    /// <summary>The bare name a type's <c>Transpose.define</c> registers it under — no type
+    /// arguments, arity suffixed. This is the key both the module manifest and the chunk map use.</summary>
+    private string DefineName(INamedTypeSymbol named)
+    {
+        var t = (INamedTypeSymbol)named.OriginalDefinition;
+        return t.Arity > 0 ? _names.TypeFullName(t) + "$" + t.Arity : _names.TypeFullName(t);
+    }
 
     private string TypeRefCore(ITypeSymbol type)
     {

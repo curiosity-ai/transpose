@@ -32,6 +32,13 @@ public sealed class AssemblyBuildResult
     /// </summary>
     public IReadOnlyDictionary<string, string>? DeclarationHashes { get; init; }
 
+    /// <summary>
+    /// The ES-module form of the same output, when the build asked for it (<c>outputBy: Module</c>).
+    /// <see cref="Javascript"/> then holds the entry module rather than a single bundle, and this
+    /// carries the chunk files alongside it. Null for an ordinary single-bundle build.
+    /// </summary>
+    public Emitter.ModuleOutput? Modules { get; init; }
+
     public IEnumerable<Diagnostic> Errors => Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error);
     public bool Success => Javascript is not null && !Errors.Any();
 }

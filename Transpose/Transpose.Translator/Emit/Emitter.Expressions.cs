@@ -249,7 +249,21 @@ public sealed partial class Emitter
                 EmitConditionalAccess(condAccess);
                 break;
             case TypeOfExpressionSyntax typeOf:
-                _w.Write(TypeRef(_model.GetTypeInfo(typeOf.Type).Type!));
+                // `typeof(X)` wants the Type object, never X's code — a module-mode stub answers
+                // Name/IsInterface/IsAssignableFrom/attributes just as well. Not treating it as a
+                // dependency is what keeps a "see also" list of typeof(...) from fusing every one
+                // of those types into a single chunk.
+                //
+                // A CONSTRUCTED generic is the exception, and it is not soft: it has no Type object
+                // to point at, it is BUILT by calling its definition — `Foo$1(Bar)` — and a stub
+                // throws when called. So the definition (and, per RecordRef, the arguments it is
+                // applied to) are real dependencies even here. RecordConstructedTypeRefs records
+                // exactly the pieces TypeRefCore will emit as a call.
+                var typeOfType = _model.GetTypeInfo(typeOf.Type).Type!;
+                RecordConstructedTypeRefs(typeOfType);
+                _softRefDepth++;
+                try { _w.Write(TypeRef(typeOfType)); }
+                finally { _softRefDepth--; }
                 break;
             case IsPatternExpressionSyntax isPattern:
                 EmitIsPattern(isPattern);

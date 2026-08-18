@@ -328,6 +328,12 @@ internal static class ProjectBuild
 
         var plan = replayed is not null ? null : cache?.CreatePlan(verdict, changedSources, canReuseAssembly: metadataOnly);
 
+        // Module mode applies to a site build AND to a package (--emit-package): a library emits its
+        // chunks and publishes the map, and its consumer imports the chunks behind the types it uses.
+        var wantsModules = tpscfg is { OutputByModule: true } && (isSiteBuild || options.EmitPackage);
+        // Every referenced assembly that was itself built as modules contributes its type → chunk map.
+        var externalChunks = wantsModules ? ModuleMap.Read(project.ReferencePaths) : null;
+
         var translator = new RoslynTranslator();
         AssemblyBuildResult result;
         try
@@ -344,7 +350,14 @@ internal static class ProjectBuild
                 assemblyVersion: options.AssemblyVersion,
                 emitDebugInformation: project.EmitDebugInformation,
                 metadataOnlyAssembly: metadataOnly,
-                incremental: plan);
+                incremental: plan,
+                emitModules: wantsModules,
+                // Per assembly, so two module-mode assemblies in one site cannot collide.
+                chunkDirectory: "chunks/" + project.AssemblyName,
+                externalChunks: externalChunks,
+                // A library has no entry point to be lazy relative to: nothing is eager beyond its
+                // [Ready] handlers, and its consumers pull in what they actually use.
+                packageModules: options.EmitPackage);
         }
         catch (Exception ex)
         {
@@ -377,6 +390,9 @@ internal static class ProjectBuild
             SaveCache(cache, plan, result, new[] { dllPath });
             log.Info($"\nOK — built package {project.AssemblyName}.dll ({result.AssemblyBytes!.Length:N0} bytes) with {items.Count} embedded resource(s) in {sw.ElapsedMilliseconds} ms.");
             log.Info($"  dll:      {dllPath}");
+            if (result.Modules is { } pkgMods)
+                log.Info($"  modules:    {pkgMods.Chunks.Count} chunk(s) — {pkgMods.EagerChunkCount} loaded up front, " +
+                         $"{pkgMods.LazyChunkCount} on demand ({pkgMods.LazyTypeCount} type(s) deferred)");
             log.Info($"  embedded: {string.Join(", ", items.Take(6).Select(i => i.Name))}{(items.Count > 6 ? ", …" : "")}");
             return BuildOutcome.NoSite(0, result.Diagnostics);
         }
@@ -398,11 +414,14 @@ internal static class ProjectBuild
 
             var outDir = SiteDirectory(options, config, project);
             var siteResult = PhaseTimings.Measure("write site (minify + resources + html)", () =>
-                OutputBuilder.Build(project, config, js, outDir, configuration, result.MetadataJavascript, options.LiveReloadScript));
+                OutputBuilder.Build(project, config, js, outDir, configuration, result.MetadataJavascript, options.LiveReloadScript, result.Modules));
             // Every file in the site counts as an output: a rebuild must notice if any of them was
             // deleted or edited, otherwise "up to date" would leave a broken site in place.
             SaveCache(cache, plan, result, SiteOutputs(outDir, dllPath));
             log.Info($"\nOK — built site in {outDir} ({js.Length:N0} bytes of {config.FileName}) in {sw.ElapsedMilliseconds} ms.");
+            if (result.Modules is { } mods)
+                log.Info($"  modules:    {mods.Chunks.Count} chunk(s) — {mods.EagerChunkCount} loaded up front, " +
+                         $"{mods.LazyChunkCount} on demand ({mods.LazyTypeCount} type(s) deferred)");
             log.Info($"  index.html: {(config.HtmlDisabled ? "disabled" : "generated")}");
             if (dllPath is not null) log.Info($"  dll:        {dllPath}");
             if (siteResult.RemovedStaleFiles.Count > 0)
@@ -778,7 +797,14 @@ internal static class ProjectBuild
                 assemblyVersion: assemblyVersion,
                 emitDebugInformation: project.EmitDebugInformation,
                 metadataOnlyAssembly: metadataOnly,
-                incremental: plan);
+                incremental: plan,
+                // A referenced project is always built as a package, and it declares module output
+                // the same way a root project does. Without this the dependency would be rebuilt as
+                // a single bundle here, silently replacing the chunked DLL its own build produced.
+                emitModules: tpscfg is { OutputByModule: true },
+                chunkDirectory: "chunks/" + project.AssemblyName,
+                externalChunks: tpscfg is { OutputByModule: true } ? ModuleMap.Read(project.ReferencePaths) : null,
+                packageModules: true);
         }
         catch (Exception ex) { ReportCrash($"Translator on '{Path.GetFileName(csproj)}'", ex, log); return false; }
 
@@ -820,8 +846,17 @@ internal static class ProjectBuild
         Directory.CreateDirectory(Path.GetDirectoryName(dllPath)!);
 
         var items = PhaseTimings.Measure("collect package resources (minify + read files)", () => config is not null
-            ? OutputBuilder.CollectEmbeddableItems(project.ProjectDir, config, mainJsName, result.Javascript!, result.MetadataJavascript, project.MinifyLocalVariables)
+            ? OutputBuilder.CollectEmbeddableItems(project.ProjectDir, config, mainJsName, result.Javascript!, result.MetadataJavascript, project.MinifyLocalVariables, result.Modules)
             : new List<EmbeddedItem> { new(mainJsName, System.Text.Encoding.UTF8.GetBytes(result.Javascript!), null) });
+
+        // A module-mode package's entry file is an ES module (it imports its eager chunks), so the
+        // consumer has to script it as one rather than as a classic deferred script.
+        if (result.Modules is not null)
+        {
+            for (var i = 0; i < items.Count; i++)
+                if (string.Equals(items[i].Name, mainJsName, StringComparison.OrdinalIgnoreCase))
+                    items[i] = items[i] with { Module = true };
+        }
         // Cecil re-serializes the assembly's metadata when embedding the resources; encoding a
         // parameter's default value whose type lives in a referenced assembly (e.g. a Tesserae enum)
         // makes it resolve that assembly. Seed the resolver with the reference directories so those
@@ -829,7 +864,7 @@ internal static class ProjectBuild
         // next to this DLL).
         // Writes the DLL — the emitted assembly plus the embedded resources — in one pass.
         PhaseTimings.Measure("embed resources into DLL (Cecil)",
-            () => ResourceEmbedder.Embed(dllPath, result.AssemblyBytes!, items, project.ReferencePaths));
+            () => ResourceEmbedder.Embed(dllPath, result.AssemblyBytes!, items, project.ReferencePaths, result.Modules?.TypeToChunk));
         // Record what a consumer's compilation actually depends on — this assembly's metadata — so a
         // rebuild of this project does not force a rebuild of everything referencing it when only its
         // method bodies moved. Cecil restamps the DLL's MVID on every embed, so its bytes cannot serve.

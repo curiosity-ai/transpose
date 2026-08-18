@@ -497,6 +497,78 @@ The short version:
   package, which does not pack `None` items. Curiosity.FrontEnd did exactly that, so every application
   built against the package was missing 243 icons/illustrations, both variable-font families and the
   favicon.
+- **Lazily-loaded modules (done).** `outputBy: "Module"` in a project's `tps.json` makes a site build
+  emit one ES module per chunk (`chunks/cN.mjs`) plus an entry module, and index.html carries a single
+  `<script type="module">`. A **chunk is a strongly-connected component of the reference graph**
+  `TypeRef` records while emitting each type — the smallest sound unit, because `Transpose.define`
+  resolves `inherits` eagerly, so a per-class split cannot order a reference cycle. Components come
+  out of Tarjan in reverse-topological order, so numbering them yields a DAG in which every import
+  points at a lower index, which also makes the output deterministic. A `typeof` operand is the one
+  reference that is *not* a dependency: it wants a Type object, which a stub answers for — **unless it
+  is a constructed generic**, which has no object to point at (it is built by *applying* its
+  definition, and applying a stub throws), so `typeof(Foo<Bar>)` records the definition and its
+  arguments as hard references while `typeof(Foo)` and unbound `typeof(Foo<>)` stay soft. Chunks
+  reachable from the entry point are imported by the entry module; the rest are declared to
+  `Transpose.Modules`. See `Emitter.Modules.cs`, `ModuleEmitTests`, and **`TODO.modules.md`** §7a for
+  what it measures (Tesserae's sample gallery: the app's initial payload 1,109 KB → 164 KB raw, all
+  140 samples rendering identically).
+
+  Three things are load-bearing and were found by running it, not by reasoning: the entry module
+  emits its **reflection metadata before the manifest** (`Modules.register` ends with a
+  `Transpose.init()`, and `init` runs `Main` — anything after it would not exist yet); the stub
+  swap lives in **`Transpose.define` itself** (`Class.set`), because a chunk can also be evaluated as
+  a plain static import from another chunk, which never passes through the loader; and the metadata
+  hand-off is keyed by type **name** (`Modules.$metaFor`) rather than held on the stub object, for the
+  same reason.
+
+  **A package splits too.** `--emit-package` emits chunks as well; a library has no entry point to be
+  lazy relative to, so it defers everything (its eager set is just the chunks holding `[Ready]`
+  handlers) and publishes a chunk map — emitted type name → chunk file — embedded as
+  `Transpose.Modules.json` (embedded but *not* listed in `Transpose.Resources.json`, like the
+  `BuildStamp`, so nothing extracts it into a site). A consuming build merges its references' maps
+  (`ModuleMap.Read`) and emits `import '../<lib>/cN.mjs'` from whichever of its own chunks reaches
+  into a library type — without that the reference would land on the library's stub, which cannot be
+  resolved synchronously. Covered by `ModulePackageTests`.
+
+  A fourth load-bearing detail, found the same way as the three above: **a stub is retired in place,
+  never deleted.** `Class.set` already copies the members of whatever previously occupied a type's
+  global slot onto the new class — that is how a nested type registered onto a stub survives — and it
+  has to survive *before* the define resolves `inherits`, because a type's own base can mention its
+  nested type (`Nav : …<Nav.NavLink>`). So `$replaceStub` clears the stub markers and leaves the
+  object where it is, keeping `$$name` (a caller holding the stub must still resolve by name) and
+  setting `$retiredStub` for the redefinition check to look past.
+
+  **A stub answers for a constructed generic too.** A base or interface reaches the manifest as either
+  a name or `[definition, ...arguments]` (`["tss.CB$2", "tss.Avatar", "HTMLElement"]`), and the runtime
+  *applies* the definition on the first read of the stub's `$$inherits`/`$interfaces`/`$allInterfaces`
+  — never at `register` time, because a base may itself be a stub, and never caching a partial
+  resolution, so a base whose module arrives later is picked up on the next question. Flattening it to
+  `Foo$1` (all a `Transpose.unroll` path walk can express — a constructed generic deliberately gets no
+  global slot) made `IsAssignableFrom(IFoo<Bar>, stub)` answer false, silently. This is *not*
+  interface-only: a generic base class flattens the same way, and is the more common case
+  (`ComponentBase<Self, THTML>`). An **open** base — `class Relay<T> : IHandler<T>` — has no argument
+  to write down, so the spec is the bare definition and the runtime applies it to placeholder type
+  parameters (`$applyOpen`), which is the shape a loaded type records: reporting the definition itself
+  instead both over-matched an unbound `typeof(IFoo<>)` and left `GetInterfaces()` empty.
+  `TODO.modules.md` §7c has the details, `LazyModuleActivatorTests` the coverage.
+
+  Still single-bundle: `--incremental` (chunk assignment is a whole-program property — do not combine
+  them yet), minification (a module entry and its chunks are emitted formatted only, since they carry
+  `import` syntax `JsMinifier` does not handle), and watch mode.
+- **The module runtime.** `Resources/Modules.js`
+  provides `Transpose.Modules` — a registry of types whose JavaScript lives in a module that has not
+  been fetched. `Modules.Register(manifest)` stubs each such type at the same global path and in the
+  same assembly `$types` map a real `Transpose.define` would use, so `Assembly.GetTypes()`,
+  `Type.Name`, `IsInterface`, `IsAssignableFrom`, `GetInterfaces` and the reflection metadata all keep
+  working while the code is absent. `Modules.LoadAsync(type)` fetches it (default loader: a dynamic `import()`,
+  built via `new Function` so `tps.js` stays parseable where one cannot be compiled;
+  `Modules.SetLoader` substitutes another), and `Activator.CreateInstanceAsync` loads-then-constructs.
+  **Using a deferred type synchronously cannot work** — fetching a module is asynchronous and C#
+  construction is not — so `Transpose.createInstance` carries a stub guard that throws naming the
+  module rather than failing obscurely. Covered by `LazyModuleActivatorTests`.
+
+  A host can also drive this itself — `Modules.Register` takes a manifest from anywhere — which is how
+  it was validated before the emitter half existed.
 - **Wider `tps.json` surface** (outputBy, module formats, locales, before/after build, etc.).
 - **Incremental compilation (done for body-level edits; on by default via the SDK).** `--incremental`
   reuses the previous build of a project: nothing at all is compiled when every input hashes the same

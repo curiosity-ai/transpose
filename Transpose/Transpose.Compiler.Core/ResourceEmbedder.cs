@@ -6,7 +6,7 @@ namespace Transpose.Compiler;
 
 /// <summary>One embedded Transpose resource: the file bytes plus its manifest entry. <see cref="Output"/>
 /// is the output subdirectory a consumer extracts it to (null for a top-level script).</summary>
-internal sealed record EmbeddedItem(string Name, byte[] Content, string? Output, bool Load = true);
+internal sealed record EmbeddedItem(string Name, byte[] Content, string? Output, bool Load = true, bool Module = false);
 
 /// <summary>
 /// Embeds the compiled JavaScript (and tps.json resource files) into a .NET assembly as private
@@ -22,6 +22,17 @@ internal sealed record EmbeddedItem(string Name, byte[] Content, string? Output,
 internal static class ResourceEmbedder
 {
     private const string ManifestName = "Transpose.Resources.json";
+
+    /// <summary>
+    /// The chunk map a module-mode package publishes: emitted type name → the site-relative chunk
+    /// file that defines it. A consuming build reads this so its own chunks can import the chunk
+    /// behind a library type they use — without it the reference would land on the library's stub,
+    /// and a stub cannot be resolved synchronously.
+    ///
+    /// Embedded but deliberately NOT listed in <see cref="ManifestName"/>: it is build metadata for
+    /// the next compiler, not a web resource, so no consumer extracts it into a site.
+    /// </summary>
+    public const string ModuleMapName = "Transpose.Modules.json";
     private static readonly UTF8Encoding Utf8NoBom = new(false);
 
     /// <summary>True if the assembly already carries the embedded Transpose resource manifest — i.e. it
@@ -45,10 +56,10 @@ internal static class ResourceEmbedder
     /// with the JS, CSS and fonts embedded, a package DLL runs to tens of megabytes, and writing it
     /// once and then reading it straight back only to rewrite it was pure I/O.
     /// </summary>
-    public static void Embed(string assemblyPath, byte[] assemblyBytes, IReadOnlyList<EmbeddedItem> items, IEnumerable<string>? referencePaths = null)
+    public static void Embed(string assemblyPath, byte[] assemblyBytes, IReadOnlyList<EmbeddedItem> items, IEnumerable<string>? referencePaths = null, IReadOnlyDictionary<string, string>? moduleMap = null)
     {
         using var output = File.Create(assemblyPath);
-        Embed(output, assemblyBytes, items, referencePaths, contextDirectory: Path.GetDirectoryName(Path.GetFullPath(assemblyPath)));
+        Embed(output, assemblyBytes, items, referencePaths, contextDirectory: Path.GetDirectoryName(Path.GetFullPath(assemblyPath)), moduleMap: moduleMap);
     }
 
     /// <summary>
@@ -60,7 +71,8 @@ internal static class ResourceEmbedder
     /// path (a copy-local referenced assembly can sit there); pass null when there is no such directory.
     /// </summary>
     public static void Embed(Stream output, byte[] assemblyBytes, IReadOnlyList<EmbeddedItem> items,
-        IEnumerable<string>? referencePaths = null, string? contextDirectory = null)
+        IEnumerable<string>? referencePaths = null, string? contextDirectory = null,
+        IReadOnlyDictionary<string, string>? moduleMap = null)
     {
         // Cecil resolves referenced assemblies when it re-serializes metadata on Write() — e.g. to
         // determine the underlying type of a parameter's default value whose type is a referenced
@@ -86,6 +98,10 @@ internal static class ResourceEmbedder
         var manifest = items.Select(i => new
         {
             FileName = i.Name,
+            // Module: the consumer scripts this file as <script type="module"> instead of a classic
+            // deferred script. Only a module-mode package's entry file sets it; its chunk files are
+            // Load=false and are reached through that entry's imports.
+            Module = i.Module ? (bool?)true : null,
             Name = i.Name,
             Path = i.Output,
             Parts = (object?)null,
@@ -98,6 +114,9 @@ internal static class ResourceEmbedder
         // type-level remarks). Replace rather than add, so re-embedding an assembly that already
         // carries one restamps it instead of leaving two.
         Replace(BuildStamp.ResourceName, BuildStamp.ForCurrentCompiler().ToJsonBytes());
+
+        if (moduleMap is { Count: > 0 })
+            Replace(ModuleMapName, Utf8NoBom.GetBytes(JsonSerializer.Serialize(moduleMap)));
 
         asm.Write(output);
     }
