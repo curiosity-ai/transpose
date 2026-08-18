@@ -596,7 +596,7 @@ The short version:
   entry point and cannot see which of its chunks a consumer needs at start-up. With an oracle for
   that set the same pass gives 53 chunks *and* 1,055 KB raw / 160 KB gz, so the ceiling is the
   missing information: the fix is to coalesce across assemblies in the site build, where the whole
-  program is visible. See `TODO.modules.md` §7f.
+  program is visible. See `TODO.modules.md` §7g.
 
   Still single-bundle: `--incremental` (chunk assignment is a whole-program property — do not combine
   them yet), minification (a module entry and its chunks are emitted formatted only, since they carry

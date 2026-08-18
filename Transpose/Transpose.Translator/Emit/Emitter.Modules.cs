@@ -124,6 +124,7 @@ public sealed partial class Emitter
         //    all eager would defeat the split entirely;
         //  - neither (a site build with no Main): everything, since nothing can be deferred safely.
         var roots = new List<INamedTypeSymbol>();
+        var canDefer = packageMode;
         if (packageMode)
         {
             roots.AddRange(types.Where(t => t.GetMembers().OfType<IMethodSymbol>()
@@ -132,10 +133,19 @@ public sealed partial class Emitter
         else if (_compilation.GetEntryPoint(default)?.ContainingType?.OriginalDefinition is INamedTypeSymbol main)
         {
             roots.Add(main);
+            canDefer = true;
         }
 
+        // The reflection metadata covers every type and *constructs* the attributes it records —
+        // `new SomeAttribute(...)`, the first time a type's metadata is materialized (getMembers,
+        // GetCustomAttributes, a reflection-driven deserializer). That construction is synchronous,
+        // so an attribute class whose chunk has not been fetched throws where a stub answers every
+        // other reflection question. The classes are few and small, and nothing imports them (the
+        // metadata is emitted outside the per-type walk), so they join the roots of the eager set.
+        if (canDefer && ReflectionEnabled) roots.AddRange(MetadataAttributeClasses(types));
+
         var eager = new HashSet<int>();
-        if (roots.Count > 0 || packageMode)
+        if (canDefer)
         {
             var stack = new Stack<int>();
             foreach (var r in roots)
@@ -210,7 +220,7 @@ public sealed partial class Emitter
 
         var result = new ModuleOutput
         {
-            EntryJs = BuildEntryModule(types, chunks, eager, lazyTypes, ChunkFile),
+            EntryJs = BuildEntryModule(types, chunks, eager, lazyTypes, ChunkFile, externalChunks),
             EagerChunkCount = eager.Count,
             LazyChunkCount = chunks.Members.Count - eager.Count,
             LazyTypeCount = lazyTypes.Count,
@@ -320,17 +330,73 @@ public sealed partial class Emitter
         return new ChunkGraph(components, deps, indexOf);
     }
 
+    /// <summary>The chunk files of the attribute classes the metadata records that come from a
+    /// referenced module-mode assembly, sorted so the entry module is byte-identical run to run.
+    /// Empty when reflection is off or no reference was built as modules.</summary>
+    private IEnumerable<string> ExternalMetadataAttributeChunks(
+        List<INamedTypeSymbol> types, IReadOnlyDictionary<string, string>? externalChunks)
+    {
+        if (!ReflectionEnabled || externalChunks is null) return Array.Empty<string>();
+
+        var mine = new HashSet<INamedTypeSymbol>(types, SymbolEqualityComparer.Default);
+        var files = new SortedSet<string>(StringComparer.Ordinal);
+
+        void Collect(IEnumerable<AttributeData> attrs)
+        {
+            foreach (var a in ReflectableAttributes(attrs))
+                if (a.AttributeClass?.OriginalDefinition is INamedTypeSymbol ac && !mine.Contains(ac)
+                    && externalChunks.TryGetValue(DefineName(ac), out var file))
+                    files.Add(file);
+        }
+
+        foreach (var t in types)
+        {
+            Collect(t.GetAttributes());
+            foreach (var m in t.GetMembers()) Collect(m.GetAttributes());
+        }
+        return files;
+    }
+
+    /// <summary>Every attribute class this compilation emits that the reflection metadata records —
+    /// on a type, or on one of its members — deduplicated. Cross-assembly attribute classes are not
+    /// here: they are imported by the entry module instead (BuildEntryModule).</summary>
+    private List<INamedTypeSymbol> MetadataAttributeClasses(List<INamedTypeSymbol> types)
+    {
+        var found = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
+        var byName = new HashSet<INamedTypeSymbol>(types, SymbolEqualityComparer.Default);
+
+        void Collect(IEnumerable<AttributeData> attrs)
+        {
+            foreach (var a in ReflectableAttributes(attrs))
+                if (a.AttributeClass?.OriginalDefinition is INamedTypeSymbol ac && byName.Contains(ac))
+                    found.Add(ac);
+        }
+
+        foreach (var t in types)
+        {
+            Collect(t.GetAttributes());
+            foreach (var m in t.GetMembers()) Collect(m.GetAttributes());
+        }
+        return found.ToList();
+    }
+
     /// <summary>The entry module: it imports the eager chunks (so they are fully evaluated before
     /// its own body runs), then declares what was deferred, attaches the reflection metadata for
     /// <em>every</em> type, and starts the runtime.</summary>
     private string BuildEntryModule(
         List<INamedTypeSymbol> types, ChunkGraph chunks, HashSet<int> eager,
-        List<INamedTypeSymbol> lazyTypes, Func<int, string> chunkFile)
+        List<INamedTypeSymbol> lazyTypes, Func<int, string> chunkFile,
+        IReadOnlyDictionary<string, string>? externalChunks)
     {
         var sb = new StringBuilder();
         sb.Append("/**\n * Transpose.Translator generated output (module entry).\n */\n");
         foreach (var i in eager.OrderBy(x => x))
             sb.Append("import './").Append(chunkFile(i)).Append("';\n");
+        // An attribute class the metadata constructs can live in a referenced module-mode assembly,
+        // where it is no more constructible from a stub than a local one is - and no chunk of this
+        // assembly imports it, since the metadata takes no part in chunking.
+        foreach (var file in ExternalMetadataAttributeChunks(types, externalChunks))
+            sb.Append("import './").Append(file).Append("';\n");
         sb.Append('\n');
 
         if (!string.IsNullOrEmpty(AssemblyVersion))

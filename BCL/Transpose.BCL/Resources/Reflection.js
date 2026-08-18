@@ -12,9 +12,13 @@
                 }
             }
 
-            ns = Transpose.unroll(ns);
+            Transpose.unroll(ns);
             type.$getMetadata = Transpose.Reflection.getMetadata;
             type.$metadata = metadata;
+            // The metadata function closes over this array, and a namespace in it can still be
+            // unresolvable now and resolvable later (module output registers its stubs after the
+            // metadata). getMetadata gives it another pass before materializing.
+            if (ns) type.$metadataNs = ns;
 
             // A module-mode stub holds the metadata for a type whose code has not arrived. Remember
             // it against the type NAME as well, so whichever route eventually replaces the stub —
@@ -61,6 +65,8 @@
         },
 
         getMetadata: function () {
+            if (this.$metadataNs) Transpose.unroll(this.$metadataNs);
+
             if (!this.$metadata && this.$genericTypeDefinition) {
                 this.$metadata = this.$genericTypeDefinition.$factoryMetadata || this.$genericTypeDefinition.$metadata;
             }

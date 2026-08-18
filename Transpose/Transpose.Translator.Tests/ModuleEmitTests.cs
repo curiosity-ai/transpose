@@ -307,6 +307,27 @@ public class Program { public static void Main() { Console.WriteLine(new Used().
         }
 
         [TestMethod]
+        public void AnAttributeClassTheMetadataConstructsIsEager()
+        {
+            var m = Emit(@"
+using System;
+public class MarkerAttribute : Attribute { public MarkerAttribute(string note) { Note = note; } public string Note; }
+
+[Marker(""x"")]
+public class Marked { public int N; }
+
+public class Program { public static void Main() { Console.WriteLine(1); } }
+");
+            // The metadata records the attribute as `new MarkerAttribute(...)`, built the first time
+            // Marked's metadata is materialized (GetCustomAttributes, getMembers, a reflection-driven
+            // deserializer). A stub answers every other reflection question but cannot be constructed,
+            // and nothing imports the class — metadata takes no part in chunking — so the entry must.
+            var marker = System.IO.Path.GetFileName(ChunkOf(m, "MarkerAttribute"));
+            Assert.IsTrue(m.EntryJs.Contains($"import './chunks/{marker}'"),
+                "the entry module must import the chunk of an attribute class its metadata constructs");
+        }
+
+        [TestMethod]
         public void MetadataIsEmittedBeforeTheManifest()
         {
             var m = Emit(@"

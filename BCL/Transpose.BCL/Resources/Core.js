@@ -1431,7 +1431,14 @@
                     var v = value[i];
 
                     if (Transpose.isString(v)) {
-                        value[i] = Transpose.unroll(v, scope);
+                        var resolved = Transpose.unroll(v, scope);
+
+                        // Leave a name that does not resolve yet in place, so a later pass can. With
+                        // module output a namespace holding only deferred types is empty until the
+                        // stubs are registered, and the metadata array naming it is shared by every
+                        // type in the assembly - overwriting the entry with null on the first pass
+                        // made the retry a no-op and the metadata then read a member off undefined.
+                        if (resolved != null) value[i] = resolved;
                     }
                 }
 

@@ -896,11 +896,23 @@
             }
 
             if (exists) {
+                // A plain object in a type's slot is the namespace placeholder Class.set creates while
+                // walking the path of a type nested deeper inside it — so a type defined BEFORE the one
+                // that contains it already registered itself under this path. That ordering is normal
+                // with module output, where the chunk holding the nested type can evaluate first, and
+                // the members it left behind have to travel onto the class now taking the slot. A member
+                // that is a type is carried over by the loop below; one that is itself a placeholder
+                // (a still-undefined type holding nested types of its own) is a plain object and is
+                // carried over as-is. A previous occupant that is a *function* is a retired stub, whose
+                // own properties (interfaces, markers) belong to the stub and must not be copied.
+                var existsIsNamespacePlaceholder = typeof exists === "object";
 
                 for (key in exists) {
                     var o = exists[key];
 
-                    if (typeof o === "function" && o.$$name) {
+                    if (existsIsNamespacePlaceholder && o && typeof o === "object" && !cls.hasOwnProperty(key)) {
+                        cls[key] = o;
+                    } else if (typeof o === "function" && o.$$name) {
                         (function (cls, key, o) {
                             Object.defineProperty(cls, key, {
                                 get: function () {
