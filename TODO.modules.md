@@ -433,6 +433,41 @@ itself generic, a diagnostic when the attribute is put on a type that is instant
 from (where the edges really are needed at definition time), and whether the published map should be
 folded into `Transpose.Modules.json` rather than shipping a second sidecar.
 
+### 7f. Three things a real app found
+
+Running a second application through module output — Curiosity's front-end, which unlike the Tesserae
+gallery keeps reflection **on** — turned up three failures that Tesserae could not have shown. All
+three are ordering problems around code the chunker deliberately does not walk.
+
+- **A nested type whose chunk evaluates first was dropped.** `Transpose.define("App.Sidebar.Mode")`
+  walks the path and leaves a plain object where `App.Sidebar` will go; when `App`'s own chunk later
+  defines `App`, `Class.set` copied the previous occupant's members onto the new class — but only the
+  ones that are *types* (a function with `$$name`). The intermediate placeholder is a plain object, so
+  the whole sub-tree under it went missing, and `App.Sidebar.Mode` read `undefined` at static-init
+  time. `Class.set` now carries a plain-object previous occupant over as-is. A previous occupant that
+  is a *function* is a retired stub, whose own properties must not be copied — that distinction is
+  what keeps the fix from corrupting the stub hand-off.
+- **An attribute class the metadata constructs must be eager.** Metadata is emitted outside the
+  per-type walk, so nothing imports what it names — fine for a type reference, which a stub answers,
+  and wrong for an attribute, which the metadata *constructs* (`new SomeAttribute(...)`) the first
+  time a type's metadata is materialized. `MetadataAttributeClasses` adds them to the eager roots, and
+  an attribute class from a referenced module-mode assembly is imported by the entry module.
+- **A namespace that is empty when the metadata registers must stay resolvable.** The whole
+  assembly's metadata shares one namespace array and `Transpose.unroll` resolves it in place on the
+  first `setMetadata` call. A namespace holding only deferred types is empty at that point — the
+  stubs are registered *after* the metadata, deliberately — and overwriting the entry with `null`
+  made the later pass (the deferred-metadata flush at the end of `Modules.register`) a no-op, so the
+  metadata read a member off `undefined`. `unroll` now leaves a name it cannot resolve in place, and
+  `getMetadata` gives the array one more pass before materializing.
+
+What that application still cannot do is defer the types a **reflection-driven deserializer**
+constructs. Newtonsoft builds an object graph from the metadata — member type by member type — and
+that construction is synchronous, so any DTO in an unfetched chunk throws. Nothing in the reference
+graph records that edge (the deserializer only ever sees a `Type`), so the current answer is to keep
+such an assembly's chunks eager: build it as a site rather than as a package. Making it lazy needs
+either an opt-out attribute for "never defer this type" or a preload pass that walks the metadata
+graph of `T` before deserializing into it.
+
 ### Not done
 
 - **`--incremental`.** Chunk assignment is a whole-program property, so a body-only edit that today

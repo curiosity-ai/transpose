@@ -454,5 +454,103 @@ public class Program
             StringAssert.Contains(output, "stillStub: True");
             StringAssert.Contains(output, "<<DONE>>");
         }
+
+        /// <summary>
+        /// The reflection metadata of a whole assembly shares ONE namespace array, and
+        /// <c>Transpose.unroll</c> resolves it in place the first time any type's metadata is
+        /// registered. With module output a namespace can be empty at that moment — every type in it
+        /// was deferred, and the stubs are registered after the metadata — so the entry has to stay
+        /// resolvable later. Overwriting it with null on the first pass made every later pass a no-op,
+        /// and the metadata then read a member off undefined.
+        /// </summary>
+        [TestMethod]
+        public async Task AnUnresolvableNamespaceIsLeftForALaterPassAsync()
+        {
+            var output = await RunTest(@"
+using System;
+using Transpose;
+
+public static class Ns
+{
+    public static bool FirstPassKeepsTheName() => Script.Write<bool>(
+        @""(function () { Transpose.global.$nsProbe = ['LateArrival']; Transpose.unroll(Transpose.global.$nsProbe); return typeof Transpose.global.$nsProbe[0] === 'string'; })()"");
+
+    public static bool SecondPassResolvesIt() => Script.Write<bool>(
+        @""(function () { Transpose.global.LateArrival = { Widget: 42 }; Transpose.unroll(Transpose.global.$nsProbe); return !!(Transpose.global.$nsProbe[0] && Transpose.global.$nsProbe[0].Widget === 42); })()"");
+}
+
+public class Program
+{
+    public static void Main()
+    {
+        Console.WriteLine(""kept: "" + Ns.FirstPassKeepsTheName());
+        Console.WriteLine(""resolved: "" + Ns.SecondPassResolvesIt());
+        Console.WriteLine(""<<DONE>>"");
+    }
+}
+", skipRoslyn: true);
+
+            StringAssert.Contains(output, "kept: True");
+            StringAssert.Contains(output, "resolved: True");
+            StringAssert.Contains(output, "<<DONE>>");
+        }
+
+        /// <summary>
+        /// A chunk holding a nested type can evaluate before the chunk holding the type that contains
+        /// it — chunk order is the reference graph's, not the source's — so <c>Transpose.define</c>
+        /// meets a namespace placeholder where the containing type is about to go. What that
+        /// placeholder holds has to survive the containing type taking the slot, at every depth: a
+        /// two-level path (<c>Outer.Inner</c>) was already carried over, a three-level one
+        /// (<c>Outer.Inner.Leaf</c>) was dropped, because the member being carried is then a plain
+        /// object rather than a type. Dropping it left the deeper type reachable by name and absent
+        /// from its own containing type, so reading it threw "cannot read properties of undefined".
+        /// </summary>
+        [TestMethod]
+        public async Task ANestedTypeDefinedBeforeItsContainingTypesSurvivesAsync()
+        {
+            var output = await RunTest(@"
+using System;
+using Transpose;
+
+public static class Chunks
+{
+    // What a chunk that evaluates first would run: the innermost type, whose containing types are
+    // defined only by the chunk that comes after it.
+    public static void DefineLeafFirst()
+    {
+        Script.Write(@""Transpose.define('Outer.Inner.Leaf', { $kind: 'nested enum', statics: { fields: { First: 0, Second: 1 } } });"");
+    }
+
+    public static void DefineContainers()
+    {
+        Script.Write(@""Transpose.define('Outer', { statics: { methods: { Name: function () { return 'outer'; } } } });"");
+        Script.Write(@""Transpose.define('Outer.Inner', { $kind: 'nested class', statics: { methods: { Name: function () { return 'inner'; } } } });"");
+    }
+
+    public static string LeafFirstValue() => Script.Write<string>(""'' + Outer.Inner.Leaf.Second"");
+    public static bool   LeafIsPresent()  => Script.Write<bool>(""typeof Outer.Inner.Leaf !== 'undefined'"");
+    public static string InnerName()      => Script.Write<string>(""Outer.Inner.Name()"");
+}
+
+public class Program
+{
+    public static void Main()
+    {
+        Chunks.DefineLeafFirst();
+        Chunks.DefineContainers();
+
+        Console.WriteLine(""leaf present: "" + Chunks.LeafIsPresent());
+        Console.WriteLine(""leaf value: "" + Chunks.LeafFirstValue());
+        Console.WriteLine(""inner: "" + Chunks.InnerName());
+        Console.WriteLine(""<<DONE>>"");
+    }
+}
+", skipRoslyn: true);
+
+            StringAssert.Contains(output, "leaf present: True");
+            StringAssert.Contains(output, "leaf value: 1");
+            StringAssert.Contains(output, "inner: inner");
+            StringAssert.Contains(output, "<<DONE>>");
+        }
     }
 }
