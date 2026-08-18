@@ -616,9 +616,11 @@ The short version:
   activator it does not own or that has not been re-released with the annotation.
   **`[NeverDefer]`** is the blunt fallback for what a call site cannot show — a `Type` *value*, a
   class resolved from a string: the type joins the eager roots, like the attribute classes the
-  metadata constructs. See `Emitter.ReflectionDeps.cs`, `ModuleReflectionDepsTests` and
-  `TODO.modules.md` §7h; the shipped JSON bindings still have to be annotated, which waits on a BCL
-  release carrying the attribute.
+  metadata constructs. The shipped JSON bindings carry the attribute — Newtonsoft's four
+  `DeserializeObject<T>`/`DeserializeAnonymousType<T>` overloads and System.Text.Json's two
+  `Deserialize<TValue>` overloads — so an application needs no declaration of its own; both projects
+  pin `Transpose.BCL` 26.8.4102, the first release carrying the attribute. See
+  `Emitter.ReflectionDeps.cs`, `ModuleReflectionDepsTests` and `TODO.modules.md` §7h.
 
   Still single-bundle: `--incremental` (chunk assignment is a whole-program property — do not combine
   them yet), minification (a module entry and its chunks are emitted formatted only, since they carry

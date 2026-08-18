@@ -8,7 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Transpose.BCL" Version="26.7.3303" />
+    <PackageReference Include="Transpose.BCL" Version="26.8.4102" />
   </ItemGroup>
 
   <ItemGroup>

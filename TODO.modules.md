@@ -599,22 +599,28 @@ Covered by `ModuleReflectionDepsTests`, which starts from the failing case (with
 nothing reaches the DTO's members) and includes the cross-assembly shape — the activator compiled
 into a package and the attribute read back out of its metadata.
 
-**Still to do: annotate the shipped bindings.** `Transpose.Newtonsoft.Json`'s four
+**The shipped bindings carry it.** `Transpose.Newtonsoft.Json`'s four
 `DeserializeObject<T>`/`DeserializeAnonymousType<T>` overloads and `Transpose.System.Text.Json`'s two
-`Deserialize<TValue>` overloads should carry `[ConstructsTypeArguments]` directly, so an application
-gets the behaviour without the assembly-level declaration. That cannot land in the same commit as
-the attribute itself: every `Packages/*` project pins a published `Transpose.BCL` (26.7.3303 today),
-so the annotation only compiles once a BCL carrying the attribute is released and those pins are
-bumped. Until then the assembly-level form is the supported route, and it is the only route for a
-third-party activator anyway.
+`Deserialize<TValue>` overloads are annotated, so an application gets the behaviour with no
+declaration of its own. That had to wait for `Transpose.BCL` 26.8.4102, the first release carrying
+the attribute; both projects' pins were bumped to it in the same change. The assembly-level form
+stays the route for a third-party activator, and for an application on an older binding.
+
+Measured on a consumer built against each, deserializing an `Order` whose graph is
+`Address → Country` and `List<Line>`:
+
+| binding | the caller's chunk imports | deferred |
+| --- | --- | --- |
+| unannotated (26.8.3954) | `Order` | `Address`, `Country`, `Line` — the deserializer's `new Address()` throws |
+| annotated | `Order`, `Address`, `Country`, `Line` | nothing but the unrelated type |
+
+`Serialize`/`SerializeObject` are deliberately left alone: serialization reads an instance it was
+handed and never constructs the type, so marking it would only inflate what a screen fetches.
 
 ### Not done
 
 - **Coalescing across assemblies at the site build** — see §7g. The pass runs per assembly, so a
   package's chunks are packed without knowing which of them its consumer needs at start-up.
-- **`[ConstructsTypeArguments]` on the shipped JSON bindings** — see §7h. The attribute and the
-  emitter support are in; annotating `Transpose.Newtonsoft.Json` and `Transpose.System.Text.Json`
-  waits on a released `Transpose.BCL` that carries it and a bump of those projects' pins.
 - **`--incremental`.** Chunk assignment is a whole-program property, so a body-only edit that today
   reuses cached per-type JavaScript could still reshuffle chunks. Module mode has not been checked
   against the cache and the two should not be combined yet.

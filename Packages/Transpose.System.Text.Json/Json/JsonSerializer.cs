@@ -48,10 +48,12 @@ namespace System.Text.Json
         public static extern string Serialize(object value, Type inputType, JsonSerializerOptions options);
 
         /// <summary>Parses the JSON string into a <typeparamref name="TValue"/>.</summary>
+        [ConstructsTypeArguments]
         [Template("System.Text.Json.JsonSerializer.Deserialize({json}, {TValue}, null)")]
         public static extern TValue Deserialize<TValue>(string json);
 
         /// <summary>Parses the JSON string into a <typeparamref name="TValue"/>, using the supplied options.</summary>
+        [ConstructsTypeArguments]
         [Template("System.Text.Json.JsonSerializer.Deserialize({json}, {TValue}, {options})")]
         public static extern TValue Deserialize<TValue>(string json, JsonSerializerOptions options);
 
