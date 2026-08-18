@@ -159,6 +159,39 @@ public class Program { public static void Main() { System.Console.WriteLine(""up
         }
 
         [TestMethod]
+        public void AMeasuredGroupIsNotCutToRespectTheSizeCeiling()
+        {
+            // The ceiling is a guess about what makes a request worth sending; a group is an
+            // observation that the application fetched these together. Splitting the group to respect
+            // the guess hands back exactly the extra requests the measurement existed to remove.
+            //
+            // The band here is deliberately far under the group: six widgets against a 2 KB ceiling.
+            var oracle = ChunkOracle.Parse(@"{ ""groups"": [
+                { ""name"": ""one-screen"", ""types"": [ ""W0"", ""W1"", ""W2"", ""W3"", ""W4"", ""W5"" ] }
+            ] }");
+
+            var m = ModuleEmitTests.Emit(Source(), minChunkBytes: 512, maxChunkBytes: 2 * 1024, chunkOracle: oracle);
+
+            var chunks = Enumerable.Range(0, 6).Select(i => ModuleEmitTests.ChunkOf(m, "W" + i)).Distinct().ToList();
+
+            Assert.AreEqual(1, chunks.Count,
+                "every type the capture placed in one group belongs in one chunk, ceiling or not");
+        }
+
+        [TestMethod]
+        public void TheCeilingStillHoldsForChunksNoCaptureGrouped()
+        {
+            // The override is scoped to what was measured: without an oracle the same sources and the
+            // same band must still be cut into several chunks, or the fix would have quietly turned
+            // maxChunkSize off for everyone.
+            var m = ModuleEmitTests.Emit(Source(), minChunkBytes: 512, maxChunkBytes: 2 * 1024);
+
+            var chunks = Enumerable.Range(0, 6).Select(i => ModuleEmitTests.ChunkOf(m, "W" + i)).Distinct().Count();
+
+            Assert.IsTrue(chunks > 1, $"an ungrouped build must still respect the ceiling (got {chunks} chunk(s))");
+        }
+
+        [TestMethod]
         public void AnEagerGroupPutsALibrarysStartUpSetInItsInitialPayload()
         {
             // A package has no entry point to be lazy relative to, so it defers everything and the
