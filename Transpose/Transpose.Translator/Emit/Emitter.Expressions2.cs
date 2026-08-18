@@ -423,13 +423,20 @@ public sealed partial class Emitter
     /// <summary>Adds generic type-parameter bindings (e.g. {TSource} → System.Int32) for templates.</summary>
     private void AddTypeArguments(Dictionary<string, string> byName, IMethodSymbol definition, IMethodSymbol constructed)
     {
-        for (var i = 0; i < definition.TypeParameters.Length && i < constructed.TypeArguments.Length; i++)
+        // A [LoadsTypeArguments] callee fetches the argument's module itself, so {T} is written
+        // without the chunk edge that would make it eager (Emitter.ReflectionDeps.cs).
+        var soft = BeginSoftTypeArgs(constructed);
+        try
         {
-            byName[definition.TypeParameters[i].Name] = TemplateTypeRef(definition, constructed.TypeArguments[i]);
-            byName[definition.TypeParameters[i].Name + ":default"] = DefaultValueLiteral(constructed.TypeArguments[i]);
-            if (ToStringFnLiteral(constructed.TypeArguments[i]) is { } tsFn)
-                byName[definition.TypeParameters[i].Name + ":ToString"] = tsFn;
+            for (var i = 0; i < definition.TypeParameters.Length && i < constructed.TypeArguments.Length; i++)
+            {
+                byName[definition.TypeParameters[i].Name] = TemplateTypeRef(definition, constructed.TypeArguments[i]);
+                byName[definition.TypeParameters[i].Name + ":default"] = DefaultValueLiteral(constructed.TypeArguments[i]);
+                if (ToStringFnLiteral(constructed.TypeArguments[i]) is { } tsFn)
+                    byName[definition.TypeParameters[i].Name + ":ToString"] = tsFn;
+            }
         }
+        finally { EndSoftTypeArgs(soft); }
 
         var defType = definition.ContainingType;
         var conType = constructed.ContainingType;
@@ -594,8 +601,15 @@ public sealed partial class Emitter
             // Receiver first (becomes `this`), then the leading generic type arguments.
             if (objLitReceiver is not null) EmitExpression(objLitReceiver); else _w.Write("this");
             if (ThreadsTypeArgs(symbol))
-                for (var ti = 0; ti < symbol.TypeArguments.Length; ti++)
-                    { _w.Write(", "); _w.Write(TypeRef(symbol.TypeArguments[ti])); }
+            {
+                var softArgs = BeginSoftTypeArgs(symbol);
+                try
+                {
+                    for (var ti = 0; ti < symbol.TypeArguments.Length; ti++)
+                        { _w.Write(", "); _w.Write(TypeRef(symbol.TypeArguments[ti])); }
+                }
+                finally { EndSoftTypeArgs(softArgs); }
+            }
             first = false;
         }
         else
@@ -745,11 +759,19 @@ public sealed partial class Emitter
     private bool EmitLeadingTypeArgs(IMethodSymbol? method)
     {
         if (method is null || !ThreadsTypeArgs(method) || method.TypeArguments.Length == 0) return false;
-        for (var i = 0; i < method.TypeArguments.Length; i++)
+
+        // A [LoadsTypeArguments] callee fetches the argument's module itself, so the type is named
+        // without the chunk edge that would make it eager (Emitter.ReflectionDeps.cs).
+        var soft = BeginSoftTypeArgs(method);
+        try
         {
-            if (i > 0) _w.Write(", ");
-            _w.Write(TypeRef(method.TypeArguments[i]));
+            for (var i = 0; i < method.TypeArguments.Length; i++)
+            {
+                if (i > 0) _w.Write(", ");
+                _w.Write(TypeRef(method.TypeArguments[i]));
+            }
         }
+        finally { EndSoftTypeArgs(soft); }
         return true;
     }
 

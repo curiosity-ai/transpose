@@ -207,6 +207,112 @@ public class Program { public static void Main() { Console.WriteLine(new UsesCar
         }
 
         [TestMethod]
+        public void LoadsTypeArgumentsKeepsAnAsyncActivatorsArgumentDeferred()
+        {
+            // Activator.CreateInstanceAsync<T>() exists to fetch T's module before constructing it,
+            // and the emitted {T} is an ordinary type reference — so without [LoadsTypeArguments] the
+            // chunker gave the caller a hard edge and loaded eagerly exactly the code the call was
+            // written to defer. The Type-valued overload was always soft (typeof is), which is why
+            // only the generic form regressed.
+            var m = Emit(@"
+using System;
+using System.Threading.Tasks;
+public class Panel { public int N; }
+public class ShellGeneric { public static Task<Panel> Open() { return Activator.CreateInstanceAsync<Panel>(); } }
+public class ShellTypeof { public static Task<object> Open() { return Activator.CreateInstanceAsync(typeof(Panel)); } }
+public class Program { public static void Main() { Console.WriteLine(1); } }
+");
+            var panel = System.IO.Path.GetFileName(ChunkOf(m, "Panel"));
+
+            Assert.AreNotEqual(ChunkOf(m, "ShellGeneric"), ChunkOf(m, "Panel"));
+            CollectionAssert.DoesNotContain(
+                ImportsOf(m.Chunks.First(c => c.relPath == ChunkOf(m, "ShellGeneric")).js).ToList(), panel,
+                "CreateInstanceAsync<Panel>() loads Panel's module itself — the call site must not import it");
+            CollectionAssert.DoesNotContain(
+                ImportsOf(m.Chunks.First(c => c.relPath == ChunkOf(m, "ShellTypeof")).js).ToList(), panel,
+                "...and the Type-valued overload behaves the same, as it always did");
+        }
+
+        [TestMethod]
+        public void LoadsTypeArgumentsWorksOnAnApplicationsOwnAsyncActivator()
+        {
+            // The attribute is not private to the BCL: an app wrapping the activator in its own
+            // helper (a route table that activates its view) needs the same treatment, and that
+            // helper is a plain generic method whose type arguments are threaded as leading call
+            // arguments rather than substituted into a [Template].
+            var m = Emit(@"
+using System;
+using System.Threading.Tasks;
+public class View { public int N; }
+public static class Activate
+{
+    [Transpose.LoadsTypeArguments]
+    public static async Task<T> ViewAsync<T>() where T : class { return await Activator.CreateInstanceAsync<T>(); }
+}
+public class Route { public static Task<View> Open() { return Activate.ViewAsync<View>(); } }
+public class Program { public static void Main() { Console.WriteLine(1); } }
+");
+            CollectionAssert.DoesNotContain(
+                ImportsOf(m.Chunks.First(c => c.relPath == ChunkOf(m, "Route")).js).ToList(),
+                System.IO.Path.GetFileName(ChunkOf(m, "View")),
+                "the helper loads the module, so naming View at the call site must stay a soft reference");
+        }
+
+        [TestMethod]
+        public void AGenericCallWithoutTheAttributeStillDependsOnItsTypeArgument()
+        {
+            // The other direction of the same switch: [LoadsTypeArguments] is opt-in, and an ordinary
+            // generic call still has to keep its argument loadable — a synchronous
+            // Activator.CreateInstance<T>() constructs it on the spot.
+            var m = Emit(@"
+using System;
+public class Widget { public int N; }
+public static class Make { public static T One<T>() where T : new() { return new T(); } }
+public class Caller { public static Widget Get() { return Make.One<Widget>(); } }
+public class Program { public static void Main() { Console.WriteLine(1); } }
+");
+            var caller = ChunkOf(m, "Caller");
+            var widget = ChunkOf(m, "Widget");
+            Assert.IsTrue(caller == widget
+                || ImportsOf(m.Chunks.First(c => c.relPath == caller).js).Contains(System.IO.Path.GetFileName(widget)),
+                "an unannotated generic call constructs its argument synchronously, so the edge must remain");
+        }
+
+        [TestMethod]
+        public void SkipTypeClusteringDoesNotAttributeALoadedTypeArgumentToTheCaller()
+        {
+            // The two passes have to agree. A route table is a [SkipTypeClustering] facade, so its
+            // member dependencies are attributed to whoever calls Define() — and that pass is a
+            // syntax walk, which sees the view named three times over (the type argument, the
+            // Task<View> return type, the awaited expression's type) where the emitter records none
+            // of them. Without muting those the activation is undone at the call site: Define()'s
+            // caller imports every view, which is exactly the eager edge it was written to remove.
+            var m = Emit(@"
+using System;
+using System.Threading.Tasks;
+public class Panel { public int N; }
+public class Plain { public int N; }
+public static class Activate
+{
+    [Transpose.LoadsTypeArguments]
+    public static async Task<T> ViewAsync<T>() where T : class { return await Activator.CreateInstanceAsync<T>(); }
+}
+[Transpose.SkipTypeClustering]
+public static class Routes
+{
+    public static async Task Define() { Console.WriteLine(await Activate.ViewAsync<Panel>()); Console.WriteLine(new Plain()); }
+}
+public class Boot { public static Task Go() { return Routes.Define(); } }
+public class Program { public static void Main() { Console.WriteLine(1); } }
+");
+            var imports = ImportsOf(m.Chunks.First(c => c.relPath == ChunkOf(m, "Boot")).js).ToList();
+            CollectionAssert.DoesNotContain(imports, System.IO.Path.GetFileName(ChunkOf(m, "Panel")),
+                "Define() activates the Panel, so calling Define() must not pull Panel's chunk");
+            CollectionAssert.Contains(imports, System.IO.Path.GetFileName(ChunkOf(m, "Plain")),
+                "...while what the facade constructs outright still has to reach its caller");
+        }
+
+        [TestMethod]
         public void SkipTypeClusteringFollowsACallToASiblingOnTheSameFacade()
         {
             // The shape that broke Mosaik.UI and DefaultRouting: a facade member does not construct

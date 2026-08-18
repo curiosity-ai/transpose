@@ -146,6 +146,41 @@ public sealed partial class Emitter
         return reached;
     }
 
+    /// <summary>
+    /// The other direction: a call whose type arguments must NOT become dependencies.
+    ///
+    /// A generic call emits its type arguments — as a <c>{T}</c> template token, or as the leading
+    /// arguments a generic method is threaded — and every emitted type reference is an edge, so
+    /// <c>Activator.CreateInstanceAsync&lt;HomeView&gt;()</c> pinned <c>HomeView</c>'s chunk into the
+    /// caller's. That is precisely what the asynchronous activator exists to avoid: it fetches the
+    /// module itself, and a static edge to it leaves code that looks lazy and is not.
+    ///
+    /// <c>[LoadsTypeArguments]</c> says the method does that fetching, so the argument is emitted as
+    /// a <em>soft</em> reference (<c>_softRefDepth</c>, the same mechanism <c>typeof</c> uses): the
+    /// name is still written down, because the runtime needs it to know what to load, and a stub
+    /// answers for it until the module arrives.
+    /// </summary>
+    private bool LoadsTypeArguments(IMethodSymbol? method) =>
+        method is not null
+        && (TransposeNaming.HasAttr(method.OriginalDefinition, TransposeNaming.LoadsTypeArgumentsAttr)
+            || TransposeNaming.HasAttr(method.ContainingType, TransposeNaming.LoadsTypeArgumentsAttr));
+
+    /// <summary>Opens a soft-reference scope around a call's type arguments when the callee loads
+    /// them itself. Returns whether one was opened, to be handed back to <see cref="EndSoftTypeArgs"/>
+    /// in a <c>finally</c>.</summary>
+    private bool BeginSoftTypeArgs(IMethodSymbol? method)
+    {
+        if (!LoadsTypeArguments(method)) return false;
+        _softRefDepth++;
+        return true;
+    }
+
+    /// <summary>Closes what <see cref="BeginSoftTypeArgs"/> opened.</summary>
+    private void EndSoftTypeArgs(bool opened)
+    {
+        if (opened) _softRefDepth--;
+    }
+
     /// <summary>The named type behind a reference, or null when there is no module to load for it:
     /// a type parameter (nothing is written down at the call site), an external type (native JS), or
     /// the BCL (always loaded, and walking <c>string</c>'s members would be a waste).</summary>

@@ -46,6 +46,11 @@ namespace System
 
         /// <summary>Creates an instance of <typeparamref name="T"/>, first loading its module if it
         /// has not been loaded yet.</summary>
+        /// <remarks><c>[LoadsTypeArguments]</c> is what makes this worth calling in a module build:
+        /// without it the emitted <c>{T}</c> is an ordinary type reference, so the chunker would give
+        /// the caller a hard edge to <typeparamref name="T"/>'s chunk and load eagerly the very code
+        /// this overload exists to fetch on demand.</remarks>
+        [Transpose.LoadsTypeArguments]
         [Transpose.Template("System.Threading.Tasks.Task.fromPromise(Transpose.createInstanceAsync({T}), 0)")]
         public static extern System.Threading.Tasks.Task<T> CreateInstanceAsync<T>();
     }

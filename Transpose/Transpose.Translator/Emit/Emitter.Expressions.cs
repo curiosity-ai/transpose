@@ -820,7 +820,13 @@ public sealed partial class Emitter
         if (member.ContainingType is { IsGenericType: true } ct)
             Add(ct.OriginalDefinition.TypeParameters, ct.TypeArguments);
         if (member is IMethodSymbol { IsGenericMethod: true } m)
-            Add(m.OriginalDefinition.TypeParameters, m.TypeArguments);
+        {
+            // A [LoadsTypeArguments] callee fetches the argument's module itself, so the name is
+            // emitted without the chunk edge that would make it eager (Emitter.ReflectionDeps.cs).
+            var soft = BeginSoftTypeArgs(m);
+            try { Add(m.OriginalDefinition.TypeParameters, m.TypeArguments); }
+            finally { EndSoftTypeArgs(soft); }
+        }
         return map;
     }
 

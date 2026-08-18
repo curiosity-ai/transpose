@@ -58,6 +58,17 @@ namespace Transpose
         public static extern Task<Type> LoadAsync(Type type);
 
         /// <summary>
+        /// Fetches the module holding <typeparamref name="T"/> and completes with the real type.
+        /// The generic form of <see cref="LoadAsync(Type)"/>, for a type known at compile time.
+        /// </summary>
+        /// <remarks><c>[LoadsTypeArguments]</c> keeps the emitted <c>{T}</c> from becoming a chunk
+        /// dependency of the caller — loading the module is the whole job, so a static edge to it
+        /// would make the call pointless.</remarks>
+        [LoadsTypeArguments]
+        [Template("System.Threading.Tasks.Task.fromPromise(Transpose.Modules.load({T}), 0)")]
+        public static extern Task<Type> LoadAsync<T>();
+
+        /// <summary>
         /// Fetches the module holding the type named <paramref name="typeName"/> (its full name, as
         /// the manifest declares it) and completes with the real type, or <c>null</c> if no such
         /// type is known.

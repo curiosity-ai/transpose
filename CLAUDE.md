@@ -217,9 +217,10 @@ metadata, not a web resource, so `OutputBuilder` never extracts it into a site.
 - `[Script]` — raw JS body.
 - `[GlobalMethods]` / `[Scope]` — project static members / a type onto ambient JS globals.
 - `[ObjectLiteral]` — treat a class/struct as a plain JS object.
-- `[SkipTypeClustering]` / `[ConstructsTypeArguments]` / `[NeverDefer]` — module-output chunking:
-  keep a facade out of the reference graph, mark a generic method that *constructs* its type
-  arguments reflectively, and pin a type into the initial payload. See the module-output section.
+- `[SkipTypeClustering]` / `[ConstructsTypeArguments]` / `[NeverDefer]` / `[LoadsTypeArguments]` —
+  module-output chunking: keep a facade out of the reference graph, mark a generic method that
+  *constructs* its type arguments reflectively, pin a type into the initial payload, and mark a
+  generic method that *loads* its type arguments itself. See the module-output section.
 
 ## Building and bootstrapping
 
@@ -685,6 +686,21 @@ The short version:
   `Deserialize<TValue>` overloads — so an application needs no declaration of its own; both projects
   pin `Transpose.BCL` 26.8.4102, the first release carrying the attribute. See
   `Emitter.ReflectionDeps.cs`, `ModuleReflectionDepsTests` and `TODO.modules.md` §7h.
+
+  **`[LoadsTypeArguments]` is the same attribute pointing the other way.** A generic call emits its
+  type arguments — as a `{T}` template token, or as the leading arguments a generic method is threaded
+  — and every emitted reference is an edge, so `Activator.CreateInstanceAsync<HomeView>()` pinned
+  `HomeView`'s chunk into the caller's. That is exactly what the asynchronous activator exists to
+  avoid: it fetches the module first, and a static edge to it leaves code that *looks* lazy and is
+  not, with nothing failing to say so. The attribute wraps the type-argument emission in the same
+  `_softRefDepth` scope `typeof` uses — the name is still written down, because the runtime needs it
+  to know what to fetch, and a stub answers for it until the module arrives. `CreateInstanceAsync<T>()`
+  and `Modules.LoadAsync<T>()` carry it; so should an application's own wrapper around them, which is
+  an ordinary generic method and gets the identical treatment. Note the `Type`-valued overloads never
+  needed it: `typeof(X)` was already soft, which is why only the generic form regressed.
+  `ModuleEmitTests.LoadsTypeArguments*` covers both, plus the negative — an unannotated generic call
+  still keeps its argument loadable, because a synchronous `Activator.CreateInstance<T>()` constructs
+  it on the spot.
 
   Still single-bundle: `--incremental` (chunk assignment is a whole-program property — do not combine
   them yet), minification (a module entry and its chunks are emitted formatted only, since they carry

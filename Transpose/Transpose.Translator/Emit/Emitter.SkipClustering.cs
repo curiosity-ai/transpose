@@ -101,14 +101,18 @@ public sealed partial class Emitter
                 foreach (var syntaxRef in raw.DeclaringSyntaxReferences)
                 {
                     var node = syntaxRef.GetSyntax();
+                    var muted = MutedByLoadedTypeArguments(node);
+
                     foreach (var descendant in node.DescendantNodesAndSelf())
                     {
+                        if (muted.Contains(descendant)) continue;
+
                         Add(own, _model.GetTypeInfo(descendant).Type);
                         var symbol = _model.GetSymbolInfo(descendant).Symbol;
                         // The *declaring* type of whatever is called or read: `new Card(...)`,
                         // `Card.Something`, an extension method's own class.
                         Add(own, symbol?.ContainingType);
-                        if (symbol is IMethodSymbol m) Add(own, m.ReturnType);
+                        if (symbol is IMethodSymbol m && !LoadsTypeArguments(m)) Add(own, m.ReturnType);
 
                         // …and when that declaring type is a facade, the call also inherits whatever
                         // the callee's body reaches — nothing else is going to import it.
@@ -182,6 +186,44 @@ public sealed partial class Emitter
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// The parts of a facade member's syntax that must NOT contribute a dependency, because the call
+    /// they belong to loads its type arguments itself (<c>[LoadsTypeArguments]</c>).
+    ///
+    /// This pass is a syntax walk and deliberately over-approximates — an extra import costs size,
+    /// a missing one throws — but here the over-approximation defeats the point. A route table
+    /// written as <c>await AppRouting.ActivateAsync&lt;ContactsView&gt;()</c> names the view three
+    /// times over (the type argument, the <c>Task&lt;ContactsView&gt;</c> return type, the awaited
+    /// expression's type), and recording any of them hands the view back to whoever calls the facade
+    /// — which is exactly the eager edge the activation was written to remove. The emitter itself
+    /// records none of them: it emits the name as a soft reference and nothing else.
+    ///
+    /// So the type-argument list, the call, and an <c>await</c> directly wrapping it are muted. A
+    /// type the member reaches any *other* way is unaffected, because it is added from that other
+    /// node.
+    /// </summary>
+    private HashSet<SyntaxNode> MutedByLoadedTypeArguments(SyntaxNode root)
+    {
+        var muted = new HashSet<SyntaxNode>();
+        foreach (var node in root.DescendantNodesAndSelf())
+        {
+            if (node is not InvocationExpressionSyntax invocation) continue;
+            if (_model.GetSymbolInfo(invocation).Symbol is not IMethodSymbol { IsGenericMethod: true } method) continue;
+            if (!LoadsTypeArguments(method)) continue;
+
+            muted.Add(invocation);
+            foreach (var name in invocation.Expression.DescendantNodesAndSelf().OfType<GenericNameSyntax>())
+                foreach (var inside in name.TypeArgumentList.DescendantNodesAndSelf())
+                    muted.Add(inside);
+
+            // `await Activate<X>()` has the awaited expression's type — X itself — on the await node.
+            var wrapper = invocation.Parent;
+            while (wrapper is ParenthesizedExpressionSyntax) wrapper = wrapper.Parent;
+            if (wrapper is AwaitExpressionSyntax) muted.Add(wrapper);
+        }
+        return muted;
     }
 
     /// <summary>The symbol a member is keyed by, matching what <see cref="RecordSkipClusterCall"/>

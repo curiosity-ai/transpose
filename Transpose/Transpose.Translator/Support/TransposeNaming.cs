@@ -23,6 +23,7 @@ internal static class TransposeNaming
     public const string SkipTypeClusteringAttr = "Transpose.SkipTypeClusteringAttribute";
     public const string ConstructsTypeArgumentsAttr = "Transpose.ConstructsTypeArgumentsAttribute";
     public const string NeverDeferAttr = "Transpose.NeverDeferAttribute";
+    public const string LoadsTypeArgumentsAttr = "Transpose.LoadsTypeArgumentsAttribute";
 
     /// <summary>Allocation-free equivalent of <c>a.AttributeClass?.ToDisplayString() == fullName</c>.
     /// Attribute matching runs for every symbol reference during emit; <c>ToDisplayString</c> builds a
