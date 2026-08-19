@@ -553,8 +553,8 @@ public sealed partial class Emitter
         // The namespace of an emitted name folded into the metadata block's shared $n table.
         string Compact(string full, ITypeSymbol of)
         {
-            var ns = of.ContainingNamespace?.ToDisplayString();
-            return !string.IsNullOrEmpty(ns) && ns != "<global namespace>"
+            var ns = TransposeNaming.NamespaceName(of);
+            return !string.IsNullOrEmpty(ns)
                    && full.StartsWith(ns + ".", StringComparison.Ordinal)
                 ? $"$n[{NsIndex(ns!)}]" + full.Substring(ns!.Length)
                 : full;
