@@ -1328,10 +1328,25 @@ public sealed partial class Emitter
                     break;
                 // Index initializer: [key] = value
                 case AssignmentExpressionSyntax { Left: ImplicitElementAccessSyntax idx } assign:
+                    var idxProp = _model.GetSymbolInfo(idx).Symbol as IPropertySymbol;
+                    // An [External] type's plain indexer writes through native bracket access, the
+                    // same as `obj[key] = v` outside an initializer (see the assignment path's
+                    // IsNativeIndexer branch). Emitting setItem here made `new dom.AnimationKeyFrame
+                    // { ["opacity"] = 0 }` — the only way to name an animated property — call a method
+                    // no native JS object has.
+                    if (idxProp is not null && TransposeNaming.IsNativeIndexer(idxProp))
+                    {
+                        _w.Write($"{target}[");
+                        EmitArgumentList(idx.ArgumentList);
+                        _w.Write("] = ");
+                        EmitExpressionConverted(assign.Right, idxProp.Type);
+                        _w.Write("; ");
+                        break;
+                    }
                     _w.Write($"{target}.setItem(");
                     EmitArgumentList(idx.ArgumentList);
                     _w.Write(", ");
-                    EmitExpressionConverted(assign.Right, (_model.GetSymbolInfo(idx).Symbol as IPropertySymbol)?.Type);
+                    EmitExpressionConverted(assign.Right, idxProp?.Type);
                     _w.Write("); ");
                     break;
                 // Collection element with multiple values: { k, v }  (e.g. dictionary)
@@ -3244,11 +3259,11 @@ public sealed partial class Emitter
         {
             _w.Write("System.Array.init(TransposeR.array(");
             EmitExpression(rankSpec.Sizes[0]);
-            _w.Write($", {DefaultValueLiteral(elementType!)}), {TypeRef(elementType!)})");
+            _w.Write($", {DefaultValueLiteral(elementType!)}), {ArrayElementTypeRef(elementType!)})");
             return;
         }
 
-        _w.Write($"System.Array.init([], {TypeRef(elementType!)})");
+        _w.Write($"System.Array.init([], {ArrayElementTypeRef(elementType!)})");
     }
 
     /// <summary>Emits a single-dimensional array-creation initializer as a JS array tagged with its
@@ -3265,7 +3280,7 @@ public sealed partial class Emitter
 
         _w.Write("System.Array.init(");
         EmitInitializerArray(initializer);
-        _w.Write($", {TypeRef(elementType)})");
+        _w.Write($", {ArrayElementTypeRef(elementType)})");
     }
 
     /// <summary>Emits a multi-dimensional array via System.Array.create(defaultValue, initValues,
@@ -3281,7 +3296,7 @@ public sealed partial class Emitter
             _w.Write(DefaultValueLiteral(elementType));
         _w.Write(", ");
         if (initializer is not null) EmitInitializerArray(initializer); else _w.Write("null");
-        _w.Write($", {TypeRef(elementType)}");
+        _w.Write($", {ArrayElementTypeRef(elementType)}");
 
         var explicitSizes = rankSpec is not null && rankSpec.Sizes.Count > 0
             && rankSpec.Sizes[0] is not OmittedArraySizeExpressionSyntax;
@@ -3372,7 +3387,7 @@ public sealed partial class Emitter
         {
             _w.Write("System.Array.init(");
             emitArrayLiteral();
-            _w.Write($", {TypeRef(arr.ElementType)})");
+            _w.Write($", {ArrayElementTypeRef(arr.ElementType)})");
             return;
         }
 
