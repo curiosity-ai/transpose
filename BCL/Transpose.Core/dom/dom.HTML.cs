@@ -3362,26 +3362,6 @@ namespace Transpose.Core
                 set;
             }
 
-            public virtual extern dom.Animation animate(
-              Union<dom.AnimationKeyFrame, dom.AnimationKeyFrame[]> keyframes,
-              Union<double, dom.AnimationOptions> options);
-
-            public virtual extern dom.Animation animate(
-              dom.AnimationKeyFrame keyframes,
-              double options);
-
-            public virtual extern dom.Animation animate(
-              dom.AnimationKeyFrame keyframes,
-              dom.AnimationOptions options);
-
-            public virtual extern dom.Animation animate(
-              dom.AnimationKeyFrame[] keyframes,
-              double options);
-
-            public virtual extern dom.Animation animate(
-              dom.AnimationKeyFrame[] keyframes,
-              dom.AnimationOptions options);
-
             public virtual extern void blur();
 
             public virtual extern void click();

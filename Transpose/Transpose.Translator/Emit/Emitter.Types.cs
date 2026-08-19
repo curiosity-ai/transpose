@@ -73,6 +73,24 @@ public sealed partial class Emitter
         return type is ITypeParameterSymbol ? TypeRefCore(type) : UnshadowedTypeRef(TypeRefCore(type));
     }
 
+    /// <summary>
+    /// The runtime type token an ARRAY is tagged with (<c>System.Array.init([…], token)</c>).
+    ///
+    /// Normally the element type's own <see cref="TypeRef"/>, but an [ObjectLiteral] type from an
+    /// external binding library has no runtime type object to name: it is a WebIDL *dictionary*
+    /// (dom.AnimationKeyFrame, dom.EventInit, …), so instances are plain JS objects, no
+    /// Transpose.define is ever emitted for it, and the browser has no global of that name either —
+    /// naming it emitted `System.Array.init([…], AnimationKeyFrame)`, which throws ReferenceError
+    /// before the array is even built. Such an element IS a plain object, so it is tagged as one,
+    /// exactly as `new object[]{…}` is. A NON-external [ObjectLiteral] type is unaffected: it still
+    /// gets a define (carrying $literal), so its name resolves.
+    /// </summary>
+    private string ArrayElementTypeRef(ITypeSymbol elementType)
+        => TransposeNaming.IsExternalType(elementType)
+           && elementType.GetAttributes().Any(a => TransposeNaming.AttrIs(a, "Transpose.ObjectLiteralAttribute"))
+            ? TypeRef(_compilation.GetSpecialType(SpecialType.System_Object))
+            : TypeRef(elementType);
+
     /// <summary>Adds every source named type inside <paramref name="type"/> (the type itself and,
     /// recursively, its generic arguments and array element) to the current type's dependency set.
     /// A generic argument counts: <c>Foo$1(X)</c> builds a generic instance whose base class can be

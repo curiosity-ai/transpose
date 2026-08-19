@@ -7683,7 +7683,7 @@ namespace Transpose.Core
 
         [CombinedClass]
         [FormerInterface]
-        public class Animation : IObject
+        public partial class Animation : IObject
         {
 
 
@@ -7789,9 +7789,9 @@ namespace Transpose.Core
         [IgnoreCast]
         [Virtual]
         [FormerInterface]
-        public abstract class AnimationEffectReadOnly : IObject
+        public abstract partial class AnimationEffectReadOnly : IObject
         {
-            public abstract double timing { get; }
+            public abstract dom.EffectTiming timing { get; }
 
             public abstract dom.ComputedTimingProperties getComputedTiming();
         }
@@ -7824,7 +7824,7 @@ namespace Transpose.Core
         }
 
         [IgnoreCast]
-        [Virtual]
+        [ObjectLiteral]
         [FormerInterface]
         public class AnimationKeyFrame : IObject
         {
@@ -16739,7 +16739,7 @@ namespace Transpose.Core
         [IgnoreCast]
         [Virtual]
         [FormerInterface]
-        public abstract class DocumentOrShadowRoot : IObject
+        public abstract partial class DocumentOrShadowRoot : IObject
         {
             public abstract dom.Element activeElement { get; }
 

@@ -3616,5 +3616,93 @@ public class Program
     }
 }", waitForOutput: "<<DONE>>");
         }
+
+        // ---- an [External] [ObjectLiteral] dictionary (a WebIDL dictionary) ------
+
+        /// <summary>
+        /// An index initializer on an [External] type must write through native bracket access, the
+        /// same as `obj[key] = v` does outside an initializer. It emitted `setItem(…)` — a method no
+        /// native JS object has — which broke the only way to name an animated property:
+        /// `el.animate(new[]{ new dom.AnimationKeyFrame { ["opacity"] = 0 } }, …)`.
+        /// </summary>
+        [TestMethod]
+        public void ExternalObjectLiteralIndexInitializerUsesNativeBracketAccess()
+        {
+            var result = new RoslynTranslator().Translate(ExternalDictionarySource);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            var js = result.Javascript!;
+
+            StringAssert.Contains(js, "[\"opacity\"] = 0",
+                "an index initializer on an external type should emit native bracket access");
+            Assert.IsFalse(js.Contains("setItem("),
+                $"no setItem call should survive for an external type's indexer:\n{js}");
+        }
+
+        /// <summary>
+        /// An array of an [External] [ObjectLiteral] type must be tagged as an array of plain objects.
+        /// Naming the type emitted `System.Array.init([…], AnimationKeyFrame)`, and a WebIDL
+        /// dictionary has no runtime object of that name — neither a Transpose.define (instances are
+        /// plain objects) nor a browser global — so the tag threw ReferenceError before the array was
+        /// even built.
+        /// </summary>
+        [TestMethod]
+        public void ArrayOfExternalObjectLiteralIsTaggedAsObjectArray()
+        {
+            var result = new RoslynTranslator().Translate(ExternalDictionarySource);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            var js = result.Javascript!;
+
+            StringAssert.Contains(js, "System.Array.init([", "the array literal should still be tagged");
+            StringAssert.Contains(js, "], System.Object)",
+                "an external [ObjectLiteral] element type should be tagged as System.Object");
+            Assert.IsFalse(js.Contains(", Keyframe)"),
+                $"the dictionary's own name has no runtime object to resolve to:\n{js}");
+        }
+
+        /// <summary>Both of the above, end to end on Node: the emitted JS has to actually run.</summary>
+        [TestMethod]
+        public async Task ExternalObjectLiteralDictionaryRoundTripsOnNode()
+        {
+            // skipRoslyn: the members are extern, so there is nothing to run natively — an external
+            // [ObjectLiteral] type IS a plain JS object, which is what makes this runnable at all
+            // (no binding library or JS shim is needed for it to exist).
+            var output = await RunTest(ExternalDictionarySource, skipRoslyn: true);
+            StringAssert.Contains(output, "opacity=0");
+            StringAssert.Contains(output, "length=2");
+            StringAssert.Contains(output, "elementType=Object");
+        }
+
+        /// <summary>
+        /// Models `dom.AnimationKeyFrame` — an [External] [ObjectLiteral] type whose animated
+        /// properties are reached through a string indexer — without depending on Transpose.Core,
+        /// which the translator tests do not reference.
+        /// </summary>
+        private const string ExternalDictionarySource = @"
+using System;
+using Transpose;
+
+[External]
+[ObjectLiteral]
+public class Keyframe
+{
+    public extern double? offset { get; set; }
+    public extern object this[string property] { get; set; }
+}
+
+public class Program
+{
+    public static void Main()
+    {
+        var frames = new[]
+        {
+            new Keyframe { [""opacity""] = 0 },
+            new Keyframe { offset = 1, [""opacity""] = 1 },
+        };
+
+        Console.WriteLine(""opacity="" + frames[0][""opacity""]);
+        Console.WriteLine(""length="" + frames.Length);
+        Console.WriteLine(""elementType="" + frames.GetType().GetElementType().Name);
+    }
+}";
     }
 }
