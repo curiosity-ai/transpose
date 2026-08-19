@@ -484,6 +484,18 @@ The short version:
 - **A boxed numeric loses its exact type.** Every JS number is a double, so `(object)1 is double` is
   true and `objects.OfType<double>()` also matches the boxed `int`s. `long`/`ulong`/`decimal` are
   real runtime objects and are unaffected, as are reference types and structs.
+- **A plain-object external type has no runtime type object.** An `[ObjectLiteral]` type from an
+  external binding library — a WebIDL dictionary (`dom.ScrollIntoViewOptions`,
+  `dom.AddEventListenerOptions`, …) or any other plain-object binding — gets no `Transpose.define`
+  (it is external) and has no browser global of that name (it is a dictionary, not a class), so every
+  runtime type reference to one resolves to `System.Object`, exactly as `dynamic` and an anonymous
+  type do. Naming it instead emitted a reference to something that never exists, which failed at run
+  time as `ReferenceError: <Namespace> is not defined` when nothing had created the namespace object
+  and `Cannot read properties of undefined (reading 'constructor'/'$$name')` when something had —
+  from `is`, `as`, or a generic's type argument (`new List<dom.ScrollIntoViewOptions>()`). The cost
+  is that a type test against such a type now answers "is a non-null object" rather than .NET's exact
+  answer; the instances are plain JS objects, so there is no runtime discriminator to do better with.
+  A non-external `[ObjectLiteral]` type is unaffected — it is emitted, carrying `$literal`.
 - **`dynamic` has no runtime overload resolver.** A generic call with a `dynamic` argument works when
   the method has one candidate (`Enumerable.Count(dyn)`); with numeric overloads to choose between
   (`Enumerable.Sum(dyn)`) there is no single binding and the emitted call does not exist.

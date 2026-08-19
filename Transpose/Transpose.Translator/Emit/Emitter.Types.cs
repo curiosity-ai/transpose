@@ -73,24 +73,6 @@ public sealed partial class Emitter
         return type is ITypeParameterSymbol ? TypeRefCore(type) : UnshadowedTypeRef(TypeRefCore(type));
     }
 
-    /// <summary>
-    /// The runtime type token an ARRAY is tagged with (<c>System.Array.init([…], token)</c>).
-    ///
-    /// Normally the element type's own <see cref="TypeRef"/>, but an [ObjectLiteral] type from an
-    /// external binding library has no runtime type object to name: it is a WebIDL *dictionary*
-    /// (dom.AnimationKeyFrame, dom.EventInit, …), so instances are plain JS objects, no
-    /// Transpose.define is ever emitted for it, and the browser has no global of that name either —
-    /// naming it emitted `System.Array.init([…], AnimationKeyFrame)`, which throws ReferenceError
-    /// before the array is even built. Such an element IS a plain object, so it is tagged as one,
-    /// exactly as `new object[]{…}` is. A NON-external [ObjectLiteral] type is unaffected: it still
-    /// gets a define (carrying $literal), so its name resolves.
-    /// </summary>
-    private string ArrayElementTypeRef(ITypeSymbol elementType)
-        => TransposeNaming.IsExternalType(elementType)
-           && elementType.GetAttributes().Any(a => TransposeNaming.AttrIs(a, "Transpose.ObjectLiteralAttribute"))
-            ? TypeRef(_compilation.GetSpecialType(SpecialType.System_Object))
-            : TypeRef(elementType);
-
     /// <summary>Adds every source named type inside <paramref name="type"/> (the type itself and,
     /// recursively, its generic arguments and array element) to the current type's dependency set.
     /// A generic argument counts: <c>Foo$1(X)</c> builds a generic instance whose base class can be
@@ -166,6 +148,29 @@ public sealed partial class Emitter
         // and produces a syntactically invalid call like `WithBody$1(, {...})`.
         if (type is INamedTypeSymbol { IsAnonymousType: true }) return "System.Object";
 
+        // An [ObjectLiteral] type from an external binding library has no runtime type object
+        // either. It is a WebIDL *dictionary* (dom.AnimationKeyFrame, dom.EventInit, …) or another
+        // plain-object binding: instances are plain JS objects, no Transpose.define is ever emitted
+        // for it, and the browser has no global of that name — so naming it emitted a reference to
+        // something that never exists. Whether that showed up as `ReferenceError: <Namespace> is
+        // not defined` or as `Cannot read properties of undefined (reading 'constructor'/'$$name')`
+        // depended only on whether something else had put the namespace object there:
+        //
+        //     o is Ext.Thing         ->  TransposeR.is(o, Ext.Thing)
+        //     o as Ext.Thing         ->  TransposeR.as(o, Ext.Thing)
+        //     new List<Ext.Thing>()  ->  new (System.Collections.Generic.List$1(Ext.Thing))()
+        //
+        // The instance IS a plain object, so its runtime type is System.Object — the same answer
+        // `dynamic` and an anonymous type get above, the same one the BCL's own plain-object
+        // bindings state by hand ([Name("System.Object")] on Transpose.ObjectLiteral and Union<…>),
+        // and the one an array of such elements has been tagged with all along. A type test against
+        // such a type therefore answers "is a non-null object" rather than .NET's exact answer;
+        // there is no runtime discriminator to do better with, and it no longer throws.
+        //
+        // A NON-external [ObjectLiteral] type is unaffected: it still gets a define (carrying
+        // $literal), so its own name resolves.
+        if (TransposeNaming.IsPlainObjectExternal(type)) return "System.Object";
+
         if (type is INamedTypeSymbol named)
         {
             // An UNBOUND generic — `typeof(Foo<>)` — has no concrete type arguments; its
@@ -198,7 +203,11 @@ public sealed partial class Emitter
                         : nestedName;
                 }
 
-                var ns = named.ContainingNamespace?.ToDisplayString();
+                // ToDisplayString() on the GLOBAL namespace is the literal "<global namespace>",
+                // which would be emitted verbatim ("<global namespace>.Ext") and is not JavaScript.
+                var ns = named.ContainingNamespace is { IsGlobalNamespace: false } cns
+                    ? cns.ToDisplayString()
+                    : null;
                 // A type-level [Transpose.Namespace] overrides the emitted namespace: false/"" drops
                 // it (so Transpose.Core's String/Number/… bind to the JS globals), a string replaces it.
                 if (TransposeNaming.NamespaceOverride(named) is { } nsOverride)

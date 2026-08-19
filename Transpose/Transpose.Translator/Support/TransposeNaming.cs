@@ -24,6 +24,7 @@ internal static class TransposeNaming
     public const string ConstructsTypeArgumentsAttr = "Transpose.ConstructsTypeArgumentsAttribute";
     public const string NeverDeferAttr = "Transpose.NeverDeferAttribute";
     public const string LoadsTypeArgumentsAttr = "Transpose.LoadsTypeArgumentsAttribute";
+    public const string ObjectLiteralAttr = "Transpose.ObjectLiteralAttribute";
 
     /// <summary>Allocation-free equivalent of <c>a.AttributeClass?.ToDisplayString() == fullName</c>.
     /// Attribute matching runs for every symbol reference during emit; <c>ToDisplayString</c> builds a
@@ -377,8 +378,29 @@ internal static class TransposeNaming
     {
         if (i is not { TypeKind: TypeKind.Interface }) return false;
         if (IsScopedType(i)) return false;                       // DOM / ambient JS — not registered
+        if (IsPlainObjectExternal(i)) return false;              // a plain-object binding — no interface object
         if (IsTransposeCompiledSource(i)) return true;                  // source or referenced user library
         return IsTransposeRuntimeAssembly(i.ContainingAssembly);        // Transpose BCL interface (IList, IEnumerable, …)
+    }
+
+    /// <summary>
+    /// True if the type is an <c>[ObjectLiteral]</c> binding from an EXTERNAL library — a WebIDL
+    /// dictionary (dom.AnimationKeyFrame, dom.EventInit, …) or another plain-object binding.
+    /// Nothing defines a runtime type object for such a type: no <c>Transpose.define</c> is emitted
+    /// (it is external) and the browser has no global of that name (it is a dictionary, not a
+    /// class), so its instances are indistinguishable from any other plain JS object. Every runtime
+    /// type reference to one therefore resolves to System.Object — see <c>Emitter.TypeRefCore</c>.
+    ///
+    /// The attribute is Inherited, so a derived dictionary counts when only its base carries it. A
+    /// NON-external [ObjectLiteral] type is excluded: it is emitted, carrying <c>$literal</c>, so
+    /// its own name resolves.
+    /// </summary>
+    public static bool IsPlainObjectExternal(ITypeSymbol? type)
+    {
+        if (type is null || !IsExternalType(type)) return false;
+        for (var t = type; t is not null; t = t.BaseType)
+            if (HasAttr(t, ObjectLiteralAttr)) return true;
+        return false;
     }
 
     /// <summary>True if the type (or an enclosing type) is a [Scope]/[GlobalMethods] binding

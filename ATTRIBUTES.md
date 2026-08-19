@@ -76,6 +76,20 @@ emits an object literal seeded per `ObjectInitializationMode` (Ignore / Initiali
 DefaultValue-all).
 *Handled in:* `Emitter.Types` (`$literal`), `Emitter.Expressions2` (construction + init mode).
 
+On an **external** type — a WebIDL dictionary such as `dom.AnimationKeyFrame`/`dom.EventInit`, or
+any other plain-object binding — there is no `$literal` define to emit and the browser has no global
+of that name either, so the type has **no runtime type object at all**. Every runtime type reference
+to one therefore resolves to `System.Object` (`TransposeNaming.IsPlainObjectExternal`), exactly as
+`dynamic` and an anonymous type do, and as the BCL's own plain-object bindings say by hand
+(`[Name("System.Object")]` on `Transpose.ObjectLiteral` and `Union<…>`). Naming it instead produced a
+reference to something that never exists, failing at run time as
+`ReferenceError: <Namespace> is not defined` (nothing had created the namespace object) or
+`Cannot read properties of undefined (reading 'constructor'/'$$name')` (something had) from `is`,
+`as` or a generic's type argument. Consequently a type test against such a type answers "is a
+non-null object" rather than .NET's exact answer — there is no runtime discriminator to do better
+with. A non-external `[ObjectLiteral]` type is unaffected: it is emitted, so its own name resolves.
+*Handled in:* `Emitter.Types` (`TypeRefCore`), `ExternalObjectLiteralTypeRefTests`.
+
 ### `[Enum(Emit.…)]` — ✅ Implemented (all 9 modes)
 Selects how an enum and its members are emitted. The `Emit` enum values (identical to H5) and their
 effect on the emitted JS:
