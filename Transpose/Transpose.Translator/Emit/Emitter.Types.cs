@@ -335,6 +335,52 @@ public sealed partial class Emitter
         _ => Convert.ToInt64(constantValue).ToString(System.Globalization.CultureInfo.InvariantCulture),
     };
 
+    /// <summary>
+    /// Below this many members, an enum keeps the member-per-name object literal. The compact form
+    /// (see <see cref="TryDenseEnumNames"/>) trades a parsed property per member for one string and
+    /// a <c>split</c> at define time, which is only worth doing at scale — and keeping every small
+    /// enum on the path it has always used means the emitted output of almost every type is
+    /// unchanged, which is what makes this measurable rather than merely different.
+    /// </summary>
+    private const int DenseEnumMinimumMembers = 64;
+
+    /// <summary>
+    /// The member names of a <em>dense</em> enum as one delimited string, or null when the enum is
+    /// not one.
+    ///
+    /// Dense means its members are exactly the ordinals <c>0…n-1</c> in declaration order — no gaps,
+    /// no aliases, no <c>[Flags]</c> bit pattern. Then the names carry all the information the
+    /// runtime needs, because each one's value <em>is</em> its index, and the whole
+    /// <c>{ "name": 0, "name": 1, … }</c> block collapses to <c>"name,name,…"</c>.
+    ///
+    /// This is worth a special case because generated enums are enormous and are exactly the ones an
+    /// application cannot avoid loading. Tesserae's <c>UIcons</c> has 5,372 members: 212 KB as an
+    /// object literal against 100 KB as a string, 40 KB against 25 KB compressed. The parse side
+    /// matters as much as the bytes — the object form makes the JS parser build 5,372 properties and
+    /// the runtime sort 5,372 pairs of them before anything renders, where the string form is one
+    /// literal and one split.
+    ///
+    /// Returns null if any member's emitted name would not survive the round trip — a name holding
+    /// the delimiter, a quote, a backslash or a line break — so the encoding can never lose a member
+    /// silently. Those cannot occur in a C# identifier but <c>[Name("…")]</c> can say anything.
+    /// </summary>
+    private static string? TryDenseEnumNames(IReadOnlyList<IFieldSymbol> fields)
+    {
+        if (fields.Count < DenseEnumMinimumMembers) return null;
+
+        var names = new List<string>(fields.Count);
+        for (var i = 0; i < fields.Count; i++)
+        {
+            if (EnumOrdinalText(fields[i].ConstantValue) != i.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                return null;
+
+            var name = TransposeNaming.MemberJsName(fields[i]);
+            if (name.Length == 0 || name.AsSpan().IndexOfAny(",\"\\\n\r") >= 0) return null;
+            names.Add(name);
+        }
+        return string.Join(",", names);
+    }
+
     private void EmitEnum(INamedTypeSymbol type)
     {
         _w.Write($"Transpose.define(\"{_names.TypeFullName(type)}\", ");
@@ -353,10 +399,19 @@ public sealed partial class Emitter
             _w.Write("statics: ");
             _w.Block(() =>
             {
+                var fields = type.GetMembers().OfType<IFieldSymbol>().Where(f => f.HasConstantValue).ToList();
+                // A large dense enum ships its names as one string; the runtime expands it back into
+                // members (Class.js). A string-backed enum is excluded — its members' values are the
+                // names themselves, not their positions, so nothing is implied by order.
+                var dense = stringMode ? null : TryDenseEnumNames(fields);
+                if (dense is not null)
+                {
+                    _w.WriteLine($"$denseNames: {JsString(dense)}");
+                    return;
+                }
                 _w.Write("fields: ");
                 _w.Block(() =>
                 {
-                    var fields = type.GetMembers().OfType<IFieldSymbol>().Where(f => f.HasConstantValue).ToList();
                     for (var i = 0; i < fields.Count; i++)
                     {
                         var value = stringMode

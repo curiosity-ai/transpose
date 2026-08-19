@@ -423,9 +423,11 @@ internal static class ProjectBuild
             var written = TryWritePackage(project, config, configuration, result, log);
             if (written is null) return BuildOutcome.NoSite(2, result.Diagnostics);
 
-            var (dllPath, items) = written.Value;
+            var (dllPath, items, packageBytes) = written.Value;
             SaveCache(cache, plan, result, new[] { dllPath });
-            log.Info($"\nOK — built package {project.AssemblyName}.dll ({result.AssemblyBytes!.Length:N0} bytes) with {items.Count} embedded resource(s) in {sw.ElapsedMilliseconds} ms.");
+            var resourceBytes = items.Sum(i => (long)i.Content.Length);
+            log.Info($"\nOK — built package {project.AssemblyName}.dll ({packageBytes:N0} bytes, "
+                   + $"{resourceBytes:N0} of it in {items.Count} embedded resource(s)) in {sw.ElapsedMilliseconds} ms.");
             log.Info($"  dll:      {dllPath}");
             if (result.Modules is { } pkgMods)
                 log.Info($"  modules:    {pkgMods.Chunks.Count} chunk(s) — {pkgMods.EagerChunkCount} loaded up front, " +
@@ -888,7 +890,7 @@ internal static class ProjectBuild
     /// than an unhandled exception) and a null result. Embedding the resources re-serializes the
     /// assembly's metadata through Mono.Cecil, which resolves referenced assemblies as it goes — a
     /// step that can fail on its own, after a clean compile.</summary>
-    private static (string dllPath, List<EmbeddedItem> items)? TryWritePackage(
+    private static (string dllPath, List<EmbeddedItem> items, long fileBytes)? TryWritePackage(
         ResolvedProject project, TransposeJson? config, string configuration, AssemblyBuildResult result, BuildLog log)
     {
         try { return WritePackage(project, config, configuration, result); }
@@ -900,9 +902,16 @@ internal static class ProjectBuild
     }
 
     /// <summary>Writes a project's emitted assembly and embeds its JS + resources, returning the DLL
-    /// path and the embedded items. The DLL path is the one the resolver references for this
-    /// project, so a consumer finds it.</summary>
-    private static (string dllPath, List<EmbeddedItem> items) WritePackage(
+    /// path, the embedded items and the size of the file written. The DLL path is the one the
+    /// resolver references for this project, so a consumer finds it.
+    /// <para>
+    /// The size is measured here rather than by the caller because this is the only place that knows
+    /// the file is complete. <c>result.AssemblyBytes</c> is what Roslyn emitted, and the resources
+    /// are injected <em>after</em> it — for a library shipping its stylesheets, fonts and JavaScript
+    /// they are most of what the package weighs, so reporting the emitted length understated
+    /// Tesserae's package as 1.8 MB when the file is 17.1 MB.
+    /// </para></summary>
+    private static (string dllPath, List<EmbeddedItem> items, long fileBytes) WritePackage(
         ResolvedProject project, TransposeJson? config, string configuration, AssemblyBuildResult result)
     {
         var mainJsName = config?.ExplicitFileName ?? project.AssemblyName + ".js";
@@ -925,7 +934,7 @@ internal static class ProjectBuild
         // rebuild of this project does not force a rebuild of everything referencing it when only its
         // method bodies moved. Cecil restamps the DLL's MVID on every embed, so its bytes cannot serve.
         BuildCache.WriteMetadataSidecar(dllPath, result.AssemblyBytes);
-        return (dllPath, items);
+        return (dllPath, items, new FileInfo(dllPath).Length);
     }
 
     /// <summary>Resolves tps.json's output path, expanding the $(OutDir) MSBuild token.</summary>
