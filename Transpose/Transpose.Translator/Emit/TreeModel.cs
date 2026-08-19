@@ -53,6 +53,11 @@ internal sealed class TreeModel
     public SymbolInfo GetCollectionInitializerSymbolInfo(ExpressionSyntax node)
         => For(node).GetCollectionInitializerSymbolInfo(node);
 
+    /// <summary>The awaiter C# resolved for an <c>await</c> — which is how a [Template]'d GetAwaiter
+    /// (notably the extension that adapts an IPromise) is found at the await site.</summary>
+    public AwaitExpressionInfo GetAwaitExpressionInfo(AwaitExpressionSyntax node)
+        => For(node).GetAwaitExpressionInfo(node);
+
     /// <summary>The enclosing symbol at a node's position (the node identifies the tree).</summary>
     public ISymbol? GetEnclosingSymbol(SyntaxNode node)
         => For(node).GetEnclosingSymbol(node.SpanStart);

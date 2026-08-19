@@ -241,8 +241,15 @@ public sealed partial class Emitter
             case AwaitExpressionSyntax await:
                 // tps.js Tasks are not natively thenable; Transpose.toPromise adapts a Task (or an
                 // already-native Promise) into something JS `await` can drive.
+                //
+                // A [Template]'d GetAwaiter is the one thing toPromise must not be handed directly:
+                // `await somePromise` binds to PromiseExtensions.GetAwaiter(IPromise), whose awaiter
+                // is what collects the promise's resolve arguments into the object[] the C# static
+                // type promises. Passing the native promise straight through yields its single
+                // resolved value instead, so `object[] v = await p` silently holds a string.
+                // Task/ValueTask declare no template, so every ordinary await is unchanged.
                 _w.Write("(await Transpose.toPromise(");
-                EmitExpression(await.Expression);
+                if (!TryEmitTemplatedAwaiter(await)) EmitExpression(await.Expression);
                 _w.Write("))");
                 break;
             case ConditionalAccessExpressionSyntax condAccess:
@@ -1143,6 +1150,37 @@ public sealed partial class Emitter
                                                     TransposeNaming.MemberJsName(enumField)));
                 return;
         }
+    }
+
+    /// <summary>
+    /// `await x` where the resolved GetAwaiter carries a [Template]: emit the template rather than
+    /// the awaited expression, so the awaiter's own adaptation happens. This is what makes
+    /// `await someIPromise` produce the object[] of resolve arguments its C# type declares
+    /// (via System.Threading.Tasks.Task.fromPromise), instead of the promise's single value.
+    /// Returns false — leaving the caller to emit the expression as-is — for every awaitable whose
+    /// GetAwaiter has no template, which is Task, Task&lt;T&gt; and ValueTask.
+    /// </summary>
+    private bool TryEmitTemplatedAwaiter(AwaitExpressionSyntax await)
+    {
+        if (_model.GetAwaitExpressionInfo(await).GetAwaiterMethod is not { } getAwaiter) return false;
+
+        var template = TransposeNaming.GetTemplate(getAwaiter.OriginalDefinition)
+                       ?? TransposeNaming.GetTemplate(getAwaiter);
+        if (template is null) return false;
+
+        // GetAwaiter takes no arguments, so the awaited expression is the only operand: it binds to
+        // {this} for an instance awaiter and to the first parameter's name ({promise}) for the
+        // extension form, and both are supplied so either spelling of the template resolves.
+        var receiver = Capture(() => EmitExpression(await.Expression));
+        var definition = getAwaiter is { IsExtensionMethod: true, ReducedFrom: { } reduced } ? reduced : getAwaiter.OriginalDefinition;
+        var byName = new Dictionary<string, string>();
+        if (definition.IsExtensionMethod && definition.Parameters.Length > 0)
+            byName[definition.Parameters[0].Name] = receiver;
+        AddTypeArguments(byName, definition, getAwaiter);
+
+        WriteTemplate(template, getAwaiter.IsStatic, getAwaiter.IsExtensionMethod, receiver, byName,
+            new List<string> { receiver });
+        return true;
     }
 
     /// <summary>

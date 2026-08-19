@@ -3704,5 +3704,124 @@ public class Program
         Console.WriteLine(""elementType="" + frames.GetType().GetElementType().Name);
     }
 }";
+
+        // ---- await on an IPromise honours the awaiter's [Template] --------------
+        //
+        // `await somePromise` binds to PromiseExtensions.GetAwaiter(this IPromise), whose
+        // [Template] is `System.Threading.Tasks.Task.fromPromise({promise})` — and that adapter is
+        // what collects the promise's resolve arguments into the `object[]` the C# static type
+        // declares. The emitter used to compile every await as `(await Transpose.toPromise(x))`,
+        // which hands a native promise straight through: `object[] v = await p` then held the single
+        // resolved VALUE, so a `Promise.resolve("hello")` gave v.Length == 5 and v[0] == 'h' with no
+        // error anywhere. This cannot be fixed in toPromise — the object[] wrapping is a decision
+        // about the awaited expression's static type, which the runtime cannot see.
+        //
+        // Task/Task<T>/ValueTask declare no template on GetAwaiter, so an ordinary await is
+        // unchanged; the negative test below is what guards that.
+
+        [TestMethod]
+        public async Task AwaitOnAPromiseYieldsTheResolveArgumentArray()
+        {
+            await RunTest(@"
+using System;
+using System.Threading.Tasks;
+
+[Transpose.External]
+public static class Js
+{
+    [Transpose.Template(""Promise.resolve('hello')"")]
+    public static extern IPromise Resolved();
+}
+
+public class Program
+{
+    static async Task Run()
+    {
+        object[] values = await Js.Resolved();
+        Console.WriteLine(""length="" + values.Length);
+        Console.WriteLine(""value="" + values[0]);
+        Console.WriteLine(""<<DONE>>"");
+    }
+    public static void Main() { Run(); }
+}", waitForOutput: "<<DONE>>", skipRoslyn: true);
+        }
+
+        [TestMethod]
+        public async Task AwaitOnARejectedPromiseThrowsACatchableException()
+        {
+            // Passing the promise straight to toPromise rethrew the raw rejection value, so
+            // `catch (Exception e)` bound a JS string and e.GetType().Name was "String".
+            await RunTest(@"
+using System;
+using System.Threading.Tasks;
+
+[Transpose.External]
+public static class Js
+{
+    [Transpose.Template(""Promise.reject('boom')"")]
+    public static extern IPromise Rejected();
+}
+
+public class Program
+{
+    static async Task Run()
+    {
+        try { await Js.Rejected(); }
+        catch (Exception e) { Console.WriteLine(""caught="" + e.GetType().Name); }
+        Console.WriteLine(""<<DONE>>"");
+    }
+    public static void Main() { Run(); }
+}", waitForOutput: "<<DONE>>", skipRoslyn: true);
+        }
+
+        [TestMethod]
+        public void AwaitOnAPromiseEmitsTheFromPromiseAdapter()
+        {
+            var code = @"
+using System;
+using System.Threading.Tasks;
+
+[Transpose.External]
+public static class Js
+{
+    [Transpose.Template(""Promise.resolve('hello')"")]
+    public static extern IPromise Resolved();
+}
+
+public class Program
+{
+    static async Task Run() { object[] v = await Js.Resolved(); Console.WriteLine(v.Length); }
+    public static void Main() { }
+}";
+            var result = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            Assert.IsTrue(result.Javascript!.Contains("Transpose.toPromise(System.Threading.Tasks.Task.fromPromise("),
+                "awaiting an IPromise should route through the awaiter's [Template] so the resolve "
+                + "arguments become the declared object[]\n" + result.Javascript);
+        }
+
+        [TestMethod]
+        public void AwaitOnATaskEmitsThePlainToPromiseAdapter()
+        {
+            // The negative: Task/Task<T>/ValueTask carry no [Template] on GetAwaiter, so honouring a
+            // templated awaiter must leave every ordinary await byte-identical.
+            var code = @"
+using System;
+using System.Threading.Tasks;
+public class Program
+{
+    static async Task Run() { Console.WriteLine(await Task.FromResult(41) + 1); }
+    public static void Main() { }
+}";
+            var result = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            Assert.IsTrue(result.Javascript!.Contains("await Transpose.toPromise(System.Threading.Tasks.Task.fromResult("),
+                "awaiting a Task should hand the task straight to toPromise\n" + result.Javascript);
+            // `TransposeR.fromPromise` is the unrelated wrapper every async method body returns, so
+            // the adapter has to be matched on its qualified name.
+            Assert.IsFalse(result.Javascript!.Contains("Task.fromPromise"),
+                "awaiting a Task must not go through the IPromise adapter\n" + result.Javascript);
+        }
+
     }
 }
