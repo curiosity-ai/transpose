@@ -833,6 +833,14 @@ public sealed partial class Emitter
             case SpecialType.System_Decimal:
                 return "0";
         }
+        // default(T?) is null whatever T is — the null state IS the default, and the runtime's
+        // Nullable$1(T).getDefaultValue() returns null for every T, so this is the same value by a
+        // shorter route. Routing it through getDefaultValue(Nullable$1(T)) names T for a value that
+        // never depends on it, and in module mode a named type is a dependency edge: every
+        // `UIcons? icon = null` optional parameter in Tesserae recorded one against its
+        // five-thousand-member icon table, ten of them across the library.
+        if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T })
+            return "null";
         // A non-primitive struct (DateTime, Guid, a user struct) gets its zeroed value via the
         // runtime's Transpose.getDefaultValue, which dispatches to the struct's getDefaultValue()
         // (and special-cases BCL structs like System.DateTime). It works for a referenced BCL struct

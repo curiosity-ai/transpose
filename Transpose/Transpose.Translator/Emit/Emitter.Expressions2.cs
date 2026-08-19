@@ -3534,16 +3534,28 @@ public sealed partial class Emitter
     /// <c>undefined</c> and crash ("Cannot read properties of undefined (reading '&lt;TypeName&gt;')").
     /// <para>
     /// This deliberately does <b>not</b> key off <c>Emit.Value</c>: a Value-mode enum declared in
-    /// source or in a compiled library (Tesserae's <c>UIcons</c>/<c>Emoji</c>, the BCL's
-    /// <c>DateTimeKind</c>/<c>StringComparison</c>) is still emitted with a full name table, and its
-    /// <c>[Name]</c> is exactly what a caller expects back — <c>UIcons.Bug.ToString()</c> is the CSS
-    /// class "fi-rr-bug", not the ordinal.
+    /// source or in a compiled library (the BCL's <c>DateTimeKind</c>/<c>StringComparison</c>) is
+    /// still emitted with a full name table, and its <c>[Name]</c> is exactly what a caller expects
+    /// back — a Value-mode <c>UIcons.Bug.ToString()</c> is the CSS class "fi-rr-bug", not the ordinal.
+    /// </para>
+    /// <para>
+    /// A <b>StringName*</b> enum needs no lookup at all: its runtime value already <em>is</em> the
+    /// string, so the table scan can only ever return the key it was handed. Emitting the value costs
+    /// one call less and names no type — and in module mode a named type is a dependency edge, so
+    /// rendering one of these no longer pulls its declaring chunk in.
+    /// </para>
+    /// <para>
+    /// Boxing is the deliberate exception and still names the enum (see
+    /// <c>TryEmitEnumToReferenceConversion</c>): a box has to know which enum it came from, because
+    /// <c>GetType()</c> and a later <c>ToString()</c> off <c>object</c> are answered from it.
     /// </para>
     /// </summary>
     private string EnumToStringJs(ITypeSymbol type, string valueJs)
-        => HasRuntimeEnumObject(type)
-            ? $"System.Enum.toString({TypeRef(type)}, {valueJs})"
-            : $"({valueJs}).toString()";
+        => TransposeNaming.EnumEmitMode(type) is 3 or 4 or 5 or 6
+            ? $"TransposeR.toStr({valueJs})"
+            : HasRuntimeEnumObject(type)
+                ? $"System.Enum.toString({TypeRef(type)}, {valueJs})"
+                : $"({valueJs}).toString()";
 
     /// <summary>
     /// Whether an enum has a runtime type object to read names off / box against.
