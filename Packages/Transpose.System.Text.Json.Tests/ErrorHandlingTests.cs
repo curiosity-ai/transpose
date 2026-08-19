@@ -145,4 +145,131 @@ public sealed class ErrorHandlingTests : JsonTestBase
             }
         }
         """);
+
+    // ---------------------------------------------------------------------------------------------
+    // A number outside the target's range
+    // ---------------------------------------------------------------------------------------------
+
+    // The integer branches of readNumber used to coerce with `raw | 0` / `raw >>> 0`, which wraps
+    // instead of rejecting: a byte read from -1 came back as 4294967295 and a ushort read from 70000
+    // stayed 70000 — values outside the member's own type, handed to the application as if they had
+    // been valid. Every one of these throws in System.Text.Json.
+    [TestMethod]
+    public async Task AnIntegerOutsideTheTargetsRangeThrows() => await RunAndCompare("""
+        using System;
+        using System.Text.Json;
+
+        public class T
+        {
+            public byte   B  { get; set; }
+            public sbyte  SB { get; set; }
+            public short  S  { get; set; }
+            public ushort US { get; set; }
+            public int    I  { get; set; }
+            public uint   UI { get; set; }
+        }
+
+        public static class Program
+        {
+            static void Read(string json)
+            {
+                try { Console.WriteLine(JsonSerializer.Serialize(JsonSerializer.Deserialize<T>(json))); }
+                catch (JsonException) { Console.WriteLine("JsonException"); }
+            }
+
+            public static void Main()
+            {
+                Read("{\"B\":-1}");
+                Read("{\"B\":300}");
+                Read("{\"SB\":200}");
+                Read("{\"S\":40000}");
+                Read("{\"US\":70000}");
+                Read("{\"US\":-1}");
+                Read("{\"I\":3000000000}");
+                Read("{\"UI\":-1}");
+            }
+        }
+        """);
+
+    // A value with a real fraction is not an integer.
+    [TestMethod]
+    public async Task AFractionalNumberIntoAnIntegerThrows() => await RunAndCompare("""
+        using System;
+        using System.Text.Json;
+
+        public class T { public int I { get; set; } }
+
+        public static class Program
+        {
+            static void Read(string json)
+            {
+                try { Console.WriteLine(JsonSerializer.Deserialize<T>(json).I); }
+                catch (JsonException) { Console.WriteLine("JsonException"); }
+            }
+
+            public static void Main()
+            {
+                Read("{\"I\":1.5}");
+                Read("{\"I\":-1.5}");
+                Read("{\"I\":7}");
+            }
+        }
+        """);
+
+    // `1.0` into an int is where the two part company, and it cannot be helped at this layer:
+    // System.Text.Json reads the token's TEXT and rejects it for carrying a decimal point, while the
+    // document here has already been through JSON.parse, which resolves `1.0` and `1` to the same
+    // JavaScript number. The value is integral, so it is accepted. Recorded rather than fixed.
+    [TestMethod]
+    public async Task AnIntegralNumberWrittenWithADecimalPointIsAccepted() => await RunJs("""
+        using System;
+        using System.Text.Json;
+
+        public class T { public int I { get; set; } }
+
+        public static class Program
+        {
+            static void Read(string json)
+            {
+                try { Console.WriteLine(JsonSerializer.Deserialize<T>(json).I); }
+                catch (JsonException) { Console.WriteLine("JsonException"); }
+            }
+
+            public static void Main()
+            {
+                Read("{\"I\":1.0}");
+                Read("{\"I\":2e0}");
+            }
+        }
+        """,
+        expected:      "1\n2",
+        nativePrints:  "JsonException\nJsonException");
+
+    // The boundary values themselves stay valid — the guard must not be off by one.
+    [TestMethod]
+    public async Task TheRangeBoundariesThemselvesAreAccepted() => await RunAndCompare("""
+        using System;
+        using System.Text.Json;
+
+        public class T
+        {
+            public byte   B  { get; set; }
+            public sbyte  SB { get; set; }
+            public short  S  { get; set; }
+            public ushort US { get; set; }
+            public int    I  { get; set; }
+            public uint   UI { get; set; }
+        }
+
+        public static class Program
+        {
+            public static void Main()
+            {
+                var json = "{\"B\":255,\"SB\":-128,\"S\":-32768,\"US\":65535,\"I\":-2147483648,\"UI\":4294967295}";
+                var t = JsonSerializer.Deserialize<T>(json);
+                Console.WriteLine(t.B + "/" + t.SB + "/" + t.S + "/" + t.US + "/" + t.I + "/" + t.UI);
+                Console.WriteLine(JsonSerializer.Serialize(t));
+            }
+        }
+        """);
 }

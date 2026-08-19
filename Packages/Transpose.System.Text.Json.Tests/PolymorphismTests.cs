@@ -278,6 +278,83 @@ public sealed class PolymorphismTests : JsonTestBase
         """,
         expected: "FieldContent/Title");
 
+    // A base shared with a server carries [JsonDerivedType] for the types the server can see, and the
+    // front-end registers the ones only it can — the mixed case this escape hatch exists for. A
+    // registration used to REPLACE the attribute-declared set rather than add to it, so the very
+    // first Register call made every attribute-declared type unserializable ("Runtime type 'Dog' is
+    // not supported by polymorphic type 'Animal'").
+    [TestMethod]
+    public async Task ARunTimeRegistrationAddsToTheAttributeDeclaredTypes() => await RunAndCompare("""
+        using System;
+        using System.Text.Json;
+        using System.Text.Json.Serialization;
+
+        [JsonPolymorphic]
+        [JsonDerivedType(typeof(Dog), "dog")]
+        [JsonDerivedType(typeof(Cat), "cat")]
+        public abstract class Animal { public string Name { get; set; } }
+        public sealed class Dog : Animal { }
+        public sealed class Cat : Animal { }
+
+        public static class Program
+        {
+            public static void Main()
+            {
+                Register();
+
+                Animal d = new Dog { Name = "Rex" };
+                Animal c = new Cat { Name = "Tom" };
+                Console.WriteLine(JsonSerializer.Serialize(d));
+                Console.WriteLine(JsonSerializer.Serialize(c));
+                Console.WriteLine(JsonSerializer.Deserialize<Animal>("{\"$type\":\"dog\",\"Name\":\"Rex\"}").GetType().Name);
+                Console.WriteLine(JsonSerializer.Deserialize<Animal>("{\"$type\":\"cat\",\"Name\":\"Tom\"}").GetType().Name);
+            }
+
+            // Native System.Text.Json has no run-time registration; the attributes above already
+            // declare both types, so the oracle simply does nothing here.
+        #if TRANSPOSE
+            static void Register() => JsonPolymorphicTypes.Register<Animal>(typeof(Cat), "cat");
+        #else
+            static void Register() { }
+        #endif
+        }
+        """);
+
+    // A [JsonPolymorphic(TypeDiscriminatorPropertyName = ...)] on the base must survive a
+    // registration that does not name a discriminator member of its own.
+    [TestMethod]
+    public async Task ARegistrationKeepsTheAttributeDiscriminatorMemberName() => await RunJs("""
+        using System;
+        using System.Text.Json;
+        using System.Text.Json.Serialization;
+
+        [JsonPolymorphic(TypeDiscriminatorPropertyName = "kind")]
+        [JsonDerivedType(typeof(Square), "square")]
+        public abstract class Shape { public int Size { get; set; } }
+        public sealed class Square : Shape { }
+        public sealed class Circle : Shape { }
+
+        public static class Program
+        {
+            public static void Main()
+            {
+                JsonPolymorphicTypes.Register<Shape>(typeof(Circle), "circle");
+
+                Shape s = new Square { Size = 1 };
+                Shape c = new Circle { Size = 2 };
+                Console.WriteLine(JsonSerializer.Serialize(s));
+                Console.WriteLine(JsonSerializer.Serialize(c));
+                Console.WriteLine(JsonSerializer.Deserialize<Shape>("{\"kind\":\"square\",\"Size\":1}").GetType().Name);
+                Console.WriteLine(JsonSerializer.Deserialize<Shape>("{\"kind\":\"circle\",\"Size\":2}").GetType().Name);
+            }
+        }
+        """, """
+        {"kind":"square","Size":1}
+        {"kind":"circle","Size":2}
+        Square
+        Circle
+        """);
+
     [TestMethod]
     public async Task ARunTimeRegistrationCanNameItsDiscriminatorMember() => await RunJs("""
         using System;

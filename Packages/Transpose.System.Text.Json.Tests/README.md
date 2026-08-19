@@ -93,11 +93,14 @@ Each is asserted by the test named beside it, so this list stays true.
 | enum from its **name** | needs a `JsonStringEnumConverter` | always accepted | `AnEnumIsAlsoReadFromItsName` |
 | deserializing to `object` | a `JsonElement` | the raw parsed JavaScript value | `DeserializingToObjectReturnsTheRawParsedValue` |
 | an assembly-qualified `$type` | unrecognised discriminator | also matches the bare type name | `AnAssemblyQualifiedDiscriminatorStillMatchesTheBareName` |
+| an integer written `1.0` / `2e0` | rejected (the token carries a decimal point) | accepted (the value is integral) | `AnIntegralNumberWrittenWithADecimalPointIsAccepted` |
 
 The first two are inherited from `Transpose.Newtonsoft.Json` on purpose: the Curiosity server's
 `Long`/`ULong`-from-string converters and its `JsonStringEnumConverter` are written against exactly
 that wire shape, so matching the *server* matters more than matching the framework here. A `decimal`
 deliberately stays a JSON number, because the server has no decimal-from-string converter.
+
+The `1.0` row is the one nobody chose: System.Text.Json rejects it by reading the token's *text*, while a document here has already been through `JSON.parse`, which resolves `1.0` and `1` to the same JavaScript number. A value with a real fraction (`1.5`) is still rejected, as is one outside the target's range.
 
 The last one exists so a store written by Json.NET's `TypeNameHandling` (which wrote
 `"Some.Type, Some.Assembly"` into `$type`) keeps deserializing against a hierarchy that declares the

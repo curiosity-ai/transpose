@@ -634,27 +634,36 @@
                 // The run-time half of the hierarchy declaration (JsonPolymorphicTypes.Register), for
                 // the case where [JsonDerivedType] cannot be written because the base type sits below
                 // its implementations and cannot name them.
+                // Only the run-time additions are recorded here; `polymorphism` overlays them onto
+                // whatever [JsonDerivedType] already declares, so a hierarchy that is declared both
+                // ways — a base shared with a server that carries the attributes, plus the derived
+                // types only the front-end can see — keeps both halves. `discriminator` stays null
+                // unless a registration names one, so it cannot silently override a
+                // [JsonPolymorphic(TypeDiscriminatorPropertyName = ...)] on the base.
                 registerDerivedType: function (baseType, derivedType, id, discriminatorPropertyName) {
                     var cache = System.Text.Json.JsonSerializer.getCacheByType(baseType),
                         info  = cache.$registered;
 
                     if (!info) {
-                        info = { discriminator: discriminatorPropertyName || "$type", unknown: 0, types: [] };
+                        info = { discriminator: null, types: [] };
                         cache.$registered = info;
-                    } else if (discriminatorPropertyName) {
+                    }
+
+                    if (discriminatorPropertyName) {
                         info.discriminator = discriminatorPropertyName;
                     }
 
                     for (var i = 0; i < info.types.length; i++) {
                         if (info.types[i].type === derivedType) {
                             info.types[i].id = id;
+                            cache.$poly = undefined;
                             return;
                         }
                     }
 
                     info.types.push({ type: derivedType, id: id });
 
-                    // A hierarchy resolved earlier would have been cached as "not polymorphic".
+                    // A hierarchy resolved earlier would have been cached as it was then.
                     cache.$poly = undefined;
                 },
 
@@ -665,31 +674,58 @@
 
                     var cache = System.Text.Json.JsonSerializer.getCacheByType(type);
 
-                    if (cache.$registered) {
-                        return cache.$registered;
-                    }
-
-                    if (!Transpose.getMetadata(type)) {
-                        return null;
-                    }
-
                     if (cache.$poly !== undefined) {
                         return cache.$poly;
                     }
 
-                    var derived = System.Text.Json.JsonSerializer.typeAttributes(type, System.Text.Json.Serialization.JsonDerivedTypeAttribute),
-                        poly    = System.Text.Json.JsonSerializer.typeAttributes(type, System.Text.Json.Serialization.JsonPolymorphicAttribute),
-                        result  = null;
+                    var registered = cache.$registered,
+                        result     = null,
+                        i;
 
-                    if (derived && derived.length > 0) {
-                        result = {
-                            discriminator: poly && poly.length > 0 && poly[0].TypeDiscriminatorPropertyName ? poly[0].TypeDiscriminatorPropertyName : "$type",
-                            unknown:       poly && poly.length > 0 ? poly[0].UnknownDerivedTypeHandling : 0,
-                            types:         []
-                        };
+                    // A type with no metadata carries no attributes, but it can still have been
+                    // registered at run time — an [External] interface is exactly that case.
+                    if (Transpose.getMetadata(type)) {
+                        var derived = System.Text.Json.JsonSerializer.typeAttributes(type, System.Text.Json.Serialization.JsonDerivedTypeAttribute),
+                            poly    = System.Text.Json.JsonSerializer.typeAttributes(type, System.Text.Json.Serialization.JsonPolymorphicAttribute);
 
-                        for (var i = 0; i < derived.length; i++) {
-                            result.types.push({ type: derived[i].DerivedType, id: derived[i].TypeDiscriminator });
+                        if (derived && derived.length > 0) {
+                            result = {
+                                discriminator: poly && poly.length > 0 && poly[0].TypeDiscriminatorPropertyName ? poly[0].TypeDiscriminatorPropertyName : "$type",
+                                unknown:       poly && poly.length > 0 ? poly[0].UnknownDerivedTypeHandling : 0,
+                                types:         []
+                            };
+
+                            for (i = 0; i < derived.length; i++) {
+                                result.types.push({ type: derived[i].DerivedType, id: derived[i].TypeDiscriminator });
+                            }
+                        }
+                    }
+
+                    if (registered) {
+                        if (!result) {
+                            result = { discriminator: "$type", unknown: 0, types: [] };
+                        }
+
+                        if (registered.discriminator) {
+                            result.discriminator = registered.discriminator;
+                        }
+
+                        // A registration for a type the attribute already names replaces its
+                        // discriminator rather than adding a second entry for the same type.
+                        for (i = 0; i < registered.types.length; i++) {
+                            var entry = registered.types[i],
+                                j     = 0,
+                                found = false;
+
+                            for (; j < result.types.length; j++) {
+                                if (result.types[j].type === entry.type) {
+                                    result.types[j] = { type: entry.type, id: entry.id };
+                                    found = true;
+                                    break;
+                                }
+                            }
+
+                            if (!found) result.types.push({ type: entry.type, id: entry.id });
                         }
                     }
 
@@ -1090,20 +1126,32 @@
                     System.Text.Json.JsonSerializer.fail("The JSON value could not be converted to " + Transpose.getTypeName(type) + ".");
                 },
 
+                // An integer target only accepts a whole number inside its range. `x | 0` / `x >>> 0`
+                // silently wrap instead, so a byte read from -1 became 4294967295 and a ushort read
+                // from 70000 stayed 70000 — a value outside the member's own type, handed to the app
+                // as if it had been valid. System.Text.Json throws for all of these, and so does this.
+                integer: function (raw, type, min, max) {
+                    if (typeof raw !== "number" || !isFinite(raw) || Math.floor(raw) !== raw || raw < min || raw > max) {
+                        System.Text.Json.JsonSerializer.fail("The JSON value could not be converted to " + Transpose.getTypeName(type) + ".");
+                    }
+
+                    return raw;
+                },
+
                 readNumber: function (raw, type, o) {
                     if (Transpose.Reflection.isEnum(type))  return Transpose.unbox(System.Enum.parse(type, raw));
-                    if (type === System.SByte)              return raw | 0;
-                    if (type === System.Byte)               return raw >>> 0;
-                    if (type === System.Int16)              return raw | 0;
-                    if (type === System.UInt16)             return raw >>> 0;
-                    if (type === System.Int32)              return raw | 0;
-                    if (type === System.UInt32)             return raw >>> 0;
+                    if (type === System.SByte)              return System.Text.Json.JsonSerializer.integer(raw, type, -128, 127);
+                    if (type === System.Byte)               return System.Text.Json.JsonSerializer.integer(raw, type, 0, 255);
+                    if (type === System.Int16)              return System.Text.Json.JsonSerializer.integer(raw, type, -32768, 32767);
+                    if (type === System.UInt16)             return System.Text.Json.JsonSerializer.integer(raw, type, 0, 65535);
+                    if (type === System.Int32)              return System.Text.Json.JsonSerializer.integer(raw, type, -2147483648, 2147483647);
+                    if (type === System.UInt32)             return System.Text.Json.JsonSerializer.integer(raw, type, 0, 4294967295);
                     if (type === System.Int64)              return System.Int64(raw);
                     if (type === System.UInt64)             return System.UInt64(raw);
                     if (type === System.Single)             return raw;
                     if (type === System.Double)             return raw;
                     if (type === System.Decimal)            return System.Decimal(raw);
-                    if (type === System.Char)               return raw | 0;
+                    if (type === System.Char)               return System.Text.Json.JsonSerializer.integer(raw, type, 0, 65535);
                     if (type === System.TimeSpan)           return System.TimeSpan.fromTicks(raw);
 
                     var cast = System.Text.Json.JsonSerializer.castOperator(raw, type);
