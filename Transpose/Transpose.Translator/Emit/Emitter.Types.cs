@@ -198,7 +198,7 @@ public sealed partial class Emitter
                         : nestedName;
                 }
 
-                var ns = named.ContainingNamespace?.ToDisplayString();
+                var ns = TransposeNaming.NamespaceName(named);
                 // A type-level [Transpose.Namespace] overrides the emitted namespace: false/"" drops
                 // it (so Transpose.Core's String/Number/… bind to the JS globals), a string replaces it.
                 if (TransposeNaming.NamespaceOverride(named) is { } nsOverride)

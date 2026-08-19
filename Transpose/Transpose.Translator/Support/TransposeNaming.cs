@@ -779,6 +779,20 @@ internal static class TransposeNaming
         return string.Join("$", parts);
     }
 
+    /// <summary>The dotted C# namespace a type sits in, or null when it sits in none.
+    /// Roslyn's <c>ContainingNamespace.ToDisplayString()</c> answers the literal
+    /// <c>"&lt;global namespace&gt;"</c> for a type declared outside any namespace — a fine display
+    /// string and a catastrophic JS one, since it is neither null nor empty and so survives every
+    /// <c>string.IsNullOrEmpty</c> guard straight into an emitted name (<c>&lt;global
+    /// namespace&gt;.IThing</c>), which is a <em>syntax</em> error that fails the whole bundle
+    /// rather than the one type. Every site that builds a name or a metadata key from a namespace
+    /// must go through here.</summary>
+    public static string? NamespaceName(ITypeSymbol? type)
+    {
+        var ns = type?.ContainingNamespace;
+        return ns is null || ns.IsGlobalNamespace ? null : ns.ToDisplayString();
+    }
+
     /// <summary>The mangled form of a type's own <c>[Name]</c> (dotted → <c>$</c>, arity appended),
     /// or null when the type has no <c>[Name]</c>.</summary>
     private static string? MangledSelf(INamedTypeSymbol type)

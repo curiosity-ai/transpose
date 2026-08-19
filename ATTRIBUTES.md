@@ -54,8 +54,14 @@ Overrides the emitted namespace of a type. `[Namespace(false)]` (or `[Namespace(
 the namespace so the type binds to its bare entity name — this is how `Transpose.Core`'s primitive
 bindings (`String`, `Number`, `Object`, `Boolean`, …) map onto the JS globals. `[Namespace("x.y")]`
 **replaces** the C# namespace with a custom one. `[Namespace(true)]` is the default (no change).
-*Handled in:* `TransposeNaming.NamespaceOverride`, applied in `Emitter.TypeRef` (references) and
-`NameMangler.TypeFullName` (definitions).
+A type declared in the **global namespace** needs none of this: it has no namespace to suppress and
+already binds to the bare JS global, exactly as `[Namespace(false)]` would make it. Every site that
+builds a name from a namespace goes through `TransposeNaming.NamespaceName`, which answers null for
+the global namespace — Roslyn's own `ToDisplayString()` answers the literal `"<global namespace>"`
+there, which used to reach the output as `<global namespace>.IThing` and fail the whole bundle with a
+JavaScript *syntax* error.
+*Handled in:* `TransposeNaming.NamespaceOverride` and `TransposeNaming.NamespaceName`, applied in
+`Emitter.TypeRef` (references) and `NameMangler.TypeFullName` (definitions).
 
 ### `[Template("...")]` — ✅ Implemented
 A JS code template that replaces a member's call site entirely (`{this}`, `{0}`, `{arg}`

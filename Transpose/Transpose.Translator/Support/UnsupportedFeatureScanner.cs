@@ -642,7 +642,7 @@ internal static class SymbolExtensions
     /// <summary>Metadata-style name including arity marker, e.g. Task`1.</summary>
     public static string ConstructUnboundGenericTypeSafeName(this INamedTypeSymbol type)
     {
-        var ns = type.ContainingNamespace?.ToDisplayString();
+        var ns = TransposeNaming.NamespaceName(type);
         var name = type.MetadataName; // already includes `1 arity
         return string.IsNullOrEmpty(ns) ? name : ns + "." + name;
     }

@@ -137,7 +137,7 @@ public sealed class NameMangler
                 return TypeFullName(named);
             }
 
-            var ns = named.ContainingNamespace?.ToDisplayString();
+            var ns = TransposeNaming.NamespaceName(named);
             var metadataKey = string.IsNullOrEmpty(ns) ? named.MetadataName : ns + "." + named.MetadataName;
             if (BclTypeMap.TryGetValue(metadataKey, out var mapped))
             {

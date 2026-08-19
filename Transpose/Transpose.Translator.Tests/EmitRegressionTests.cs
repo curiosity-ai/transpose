@@ -2949,6 +2949,88 @@ public class Program
             Assert.IsTrue(js.Contains("d.SOMEVALONE") && js.Contains("d.DOTHING("), "UpperCase\n" + js);
         }
 
+        // ---- an [External] type in the GLOBAL namespace ----------------------------------------
+        //
+        // Roslyn's ContainingNamespace.ToDisplayString() answers the literal "<global namespace>" for
+        // a type declared outside any namespace. That is neither null nor empty, so it sailed through
+        // the string.IsNullOrEmpty guards that build an emitted name and landed in the output as
+        // `<global namespace>.IThing` — a SYNTAX error, so it failed the whole bundle rather than the
+        // one type, and it reproduced through both `is`/`new` (Emitter.Types TypeRef) and the
+        // reflection metadata. Only an [External]/BCL type is affected: a type this compiler emits
+        // goes through NameMangler.TypeFullName, which walks the namespace chain and stops on
+        // IsGlobalNamespace. The correct name is the bare identifier — no namespace means the JS
+        // global, which is exactly what such a binding refers to.
+
+        [TestMethod]
+        public void ExternalTypeInGlobalNamespaceEmitsBareName()
+        {
+            var code = @"
+using System;
+using Transpose;
+
+[External]
+public interface IThing { }
+
+[External]
+public class Widget : IThing { }
+
+namespace App
+{
+    public class Program
+    {
+        public static void Main()
+        {
+            object o = null;
+            Console.WriteLine(o is IThing);
+            Console.WriteLine(o is Widget);
+            Console.WriteLine(typeof(IThing).Name);
+        }
+    }
+}";
+            var result = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            var js = result.Javascript!;
+            Assert.IsFalse(js.Contains("<global namespace>"),
+                "the global namespace must never reach the output — it is not valid JavaScript\n" + js);
+            Assert.IsTrue(js.Contains("TransposeR.is(o, IThing)"), "bare interface name\n" + js);
+            Assert.IsTrue(js.Contains("TransposeR.is(o, Widget)"), "bare class name\n" + js);
+        }
+
+        // A global-namespace [External] type must also behave correctly at runtime: it binds to the
+        // ambient JS global of the same name, so `is` resolves against the real object.
+        [TestMethod]
+        public async Task ExternalTypeInGlobalNamespaceRunsAsync()
+        {
+            await RunTest(@"
+using System;
+using Transpose;
+
+[External]
+public interface IThing { }
+
+[External]
+public class Widget : IThing { }
+
+namespace App
+{
+    public class Program
+    {
+        public static void Main()
+        {
+            Script.Write(""globalThis.IThing = Transpose.define('IThing', { $kind: 'interface' });"");
+            Script.Write(""globalThis.Widget = Transpose.define('Widget', { inherits: [IThing] });"");
+
+            object w = Script.Write<object>(""new Widget()"");
+            Console.WriteLine(""isIThing:"" + (w is IThing));
+            Console.WriteLine(""isWidget:"" + (w is Widget));
+            Console.WriteLine(""nullIsWidget:"" + (((object)null) is Widget));
+            Console.WriteLine(""name:"" + typeof(IThing).Name);
+            Console.WriteLine(""<<DONE>>"");
+        }
+    }
+}", waitForOutput: "<<DONE>>", skipRoslyn: true);
+        }
+
         // ---- [Template] Fn — a method group of a templated method uses the Fn (delegate) form ----
         //
         // [Template(Fn = "...")] gives the delegate form to use when the method is referenced as a
