@@ -103,7 +103,7 @@ public sealed partial class Emitter
                 : null;
             _w.Write("System.Array.init(TransposeR.array(");
             if (size is not null) EmitExpression(size); else _w.Write("0");
-            _w.Write($", {DefaultValueLiteral(elementType)}), {ArrayElementTypeRef(elementType)})");
+            _w.Write($", {DefaultValueLiteral(elementType)}), {TypeRef(elementType)})");
         });
     }
 

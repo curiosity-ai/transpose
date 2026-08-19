@@ -380,9 +380,25 @@ internal static class TransposeNaming
     {
         if (i is not { TypeKind: TypeKind.Interface }) return false;
         if (IsScopedType(i)) return false;                       // DOM / ambient JS — not registered
+        if (IsPlainObjectExternal(i)) return false;              // a plain-object binding — no interface object
         if (IsTransposeCompiledSource(i)) return true;                  // source or referenced user library
         return IsTransposeRuntimeAssembly(i.ContainingAssembly);        // Transpose BCL interface (IList, IEnumerable, …)
     }
+
+    /// <summary>
+    /// True if the type is an <c>[ObjectLiteral]</c> binding from an EXTERNAL library — a WebIDL
+    /// dictionary (dom.AnimationKeyFrame, dom.EventInit, …) or another plain-object binding.
+    /// Nothing defines a runtime type object for such a type: no <c>Transpose.define</c> is emitted
+    /// (it is external) and the browser has no global of that name (it is a dictionary, not a
+    /// class), so its instances are indistinguishable from any other plain JS object. Every runtime
+    /// type reference to one therefore resolves to System.Object — see <c>Emitter.TypeRefCore</c>.
+    ///
+    /// <c>Emitter.IsObjectLiteralType</c> walks the base chain (the attribute is Inherited), so a
+    /// derived dictionary counts when only its base carries it. A NON-external [ObjectLiteral] type
+    /// is excluded: it is emitted, carrying <c>$literal</c>, so its own name resolves.
+    /// </summary>
+    public static bool IsPlainObjectExternal(ITypeSymbol? type)
+        => type is not null && IsExternalType(type) && Emitter.IsObjectLiteralType(type);
 
     /// <summary>True if the type (or an enclosing type) is a [Scope]/[GlobalMethods] binding
     /// projected onto ambient JS (e.g. the DOM types under Transpose.Core.dom).</summary>

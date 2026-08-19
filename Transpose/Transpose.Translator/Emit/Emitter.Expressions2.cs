@@ -3824,11 +3824,11 @@ public sealed partial class Emitter
         {
             _w.Write("System.Array.init(TransposeR.array(");
             EmitExpression(rankSpec.Sizes[0]);
-            _w.Write($", {DefaultValueLiteral(elementType!)}), {ArrayElementTypeRef(elementType!)})");
+            _w.Write($", {DefaultValueLiteral(elementType!)}), {TypeRef(elementType!)})");
             return;
         }
 
-        _w.Write($"System.Array.init([], {ArrayElementTypeRef(elementType!)})");
+        _w.Write($"System.Array.init([], {TypeRef(elementType!)})");
     }
 
     /// <summary>Emits a single-dimensional array-creation initializer as a JS array tagged with its
@@ -3845,7 +3845,7 @@ public sealed partial class Emitter
 
         _w.Write("System.Array.init(");
         EmitInitializerArray(initializer);
-        _w.Write($", {ArrayElementTypeRef(elementType)})");
+        _w.Write($", {TypeRef(elementType)})");
     }
 
     /// <summary>Emits a multi-dimensional array via System.Array.create(defaultValue, initValues,
@@ -3861,7 +3861,7 @@ public sealed partial class Emitter
             _w.Write(DefaultValueLiteral(elementType));
         _w.Write(", ");
         if (initializer is not null) EmitInitializerArray(initializer); else _w.Write("null");
-        _w.Write($", {ArrayElementTypeRef(elementType)}");
+        _w.Write($", {TypeRef(elementType)}");
 
         var explicitSizes = rankSpec is not null && rankSpec.Sizes.Count > 0
             && rankSpec.Sizes[0] is not OmittedArraySizeExpressionSyntax;
@@ -3952,7 +3952,7 @@ public sealed partial class Emitter
         {
             _w.Write("System.Array.init(");
             emitArrayLiteral();
-            _w.Write($", {ArrayElementTypeRef(arr.ElementType)})");
+            _w.Write($", {TypeRef(arr.ElementType)})");
             return;
         }
 
@@ -3964,7 +3964,7 @@ public sealed partial class Emitter
             {
                 _w.Write("System.Array.init(");
                 emitArrayLiteral();
-                _w.Write($", {ArrayElementTypeRef(elem)})");
+                _w.Write($", {TypeRef(elem)})");
             });
             return;
         }

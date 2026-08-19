@@ -799,6 +799,20 @@ The short version:
   The one sound test is kept: when the value's static type already converts to the target
   (`Lit x; x is Lit`, or a literal derived from it) the test can only be asking whether the value is
   null, and `Transpose.is(null, …)` answers false. Covered by `ObjectLiteralTypeTestTests`.
+- **An EXTERNAL `[ObjectLiteral]` type has no runtime type object to name either.** The rule above
+  rejects the question a type test asks; this is about the *name* every other position writes down.
+  A WebIDL dictionary (`dom.ScrollIntoViewOptions`, `dom.AddEventListenerOptions`, …) or any other
+  external plain-object binding gets no `Transpose.define` (it is external) and has no browser global
+  of that name (it is a dictionary, not a class), so naming it emitted a reference to something that
+  never exists — failing at run time as `ReferenceError: <Namespace> is not defined` when nothing had
+  created the namespace object, and `Cannot read properties of undefined (reading
+  'constructor'/'$$name')` when something had. Every runtime type reference to one therefore resolves
+  to `System.Object`, exactly as `dynamic` and an anonymous type do (`TypeRefCore`, via
+  `TransposeNaming.IsPlainObjectExternal`). The positions that reach it are the ones no type-test
+  rule looks at — a generic's type argument (`new List<dom.ScrollIntoViewOptions>()`), an array's
+  element token, reflection metadata — plus the one test TransposeR0005 keeps as sound, where the
+  static type already converts and the test is only asking whether the value is null. A non-external
+  `[ObjectLiteral]` type is unaffected — it is emitted, carrying `$literal`.
 - **`dynamic` has no runtime overload resolver.** A generic call with a `dynamic` argument works when
   the method has one candidate (`Enumerable.Count(dyn)`); with numeric overloads to choose between
   (`Enumerable.Sum(dyn)`) there is no single binding and the emitted call does not exist.

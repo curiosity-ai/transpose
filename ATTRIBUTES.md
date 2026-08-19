@@ -93,6 +93,22 @@ hold nothing in the object — and only on a type Transpose itself materialises:
 *Handled in:* `Emitter.Types` (`$literal`), `Emitter.Expressions2` (construction + init mode),
 `ObjectLiteralMemberScanner` (the member-type check, off `UnsupportedFeatureScanner`'s walk).
 
+On an **external** type — a WebIDL dictionary such as `dom.AnimationKeyFrame`/`dom.EventInit`, or
+any other plain-object binding — there is no `$literal` define to emit and the browser has no global
+of that name either, so the type has **no runtime type object at all**. Every runtime type reference
+to one therefore resolves to `System.Object` (`TransposeNaming.IsPlainObjectExternal`), exactly as
+`dynamic` and an anonymous type do, and as the BCL's own plain-object bindings say by hand
+(`[Name("System.Object")]` on `Transpose.ObjectLiteral` and `Union<…>`). Naming it instead produced a
+reference to something that never exists, failing at run time as
+`ReferenceError: <Namespace> is not defined` (nothing had created the namespace object) or
+`Cannot read properties of undefined (reading 'constructor'/'$$name')` (something had). The
+positions that reach this are the ones TransposeR0005 does not cover, because they are not type
+tests: a generic's type argument, an array's element token, reflection metadata — plus the one test
+that rule keeps as sound, where the static type already converts and the question is only whether
+the value is null. A non-external `[ObjectLiteral]` type is unaffected: it is emitted, so its own
+name resolves.
+*Handled in:* `Emitter.Types` (`TypeRefCore`), `ExternalObjectLiteralTypeRefTests`.
+
 ### `[Enum(Emit.…)]` — ✅ Implemented (all 9 modes)
 Selects how an enum and its members are emitted. The `Emit` enum values (identical to H5) and their
 effect on the emitted JS:

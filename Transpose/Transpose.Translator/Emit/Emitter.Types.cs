@@ -73,24 +73,6 @@ public sealed partial class Emitter
         return type is ITypeParameterSymbol ? TypeRefCore(type) : UnshadowedTypeRef(TypeRefCore(type));
     }
 
-    /// <summary>
-    /// The runtime type token an ARRAY is tagged with (<c>System.Array.init([…], token)</c>).
-    ///
-    /// Normally the element type's own <see cref="TypeRef"/>, but an [ObjectLiteral] type from an
-    /// external binding library has no runtime type object to name: it is a WebIDL *dictionary*
-    /// (dom.AnimationKeyFrame, dom.EventInit, …), so instances are plain JS objects, no
-    /// Transpose.define is ever emitted for it, and the browser has no global of that name either —
-    /// naming it emitted `System.Array.init([…], AnimationKeyFrame)`, which throws ReferenceError
-    /// before the array is even built. Such an element IS a plain object, so it is tagged as one,
-    /// exactly as `new object[]{…}` is. A NON-external [ObjectLiteral] type is unaffected: it still
-    /// gets a define (carrying $literal), so its name resolves.
-    /// </summary>
-    private string ArrayElementTypeRef(ITypeSymbol elementType)
-        => TransposeNaming.IsExternalType(elementType)
-           && elementType.GetAttributes().Any(a => TransposeNaming.AttrIs(a, "Transpose.ObjectLiteralAttribute"))
-            ? TypeRef(_compilation.GetSpecialType(SpecialType.System_Object))
-            : TypeRef(elementType);
-
     /// <summary>Adds every source named type inside <paramref name="type"/> (the type itself and,
     /// recursively, its generic arguments and array element) to the current type's dependency set.
     /// A generic argument counts: <c>Foo$1(X)</c> builds a generic instance whose base class can be
@@ -165,6 +147,35 @@ public sealed partial class Emitter
         // req.WithBody(new { ... })) resolves to System.Object. Without this the type ref emits empty
         // and produces a syntactically invalid call like `WithBody$1(, {...})`.
         if (type is INamedTypeSymbol { IsAnonymousType: true }) return "System.Object";
+
+        // An [ObjectLiteral] type from an external binding library has no runtime type object
+        // either. It is a WebIDL *dictionary* (dom.AnimationKeyFrame, dom.EventInit, …) or another
+        // plain-object binding: instances are plain JS objects, no Transpose.define is ever emitted
+        // for it, and the browser has no global of that name — so naming it emitted a reference to
+        // something that never exists. Whether that showed up as `ReferenceError: <Namespace> is
+        // not defined` or as `Cannot read properties of undefined (reading 'constructor'/'$$name')`
+        // depended only on whether something else had put the namespace object there:
+        //
+        //     new List<Ext.Thing>()  ->  new (System.Collections.Generic.List$1(Ext.Thing))()
+        //     new Ext.Thing[2]       ->  System.Array.init(…, Ext.Thing)
+        //     Ext.Thing t; t is …    ->  TransposeR.is(t, Ext.Thing)
+        //
+        // The instance IS a plain object, so its runtime type is System.Object — the same answer
+        // `dynamic` and an anonymous type get above, the same one the BCL's own plain-object
+        // bindings state by hand ([Name("System.Object")] on Transpose.ObjectLiteral and Union<…>),
+        // and the one an array of such elements has been tagged with all along.
+        //
+        // This is NOT the type-test rule: a test that asks an undecidable question
+        // (`object o; o is Ext.Thing`) is rejected outright by ObjectLiteralTypeTestScanner
+        // (TransposeR0005), literal or external literal alike. What reaches here is every position
+        // that stays legal and that no type-test rule looks at — a generic's type argument, an
+        // array's element token, reflection metadata — plus the test that scanner keeps as sound,
+        // where the static type already converts and the question is only whether the value is
+        // null, which Transpose.is answers correctly once its type argument exists.
+        //
+        // A NON-external [ObjectLiteral] type is unaffected: it still gets a define (carrying
+        // $literal), so its own name resolves.
+        if (TransposeNaming.IsPlainObjectExternal(type)) return "System.Object";
 
         if (type is INamedTypeSymbol named)
         {
