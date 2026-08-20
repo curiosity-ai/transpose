@@ -149,6 +149,9 @@
             // After Task.js: the module loader resolves with Promises the Task layer adapts, and
             // after Reflection/Class so its stubs can register into an assembly's $types map.
             "Resources/Modules.js",
+            // After Modules.js for the same reason: it hands back Promises the Task layer adapts,
+            // and it reports a failure as a System.Exception.
+            "Resources/Require.js",
             "Resources/Validation.js",
             "Resources/Attribute.js",
             "Resources/.generated/System/SerializableAttribute.js",

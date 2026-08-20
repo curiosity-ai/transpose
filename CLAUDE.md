@@ -447,10 +447,22 @@ The short version:
   name, which is how a library declares a vendored bundle it wants both variants of (Tesserae's
   `tss-dep.js` + `tss-dep.min.js`, Curiosity's `ExternalBundle` pair) — and the same rule applies
   whether the site build reads the pair from disk or extracts it from a package, so neither path
-  scripts both halves. A resource that ships in **one** variant — Monaco's `editor.main.js`, a vendored
-  `d3.min.js` — has no other variant to switch to and is copied through under its authored name in
-  *every* configuration. Renaming it would break the app: a module loader, a `new Worker(...)` or an
-  import map fetches that file by a path the compiler does not rewrite (`PackageResourceVariantTests`).
+  **scripts** both halves. A resource that ships in **one** variant — Monaco's `editor.main.js`, a
+  vendored `d3.min.js` — has no other variant to switch to and is copied through under its authored
+  name in *every* configuration. Renaming it would break the app: a module loader, a `new Worker(...)`
+  or an import map fetches that file by a path the compiler does not rewrite
+  (`PackageResourceVariantTests`).
+
+  What the switch decides is which half index.html **links**, not which halves exist. The minified
+  name of a declared pair is **written in every configuration**, because code that fetches a bundle on
+  demand asks for it by name (GraphKit's `assets/js/graph-kit.min.js`, Monaco's loader) and cannot
+  know which configuration built the site around it — a Debug site that carried only the formatted
+  half answered those fetches with a 404. The formatted half stays Debug-only: nothing fetches the
+  readable copy of a bundle a Release site already minified. And when a pair is declared but its
+  minified half **matches no file** — a bundler that was never run, only the readable artifact checked
+  in — the formatted file is copied under the minified name, both into a site and into a package.
+  Before that, the `.js` group stepped aside for a sibling that produced nothing and a Release build
+  emitted *neither* half.
 
   Two NUglify transforms are switched off through `CodeSettings.KillSwitch` because they are unsound
   for the JavaScript we emit, and `JsMinifierTests` guards both. Besides the `??`-under-`&&` collapse
@@ -734,6 +746,20 @@ The short version:
 
   A host can also drive this itself — `Modules.Register` takes a manifest from anywhere — which is how
   it was validated before the emitter half existed.
+- **`Transpose.Require` is the one run-time loader (`Resources/Require.js`).** `Require.RequireAsync`
+  fetches a script, an ES module or a stylesheet after the page has started — the "load this library
+  the first time a chart is shown" case every application on Transpose had grown its own version of
+  (Tesserae's `Require`, GraphKit's `GK.LoadAsync`, Curiosity's `ExternalLibraries`, Monaco's
+  loader), each a `<script>` element and a slightly different set of things it got wrong. It picks the
+  element from the URL (`.css` → a stylesheet link, `.mjs` → a module, anything else → a classic
+  script; `RequireKind` says so explicitly for a module entry, which keeps the bundle's `.js` name),
+  resolves the URL against `document.baseURI` first — so every spelling of one file is one entry, and
+  a file index.html already carries is waited on rather than fetched again — shares one fetch between
+  every caller, forgets a failed one so a later caller retries, and **falls back between the `.js` and
+  `.min.js` spellings** of the same file. That last part is the run-time half of the variant rule
+  above: a library published once cannot know which build is consuming it, so asking for either name
+  has to work. Several URLs load in order, because a plugin has to arrive after the library it
+  extends. Covered by `RequireLoaderTests`, which runs the real runtime against a DOM stub.
 - **Wider `tps.json` surface** (outputBy, module formats, locales, before/after build, etc.).
 - **Incremental compilation (done for body-level edits; on by default via the SDK).** `--incremental`
   reuses the previous build of a project: nothing at all is compiled when every input hashes the same

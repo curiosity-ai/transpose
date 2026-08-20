@@ -260,12 +260,15 @@ internal static class OutputBuilder
 
                 var o = new JsOut { Path = f.Rel, IsModule = f.Module };
                 if (wantFormatted) WriteText(f.Rel, f.Text); else o.IsEmpty = true;
-                if (wantMinified)
-                {
-                    var pre = byName[counterpart];   // pre-built .min.js from the package
-                    WriteText(pre.Rel, pre.Text);
-                    o.MinifiedPath = pre.Rel;
-                }
+
+                // The minified half goes to disk in EVERY configuration, and is linked from
+                // index.html only by a minified build. A library's on-demand loader fetches its
+                // bundle by the minified name (GraphKit's `assets/js/graph-kit.min.js`) and has no
+                // way to know which configuration built the consuming site, so a Debug site that
+                // kept only the formatted half answered that fetch with a 404.
+                var pre = byName[counterpart];   // pre-built .min.js from the package
+                WriteText(pre.Rel, pre.Text);
+                if (wantMinified) o.MinifiedPath = pre.Rel;
                 if (f.Load) jsOuts.Add(o);
             }
         }
@@ -300,12 +303,21 @@ internal static class OutputBuilder
         {
             var cfg = projectDir == project.ProjectDir ? config : TransposeJson.TryLoad(projectDir, configuration);
             if (cfg is null) continue;
-            // Which bundle names this project declares, so a group that has a declared counterpart
-            // (an authored `x.js` next to an authored `x.min.js`) takes part in the variant switch
-            // instead of both halves being written and both being scripted.
-            var declared = cfg.Resources.Select(g => ResolveResource(g).fileName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            // Which bundle names this project declares, and which of them it can actually produce. A
+            // group that has a *producible* counterpart (an authored `x.js` next to an authored
+            // `x.min.js`) takes part in the variant switch; one whose declared counterpart matches no
+            // file on disk has that counterpart synthesised from its own files instead. Declaring
+            // `x.min.js` and shipping only `x.js` used to make a Release build emit neither — the
+            // `.js` group stepped aside for a sibling that wrote nothing (see ProcessResourceGroup).
+            var declared = cfg.Resources
+                .Select(g => ResolveResource(g).fileName)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var producible = cfg.Resources
+                .Where(g => ResourceGroupOutputs(projectDir, g).Count > 0)
+                .Select(g => ResolveResource(g).fileName)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (var group in cfg.Resources)
-                ProcessResourceGroup(projectDir, outputDir, group, jsOuts, cssLinks, written, declared, wantFormatted, wantMinified);
+                ProcessResourceGroup(projectDir, outputDir, group, jsOuts, cssLinks, written, declared, producible, wantFormatted, wantMinified);
         }
 
         // 3. The compiled bundle — loads last, after runtime + library deps are in place.
@@ -479,6 +491,24 @@ internal static class OutputBuilder
                         load));
                 }
             }
+        }
+
+        // A `.min.js` group whose files are missing — its bundler never ran, or only the readable
+        // artifact was checked in — produced nothing above, so the package would ship one half of a
+        // pair the author declared and every consumer expects. Copy the formatted item under the
+        // minified name instead: the consumer then picks a variant as usual, and the site it builds
+        // answers a fetch of either name. (Copied, not minified: an authored resource is embedded
+        // exactly as it was written, and squeezing a vendored bundle here is not this build's call.)
+        var embeddedNames = items.Select(i => i.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var declaredResourceNames = config.Resources
+            .Select(g => ResolveResource(g).fileName)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in items.ToList())
+        {
+            if (!item.Name.EndsWith(".js", StringComparison.OrdinalIgnoreCase) || IsMinifiedName(item.Name)) continue;
+            var minName = ToMinName(item.Name);
+            if (!declaredResourceNames.Contains(minName) || !embeddedNames.Add(minName)) continue;
+            items.Add(item with { Name = minName });
         }
 
         // Every variant of the compiled output, prepended so the main bundle stays first. Shipping the
@@ -797,7 +827,8 @@ internal static class OutputBuilder
     private static void ProcessResourceGroup(
         string projectDir, string outputDir, TransposeJson.ResourceGroup group,
         List<JsOut> jsOuts, List<string> cssLinks, HashSet<string> written,
-        IReadOnlySet<string> declaredNames, bool wantFormatted, bool wantMinified)
+        IReadOnlySet<string> declaredNames, IReadOnlySet<string> producibleNames,
+        bool wantFormatted, bool wantMinified)
     {
         // The output name (the group name minus its "module#" grouping prefix and ".dontload" suffix)
         // plus the effective load flag: a non-loaded resource is written to the output but never
@@ -806,26 +837,54 @@ internal static class OutputBuilder
         var isBundle = IsBundleName(name);
 
         // A JavaScript bundle the project declares in BOTH variants is one resource with two spellings
-        // — Tesserae's `tss-dep.js` / `tss-dep.min.js`, Curiosity's `ExternalBundle` pair — so only the
-        // one this build wants is produced. (Writing both put 700 KB on disk twice and, once a build
-        // generates a single index.html, scripted the same library twice.) A group with no declared
-        // counterpart is an authored resource in the only variant that exists, and is written always.
-        if (name.EndsWith(".js", StringComparison.OrdinalIgnoreCase) && declaredNames.Contains(CounterpartName(name)))
-        {
-            var wanted = IsMinifiedName(name) ? wantMinified : wantFormatted;
-            if (!wanted) return;
-        }
+        // — Tesserae's `tss-dep.js` / `tss-dep.min.js`, Curiosity's `ExternalBundle` pair — and only the
+        // one this build wants is *scripted*, so a single index.html never loads the same library twice.
+        //
+        // The minified name is nevertheless always written, in every configuration. Code that fetches a
+        // resource on demand asks for it by name (GraphKit's `assets/js/graph-kit.min.js`, Monaco's
+        // loader) and cannot know which configuration built the site, so a Debug site that carried only
+        // the formatted half answered those fetches with a 404. The formatted half stays Debug-only:
+        // nothing fetches the readable copy of a bundle a Release site already minified.
+        //
+        // A group with no *producible* counterpart is an authored resource in the only variant that
+        // exists, and is written always. When the counterpart was declared but its files are missing —
+        // a `.min.js` group whose bundler never ran — the formatted file is copied under the minified
+        // name rather than being dropped: the pair the author declared is what everything downstream
+        // fetches, and a build that emitted neither half was the worst of the three answers.
+        var isJs = name.EndsWith(".js", StringComparison.OrdinalIgnoreCase);
+        var counterpart = isJs ? CounterpartName(name) : name;
+        var hasRealCounterpart = isJs && producibleNames.Contains(counterpart);
+        var minified = IsMinifiedName(name);
+
+        // Whether index.html should carry this group at all: the pairing above decides which half is
+        // scripted, and a half that is not this build's is written to disk silently.
+        var scripted = load && (!isJs || !hasRealCounterpart || (minified ? wantMinified : wantFormatted));
+
+        // The formatted half of a real pair is not written by a minified build — the minified half,
+        // which that build scripts, is the whole of what it needs.
+        if (isJs && hasRealCounterpart && !minified && !wantFormatted) return;
+
+        // A declared-but-unproducible `.min.js` counterpart is synthesised from this group's own files.
+        var synthesiseMinified = isJs && isBundle && !minified && !hasRealCounterpart
+                                 && declaredNames.Contains(counterpart);
 
         foreach (var (rel, sources) in ResourceGroupOutputs(projectDir, group))
         {
             WriteResource(outputDir, rel, sources, concatenate: isBundle, written);
-            if (!load) continue;   // written to disk already; not injected into index.html
+
+            var minRel = synthesiseMinified ? ToMinName(rel) : null;
+            if (minRel is not null && minRel != rel)
+                WriteResource(outputDir, minRel, sources, concatenate: isBundle, written);
+
+            if (!scripted) continue;   // written to disk already; not injected into index.html
 
             if (IsCss(rel)) cssLinks.Add(rel);
             // Resource JS is taken as authored (never re-minified): a .min.js links only from
-            // a Release build; a plain .js is scripted in both — matching the legacy compiler.
+            // a Release build; a plain .js is scripted in both — matching the legacy compiler. A
+            // synthesised counterpart is what the minified HTML links, so both HTMLs name a file
+            // this build actually wrote.
             else if (rel.EndsWith(".js", StringComparison.OrdinalIgnoreCase))
-                jsOuts.Add(new JsOut { Path = rel, IsMinified = IsMinifiedName(rel) });
+                jsOuts.Add(new JsOut { Path = rel, IsMinified = IsMinifiedName(rel), MinifiedPath = minRel });
         }
     }
 
