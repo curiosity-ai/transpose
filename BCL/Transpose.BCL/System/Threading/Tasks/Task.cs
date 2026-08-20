@@ -134,9 +134,33 @@ namespace System.Threading.Tasks
         [Transpose.Template("System.Threading.Tasks.Task.fromException({exception}, {TResult})")]
         public static extern Task<TResult> FromException<TResult>(Exception exception);        
 
+        /// <summary>A task already in the cancelled state. The token must already be cancelled -
+        /// there is nothing to cancel the task later - which is what .NET checks for too.</summary>
+        public static extern Task FromCanceled(CancellationToken cancellationToken);
+
+        [Transpose.Template("System.Threading.Tasks.Task.fromCanceled({cancellationToken}, {TResult})")]
+        public static extern Task<TResult> FromCanceled<TResult>(CancellationToken cancellationToken);
+
+        // All eight overloads bind to the one runtime `run`, the way Delay's four bind to `delay`:
+        // it takes an optional token and unwraps a Task the body handed back, so Func<Task> and
+        // Func<Task<TResult>> need no separate implementation. Declaring them matters anyway -
+        // without them `Task.Run(async () => …)` bound to Action/Func<TResult> and its declared type
+        // came out as Task<Task<TResult>>, and the CancellationToken forms did not compile at all.
         public static extern Task Run(Action action);
 
+        public static extern Task Run(Action action, CancellationToken cancellationToken);
+
         public static extern Task<TResult> Run<TResult>(Func<TResult> function);
+
+        public static extern Task<TResult> Run<TResult>(Func<TResult> function, CancellationToken cancellationToken);
+
+        public static extern Task Run(Func<Task> function);
+
+        public static extern Task Run(Func<Task> function, CancellationToken cancellationToken);
+
+        public static extern Task<TResult> Run<TResult>(Func<Task<TResult>> function);
+
+        public static extern Task<TResult> Run<TResult>(Func<Task<TResult>> function, CancellationToken cancellationToken);
 
         public static extern Task WhenAll(params Task[] tasks);
 

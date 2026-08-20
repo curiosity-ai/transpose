@@ -679,8 +679,27 @@ public sealed partial class Emitter
             _w.WriteLine("catch ($ex) {");
             _w.Indent();
 
-            // Bind each catch variable to $ex up front so it is in scope for exception
-            // filters (`when (...)`), which are evaluated in the guard before the body.
+            // What JavaScript threw is not necessarily a System.Exception — an interop call, a
+            // rejected promise or the engine itself (a null dereference raises a native TypeError)
+            // hands back a bare value — so it is normalised once, on entry, into the exception the
+            // handlers are written against: without that, `catch (NullReferenceException)` did not
+            // match a null dereference and `e.GetType()` answered "TypeError". `TransposeR.caught`
+            // returns a real exception unchanged, so a C#-thrown one costs nothing, and a bare
+            // `throw;` still rethrows `$ex` — the value as JavaScript threw it — which is what keeps
+            // its identity and native frames usable by an outer JS handler.
+            //
+            // Only emitted when some clause can observe it: a bare `catch { }` or a
+            // `catch (Exception)` with no variable has nothing to ask.
+            var caught = "$ex";
+
+            if (tryStmt.Catches.Any(c => c.Filter is not null || CatchBindsAVariable(c) || !IsCatchAllType(c)))
+            {
+                caught = "$exn";
+                _w.WriteLine("let $exn = TransposeR.caught($ex);");
+            }
+
+            // Bind each catch variable up front so it is in scope for exception filters
+            // (`when (...)`), which are evaluated in the guard before the body.
             var boundNames = new System.Collections.Generic.HashSet<string>(System.StringComparer.Ordinal);
             foreach (var katch in tryStmt.Catches)
             {
@@ -688,7 +707,7 @@ public sealed partial class Emitter
                 if (id is { RawKind: not 0 } token && !string.IsNullOrEmpty(token.Text))
                 {
                     var jsName = NameMangler.JsIdentifier(token.Text);
-                    if (boundNames.Add(jsName)) _w.WriteLine($"let {jsName} = $ex;");
+                    if (boundNames.Add(jsName)) _w.WriteLine($"let {jsName} = {caught};");
                 }
             }
 
@@ -698,10 +717,9 @@ public sealed partial class Emitter
             {
                 var typeSyntax = katch.Declaration?.Type;
                 var exType = typeSyntax is not null ? _model.GetTypeInfo(typeSyntax).Type : null;
-                var isCatchAll = exType is null || exType.SpecialType == SpecialType.System_Object
-                    || exType.ToDisplayString() == "System.Exception";
+                var isCatchAll = IsCatchAllType(katch);
 
-                var condition = isCatchAll ? null : $"TransposeR.is($ex, {ExceptionTypeRef(exType!)})";
+                var condition = isCatchAll ? null : $"TransposeR.is({caught}, {ExceptionTypeRef(exType!)})";
 
                 if (condition is null && katch.Filter is null)
                 {
@@ -753,6 +771,19 @@ public sealed partial class Emitter
             EmitBlock(tryStmt.Finally.Block);
         }
     }
+
+    /// <summary>A clause that catches everything: `catch`, `catch (object)`, `catch (Exception)`.</summary>
+    private bool IsCatchAllType(CatchClauseSyntax katch)
+    {
+        var typeSyntax = katch.Declaration?.Type;
+        var exType = typeSyntax is not null ? _model.GetTypeInfo(typeSyntax).Type : null;
+
+        return exType is null || exType.SpecialType == SpecialType.System_Object
+            || exType.ToDisplayString() == "System.Exception";
+    }
+
+    private static bool CatchBindsAVariable(CatchClauseSyntax katch)
+        => katch.Declaration?.Identifier is { RawKind: not 0 } token && !string.IsNullOrEmpty(token.Text);
 
     private void EmitCatchBody(CatchClauseSyntax katch, string? prefix)
     {

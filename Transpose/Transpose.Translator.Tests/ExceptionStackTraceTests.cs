@@ -10,10 +10,14 @@ namespace Transpose.Translator.Tests
     /// <c>errorStack</c>. C# matches both, but <c>StackTrace</c> read <c>errorStack.stack</c>
     /// unconditionally, so it came back null for every raw error while a C#-thrown exception worked.
     ///
-    /// The read now goes through <c>TransposeR.stackTrace</c>, which takes whichever shape arrived.
-    /// The alternative — normalising every caught value into a wrapper the way h5 does — was rejected:
-    /// it allocates on entry to every catch clause and makes <c>throw;</c> rethrow the wrapper rather
-    /// than the original error, losing its identity and native stack for any outer JS handler.
+    /// The read goes through <c>TransposeR.stackTrace</c>, which takes whichever shape arrived, and
+    /// the value itself is normalised on entry to the catch by <c>TransposeR.caught</c> — so the
+    /// handler holds a real exception whatever JavaScript threw. Both objections to normalising are
+    /// answered rather than traded away: a real exception is returned unchanged, so a C#-thrown one
+    /// allocates nothing, and a bare <c>throw;</c> still rethrows the ORIGINAL value, keeping its
+    /// identity and native frames usable by an outer JavaScript handler. The wrapper is remembered
+    /// against the value it wraps, so an outer C# catch of that rethrow binds the same instance.
+    /// See <see cref="ExceptionControlFlowTests"/> for the normalisation's own cases.
     /// </summary>
     [TestClass]
     public class ExceptionStackTraceTests : TranslatorTestBase
@@ -65,8 +69,15 @@ public class Program
 }");
         }
 
-        /// <summary>A raw JS error crossing into C# resolves its native stack; a thrown non-Error
-        /// (a bare string, an object literal) has no stack and correctly yields null.</summary>
+        /// <summary>
+        /// A raw JS error crossing into C# resolves its native stack. A thrown non-Error (a bare
+        /// string, an object literal) has no frames of its own, so what is reported is the stack
+        /// captured where the value was normalised — in the handler, close to the throw, which is
+        /// the best there is — and the type is the .NET one the value maps onto rather than
+        /// "String". This is the same answer the Task.Run path gives for the same value (see
+        /// <see cref="NormalisingAThrownNonErrorKeepsTheCapturedStackAsync"/>): the two used to
+        /// disagree, because a direct catch bound the raw value while a task fault normalised it.
+        /// </summary>
         [TestMethod]
         public async Task RawJavaScriptErrorExposesItsNativeStackAsync()
         {
@@ -88,14 +99,23 @@ public class Program
         catch (Exception e) { Console.WriteLine(""error stack: "" + (e.StackTrace ?? """").Split('\n')[0]); }
 
         try { Native.ThrowString(); }
-        catch (Exception e) { Console.WriteLine(""string stack null: "" + (e.StackTrace == null)); }
+        catch (Exception e)
+        {
+            Console.WriteLine(""string type: "" + e.GetType().FullName);
+            Console.WriteLine(""string message: "" + e.Message);
+            Console.WriteLine(""string has a stack: "" + (e.StackTrace != null));
+        }
     }
 }", skipRoslyn: true);
 
             StringAssert.Contains(js, "error stack: TypeError: js boom",
                 "a raw JS error must expose its native stack through Exception.StackTrace");
-            StringAssert.Contains(js, "string stack null: True",
-                "a thrown non-Error has no stack, so StackTrace must be null rather than undefined");
+            StringAssert.Contains(js, "string type: System.Exception",
+                "a thrown non-Error is normalised into the exception a handler is written against");
+            StringAssert.Contains(js, "string message: bare string");
+            StringAssert.Contains(js, "string has a stack: True",
+                "a thrown non-Error has no frames of its own, so the stack captured while normalising "
+                + "it - taken in the handler, close to the throw - is the best there is");
         }
 
         /// <summary>

@@ -120,16 +120,50 @@
                 return t;
             },            
 
-            run: function (fn) {
+            fromCanceled: function (token, T) {
+                // .NET refuses a token that is not already cancelled - the task has to BE cancelled,
+                // and there is nothing to cancel it later.
+                if (!token || !token.getIsCancellationRequested()) {
+                    throw new System.ArgumentOutOfRangeException.$ctor1("cancellationToken");
+                }
+
+                var t = new (System.Threading.Tasks.Task$1(T || System.Object))();
+
+                t.cancel();
+
+                return t;
+            },
+
+            run: function (fn, token) {
                 var tcs = new System.Threading.Tasks.TaskCompletionSource();
 
                 System.Threading.Tasks.Task.schedule(function () {
+                    // Task.Run(fn, token)'s token cancels the SCHEDULING, not the body: it is read
+                    // when the work reaches the front of the queue, and a cancellation by then means
+                    // fn is never invoked. Deliberately not short-circuited before the schedule -
+                    // .NET reports IsCanceled false immediately after the call even for an
+                    // already-cancelled token, because the transition happens on the scheduler.
+                    if (token && token.getIsCancellationRequested()) {
+                        tcs.setCanceled();
+
+                        return;
+                    }
+
                     try {
-                        var result = fn();
+                        // asTask, so a body that hands back a native promise - a [Script]-bound JS
+                        // async function, which is what Func<Task> often is here - is awaited rather
+                        // than becoming the task's RESULT, with its rejection unobserved.
+                        var result = System.Threading.Tasks.Task.asTask(fn());
 
                         if (Transpose.is(result, System.Threading.Tasks.Task)) {
                             result.continueWith(function () {
-                                if (result.isFaulted() || result.isCanceled()) {
+                                if (result.isCanceled()) {
+                                    // Unwrapping keeps the KIND of the inner completion: reporting a
+                                    // cancelled inner task as a fault turned "the caller changed
+                                    // their mind" into an error, and the OperationCanceledException
+                                    // a caller catches into an unexpected one.
+                                    tcs.setCanceled();
+                                } else if (result.isFaulted()) {
                                     // As in _getResult: the inner task may have been faulted with a
                                     // bare exception, which has no innerExceptions to read.
                                     tcs.setException(result.exception && result.exception.innerExceptions && result.exception.innerExceptions.Count > 0 ? result.exception.innerExceptions.getItem(0) : result.exception);

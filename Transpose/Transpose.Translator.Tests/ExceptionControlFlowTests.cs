@@ -232,6 +232,135 @@ public class Program
         }
 
         /// <summary>
+        /// What the engine itself throws is not a <c>System.Exception</c> — a null dereference raises
+        /// a native <c>TypeError</c> — so the value a <c>catch</c> binds is normalised on entry into
+        /// the exception the handlers are written against. Without that the single most common
+        /// exception in any program did not match the handler that names it:
+        /// <c>catch (NullReferenceException)</c> was skipped, <c>e is NullReferenceException</c> was
+        /// false and <c>e.GetType()</c> answered "TypeError".
+        ///
+        /// The two properties that make normalising safe are asserted here too, because they are the
+        /// reason it can be done at all: a rethrow is still a rethrow of the SAME exception instance
+        /// (so anything the inner handler recorded on it survives), and a C#-thrown exception passes
+        /// through untouched. That a bare rethrow hands JavaScript back the value it actually threw —
+        /// the other half of the bargain — is asserted in
+        /// <see cref="InteropExceptionTests.AThrowSurvivesEveryHopBetweenCSharpAndJavaScriptAsync"/>.
+        /// </summary>
+        [TestMethod]
+        public async Task AnEngineLevelFailureMatchesTheHandlerThatNamesItAsync()
+        {
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+
+public class Program
+{
+    public static void Main()
+    {
+        string nothing = null;
+
+        try { var _ = nothing.Length; }
+        catch (NullReferenceException e)
+        {
+            Console.WriteLine(""typed catch: "" + e.GetType().FullName + "" / is NRE="" + (e is NullReferenceException));
+        }
+
+        try { nothing.ToUpper(); }
+        catch (Exception e) { Console.WriteLine(""catch(Exception): "" + e.GetType().FullName + "" / stack="" + (e.StackTrace != null)); }
+
+        // A handler that does not apply still lets it through to the one that does.
+        try
+        {
+            try { var _ = nothing.Length; }
+            catch (FormatException) { Console.WriteLine(""WRONG""); }
+        }
+        catch (NullReferenceException) { Console.WriteLine(""passed through to the right handler""); }
+
+        // A filter over it, and the inner chain it can be wrapped into.
+        try { var _ = nothing.Length; }
+        catch (Exception e) when (e is NullReferenceException) { Console.WriteLine(""matched by a filter""); }
+
+        try
+        {
+            try { var _ = nothing.Length; }
+            catch (Exception e) { throw new InvalidOperationException(""wrapped"", e); }
+        }
+        catch (Exception e) { Console.WriteLine(""wrapped inner: "" + e.InnerException.GetType().FullName); }
+
+        // A rethrow is a rethrow of the same instance, so what the inner handler recorded survives.
+        Exception inner = null, outer = null;
+        try
+        {
+            try { var _ = nothing.Length; }
+            catch (Exception e) { inner = e; e.Data[""seen""] = ""yes""; throw; }
+        }
+        catch (Exception e) { outer = e; }
+
+        Console.WriteLine(""same instance after a rethrow: "" + ReferenceEquals(inner, outer));
+        Console.WriteLine(""data survived: "" + outer.Data[""seen""]);
+        Console.WriteLine(""base of it: "" + outer.GetBaseException().GetType().FullName);
+
+        // A C#-thrown exception is untouched by any of this.
+        try { throw new InvalidOperationException(""mine""); }
+        catch (Exception e) { Console.WriteLine(""c#: "" + e.GetType().FullName + "" / "" + e.Message); }
+
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        /// <summary>
+        /// The emit shape of the normalisation: the caught value is normalised ONCE for the whole
+        /// catch, type tests are asked of the normalised exception, and a bare <c>throw;</c> still
+        /// rethrows <c>$ex</c> — what JavaScript threw — rather than the wrapper. A clause that
+        /// cannot observe the value at all (a bare <c>catch { }</c>) gets no normalisation, so the
+        /// swallow-everything case costs nothing.
+        /// </summary>
+        [TestMethod]
+        public void TheCaughtValueIsNormalisedOnceAndARethrowStillThrowsTheOriginal()
+        {
+            var observed = new RoslynTranslator().Translate(@"
+using System;
+
+public class Program
+{
+    public static void Read()
+    {
+        try { throw new InvalidOperationException(""x""); }
+        catch (FormatException) { }
+        catch (Exception e) { Console.WriteLine(e.Message); throw; }
+    }
+    public static void Main() { }
+}");
+
+            Assert.IsTrue(observed.Success, "translation should succeed");
+            StringAssert.Contains(observed.Javascript!, "let $exn = TransposeR.caught($ex);",
+                "the caught value must be normalised on entry, once for the whole catch");
+            StringAssert.Contains(observed.Javascript!, "TransposeR.is($exn, System.FormatException)",
+                "a type test must be asked of the normalised exception, not of the raw thrown value");
+            StringAssert.Contains(observed.Javascript!, "throw $ex;",
+                "a bare rethrow must rethrow what JavaScript threw, so an outer JS handler still "
+                + "sees its own error with its native frames");
+
+            var unobserved = new RoslynTranslator().Translate(@"
+using System;
+
+public class Program
+{
+    public static void Read()
+    {
+        try { throw new InvalidOperationException(""x""); }
+        catch { Console.WriteLine(""swallowed""); }
+    }
+    public static void Main() { }
+}");
+
+            Assert.IsTrue(unobserved.Success, "translation should succeed");
+            Assert.IsFalse(unobserved.Javascript!.Contains("TransposeR.caught("),
+                "a catch clause that cannot observe the value has nothing to normalise");
+        }
+
+        /// <summary>
         /// The emit-shape half of the case above. A filter has to be evaluated somewhere a throw can
         /// be caught, so it goes through <c>TransposeR.filter</c>; inline in the guard there is
         /// nowhere for the CLR's "swallow it and read the filter as false" rule to live. The arrow

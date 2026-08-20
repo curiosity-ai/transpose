@@ -391,5 +391,136 @@ public class Program
     }
 }", waitForOutput: "<<DONE>>");
         }
+
+        /// <summary>
+        /// The <c>Task.Run</c> overloads. <c>Func&lt;Task&gt;</c> and <c>Func&lt;Task&lt;TResult&gt;&gt;</c>
+        /// matter for more than compiling: with only the <c>Action</c>/<c>Func&lt;TResult&gt;</c> forms
+        /// declared, <c>Task.Run(async () =&gt; 1)</c> bound to the synchronous one and came out typed
+        /// <c>Task&lt;Task&lt;int&gt;&gt;</c>, and the <c>CancellationToken</c> forms did not exist at
+        /// all. Unwrapping the inner task also has to keep the KIND of its completion — a cancelled
+        /// inner task cancels the outer one rather than faulting it.
+        /// </summary>
+        [TestMethod]
+        public async Task TaskRunUnwrapsAnAsyncBodyAndHonoursItsTokenAsync()
+        {
+            await RunTest(@"
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+
+public class Program
+{
+    public static async Task Main()
+    {
+        // Func<Task>: the inner task is unwrapped, so its exception surfaces on the outer one.
+        try { await Task.Run(async () => { await Task.Yield(); throw new FormatException(""from Func<Task>""); }); Console.WriteLine(""NOT REACHED""); }
+        catch (FormatException e) { Console.WriteLine(""Func<Task>: "" + e.Message); }
+
+        // Func<Task<T>>: declared Task<int>, not Task<Task<int>>.
+        Task<int> typed = Task.Run(async () => { await Task.Yield(); return 41; });
+        Console.WriteLine(""Func<Task<T>>: "" + await typed);
+
+        try { await Task.Run(async () => { await Task.Yield(); throw new NotSupportedException(""typed body""); }); Console.WriteLine(""NOT REACHED""); }
+        catch (NotSupportedException e) { Console.WriteLine(""Func<Task<T>> throwing: "" + e.Message); }
+
+        // The synchronous forms are unchanged.
+        Console.WriteLine(""Func<T>: "" + await Task.Run(() => 7));
+        await Task.Run(() => Console.WriteLine(""Action: ran""));
+
+        // A token cancels the SCHEDULING: the body never runs, and the task is cancelled.
+        var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var ran = false;
+        var cancelled = Task.Run(() => { ran = true; }, cts.Token);
+
+        try { await cancelled; Console.WriteLine(""NOT REACHED""); }
+        catch (OperationCanceledException e)
+        {
+            Console.WriteLine(""cancelled: body ran="" + ran + "" IsCanceled="" + cancelled.IsCanceled
+                + "" is TaskCanceledException="" + (e is TaskCanceledException));
+        }
+
+        // A live token does not get in the way of any form.
+        var live = new CancellationTokenSource();
+        Console.WriteLine(""live token, Func<T>: "" + await Task.Run(() => 5, live.Token));
+        await Task.Run(async () => { await Task.Yield(); }, live.Token);
+        Console.WriteLine(""live token, Func<Task>: ok"");
+        Console.WriteLine(""live token, Func<Task<T>>: "" + await Task.Run(async () => { await Task.Yield(); return 6; }, live.Token));
+
+        try { await Task.Run(() => { throw new FormatException(""with a token""); }, live.Token); Console.WriteLine(""NOT REACHED""); }
+        catch (FormatException e) { Console.WriteLine(""throwing with a token: "" + e.Message); }
+
+        // Unwrapping keeps the kind of the inner completion.
+        var innerCancelled = Task.Run(() => Task.FromCanceled(cts.Token));
+        try { await innerCancelled; Console.WriteLine(""NOT REACHED""); }
+        catch (OperationCanceledException) { Console.WriteLine(""inner cancel: cancelled="" + innerCancelled.IsCanceled + "" faulted="" + innerCancelled.IsFaulted); }
+
+        var innerFaulted = Task.Run(() => Task.FromException(new FormatException(""inner fault"")));
+        try { await innerFaulted; Console.WriteLine(""NOT REACHED""); }
+        catch (FormatException e) { Console.WriteLine(""inner fault: "" + e.Message + "" faulted="" + innerFaulted.IsFaulted); }
+
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        /// <summary>
+        /// <c>Task.FromCanceled</c>: a task already in the cancelled state, which is the counterpart
+        /// of <c>FromException</c> and the only way to hand back "the caller changed their mind"
+        /// without a source to cancel. The token has to be cancelled ALREADY — nothing will cancel
+        /// the task later — and .NET refuses a live one, which is worth pinning down because it is
+        /// the kind of argument check that is easy to leave out and then relied on.
+        /// </summary>
+        [TestMethod]
+        public async Task FromCanceledProducesAnAlreadyCancelledTaskAsync()
+        {
+            await RunTest(@"
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+
+public class Program
+{
+    public static async Task Main()
+    {
+        var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var t = Task.FromCanceled(cts.Token);
+        Console.WriteLine(""IsCanceled="" + t.IsCanceled + "" IsCompleted="" + t.IsCompleted + "" IsFaulted="" + t.IsFaulted);
+
+        try { await t; Console.WriteLine(""NOT REACHED""); }
+        catch (OperationCanceledException e) { Console.WriteLine(""awaited: is TaskCanceledException="" + (e is TaskCanceledException)); }
+
+        var typed = Task.FromCanceled<int>(cts.Token);
+        Console.WriteLine(""typed: IsCanceled="" + typed.IsCanceled);
+
+        try { var v = await typed; Console.WriteLine(""NOT REACHED "" + v); }
+        catch (TaskCanceledException) { Console.WriteLine(""awaited typed: cancelled""); }
+
+        // A token that is not cancelled is refused: there would be nothing to cancel the task.
+        var live = new CancellationTokenSource();
+        try { Task.FromCanceled(live.Token); Console.WriteLine(""NOT REACHED""); }
+        catch (ArgumentOutOfRangeException) { Console.WriteLine(""a live token is refused""); }
+
+        try { Task.FromCanceled<int>(live.Token); Console.WriteLine(""NOT REACHED""); }
+        catch (ArgumentOutOfRangeException) { Console.WriteLine(""a live token is refused for the typed form too""); }
+
+        // It behaves as a cancelled task everywhere a cancelled task is read.
+        var all = Task.WhenAll(Task.FromCanceled(cts.Token), Task.CompletedTask);
+        try { await all; Console.WriteLine(""NOT REACHED""); }
+        catch (OperationCanceledException) { Console.WriteLine(""WhenAll cancelled: "" + all.IsCanceled); }
+
+        var beside = Task.WhenAll(Task.FromCanceled(cts.Token), Task.FromException(new FormatException(""a fault beside it"")));
+        try { await beside; Console.WriteLine(""NOT REACHED""); }
+        catch (Exception e) { Console.WriteLine(""a fault outranks it: "" + e.GetType().Name + "" faulted="" + beside.IsFaulted); }
+
+        var any = await Task.WhenAny(Task.FromCanceled(cts.Token));
+        Console.WriteLine(""WhenAny: "" + any.IsCanceled);
+
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
     }
 }

@@ -378,5 +378,50 @@ public class Program
             StringAssert.Contains(js, "foreign frames kept: True");
             StringAssert.Contains(js, "<<DONE>>");
         }
+
+        /// <summary>
+        /// A <c>Task.Run</c> body that hands back a native promise — which is what a
+        /// <c>[Script]</c>-bound JS async function is, and so what <c>Func&lt;Task&gt;</c> often
+        /// resolves to here. It has to be AWAITED rather than becoming the task's result: stored as
+        /// the result, the outer task completed immediately and the promise's rejection was never
+        /// observed by anyone, so a failure vanished and the code after the await ran as if it had
+        /// succeeded.
+        /// </summary>
+        [TestMethod]
+        public async Task ATaskRunBodyThatReturnsAPromiseIsAwaitedNotStoredAsync()
+        {
+            var js = await RunTest(@"
+using System;
+using System.Threading.Tasks;
+using Transpose;
+
+public class Native
+{
+    [Script(""return Promise.reject(new Error('promise body rejected'));"")]
+    public static extern Task Reject();
+
+    [Script(""return Promise.resolve(19);"")]
+    public static extern Task<int> Resolve();
+}
+
+public class Program
+{
+    public static async Task Run()
+    {
+        try { await Task.Run(() => Native.Reject()); Console.WriteLine(""NOT REACHED""); }
+        catch (Exception e) { Console.WriteLine(""rejecting body: "" + e.GetType().FullName + "" / "" + e.Message); }
+
+        Console.WriteLine(""resolving body: "" + await Task.Run(() => Native.Resolve()));
+        Console.WriteLine(""<<DONE>>"");
+    }
+
+    public static void Main() { Run(); }
+}", skipRoslyn: true);
+
+            StringAssert.Contains(js, "rejecting body: System.SystemException / promise body rejected",
+                "a promise a Task.Run body returned must be awaited, or its rejection reaches nobody");
+            StringAssert.Contains(js, "resolving body: 19");
+            StringAssert.Contains(js, "<<DONE>>");
+        }
     }
 }
