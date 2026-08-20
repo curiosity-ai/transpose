@@ -940,6 +940,54 @@ public class Program
                 "an iterator local function should compile to a TransposeR.iter(function*(){...}) generator\n" + result.Javascript);
         }
 
+        /// <summary>
+        /// An iterator declared to return <c>IEnumerator</c>/<c>IEnumerator&lt;T&gt;</c> must compile to the
+        /// cursor helper, not to the enumerable one — see
+        /// <c>IteratorsTests.Iterators_GetEnumeratorIsItselfAnIterator</c> for the runtime failure this
+        /// caused ("e.MoveNext is not a function"). The sequence-returning form must keep using
+        /// <c>TransposeR.iter</c>, since it has to stay re-enumerable.
+        /// </summary>
+        [TestMethod]
+        public void EnumeratorReturningIteratorEmitsCursorHelper()
+        {
+            var code = @"
+using System;
+using System.Collections;
+using System.Collections.Generic;
+public class Program
+{
+    static IEnumerator<int> Cursor() { yield return 1; }
+    static IEnumerator Untyped() { yield return 1; }
+    static IEnumerable<int> Sequence() { yield return 1; }
+    static IEnumerator<int> CursorProperty { get { yield return 1; } }
+    public static void Main()
+    {
+        IEnumerator<int> local() { yield return 1; }
+        Console.WriteLine(Cursor().MoveNext() && Untyped().MoveNext() && local().MoveNext()
+                          && CursorProperty.MoveNext() && Sequence() != null);
+    }
+}";
+            var result = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            // Four cursor-returning iterators (method, non-generic method, property getter, local
+            // function) and exactly one sequence-returning one.
+            Assert.AreEqual(4, Occurrences(result.Javascript!, "TransposeR.iterEnumerator((function* ()"),
+                "every IEnumerator-returning iterator should compile to the cursor helper\n" + result.Javascript);
+            Assert.AreEqual(1, Occurrences(result.Javascript!, "TransposeR.iter((function* ()"),
+                "an IEnumerable-returning iterator should keep compiling to the re-enumerable helper\n" + result.Javascript);
+        }
+
+        private static int Occurrences(string haystack, string needle)
+        {
+            var count = 0;
+            for (var i = haystack.IndexOf(needle, System.StringComparison.Ordinal); i >= 0;
+                 i = haystack.IndexOf(needle, i + needle.Length, System.StringComparison.Ordinal))
+            {
+                count++;
+            }
+            return count;
+        }
+
         // ---- interface Keys/Values dispatch on Dictionary ----------------------
         // Accessing a BCL interface property (IReadOnlyDictionary/IDictionary .Keys/.Values) through
         // the interface emits the member's plain camelCase name (`d.values`). On Dictionary that name

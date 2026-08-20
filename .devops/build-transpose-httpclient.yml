@@ -1,5 +1,6 @@
 variables:
   transposeHttpClient: '$(Build.SourcesDirectory)/Packages/Transpose.HttpClient/Transpose.HttpClient.csproj'
+  transposeHttpClientTests: '$(Build.SourcesDirectory)/Packages/Transpose.HttpClient.Tests/Transpose.HttpClient.Tests.csproj'
   buildConfiguration: 'Release'
   targetVersion: yy.M.$(build.buildId)
 
@@ -13,6 +14,7 @@ trigger:
   paths:
     include:
     - Packages/Transpose.HttpClient/*
+    - Packages/Transpose.HttpClient.Tests/*
     - .devops/build-transpose-httpclient.yml
 
 pr: none
@@ -60,6 +62,18 @@ steps:
     command: 'build'
     projects: '$(transposeHttpClient)'
     arguments: '-c $(buildConfiguration) /p:Version=$(targetVersion)'
+
+# TESTS DISABLED ON CI DUE TO RESOURCE LIMITATION
+# Runs each snippet as translated JavaScript on Node against a fake XMLHttpRequest, and — for the part
+# of the surface that has one — diffs it against the real System.Net.Http in the shared framework. The
+# suite compiles Transpose.Core and the package itself in-process, so it also catches the package
+# failing to transpile at all.
+# - task: DotNetCoreCLI@2
+#   displayName: 'test'
+#   inputs:
+#     command: 'test'
+#     projects: '$(transposeHttpClientTests)'
+#     arguments: '-c $(buildConfiguration)'
 
 - task: DotNetCoreCLI@2
   displayName: 'pack nuget'

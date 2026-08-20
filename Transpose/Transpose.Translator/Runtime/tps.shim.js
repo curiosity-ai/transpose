@@ -145,6 +145,19 @@
     // contributes 0 in .NET, whereas the bare runtime helper throws "HashCode cannot be calculated
     // for empty value" — which took out any struct/record with an unset reference field.
     TransposeR.hash = function (v) { return Transpose.getHashCode ? Transpose.getHashCode(v, true) : 0; };
+    // Follow a GetEnumerator() that hands back another *enumerable* rather than a cursor, instead of
+    // wrapping it as if it were one (which failed later, and obscurely, as "e.MoveNext is not a
+    // function"). A collection whose GetEnumerator() is itself a C# iterator method compiled to exactly
+    // that shape before TransposeR.iterEnumerator existed, so a package published by an older compiler
+    // still ships it. Bounded, so a GetEnumerator returning `this` cannot spin.
+    var toEnumerator = function (e) {
+        for (var i = 0; i < 4 && e != null; i++) {
+            if (typeof e.moveNext === "function" || typeof e.MoveNext === "function") { return e; }
+            if (typeof e.GetEnumerator !== "function") { break; }
+            e = e.GetEnumerator();
+        }
+        return e;
+    };
     TransposeR.getEnumerator = function (src) {
         // foreach over a null sequence throws NullReferenceException in .NET (the implicit
         // GetEnumerator call dereferences null), not a raw JS TypeError from a later .moveNext().
@@ -162,7 +175,7 @@
             // Already an enumerator (pattern-based / extension GetEnumerator result).
             if (typeof src.moveNext === "function" || typeof src.MoveNext === "function") { return wrap(src); }
             // An enumerable with its own GetEnumerator (e.g. TransposeR.iter iterables).
-            if (typeof src.GetEnumerator === "function") { return wrap(src.GetEnumerator()); }
+            if (typeof src.GetEnumerator === "function") { return wrap(toEnumerator(src.GetEnumerator())); }
         }
         if (Transpose.getEnumerator) { return wrap(Transpose.getEnumerator(src)); }
         var i = -1; return { moveNext: function () { i++; return i < src.length; }, get current() { return src[i]; } };
@@ -236,4 +249,9 @@
             return en;
         });
     };
+    // The same generator as an *enumerator*, for an iterator method declared to return
+    // IEnumerator/IEnumerator<T> rather than the sequence: the caller holds the cursor itself and calls
+    // MoveNext/Current on it, so handing back the enumerable would be the wrong object. One enumerator
+    // per call, which is what the declared type means — an IEnumerator is not re-enumerable.
+    TransposeR.iterEnumerator = function (genFn) { return TransposeR.iter(genFn).GetEnumerator(); };
 })(typeof globalThis !== "undefined" ? globalThis : this);

@@ -629,13 +629,34 @@ public sealed partial class Emitter
         _w.Block(() =>
         {
             EmitOptionalDefaults(method);
-            // A generator function can't be an arrow, so it rebinds `this`; bind it to the
-            // enclosing instance so an iterator body that reads `this.field` still works.
-            _w.Write("return TransposeR.iter((function* () ");
-            _w.Block(() => EmitStatements(body.Statements));
-            _w.WriteLine(").bind(this));");
+            EmitIteratorGenerator(body.Statements, method.ReturnType);
         });
     }
+
+    /// <summary>
+    /// Emits the generator an iterator body compiles to. C# lets an iterator be declared as either the
+    /// sequence (<c>IEnumerable</c>/<c>IEnumerable&lt;T&gt;</c>) or the cursor over it
+    /// (<c>IEnumerator</c>/<c>IEnumerator&lt;T&gt;</c>), and those are two different JavaScript objects:
+    /// the first answers <c>GetEnumerator()</c>, the second answers <c>moveNext()</c>/<c>current</c>.
+    /// Emitting the enumerable for both is what made <c>foreach</c> over a collection whose
+    /// <c>GetEnumerator()</c> is itself an iterator method fail with "e.MoveNext is not a function" —
+    /// the caller received a sequence where the language contract promised a cursor.
+    /// </summary>
+    private void EmitIteratorGenerator(SyntaxList<StatementSyntax> statements, ITypeSymbol? returnType)
+    {
+        var helper = IsEnumeratorType(returnType) ? "TransposeR.iterEnumerator" : "TransposeR.iter";
+        // A generator function can't be an arrow, so it rebinds `this`; bind it to the
+        // enclosing instance so an iterator body that reads `this.field` still works.
+        _w.Write($"return {helper}((function* () ");
+        _w.Block(() => EmitStatements(statements));
+        _w.WriteLine(").bind(this));");
+    }
+
+    /// <summary>True for <c>System.Collections.IEnumerator</c> and <c>System.Collections.Generic.IEnumerator&lt;T&gt;</c>.</summary>
+    private static bool IsEnumeratorType(ITypeSymbol? type) =>
+        type is INamedTypeSymbol named
+        && named.OriginalDefinition.MetadataName is "IEnumerator" or "IEnumerator`1"
+        && named.ContainingNamespace?.ToDisplayString() is "System.Collections" or "System.Collections.Generic";
 
     private static bool IsIteratorBody(SyntaxNode body)
     {

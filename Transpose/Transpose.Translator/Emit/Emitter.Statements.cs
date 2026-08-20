@@ -954,12 +954,10 @@ public sealed partial class Emitter
             {
                 // An iterator local function compiles to a generator, exactly like an iterator method:
                 // a `function*` (can't be an arrow, so it rebinds `this` — bind it to the captured
-                // enclosing instance) wrapped by TransposeR.iter. Emitting the yields straight into the
-                // arrow would be invalid — a bare `yield` outside a generator is a strict-mode syntax
-                // error.
-                _w.Write("return TransposeR.iter((function* () ");
-                _w.Block(() => EmitStatements(localFn.Body!.Statements));
-                _w.WriteLine(").bind(this));");
+                // enclosing instance) wrapped by TransposeR.iter / .iterEnumerator. Emitting the yields
+                // straight into the arrow would be invalid — a bare `yield` outside a generator is a
+                // strict-mode syntax error.
+                EmitIteratorGenerator(localFn.Body!.Statements, symbol?.ReturnType);
             }
             else
             {
