@@ -125,7 +125,9 @@
                         if (Transpose.is(result, System.Threading.Tasks.Task)) {
                             result.continueWith(function () {
                                 if (result.isFaulted() || result.isCanceled()) {
-                                    tcs.setException(result.exception.innerExceptions.Count > 0 ? result.exception.innerExceptions.getItem(0) : result.exception);
+                                    // As in _getResult: the inner task may have been faulted with a
+                                    // bare exception, which has no innerExceptions to read.
+                                    tcs.setException(result.exception && result.exception.innerExceptions && result.exception.innerExceptions.Count > 0 ? result.exception.innerExceptions.getItem(0) : result.exception);
                                 } else {
                                     tcs.setResult(result.getAwaitedResult());
                                 }
@@ -504,7 +506,20 @@
                     var ex = new System.Threading.Tasks.TaskCanceledException.$ctor3(this);
                     throw awaiting ? ex : new System.AggregateException(null, [ex]);
                 case System.Threading.Tasks.TaskStatus.faulted:
-                    throw awaiting ? (this.exception.innerExceptions.Count > 0 ? this.exception.innerExceptions.getItem(0) : null) : this.exception;
+                    // A task can be faulted with a bare exception rather than an AggregateException
+                    // (Task.FromException does exactly that), and an AggregateException can carry no
+                    // inner exception at all. Rethrow whatever there is: reading `.innerExceptions`
+                    // blindly raised a TypeError over the real fault, and the `null` this used to
+                    // fall back to discarded it outright.
+                    if (!awaiting) {
+                        throw this.exception;
+                    }
+
+                    if (this.exception && this.exception.innerExceptions && this.exception.innerExceptions.Count > 0) {
+                        throw this.exception.innerExceptions.getItem(0);
+                    }
+
+                    throw this.exception ? this.exception : new System.Exception("A task failed without reporting an exception.");
                 default:
                     throw new System.InvalidOperationException.$ctor1("Task is not yet completed.");
             }
@@ -602,6 +617,15 @@
         trySetException: function (exception) {
             if (Transpose.is(exception, System.Exception)) {
                 exception = [exception];
+            } else if (Array.isArray(exception)) {
+                exception = exception.map(function (item) { return System.Exception.create(item); });
+            } else if (exception === null || exception === undefined || typeof exception.getEnumerator !== "function") {
+                // A value that crossed from JavaScript - a rejected promise's reason, a raw browser
+                // Error bound by `catch (Exception)` - is not a System.Exception, and constructing
+                // the AggregateException below out of it threw "Cannot create Enumerator." from
+                // inside the setter: the task then stayed un-completed forever (so every awaiter
+                // hung) and the error itself was gone. Wrap whatever arrived instead.
+                exception = [System.Exception.create(exception)];
             }
 
             exception = new System.AggregateException(null, exception);

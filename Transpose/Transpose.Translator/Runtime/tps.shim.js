@@ -54,6 +54,25 @@
         var fn = TransposeR.toStrFn(t);
         return fn ? fn(v) : TransposeR.toStr(v);
     };
+    // Exception.Message. Same story as stackTrace below: the value caught by `catch (Exception)`
+    // may be a real System.Exception, a raw JS error (both carry a `message`, so both already
+    // worked), or a bare value someone threw - a string, an object literal - whose text was
+    // reported as an empty message because there was no `message` field to read.
+    TransposeR.message = function (e) {
+        if (e === null || e === undefined) { return null; }
+        if (typeof e === "string") { return e; }
+        if (typeof e.message === "string") { return e.message; }
+        // A DOM event - a WebSocket or XHR `error` - carries no message and stringifies to
+        // "[object Event]", which says nothing. Name the event and what raised it, as
+        // System.Exception.create does for the same value (kept here rather than delegating to it:
+        // the shim ships with the application and cannot assume the runtime it loads has that
+        // function).
+        if (typeof e.type === "string" && e.type.length > 0 && "target" in e) {
+            var raisedBy = (e.target && e.target.constructor && e.target.constructor.name !== "Object") ? e.target.constructor.name : null;
+            return "A JavaScript '" + e.type + "' event was raised" + (raisedBy ? " by " + raisedBy : "") + ".";
+        }
+        return TransposeR.toStr(e);
+    };
     // Exception.StackTrace. A value caught by `catch (Exception)` is either a real System.Exception,
     // which captured an Error into `errorStack` when it was constructed, or a raw JS error thrown by
     // interop / a rejected promise, which has a native `stack` and no `errorStack`. C# matches both,
