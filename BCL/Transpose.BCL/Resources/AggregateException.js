@@ -4,7 +4,12 @@
         ctor: function (message, innerExceptions) {
             this.$initialize();
             this.innerExceptions = new(System.Collections.ObjectModel.ReadOnlyCollection$1(System.Exception))(Transpose.hasValue(innerExceptions) ? Transpose.toArray(innerExceptions) : []);
-            System.Exception.ctor.call(this, message || 'One or more errors occurred.', this.innerExceptions.Count > 0 ? this.innerExceptions.getItem(0) : null);
+
+            // The text this was constructed with, before the inner messages are appended - .NET's
+            // `base.Message`, which is what Flatten() carries over to the flattened aggregate.
+            this.baseMessage = message ? message : "One or more errors occurred.";
+
+            System.Exception.ctor.call(this, System.AggregateException.composeMessage(this.baseMessage, this.innerExceptions), this.innerExceptions.Count > 0 ? this.innerExceptions.getItem(0) : null);
         },
 
         handle: function (predicate) {
@@ -16,8 +21,12 @@
                 unhandledExceptions = [];
 
             for (var i = 0; i < count; i++) {
-                if (!predicate(this.innerExceptions.get(i))) {
-                    unhandledExceptions.push(this.innerExceptions.getItem(i));
+                // getItem, not get: the ReadOnlyCollection indexer is emitted as getItem, so this
+                // threw "this.innerExceptions.get is not a function" for every call to Handle.
+                var inner = this.innerExceptions.getItem(i);
+
+                if (!predicate(inner)) {
+                    unhandledExceptions.push(inner);
                 }
             }
 
@@ -83,7 +92,52 @@
                 }
             }
 
-            return new System.AggregateException(this.Message, flattenedExceptions);
+            // base.Message, not Message: composing again over the flattened list would repeat
+            // every inner message the composed text already names.
+            return new System.AggregateException(this.baseMessage, flattenedExceptions);
+        },
+
+        toString: function () {
+            // base.ToString() reports the type, the composed message and the FIRST inner exception
+            // (which is InnerException). Every other inner exception is unreachable from it, so
+            // .NET lists them afterwards - and they are exactly what the reader is looking for
+            // when several tasks failed at once.
+            var text = System.Exception.prototype.toString.call(this);
+            var count = this.innerExceptions.Count;
+
+            for (var i = 0; i < count; i++) {
+                var inner = this.innerExceptions.getItem(i);
+
+                if (inner === this.InnerException) {
+                    continue;
+                }
+
+                text += "\n---> (Inner Exception #" + i + ") " + Transpose.toString(inner) + "<---\n";
+            }
+
+            return text;
+        },
+
+        statics: {
+            // "One or more errors occurred. (first) (second)" - the message .NET reports, which is
+            // the base text followed by every inner message in parentheses. Composed once, in the
+            // constructor, because generated code reads Message as the `message` FIELD (through
+            // TransposeR.message) rather than through a property getter it could override.
+            composeMessage: function (baseMessage, innerExceptions) {
+                var count = innerExceptions ? innerExceptions.Count : 0;
+
+                if (count === 0) {
+                    return baseMessage;
+                }
+
+                var text = baseMessage;
+
+                for (var i = 0; i < count; i++) {
+                    text += " (" + System.Exception.describe(innerExceptions.getItem(i)) + ")";
+                }
+
+                return text;
+            }
         }
     });
 

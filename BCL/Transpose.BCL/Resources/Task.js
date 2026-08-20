@@ -110,21 +110,60 @@
                 var t = new (System.Threading.Tasks.Task$1(T || System.Object))();
 
                 t.status = System.Threading.Tasks.TaskStatus.faulted;
-                t.exception = exception;
+                // Task.Exception is an AggregateException in .NET, always - and it wraps whatever it
+                // is given, an AggregateException included. Storing the bare exception left
+                // task.Exception.InnerException null, so the fault was simply unreachable from the
+                // Task, and made every reader of `.innerExceptions` a special case (WhenAll's
+                // continuation died on one, silently).
+                t.exception = new System.AggregateException(null, [System.Exception.create(exception)]);
 
                 return t;
             },            
 
-            run: function (fn) {
+            fromCanceled: function (token, T) {
+                // .NET refuses a token that is not already cancelled - the task has to BE cancelled,
+                // and there is nothing to cancel it later.
+                if (!token || !token.getIsCancellationRequested()) {
+                    throw new System.ArgumentOutOfRangeException.$ctor1("cancellationToken");
+                }
+
+                var t = new (System.Threading.Tasks.Task$1(T || System.Object))();
+
+                t.cancel();
+
+                return t;
+            },
+
+            run: function (fn, token) {
                 var tcs = new System.Threading.Tasks.TaskCompletionSource();
 
                 System.Threading.Tasks.Task.schedule(function () {
+                    // Task.Run(fn, token)'s token cancels the SCHEDULING, not the body: it is read
+                    // when the work reaches the front of the queue, and a cancellation by then means
+                    // fn is never invoked. Deliberately not short-circuited before the schedule -
+                    // .NET reports IsCanceled false immediately after the call even for an
+                    // already-cancelled token, because the transition happens on the scheduler.
+                    if (token && token.getIsCancellationRequested()) {
+                        tcs.setCanceled();
+
+                        return;
+                    }
+
                     try {
-                        var result = fn();
+                        // asTask, so a body that hands back a native promise - a [Script]-bound JS
+                        // async function, which is what Func<Task> often is here - is awaited rather
+                        // than becoming the task's RESULT, with its rejection unobserved.
+                        var result = System.Threading.Tasks.Task.asTask(fn());
 
                         if (Transpose.is(result, System.Threading.Tasks.Task)) {
                             result.continueWith(function () {
-                                if (result.isFaulted() || result.isCanceled()) {
+                                if (result.isCanceled()) {
+                                    // Unwrapping keeps the KIND of the inner completion: reporting a
+                                    // cancelled inner task as a fault turned "the caller changed
+                                    // their mind" into an error, and the OperationCanceledException
+                                    // a caller catches into an unexpected one.
+                                    tcs.setCanceled();
+                                } else if (result.isFaulted()) {
                                     // As in _getResult: the inner task may have been faulted with a
                                     // bare exception, which has no innerExceptions to read.
                                     tcs.setException(result.exception && result.exception.innerExceptions && result.exception.innerExceptions.Count > 0 ? result.exception.innerExceptions.getItem(0) : result.exception);
@@ -143,6 +182,39 @@
                 return tcs.task;
             },
 
+            // Each element as a real Task. `await` accepts a native promise (Transpose.toPromise),
+            // so a [Script] binding that returns one - the natural way to bind a JS async function -
+            // behaves like a working Task right up until it is handed to WhenAll/WhenAny, which
+            // drive their arguments through continueWith: the call died on "continueWith is not a
+            // function" and, being inside a promise, took the rejection out of reach with it.
+            asTasks: function (tasks) {
+                var out = new Array(tasks.length),
+                    i;
+
+                for (i = 0; i < tasks.length; i++) {
+                    out[i] = System.Threading.Tasks.Task.asTask(tasks[i]);
+                }
+
+                return out;
+            },
+
+            asTask: function (awaitable) {
+                if (!awaitable || typeof awaitable.continueWith === "function" || typeof awaitable.then !== "function") {
+                    return awaitable;
+                }
+
+                var tcs = new System.Threading.Tasks.TaskCompletionSource();
+
+                awaitable.then(
+                    function (value) { tcs.trySetResult(value); },
+                    // Normalised, so an awaiter of the WhenAll sees the same System.Exception it
+                    // would have seen awaiting the promise directly.
+                    function (reason) { tcs.trySetException(System.Exception.create(reason)); }
+                );
+
+                return tcs.task;
+            },
+
             whenAll: function (tasks) {
                 var tcs = new System.Threading.Tasks.TaskCompletionSource(),
                     result,
@@ -156,6 +228,8 @@
                 } else if (!Transpose.isArray(tasks)) {
                     tasks = Array.prototype.slice.call(arguments, 0);
                 }
+
+                tasks = System.Threading.Tasks.Task.asTasks(tasks);
 
                 if (tasks.length === 0) {
                     tcs.setResult([]);
@@ -177,7 +251,17 @@
                                     cancelled = true;
                                     break;
                                 case System.Threading.Tasks.TaskStatus.faulted:
-                                    System.Array.addRange(exceptions, t.exception.innerExceptions);
+                                    // A task can be faulted with a bare exception rather than an
+                                    // AggregateException (Task.FromException does exactly that), so
+                                    // there may be no innerExceptions to range over. Reading it
+                                    // blindly threw from inside this continuation, which left the
+                                    // WhenAll task un-completed forever: every awaiter hung and the
+                                    // program simply stopped, with nothing reported anywhere.
+                                    if (t.exception && t.exception.innerExceptions) {
+                                        System.Array.addRange(exceptions, t.exception.innerExceptions);
+                                    } else if (t.exception) {
+                                        exceptions.push(t.exception);
+                                    }
                                     break;
                                 default:
                                     throw new System.InvalidOperationException.$ctor1("Invalid task status: " + t.status);
@@ -209,6 +293,8 @@
                 if (!tasks.length) {
                     throw new System.ArgumentException.$ctor1("At least one task is required");
                 }
+
+                tasks = System.Threading.Tasks.Task.asTasks(tasks);
 
                 var tcs = new System.Threading.Tasks.TaskCompletionSource(),
                     i;
@@ -523,6 +609,23 @@
                 default:
                     throw new System.InvalidOperationException.$ctor1("Task is not yet completed.");
             }
+        },
+
+        // Task.Wait(). JavaScript cannot block, so a wait on a task that has NOT completed can only
+        // answer "still running" - but a wait on one that HAS must do what .NET's Wait does and
+        // observe it, throwing the AggregateException for a fault or a cancellation. Emitted as a
+        // bare `wait()` whose returned Task nobody ever looked at, Wait() discarded that exception
+        // outright: the single thing it exists for. The bool is Wait(timeout)'s "did it complete",
+        // and answering false for a pending task is right for the same reason - no time can pass
+        // while a single-threaded runtime is inside this call.
+        waitSync: function () {
+            if (!this.isCompleted()) {
+                return false;
+            }
+
+            this._getResult(false);
+
+            return true;
         },
 
         getResult: function () {
@@ -878,7 +981,17 @@
         }
 
         if (awaitable instanceof Promise || typeof awaitable.then === 'function') {
-            return awaitable;
+            // A native promise rejects with whatever JavaScript threw - an Error, a string, a DOM
+            // event - and `await`ing it binds that raw value to `catch (Exception e)`: GetType()
+            // answered "Error", `e is IOException` was false, and GetBaseException()/Data/ToString
+            // were simply absent. Normalise it the way every other JS->C# seam already does
+            // (Task.Run, TransposeR.fromPromise, ContinueWith), which also keeps the browser's
+            // message and frames. A value that is already a System.Exception is returned unchanged,
+            // so nothing is double-wrapped - including the exception an awaited C# Task rejected
+            // with below.
+            return Promise.resolve(awaitable).catch(function (reason) {
+                throw System.Exception.create(reason);
+            });
         }
 
         if (Transpose.is(awaitable, System.Threading.Tasks.Task) || (awaitable && typeof awaitable.continueWith === 'function')) {
