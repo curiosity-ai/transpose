@@ -940,6 +940,120 @@ public class Program
                 "an iterator local function should compile to a TransposeR.iter(function*(){...}) generator\n" + result.Javascript);
         }
 
+        /// <summary>
+        /// <c>CreateLinkedTokenSource</c> where one of the tokens is ALREADY cancelled. Registering on
+        /// such a token runs the callback synchronously, so the new source cancels while the runtime is
+        /// still building its list of links — and cancelling cleans up, which nulled that list out from
+        /// under the loop filling it. Linking two tokens died with "Cannot read properties of null
+        /// (reading 'push')", which is how an HttpClient request passed an already-cancelled token
+        /// failed.
+        /// </summary>
+        [TestMethod]
+        public async Task LinkedTokenSourceWithAnAlreadyCancelledTokenRunsAsync()
+        {
+            await RunTest(@"
+using System;
+using System.Threading;
+public class Program
+{
+    public static void Main()
+    {
+        var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        var open = new CancellationTokenSource();
+
+        var one = CancellationTokenSource.CreateLinkedTokenSource(cancelled.Token);
+        Console.WriteLine(""one: "" + one.IsCancellationRequested);
+
+        var two = CancellationTokenSource.CreateLinkedTokenSource(cancelled.Token, open.Token);
+        Console.WriteLine(""two: "" + two.IsCancellationRequested);
+
+        var trailing = CancellationTokenSource.CreateLinkedTokenSource(open.Token, cancelled.Token);
+        Console.WriteLine(""trailing: "" + trailing.IsCancellationRequested);
+
+        var neither = CancellationTokenSource.CreateLinkedTokenSource(open.Token, new CancellationTokenSource().Token);
+        Console.WriteLine(""neither: "" + neither.IsCancellationRequested);
+        open.Cancel();
+        Console.WriteLine(""after cancel: "" + neither.IsCancellationRequested);
+    }
+}");
+        }
+
+        /// <summary>
+        /// A NEGATIVE <c>TimeSpan</c> keeps its fractional part. The sign is prefixed separately and
+        /// every other component is formatted from the magnitude, but the fraction tested the signed
+        /// remainder — which is negative — so it was dropped: <c>TimeSpan.FromMilliseconds(-1)</c>
+        /// printed "-00:00:00", which is how an infinite HttpClient timeout rendered.
+        /// </summary>
+        [TestMethod]
+        public async Task NegativeTimeSpanKeepsItsFractionRunsAsync()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        Console.WriteLine(TimeSpan.FromMilliseconds(-1));
+        Console.WriteLine(TimeSpan.FromMilliseconds(1));
+        Console.WriteLine(TimeSpan.FromMilliseconds(-1500));
+        Console.WriteLine(TimeSpan.FromMilliseconds(1500));
+        Console.WriteLine(TimeSpan.FromSeconds(-90));
+        Console.WriteLine(new TimeSpan(-1));
+        Console.WriteLine(TimeSpan.Zero);
+        Console.WriteLine(new TimeSpan(-2, -3, -4, -5, -6));
+    }
+}");
+        }
+
+        /// <summary>
+        /// An iterator declared to return <c>IEnumerator</c>/<c>IEnumerator&lt;T&gt;</c> must compile to the
+        /// cursor helper, not to the enumerable one — see
+        /// <c>IteratorsTests.Iterators_GetEnumeratorIsItselfAnIterator</c> for the runtime failure this
+        /// caused ("e.MoveNext is not a function"). The sequence-returning form must keep using
+        /// <c>TransposeR.iter</c>, since it has to stay re-enumerable.
+        /// </summary>
+        [TestMethod]
+        public void EnumeratorReturningIteratorEmitsCursorHelper()
+        {
+            var code = @"
+using System;
+using System.Collections;
+using System.Collections.Generic;
+public class Program
+{
+    static IEnumerator<int> Cursor() { yield return 1; }
+    static IEnumerator Untyped() { yield return 1; }
+    static IEnumerable<int> Sequence() { yield return 1; }
+    static IEnumerator<int> CursorProperty { get { yield return 1; } }
+    public static void Main()
+    {
+        IEnumerator<int> local() { yield return 1; }
+        Console.WriteLine(Cursor().MoveNext() && Untyped().MoveNext() && local().MoveNext()
+                          && CursorProperty.MoveNext() && Sequence() != null);
+    }
+}";
+            var result = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(result.Success, "translation should succeed");
+            // Four cursor-returning iterators (method, non-generic method, property getter, local
+            // function) and exactly one sequence-returning one.
+            Assert.AreEqual(4, Occurrences(result.Javascript!, "TransposeR.iterEnumerator((function* ()"),
+                "every IEnumerator-returning iterator should compile to the cursor helper\n" + result.Javascript);
+            Assert.AreEqual(1, Occurrences(result.Javascript!, "TransposeR.iter((function* ()"),
+                "an IEnumerable-returning iterator should keep compiling to the re-enumerable helper\n" + result.Javascript);
+        }
+
+        private static int Occurrences(string haystack, string needle)
+        {
+            var count = 0;
+            for (var i = haystack.IndexOf(needle, System.StringComparison.Ordinal); i >= 0;
+                 i = haystack.IndexOf(needle, i + needle.Length, System.StringComparison.Ordinal))
+            {
+                count++;
+            }
+            return count;
+        }
+
         // ---- interface Keys/Values dispatch on Dictionary ----------------------
         // Accessing a BCL interface property (IReadOnlyDictionary/IDictionary .Keys/.Values) through
         // the interface emits the member's plain camelCase name (`d.values`). On Dictionary that name

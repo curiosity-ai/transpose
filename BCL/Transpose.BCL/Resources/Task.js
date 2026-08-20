@@ -728,7 +728,22 @@
                 var d = Transpose.fn.bind(cts, cts.cancel);
 
                 for (var i = 0; i < arguments.length; i++) {
-                    cts.links.push(arguments[i].register(d));
+                    // Registering on a token that is ALREADY cancelled runs the callback synchronously,
+                    // so `cts` cancels right here — and cancelling calls clean(), which nulls
+                    // `cts.links` out from under this loop. The linked source has reached its final
+                    // state at that point and there is nothing left to link, so stop. Without these two
+                    // guards, linking two tokens where the first is already cancelled died with
+                    // "Cannot read properties of null (reading 'push')" — which is what an HttpClient
+                    // request passed an already-cancelled token used to fail with.
+                    if (cts.isCancellationRequested) {
+                        break;
+                    }
+
+                    var registration = arguments[i].register(d);
+
+                    if (cts.links) {
+                        cts.links.push(registration);
+                    }
                 }
 
                 return cts;

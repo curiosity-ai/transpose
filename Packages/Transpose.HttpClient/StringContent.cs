@@ -14,6 +14,15 @@ namespace System.Net.Http
         {
             MediaType = mediaType;
             Content = content;
+
+            // The media type is only useful if it reaches the wire. It used to live in the MediaType
+            // property and nowhere else, so a JSON POST went out with no content type at all and any
+            // server that dispatches on one rejected it. No charset is appended: the body is handed to
+            // XMLHttpRequest.send as a string, and a browser encodes that as UTF-8 and says so itself.
+            if (!string.IsNullOrEmpty(mediaType))
+            {
+                Headers.Add("Content-Type", mediaType);
+            }
         }
 
         public string Content { get; }

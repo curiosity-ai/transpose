@@ -110,6 +110,17 @@ Packages/                      # Additional binding libraries (all [assembly: Ex
 ├── Transpose.WebGL2/          #   package Transpose.WebGL2
 ├── Transpose.P2/              #   package Transpose.P2
 ├── Transpose.HttpClient/      #   package Transpose.HttpClient
+├── Transpose.HttpClient.Tests/# MSTest suite for it. The package is real C# over the browser's
+│                              #   XMLHttpRequest, so the suite compiles Transpose.Core + the package
+│                              #   in-process (cached on disk — Core costs ~10s), then runs each
+│                              #   snippet on Node against a fake XMLHttpRequest that answers from a
+│                              #   routing table and records what was sent. Everything OFF the wire
+│                              #   (HttpMethod, status codes, EnsureSuccessStatusCode, options) is
+│                              #   diffed against the real System.Net.Http in the shared framework;
+│                              #   everything on it is pinned. See its README for the divergences: the
+│                              #   simplified header model is deliberate (one value per name, a
+│                              #   response's headers never populated), and the suite also records the
+│                              #   eight bugs it turned up and now guards the fixes for
 └── Transpose.Placeholders/    #   placeholder attributes (package Transpose.Placeholders)
 
 benchmarks/tesserae/           # git submodule: the benchmark corpus (see Performance below)
@@ -119,11 +130,12 @@ docs/perf/                     # recorded tps-bench reports (baseline + current)
                                #   Transpose.Compiler and Transpose.Compiler.Library: they share the
                                #   unpublished Translator/Compiler.Core, so both have to ship at the
                                #   same version and are packed and pushed in one run.
-                               #   Two of them carry test steps — build-transpose-compiler (the
-                               #   translator + watch-mode suites) and build-transpose-json — but both
-                               #   are commented out: the DevOps agents are too resource-limited to
-                               #   run them, so the suites are run by hand for now. Keep them that
-                               #   way (and keep the steps in place) unless that changes.
+                               #   Three of them carry test steps — build-transpose-compiler (the
+                               #   translator + watch-mode suites), build-transpose-json and
+                               #   build-transpose-httpclient — but all are commented out: the DevOps
+                               #   agents are too resource-limited to run them, so the suites are run
+                               #   by hand for now. Keep them that way (and keep the steps in place)
+                               #   unless that changes.
 
 docs/, logo/, lib/, External-less # docs, brand assets (see below), misc
 ```

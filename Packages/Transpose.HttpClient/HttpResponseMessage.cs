@@ -16,6 +16,11 @@ namespace System.Net.Http
         private HttpContent _content;
         private bool _disposed;
 
+        // The XMLHttpRequest this response was read from, or null for a response built in code. Kept so
+        // the Headers collection below has something to be backed by; it used to be taken by the
+        // constructor and dropped on the floor, which made every `response.Headers` a null dereference.
+        private readonly Transpose.Core.dom.XMLHttpRequest _request;
+
         public HttpContent Content
         {
             get
@@ -72,11 +77,18 @@ namespace System.Net.Http
 
         internal void SetReasonPhraseWithoutValidation(string value) => _reasonPhrase = value;
 
+        /// <summary>
+        /// The response's header collection. Always a real collection and never throws — a response the
+        /// transport produced is backed by its XMLHttpRequest, one built in code by nothing at all — but
+        /// it is <b>empty</b> either way: this package does not parse a response's headers into a store
+        /// (see the header-model note on <see cref="Headers.HttpHeaders"/>), so enumerating it or asking
+        /// it whether it contains a header answers as it would for a response that carried none.
+        /// </summary>
         public HttpResponseHeaders Headers
         {
             get
             {
-                if (_headers is null) _headers = new HttpResponseHeaders(_requestMessage._request);
+                if (_headers is null) _headers = new HttpResponseHeaders(_request ?? _requestMessage?._request);
                 return _headers;
             }
         }
@@ -108,6 +120,7 @@ namespace System.Net.Http
             }
 
             _statusCode = statusCode;
+            _request = requestObject;
         }
 
         public HttpResponseMessage EnsureSuccessStatusCode()
