@@ -51,6 +51,37 @@ public sealed class ErrorHandlingTests : JsonTestBase
                 Try("string",   () => JsonSerializer.Deserialize<T>("{\"Name\":null}").Name ?? "<null>");
         """));
 
+    /// <summary>
+    /// The one deliberate deviation: a null document reads back as the target's default instead of
+    /// raising <c>ArgumentNullException</c>. See the "Known divergences" table in the README — this
+    /// matches <c>Transpose.Newtonsoft.Json</c>, which every front-end moving onto this package was
+    /// written against. An empty or malformed document still throws (asserted by
+    /// <see cref="MalformedInput"/>), so only "no document at all" is affected.
+    /// </summary>
+    [TestMethod]
+    public async Task ANullDocumentReadsBackAsTheDefault() => await RunJs("""
+        using System;
+        using System.Text.Json;
+
+        public static class Program
+        {
+            static void Try(string label, Func<string> f)
+            {
+                try                           { Console.WriteLine(label + ": " + f()); }
+                catch (ArgumentNullException) { Console.WriteLine(label + ": ArgumentNullException"); }
+            }
+
+            public static void Main()
+            {
+                Try("string", () => JsonSerializer.Deserialize<string>((string)null) ?? "<null>");
+                Try("int",    () => JsonSerializer.Deserialize<int>((string)null).ToString());
+                Try("array",  () => JsonSerializer.Deserialize<int[]>((string)null) is null ? "<null>" : "not null");
+            }
+        }
+        """,
+        expected:     "string: <null>\nint: 0\narray: <null>",
+        nativePrints: "string: ArgumentNullException\nint: ArgumentNullException\narray: ArgumentNullException");
+
     [TestMethod]
     public async Task ATypeMismatchIsAnError() => await RunAndCompare(With("""
                 Try("string into int",  () => JsonSerializer.Deserialize<T>("{\"Count\":\"7\"}").Count.ToString());
