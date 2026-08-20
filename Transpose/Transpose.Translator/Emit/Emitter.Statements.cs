@@ -702,10 +702,6 @@ public sealed partial class Emitter
                     || exType.ToDisplayString() == "System.Exception";
 
                 var condition = isCatchAll ? null : $"TransposeR.is($ex, {ExceptionTypeRef(exType!)})";
-                if (katch.Filter is not null)
-                {
-                    // exception filter appended
-                }
 
                 if (condition is null && katch.Filter is null)
                 {
@@ -729,9 +725,14 @@ public sealed partial class Emitter
                     _w.Write(condition);
                     if (katch.Filter is not null)
                     {
-                        _w.Write(" && (");
+                        // Through TransposeR.filter, because the CLR swallows whatever the filter
+                        // itself throws and reads that as "does not match": the exception already in
+                        // flight then keeps propagating, where evaluating the filter inline let a
+                        // fault inside it replace (and so lose) that exception. A C# filter can
+                        // contain no `await`, so a plain arrow is safe.
+                        _w.Write(" && TransposeR.filter(() => (");
                         EmitExpression(katch.Filter.FilterExpression);
-                        _w.Write(")");
+                        _w.Write("))");
                     }
                     _w.Write(") ");
                     EmitCatchBodyBlock(katch);

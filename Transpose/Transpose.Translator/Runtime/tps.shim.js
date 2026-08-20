@@ -82,6 +82,15 @@
         if (e.errorStack && e.errorStack.stack !== null && e.errorStack.stack !== undefined) { return e.errorStack.stack; }
         return (e.stack !== null && e.stack !== undefined) ? e.stack : null;
     };
+    // An exception filter (`catch (E e) when (expr)`). The CLR runs the filter with the exception
+    // still in flight and SWALLOWS anything the filter itself throws, treating it as "does not
+    // match" - so the exception being handled keeps propagating. Evaluating the filter inline
+    // instead let a fault inside it (the usual one: a null dereference in the `when` clause)
+    // replace the error the handler existed to report, which is the one thing nobody can debug.
+    // Note a C# filter can never contain `await`, so a plain arrow is safe here.
+    TransposeR.filter = function (test) {
+        try { return !!test(); } catch (e) { return false; }
+    };
     TransposeR.is = function (v, t) { return Transpose.is(v, t); };
     TransposeR.as = function (v, t) { return Transpose.as ? Transpose.as(v, t) : (Transpose.is(v, t) ? v : null); };
     TransposeR.equals = function (a, b) { return Transpose.equals ? Transpose.equals(a, b) : a === b; };

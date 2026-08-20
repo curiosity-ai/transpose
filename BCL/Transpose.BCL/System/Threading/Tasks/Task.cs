@@ -64,31 +64,38 @@ namespace System.Threading.Tasks
 
         public extern void Complete(object result = null);
 
-        [ToAwait]
+        // Wait bound to `waitSync`, which observes an already-completed task the way .NET does -
+        // throwing the AggregateException of a faulted or cancelled one - and answers false for a
+        // task still running. [ToAwait] (h5's rewrite of the call into an `await`) is not
+        // implemented by the Roslyn translator, so these were emitted as a plain `wait()` whose returned
+        // Task nobody looked at, which threw nothing at all for a faulted task. Blocking until a
+        // pending task completes remains impossible in a single-threaded runtime; observing one that
+        // has already finished never needed to block.
+        [Template("{this}.waitSync()")]
         public extern void Wait();
 
         [Name("wait")]
         public extern Task WaitTask();
 
-        [ToAwait]
+        [Template("{this}.waitSync()")]
         public extern void Wait(CancellationToken cancellationToken);
 
         [Name("wait")]
         public extern Task WaitTask(CancellationToken cancellationToken);
 
-        [ToAwait]
+        [Template("{this}.waitSync()")]
         public extern bool Wait(int millisecondsTimeout);
 
         [Name("waitt")]
         public extern Task<bool> WaitTask(int millisecondsTimeout);
 
-        [ToAwait]
+        [Template("{this}.waitSync()")]
         public extern bool Wait(int millisecondsTimeout, CancellationToken cancellationToken);
 
         [Name("waitt")]
         public extern Task<bool> WaitTask(int millisecondsTimeout, CancellationToken cancellationToken);
 
-        [ToAwait]
+        [Template("{this}.waitSync()")]
         public extern bool Wait(TimeSpan timeout);
 
         [Name("waitt")]
