@@ -120,20 +120,64 @@ public sealed class PackageResourceVariantTests
     [TestMethod]
     public void AResourceDeclaredInBothVariantsStillSwitchesPerConfiguration()
     {
-        // A library that deliberately ships both variants of an authored bundle keeps the legacy
-        // behaviour: the minified build takes the .min.js, the formatted build takes the .js.
+        // A library that deliberately ships both variants of an authored bundle is *scripted* in one
+        // of them — index.html never loads the same library twice — and the minified name is on disk
+        // in both, because a library's own on-demand loader fetches its bundle by that name and
+        // cannot know which configuration built the site around it.
         var dll = LibraryPackage();
 
-        BuildSite(dll, "Release");
+        var release = BuildSite(dll, "Release");
         AssertInOutput("assets/js/Lib.ExternalBundle.min.js", "a declared .min.js variant is what a Minified build writes");
-        AssertNotInOutput("assets/js/Lib.ExternalBundle.js", "…and the formatted variant is not materialised");
+        AssertNotInOutput("assets/js/Lib.ExternalBundle.js",
+            "…and the formatted variant is not materialised: nothing fetches the readable copy of a bundle a Release site already minified");
 
         Directory.Delete(_outputDir, recursive: true);
         Directory.CreateDirectory(_outputDir);
 
-        BuildSite(dll, "Debug");
+        var debug = BuildSite(dll, "Debug");
         AssertInOutput("assets/js/Lib.ExternalBundle.js", "a Formatted build writes the formatted variant");
-        AssertNotInOutput("assets/js/Lib.ExternalBundle.min.js", "…and not the minified one");
+        AssertInOutput("assets/js/Lib.ExternalBundle.min.js",
+            "…and the minified one alongside it, so a fetch of `…min.js` at run time resolves in a Debug site too");
+
+        StringAssert.Contains(debug, "Lib.ExternalBundle.js", "the formatted variant is the one a Debug index.html scripts");
+        Assert.IsFalse(debug.Contains("Lib.ExternalBundle.min.js"), "…and the minified one is written but never scripted");
+        StringAssert.Contains(release, "Lib.ExternalBundle.min.js", "a Release index.html scripts the minified variant");
+    }
+
+    [TestMethod]
+    public void AMissingMinifiedVariantIsSynthesisedFromTheFormattedOne()
+    {
+        // The reported bug: a library declares the `.js` / `.min.js` pair but ships only the readable
+        // half (its bundler was never run, or only that artifact was checked in). The `.js` group then
+        // stepped aside for a sibling that produced nothing, and a Release site got NEITHER — so the
+        // library's loader 404'd on both names. The formatted file is copied under the minified name
+        // instead, so both names resolve.
+        Asset(_libDir, "tps/assets/js/only-formatted.js", "// authored, never minified");
+        File.WriteAllText(Path.Combine(_libDir, "tps.json"), @"{
+            ""fileName"": ""Lib.js"",
+            ""resources"": [
+                {
+                    ""name"": ""half-a-pair.js"",
+                    ""files"": [ ""tps/assets/js/only-formatted.js"" ],
+                    ""output"": ""assets/js""
+                },
+                {
+                    ""name"": ""half-a-pair.min.js"",
+                    ""files"": [ ""tps/assets/js/only-formatted.min.js"" ],
+                    ""output"": ""assets/js""
+                }
+            ]
+        }");
+
+        var config = TransposeJson.TryLoad(_libDir, "Release");
+        Assert.IsNotNull(config);
+        var dll = PackageDll("Lib", OutputBuilder.CollectEmbeddableItems(_libDir, config!, "Lib.js", "var lib = 1;", null));
+
+        BuildSite(dll, "Release");
+        AssertInOutput("assets/js/half-a-pair.min.js", "the minified name must resolve even though nothing minified was shipped");
+        Assert.AreEqual("// authored, never minified",
+            File.ReadAllText(Path.Combine(_outputDir, "assets", "js", "half-a-pair.min.js")),
+            "…and its content is the formatted file, copied through rather than minified here");
     }
 
     [TestMethod]
@@ -146,6 +190,48 @@ public sealed class PackageResourceVariantTests
         AssertInOutput("Lib.min.js", "the package's pre-minified bundle is what a Minified build writes");
         AssertNotInOutput("Lib.js", "…and the formatted bundle is not materialised");
         StringAssert.Contains(html, "src=\"Lib.min.js\"", "index.html must link the minified bundle in Release");
+    }
+
+    [TestMethod]
+    public void AProjectsOwnResourcesFollowTheSamePairingRules()
+    {
+        // The same three shapes, read from the building project's own tps.json rather than extracted
+        // from a package: a real pair, a declared pair whose minified half is missing, and a
+        // single-variant authored resource.
+        Asset(_appDir, "js/paired.js", "// readable");
+        Asset(_appDir, "js/paired.min.js", "// squeezed");
+        Asset(_appDir, "js/lonely.js", "// only ever existed once");
+        Asset(_appDir, "js/half.js", "// declared as a pair, shipped as one");
+
+        const string tps = @"{
+            ""fileName"": ""app.js"",
+            ""resources"": [
+                { ""name"": ""paired.js"",     ""files"": [ ""js/paired.js"" ],     ""output"": ""assets"" },
+                { ""name"": ""paired.min.js"", ""files"": [ ""js/paired.min.js"" ], ""output"": ""assets"" },
+                { ""name"": ""lonely.js"",     ""files"": [ ""js/lonely.js"" ],     ""output"": ""assets"" },
+                { ""name"": ""half.js"",       ""files"": [ ""js/half.js"" ],       ""output"": ""assets"" },
+                { ""name"": ""half.min.js"",   ""files"": [ ""js/half.min.js"" ],   ""output"": ""assets"" }
+            ]
+        }";
+
+        var dll = LibraryPackage();
+
+        BuildSite(dll, "Release", appTpsJson: tps);
+        AssertInOutput("assets/paired.min.js", "a Release build writes the minified half of a real pair");
+        AssertNotInOutput("assets/paired.js", "…and not the formatted one");
+        AssertInOutput("assets/lonely.js", "a single-variant authored resource keeps its own name");
+        AssertNotInOutput("assets/lonely.min.js", "…and is not duplicated under a name nobody declared");
+        AssertInOutput("assets/half.js", "a declared pair whose minified half is missing still writes what it has");
+        AssertInOutput("assets/half.min.js", "…under both names, rather than emitting neither");
+        Assert.AreEqual("// declared as a pair, shipped as one",
+            File.ReadAllText(Path.Combine(_outputDir, "assets", "half.min.js")));
+
+        Directory.Delete(_outputDir, recursive: true);
+        Directory.CreateDirectory(_outputDir);
+
+        BuildSite(dll, "Debug", appTpsJson: tps);
+        AssertInOutput("assets/paired.js", "a Debug build writes the formatted half");
+        AssertInOutput("assets/paired.min.js", "…and the minified one, which an on-demand loader may fetch by name");
     }
 
     // ------------------------------------------- a package ships every variant; the consumer picks
@@ -252,9 +338,10 @@ public sealed class PackageResourceVariantTests
 
     /// <summary>Builds a consuming project that has no resources of its own — everything in the site
     /// comes from <paramref name="packageDll"/> — and returns its index.html.</summary>
-    private string BuildSite(string packageDll, string configuration, Emitter.ModuleOutput? modules = null)
+    private string BuildSite(string packageDll, string configuration, Emitter.ModuleOutput? modules = null,
+                             string? appTpsJson = null)
     {
-        File.WriteAllText(Path.Combine(_appDir, "tps.json"), @"{ ""fileName"": ""app.js"" }");
+        File.WriteAllText(Path.Combine(_appDir, "tps.json"), appTpsJson ?? @"{ ""fileName"": ""app.js"" }");
 
         var config = TransposeJson.TryLoad(_appDir, configuration);
         Assert.IsNotNull(config, "the app's tps.json must load");
