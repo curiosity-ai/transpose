@@ -70,12 +70,15 @@ https://other.test/thing?q=1
     }
 
     /// <summary>
-    /// <b>Divergence.</b> A relative URI is resolved by string concatenation
-    /// (<c>BaseAddress.ToString() + uri</c>) rather than by <c>Uri</c> combination. For the ordinary
-    /// shape — a base ending in "/" and a relative path that does not start with one — the two agree.
-    /// They part company as soon as either slash convention differs: .NET treats a leading "/" as
-    /// root-relative and a base with no trailing "/" as naming a resource, and both rules drop path
-    /// segments the concatenation keeps.
+    /// <b>Divergence, by design.</b> A relative URI is <i>appended</i> to the base address on exactly
+    /// one "/", rather than resolved the way <see cref="Uri"/> would: .NET treats a leading "/" as
+    /// root-relative and a base with no trailing "/" as naming a resource, and both of those rules drop
+    /// path segments the caller wrote down. Appending is the simpler contract and the one this package
+    /// documents.
+    ///
+    /// What it no longer does is concatenate blindly, which turned the two spellings people actually
+    /// get wrong into broken URLs — a doubled "//" (which many servers route as a different path) and a
+    /// missing separator that ran the last base segment into the first relative one.
     /// </summary>
     [TestMethod]
     public async Task ARelativeUriIsAppendedToTheBaseAddress()
@@ -94,6 +97,7 @@ public class Program
         await Send("https://api.test/v1/", "things");
         await Send("https://api.test/v1/", "/things");
         await Send("https://api.test/v1", "things");
+        await Send("https://api.test/v1", "/things");
     }
 
     static async Task Send(string baseAddress, string relative)
@@ -106,12 +110,14 @@ public class Program
 }
 """, """
 https://api.test/v1/ + things -> https://api.test/v1/things
-https://api.test/v1/ + /things -> https://api.test/v1//things
-https://api.test/v1 + things -> https://api.test/v1things
+https://api.test/v1/ + /things -> https://api.test/v1/things
+https://api.test/v1 + things -> https://api.test/v1/things
+https://api.test/v1 + /things -> https://api.test/v1/things
 """, nativePrints: """
 https://api.test/v1/ + things -> https://api.test/v1/things
 https://api.test/v1/ + /things -> https://api.test/things
 https://api.test/v1 + things -> https://api.test/things
+https://api.test/v1 + /things -> https://api.test/things
 """, nativeCode: """
 using System;
 
@@ -122,6 +128,7 @@ public class Program
         Show("https://api.test/v1/", "things");
         Show("https://api.test/v1/", "/things");
         Show("https://api.test/v1", "things");
+        Show("https://api.test/v1", "/things");
     }
 
     static void Show(string baseAddress, string relative)
@@ -320,12 +327,10 @@ public class Program
             }
         }
 
-        // An infinite timeout is accepted where any other non-positive value is refused. Compared as a
-        // value rather than as text: formatting a negative TimeSpan drops its fractional part in the
-        // Transpose BCL, which is a runtime bug of its own and not this package's business.
+        // An infinite timeout is accepted where any other non-positive value is refused.
         var infinite = new HttpClient();
         infinite.Timeout = TimeSpan.FromMilliseconds(-1);
-        Console.WriteLine("infinite: " + (infinite.Timeout == TimeSpan.FromMilliseconds(-1)));
+        Console.WriteLine("infinite: " + infinite.Timeout);
     }
 }
 """);

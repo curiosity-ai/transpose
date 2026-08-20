@@ -67,26 +67,37 @@ TPS_DUMP_JS=/tmp/out.js dotnet test Packages/Transpose.HttpClient.Tests --filter
 
 ## Divergences from System.Net.Http
 
-### By design
+Every one of these is asserted on **both** sides — the recorded translated output and what native .NET
+prints for the same thing — so a note here cannot quietly rot into something else.
 
-The header model is deliberately much simpler than .NET's, and this is not a list of things to fix:
-`HttpHeaders` is one `Dictionary<string, string>`, with no multi-value store, no per-header parsers, no
-strongly typed collections (`HttpRequestHeaders.Accept` and friends) and no validation. A browser app
-does not need them and they are a lot of code to carry into a bundle. What follows from that:
+### The header model, by design
+
+`HttpHeaders` is one `Dictionary<string, string>`: no multi-value store, no per-header parsers, no
+strongly typed collections (`HttpRequestHeaders.Accept` and friends), no validation. A browser app does
+not need them and they are a lot of code to carry into a bundle. What follows:
 
 - **One value per header name.** A second `Add` for the same name throws instead of appending to a
-  comma-separated field (`HeaderTests.AddingASecondValueForAHeaderThrows`). Write the list yourself in a
-  single `Add`.
+  comma-separated field (`HeaderTests.AddingASecondValueForAHeaderThrows`). Write the list yourself in
+  one `Add`.
+- **Merging leaves an existing name alone**, since there is no list to merge into: a header set on the
+  request beats the client's default, and beats the one its content contributes
+  (`HeaderTests.ARequestHeaderWinsOverTheClientDefault`,
+  `ContentTests.AContentTypeOnTheRequestWinsOverTheContentsOwn`).
+- **A response's headers are never populated.** `response.Headers` is always a real, empty collection —
+  the package does not parse a response's headers into a store
+  (`HeaderTests.ResponseHeadersAreEmptyAndDoNotThrow`). Read one off the `XMLHttpRequest` if you need it.
 - **No `TryGetValues`/`GetValues` and no typed accessors.** `Add`/`Contains`/`Remove`/`Clear` and
   enumeration are the whole surface.
-- A response's headers are meant to be read straight off the `XMLHttpRequest` rather than parsed into a
-  store — a reasonable simplification, but the wiring is broken, so see the bug list.
+- **`StringContent` writes the bare media type**, not `text/plain; charset=utf-8`: the body goes to
+  `XMLHttpRequest.send` as a string, and a browser encodes that as UTF-8 and says so itself
+  (`ContentTests.StringContentSendsItsMediaTypeAsContentType`).
 
-Also by construction:
+### Elsewhere, by design
 
-- **A relative request URI is appended to `BaseAddress` as a string**, not combined as a `Uri`
-  (`RequestTests.ARelativeUriIsAppendedToTheBaseAddress`). Identical for the ordinary shape (base ends
-  in `/`, relative does not begin with one); different as soon as either slash convention does.
+- **A relative request URI is appended to `BaseAddress`** on exactly one `/`, rather than resolved as a
+  `Uri` (`RequestTests.ARelativeUriIsAppendedToTheBaseAddress`). .NET treats a leading `/` as
+  root-relative and a base with no trailing `/` as naming a resource, and both of those rules drop path
+  segments the caller wrote down.
 - **`HttpRequestMessage.Version` starts null**, where .NET defaults it to 1.1. Nothing in a browser can
   act on it either way.
 - **`HttpMethod`'s constructor is private**, so only the eight predefined verbs exist — a vendor verb
@@ -94,18 +105,30 @@ Also by construction:
 - **`EnsureSuccessStatusCode`'s message writes empty parentheses** for a status with no reason phrase,
   where .NET omits them.
 
-### Bugs
+## Fixed here (was broken)
 
-Each has a test that currently passes by asserting the *wrong* behaviour, so a fix turns it red and the
-test gets updated with the fix:
+Each of these had a test pinning the broken behaviour; the test now asserts the fix.
 
-| what | test |
-| --- | --- |
-| `response.Headers` is a null dereference — the response never stores the `XMLHttpRequest` it was constructed with, and its `Headers` getter reaches for it through `RequestMessage`, which the handler never sets. `GetHeaderString` is `internal`, so there is no other way in: **a response header cannot be read at all.** | `HeaderTests.ReadingResponseHeadersThrows` |
-| `StringContent`'s media type never becomes a `Content-Type` header, so a JSON POST goes out with no content type | `ContentTests.StringContentSendsNoContentTypeHeader` |
-| `HttpRequestMessage.ResponseType` is set by the typed reads and never copied onto the `XMLHttpRequest`, so every body is decoded as text — `GetByteArrayAsync`/`GetBlobAsync` return the response *string* cast to `ArrayBuffer`/`Blob` | `ContentTests.TheResponseTypeIsNeverAppliedToTheRequest` |
-| a 302 is returned to the caller instead of being followed: the redirect branch falls through to the ordinary `TrySetResult`, the `Location` header is read and never used, and the retry reuses the same `XMLHttpRequest` | `RedirectTests.A302IsReturnedToTheCallerInsteadOfBeingFollowed` |
-| `HttpClientHandler.AllowAutoRedirect` is forwarded to the handler and never read | `RedirectTests.AllowAutoRedirectIsIgnored` |
-| an already-cancelled token raises a raw JavaScript error rather than `TaskCanceledException`: the registration's callback runs synchronously inside `Register` and disposes the very source `Register` is still appending to | `CancellationTests.AnAlreadyCancelledTokenThrowsTheWrongException` |
-| reading content with no request behind it (`EmptyContent`, i.e. any response the caller built) is a null dereference; .NET reads an empty body as `""` | `ResponseTests.ReadingContentWithNoRequestBehindItThrows` |
-| a transport failure (CORS, DNS, offline) becomes a status-0 *response* rather than an `HttpRequestException` | `ResponseTests.ATransportFailureBecomesAStatusZeroResponse` |
+| what was wrong | now | test |
+| --- | --- | --- |
+| `response.Headers` was a null dereference — the response never stored the `XMLHttpRequest` it was constructed with, and the getter reached for it through `RequestMessage`, which the handler never set. **No response header could be touched at all.** | always a real, empty collection | `HeaderTests.ResponseHeadersAreEmptyAndDoNotThrow` |
+| `StringContent`'s media type never became a `Content-Type` header, so a JSON POST went out with none | sent as `Content-Type` | `ContentTests.StringContentSendsItsMediaTypeAsContentType` |
+| merging headers used `Dictionary.Add`, so a name on both sides threw `ArgumentException` and failed the request | existing name wins | `HeaderTests.ARequestHeaderWinsOverTheClientDefault` |
+| `ResponseType` was set by the typed reads and never copied onto the `XMLHttpRequest`, so every body was decoded as text — `GetByteArrayAsync`/`GetBlobAsync` returned the response *string* | applied before `send()` | `ContentTests.EachTypedReadSetsItsResponseType` |
+| content headers were merged *after* the headers were applied to the transport, i.e. after the only moment they could reach the wire | merged first | `ContentTests.StringContentSendsItsMediaTypeAsContentType` |
+| a 3xx was returned to the caller: the redirect branch fell through to the ordinary `TrySetResult`, `Location` was read and never used, and the retry reused the same `XMLHttpRequest` | followed, as a loop rather than callback recursion; 303 (and a 301/302 with a body) becomes a GET | `RedirectTests.*` |
+| `AllowAutoRedirect` was forwarded to the handler and never read | honoured | `RedirectTests.AllowAutoRedirectFalseHandsBackTheRedirect` |
+| an already-cancelled token raised a raw JavaScript error — see the runtime note below | `TaskCanceledException`, nothing sent | `CancellationTests.AnAlreadyCancelledTokenCancels` |
+| reading content with no request behind it (`EmptyContent`, i.e. any response built in code) was a null dereference | `""` | `ResponseTests.ContentWithNoRequestBehindItReadsAsEmpty` |
+| a transport failure (CORS, DNS, offline) became a status-0 *response* | `HttpRequestException` | `ResponseTests.ATransportFailureThrowsHttpRequestException` |
+| joining `BaseAddress` with a relative URI concatenated blindly, producing `//` or no separator at all | joined on one `/` | `RequestTests.ARelativeUriIsAppendedToTheBaseAddress` |
+
+Two of these were **runtime** bugs rather than package bugs, found through this suite and fixed in the
+BCL (with regression tests in `EmitRegressionTests`, since neither is about HTTP):
+
+- `CancellationTokenSource.CreateLinkedTokenSource` where one token is already cancelled. Registering
+  on it runs the callback synchronously, so the new source cancels while the runtime is still building
+  its list of links — and cancelling cleans up, which nulled that list out from under the loop filling
+  it. This is what made an already-cancelled token fail obscurely.
+- A negative `TimeSpan` lost its fractional part when formatted (`TimeSpan.FromMilliseconds(-1)` →
+  `-00:00:00`), which is how an infinite `HttpClient.Timeout` rendered.

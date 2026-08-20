@@ -245,17 +245,15 @@ public class Program
     }
 
     /// <summary>
-    /// <b>Bug, not a model difference.</b> The simplified design reads a response header straight off
-    /// the <c>XMLHttpRequest</c> (<c>HttpHeaders.GetHeaderString</c>) instead of parsing the response
-    /// into a store, which is a reasonable simplification — but the wiring is broken, so it can never
-    /// run: <c>HttpResponseMessage</c> takes the <c>XMLHttpRequest</c> in its constructor and never
-    /// stores it, and its <c>Headers</c> getter reaches for it through <c>RequestMessage</c>, which the
-    /// handler never sets either. So <c>response.Headers</c> is a null dereference for every response
-    /// the package produces — and <c>GetHeaderString</c> is <c>internal</c>, so there is no other way
-    /// in.
+    /// <b>Divergence, by design — and it used to throw.</b> A response's headers are not parsed into a
+    /// store, so the collection is always empty; what changed is that it is now always a real, empty
+    /// collection. It used to be a null dereference for <i>every</i> response the package produced —
+    /// <c>HttpResponseMessage</c> took the <c>XMLHttpRequest</c> in its constructor and dropped it, and
+    /// the getter reached for it through <c>RequestMessage</c>, which the handler never set either — so
+    /// merely touching <c>response.Headers</c> took the caller down.
     /// </summary>
     [TestMethod]
-    public async Task ReadingResponseHeadersThrows()
+    public async Task ResponseHeadersAreEmptyAndDoNotThrow()
     {
         await RunJs("""
 using System;
@@ -270,18 +268,88 @@ public class Program
 
         var response = await new HttpClient().GetAsync("https://api.test/x");
 
-        try
-        {
-            Console.WriteLine("count: " + response.Headers.Contains("X-Total-Count"));
-        }
-        catch (Exception e)
-        {
-            Console.WriteLine(e.GetType().Name);
-        }
+        Console.WriteLine("contains: " + response.Headers.Contains("X-Total-Count"));
+
+        var count = 0;
+        foreach (var header in response.Headers) count++;
+        Console.WriteLine("enumerated: " + count);
+
+        // ... including on a response nothing was ever sent for.
+        Console.WriteLine("standalone: " + new HttpResponseMessage(null).Headers.Contains("X-Total-Count"));
+
+        // The content's headers behave the same way.
+        Console.WriteLine("content: " + response.Content.Headers.Contains("Content-Type"));
     }
 }
 """, """
-TypeError
+contains: False
+enumerated: 0
+standalone: False
+content: False
+""", nativePrints: """
+contains: True
+enumerated: 1
+standalone: False
+content: True
+""", nativeCode: """
+using System;
+using System.Linq;
+using System.Net;
+using System.Net.Http;
+using System.Threading.Tasks;
+
+public class Program
+{
+    public static void Main()
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.OK);
+        response.Headers.Add("X-Total-Count", "12");
+        response.Content = new StringContent("ok", System.Text.Encoding.UTF8, "text/plain");
+
+        Console.WriteLine("contains: " + response.Headers.Contains("X-Total-Count"));
+        Console.WriteLine("enumerated: " + response.Headers.Count());
+        Console.WriteLine("standalone: " + new HttpResponseMessage().Headers.Contains("X-Total-Count"));
+        Console.WriteLine("content: " + response.Content.Headers.Contains("Content-Type"));
+    }
+}
+""");
+    }
+
+    /// <summary>
+    /// Merging one collection into another leaves a name the target already carries alone: a header set
+    /// on the request beats the client's default. The store is one value per name, so there is no list
+    /// to merge them into — and adding unconditionally used to throw <c>ArgumentException</c> and fail
+    /// the whole request.
+    /// </summary>
+    [TestMethod]
+    public async Task ARequestHeaderWinsOverTheClientDefault()
+    {
+        await RunJs("""
+using System;
+using System.Net.Http;
+using System.Threading.Tasks;
+
+public class Program
+{
+    public static async Task Main()
+    {
+        Xhr.Route("*", "*", 200, "ok");
+
+        var client = new HttpClient();
+        client.DefaultRequestHeaders.Add("Accept", "application/json");
+        client.DefaultRequestHeaders.Add("X-Api-Key", "secret");
+
+        var message = new HttpRequestMessage(HttpMethod.Get, "https://api.test/x");
+        message.Headers.Add("Accept", "text/csv");
+
+        await client.SendAsync(message);
+
+        Console.WriteLine(Xhr.RequestHeaders(0));
+    }
+}
+""", """
+Accept: text/csv
+X-Api-Key: secret
 """);
     }
 }

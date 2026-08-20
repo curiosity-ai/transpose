@@ -114,16 +114,16 @@ body: second
     }
 
     /// <summary>
-    /// <b>Bug.</b> A token that is <i>already</i> cancelled when the request starts produces a raw
-    /// JavaScript error instead of a <c>TaskCanceledException</c>. The registration on an
-    /// already-cancelled token runs its callback synchronously, inside
-    /// <c>CancellationToken.Register</c> — and that callback disposes the very
-    /// <c>CancellationTokenSource</c> whose registration list <c>Register</c> is still in the middle of
-    /// appending to. Passing an already-cancelled token is exactly what a component does when it
-    /// re-fires a request after its own scope was torn down, so this is reachable in ordinary code.
+    /// A token that is <i>already</i> cancelled when the request starts cancels like any other, and
+    /// nothing reaches the transport. It used to produce a raw JavaScript error: the request was
+    /// registered on the cancelled token, which runs its callback synchronously inside
+    /// <c>CancellationToken.Register</c>, and that callback disposed the very
+    /// <c>CancellationTokenSource</c> whose registration list <c>Register</c> was still appending to.
+    /// Passing an already-cancelled token is what a component does when it re-fires a request after its
+    /// own scope was torn down, so this was reachable in ordinary code.
     /// </summary>
     [TestMethod]
-    public async Task AnAlreadyCancelledTokenThrowsTheWrongException()
+    public async Task AnAlreadyCancelledTokenCancels()
     {
         await RunJs("""
 using System;
@@ -149,17 +149,17 @@ public class Program
         {
             Console.WriteLine("TaskCanceledException");
         }
-        catch (Exception)
+        catch (Exception e)
         {
-            // The exception the runtime raises here is a raw JavaScript error escaping the
-            // registration, so its exact type is not stable enough to assert on. That it is not a
-            // cancellation is the finding.
-            Console.WriteLine("not a cancellation");
+            Console.WriteLine("not a cancellation: " + e.GetType().Name);
         }
+
+        Console.WriteLine("requests: " + Xhr.RequestCount());
     }
 }
 """, """
-not a cancellation
+TaskCanceledException
+requests: 0
 """, nativePrints: """
 TaskCanceledException
 """, nativeCode: """
@@ -184,9 +184,9 @@ public class Program
         {
             Console.WriteLine("TaskCanceledException");
         }
-        catch (Exception)
+        catch (Exception e)
         {
-            Console.WriteLine("not a cancellation");
+            Console.WriteLine("not a cancellation: " + e.GetType().Name);
         }
     }
 }

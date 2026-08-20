@@ -44,9 +44,12 @@ namespace System.Net.Http
             return null;
         }
 
-        public string ReadAsString() => _request.responseText;
-        public ArrayBuffer ReadAsArrayBuffer() => _request.response.As<ArrayBuffer>();
-        public Blob ReadAsBlob() => _request.response.As<Blob>();
-        public T ReadAsObjectLiteral<T>() => _request.response.As<T>();
+        // A content with no XMLHttpRequest behind it is a response built in code rather than read off
+        // the wire (HttpResponseMessage.Content defaults to an EmptyContent). Reading one used to be a
+        // null dereference; it now reads as the empty body it is, which is what .NET answers.
+        public string ReadAsString() => _request is object ? _request.responseText : "";
+        public ArrayBuffer ReadAsArrayBuffer() => _request is object ? _request.response.As<ArrayBuffer>() : null;
+        public Blob ReadAsBlob() => _request is object ? _request.response.As<Blob>() : null;
+        public T ReadAsObjectLiteral<T>() => _request is object ? _request.response.As<T>() : default(T);
     }
 }

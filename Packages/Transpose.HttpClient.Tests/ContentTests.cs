@@ -65,15 +65,64 @@ text/plain
     }
 
     /// <summary>
-    /// <b>Bug.</b> <c>StringContent</c> keeps its media type in a <c>MediaType</c> property and never
-    /// turns it into a <c>Content-Type</c> header, so a JSON POST goes out with no content type at all
-    /// and a server that dispatches on it rejects the request. This is not the simplified header model
-    /// talking — the request has a header collection, the value simply never gets put in it. The
-    /// workaround today is to set it on the request message by hand
-    /// (<see cref="AContentTypeSetOnTheRequestIsSent"/>), which does work.
+    /// The media type reaches the wire as a <c>Content-Type</c> header. It used to live in the
+    /// <c>MediaType</c> property and nowhere else, so a JSON POST went out with no content type and any
+    /// server that dispatches on one rejected it.
+    ///
+    /// <b>Divergence:</b> no <c>; charset=utf-8</c> is appended, where .NET writes
+    /// <c>text/plain; charset=utf-8</c>. The body is handed to <c>XMLHttpRequest.send</c> as a string,
+    /// which a browser encodes as UTF-8 and says so itself.
     /// </summary>
     [TestMethod]
-    public async Task StringContentSendsNoContentTypeHeader()
+    public async Task StringContentSendsItsMediaTypeAsContentType()
+    {
+        await RunJs("""
+using System;
+using System.Net.Http;
+using System.Threading.Tasks;
+
+public class Program
+{
+    public static async Task Main()
+    {
+        Xhr.Route("POST", "*", 200, "ok");
+
+        var client = new HttpClient();
+        await client.PostAsync("https://api.test/json", new StringContent("{}", "application/json"));
+        await client.PostAsync("https://api.test/text", new StringContent("hi"));
+
+        Console.WriteLine("json: " + Xhr.RequestHeader(0, "Content-Type"));
+        Console.WriteLine("default: " + Xhr.RequestHeader(1, "Content-Type"));
+    }
+}
+""", """
+json: application/json
+default: text/plain
+""", nativePrints: """
+json: application/json; charset=utf-8
+default: text/plain; charset=utf-8
+""", nativeCode: """
+using System;
+using System.Linq;
+using System.Net.Http;
+
+public class Program
+{
+    public static void Main()
+    {
+        Console.WriteLine("json: " + new StringContent("{}", System.Text.Encoding.UTF8, "application/json").Headers.ContentType);
+        Console.WriteLine("default: " + new StringContent("hi").Headers.ContentType);
+    }
+}
+""");
+    }
+
+    /// <summary>
+    /// A <c>Content-Type</c> the caller set on the request message itself wins over the one its content
+    /// contributes — the same "already present, leave it alone" rule the client's default headers follow.
+    /// </summary>
+    [TestMethod]
+    public async Task AContentTypeOnTheRequestWinsOverTheContentsOwn()
     {
         await RunJs("""
 using System;
@@ -86,15 +135,17 @@ public class Program
     {
         Xhr.Route("POST", "https://api.test/items", 200, "ok");
 
-        await new HttpClient().PostAsync("https://api.test/items", new StringContent("{}", "application/json"));
+        var message = new HttpRequestMessage(HttpMethod.Post, "https://api.test/items");
+        message.Headers.Add("Content-Type", "application/vnd.api+json");
+        message.Content = new StringContent("{}", "application/json");
 
-        Console.WriteLine("headers: [" + Xhr.RequestHeaders(0) + "]");
+        await new HttpClient().SendAsync(message);
+
         Console.WriteLine("content-type: " + Xhr.RequestHeader(0, "Content-Type"));
     }
 }
 """, """
-headers: []
-content-type: (absent)
+content-type: application/vnd.api+json
 """);
     }
 
@@ -157,7 +208,8 @@ post(null): (none)
     /// <summary>
     /// <c>GetObjectLiteralAsync&lt;T&gt;</c> hands back the browser's parsed JSON as a
     /// <c>[ObjectLiteral]</c>-shaped value — the package's answer to "deserialize this response"
-    /// without a serializer in the bundle.
+    /// without a serializer in the bundle. It asks the transport for <c>responseType: "json"</c>, so
+    /// the parsing is the browser's (see <see cref="EachTypedReadSetsItsResponseType"/>).
     /// </summary>
     [TestMethod]
     public async Task GetObjectLiteralAsyncReadsTheParsedResponse()
@@ -194,16 +246,13 @@ count: 7
     }
 
     /// <summary>
-    /// <b>Bug.</b> The typed reads set <c>HttpRequestMessage.ResponseType</c>, but nothing ever copies
-    /// it onto the <c>XMLHttpRequest</c> — <c>BrowserHttpHandler</c> does not read the property at all.
-    /// So every request goes out with the default responseType and the browser decodes every body as
-    /// text: <c>GetByteArrayAsync</c> and <c>GetBlobAsync</c> return the response *string*, cast to
-    /// <c>ArrayBuffer</c>/<c>Blob</c>, and <c>GetObjectLiteralAsync</c> works only because a JSON
-    /// string happens to be indexable in the shapes people test with. The test above passes for that
-    /// reason and not because the plumbing is right.
+    /// Each typed read declares how the browser should decode the body, and the handler applies it to
+    /// the <c>XMLHttpRequest</c> before sending. Nothing used to copy it across, so every body came
+    /// back as text however it was asked for — <c>GetByteArrayAsync</c> and <c>GetBlobAsync</c>
+    /// returned the response *string* cast to <c>ArrayBuffer</c>/<c>Blob</c>.
     /// </summary>
     [TestMethod]
-    public async Task TheResponseTypeIsNeverAppliedToTheRequest()
+    public async Task EachTypedReadSetsItsResponseType()
     {
         await RunJs("""
 using System;
@@ -218,20 +267,26 @@ public class Program
         Xhr.RouteJson("GET", "https://api.test/json", 200, "{}");
         Xhr.Route("GET", "https://api.test/bytes", 200, "binary");
 
+        Xhr.Route("GET", "https://api.test/plain", 200, "plain");
+
         var client = new HttpClient();
         await client.GetStringAsync("https://api.test/text");
         await client.GetObjectLiteralAsync<object>("https://api.test/json");
         await client.GetByteArrayAsync("https://api.test/bytes");
+        await client.GetAsync("https://api.test/plain");
 
         Console.WriteLine("string: " + Xhr.RequestResponseType(0));
         Console.WriteLine("json: " + Xhr.RequestResponseType(1));
         Console.WriteLine("bytes: " + Xhr.RequestResponseType(2));
+        // GetAsync makes no claim about the body, so the transport keeps its default.
+        Console.WriteLine("untyped: " + Xhr.RequestResponseType(3));
     }
 }
 """, """
-string: (default)
-json: (default)
-bytes: (default)
+string: text
+json: json
+bytes: arraybuffer
+untyped: (default)
 """);
     }
 

@@ -117,8 +117,10 @@ Packages/                      # Additional binding libraries (all [assembly: Ex
 │                              #   routing table and records what was sent. Everything OFF the wire
 │                              #   (HttpMethod, status codes, EnsureSuccessStatusCode, options) is
 │                              #   diffed against the real System.Net.Http in the shared framework;
-│                              #   everything on it is pinned. See its README for the divergences —
-│                              #   the simplified header model is deliberate, the bug list is not
+│                              #   everything on it is pinned. See its README for the divergences: the
+│                              #   simplified header model is deliberate (one value per name, a
+│                              #   response's headers never populated), and the suite also records the
+│                              #   eight bugs it turned up and now guards the fixes for
 └── Transpose.Placeholders/    #   placeholder attributes (package Transpose.Placeholders)
 
 benchmarks/tesserae/           # git submodule: the benchmark corpus (see Performance below)

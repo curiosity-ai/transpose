@@ -291,8 +291,12 @@
             result += format(ticks.toNumberDivided(1e7));
             ticks = ticks.mod(1e7);
 
-            if (ticks.gt(0)) {
-                result += "." + format(ticks.toNumber(), 7);
+            // abs(): the sign is carried by `isNeg` and prefixed below, so every component above is
+            // formatted from the magnitude — but this one tested the signed remainder, which is
+            // negative for a negative TimeSpan, so the fraction was dropped and
+            // TimeSpan.FromMilliseconds(-1) printed "-00:00:00".
+            if (ticks.abs().gt(0)) {
+                result += "." + format(ticks.abs().toNumber(), 7);
             }
 
             return (isNeg ? "-" : "") + result;

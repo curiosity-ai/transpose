@@ -11,10 +11,5 @@ namespace System.Net.Http.Headers
         internal HttpRequestHeaders() : base(null)
         {
         }
-
-        internal override void AddHeaders(HttpHeaders sourceHeaders)
-        {
-            base.AddHeaders(sourceHeaders);
-        }
     }
 }

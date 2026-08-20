@@ -92,10 +92,18 @@ namespace System.Net.Http.Headers
             return _headerStore.TryGetValue(descriptor, out value);
         }
 
+        /// <summary>
+        /// Copies <paramref name="sourceHeaders"/> in, leaving any name this collection already carries
+        /// alone. The store holds one value per name, so a name present on both sides cannot be merged
+        /// into a list the way .NET would — and the two callers both want the same answer when that
+        /// happens: a header set on the request wins over the client's default, and over the one its
+        /// content contributes. Adding unconditionally threw ArgumentException instead.
+        /// </summary>
         internal virtual void AddHeaders(HttpHeaders sourceHeaders)
         {
-            foreach(var kv in sourceHeaders)
+            foreach (var kv in sourceHeaders)
             {
+                if (Contains(kv.Key)) continue;
                 Add(kv.Key, kv.Value);
             }
         }

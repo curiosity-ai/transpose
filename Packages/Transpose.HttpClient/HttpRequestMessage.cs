@@ -27,7 +27,16 @@ namespace System.Net.Http
 
         internal XMLHttpRequest _request = new XMLHttpRequest();
 
-        internal XMLHttpRequestResponseType ResponseType { set { CheckDisposed(); _responseType = value; } }
+        /// <summary>
+        /// How the browser should decode the response body. Set by the typed reads on
+        /// <see cref="HttpClient"/>; read by the handler, which applies it to the XMLHttpRequest before
+        /// sending (it was write-only, so nothing ever did).
+        /// </summary>
+        internal XMLHttpRequestResponseType ResponseType
+        {
+            get { return _responseType; }
+            set { CheckDisposed(); _responseType = value; }
+        }
 
         public Version Version
         {
@@ -141,6 +150,7 @@ namespace System.Net.Http
         {
             _disposed = true;
         }
+
 
         private void CheckDisposed()
         {

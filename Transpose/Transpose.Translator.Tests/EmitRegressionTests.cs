@@ -941,6 +941,72 @@ public class Program
         }
 
         /// <summary>
+        /// <c>CreateLinkedTokenSource</c> where one of the tokens is ALREADY cancelled. Registering on
+        /// such a token runs the callback synchronously, so the new source cancels while the runtime is
+        /// still building its list of links — and cancelling cleans up, which nulled that list out from
+        /// under the loop filling it. Linking two tokens died with "Cannot read properties of null
+        /// (reading 'push')", which is how an HttpClient request passed an already-cancelled token
+        /// failed.
+        /// </summary>
+        [TestMethod]
+        public async Task LinkedTokenSourceWithAnAlreadyCancelledTokenRunsAsync()
+        {
+            await RunTest(@"
+using System;
+using System.Threading;
+public class Program
+{
+    public static void Main()
+    {
+        var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        var open = new CancellationTokenSource();
+
+        var one = CancellationTokenSource.CreateLinkedTokenSource(cancelled.Token);
+        Console.WriteLine(""one: "" + one.IsCancellationRequested);
+
+        var two = CancellationTokenSource.CreateLinkedTokenSource(cancelled.Token, open.Token);
+        Console.WriteLine(""two: "" + two.IsCancellationRequested);
+
+        var trailing = CancellationTokenSource.CreateLinkedTokenSource(open.Token, cancelled.Token);
+        Console.WriteLine(""trailing: "" + trailing.IsCancellationRequested);
+
+        var neither = CancellationTokenSource.CreateLinkedTokenSource(open.Token, new CancellationTokenSource().Token);
+        Console.WriteLine(""neither: "" + neither.IsCancellationRequested);
+        open.Cancel();
+        Console.WriteLine(""after cancel: "" + neither.IsCancellationRequested);
+    }
+}");
+        }
+
+        /// <summary>
+        /// A NEGATIVE <c>TimeSpan</c> keeps its fractional part. The sign is prefixed separately and
+        /// every other component is formatted from the magnitude, but the fraction tested the signed
+        /// remainder — which is negative — so it was dropped: <c>TimeSpan.FromMilliseconds(-1)</c>
+        /// printed "-00:00:00", which is how an infinite HttpClient timeout rendered.
+        /// </summary>
+        [TestMethod]
+        public async Task NegativeTimeSpanKeepsItsFractionRunsAsync()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        Console.WriteLine(TimeSpan.FromMilliseconds(-1));
+        Console.WriteLine(TimeSpan.FromMilliseconds(1));
+        Console.WriteLine(TimeSpan.FromMilliseconds(-1500));
+        Console.WriteLine(TimeSpan.FromMilliseconds(1500));
+        Console.WriteLine(TimeSpan.FromSeconds(-90));
+        Console.WriteLine(new TimeSpan(-1));
+        Console.WriteLine(TimeSpan.Zero);
+        Console.WriteLine(new TimeSpan(-2, -3, -4, -5, -6));
+    }
+}");
+        }
+
+        /// <summary>
         /// An iterator declared to return <c>IEnumerator</c>/<c>IEnumerator&lt;T&gt;</c> must compile to the
         /// cursor helper, not to the enumerable one — see
         /// <c>IteratorsTests.Iterators_GetEnumeratorIsItselfAnIterator</c> for the runtime failure this

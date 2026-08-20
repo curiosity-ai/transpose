@@ -301,14 +301,14 @@ Response status code does not indicate success: 404 (Not Found). | status=NotFou
     }
 
     /// <summary>
-    /// <b>Divergence — bug.</b> A response the caller built (or one the handler produced with no
-    /// content) exposes an <c>EmptyContent</c> whose underlying <c>XMLHttpRequest</c> is null, so
-    /// reading it is a null dereference. .NET reads an empty body as the empty string.
+    /// A response the caller built — or one the handler produced with no content — exposes an
+    /// <c>EmptyContent</c> with no <c>XMLHttpRequest</c> behind it, and reads as the empty body it is.
+    /// Reading one used to be a null dereference.
     /// </summary>
     [TestMethod]
-    public async Task ReadingContentWithNoRequestBehindItThrows()
+    public async Task ContentWithNoRequestBehindItReadsAsEmpty()
     {
-        await RunJs("""
+        await RunAndCompare("""
 using System;
 using System.Net;
 using System.Net.Http;
@@ -318,14 +318,9 @@ public class Program
     public static void Main()
     {
         var response = new HttpResponseMessage((HttpStatusCode)204, null);
-        try { Console.WriteLine("[" + response.Content.ReadAsString() + "]"); }
-        catch (Exception e) { Console.WriteLine(e.GetType().Name); }
+        Console.WriteLine("[" + response.Content.ReadAsString() + "]");
     }
 }
-""", """
-TypeError
-""", nativePrints: """
-[]
 """, nativeCode: """
 using System;
 using System.Net;
@@ -343,15 +338,15 @@ public class Program
     }
 
     /// <summary>
-    /// <b>Divergence.</b> A transport-level failure — a CORS rejection, DNS failure, or an offline
-    /// browser, all of which surface as readyState 4 with status 0 — is handed back as a *response*
-    /// with status 0 rather than raised as an <c>HttpRequestException</c>. So `IsSuccessStatusCode`
-    /// is the only signal, and code that only catches <c>HttpRequestException</c> sees a response
-    /// object it cannot make sense of. (Native .NET cannot be compared here: it has no
-    /// status-0 response to produce.)
+    /// A transport-level failure — a CORS rejection, a DNS failure, an offline browser, all of which
+    /// surface as readyState 4 with status 0 — raises <c>HttpRequestException</c>, the way .NET reports
+    /// a request that could not be sent. It used to be handed back as a *response* with status 0, so
+    /// the only signal was <c>IsSuccessStatusCode</c> and code that catches
+    /// <c>HttpRequestException</c> — which is what a .NET caller writes — saw a response object it
+    /// could make no sense of.
     /// </summary>
     [TestMethod]
-    public async Task ATransportFailureBecomesAStatusZeroResponse()
+    public async Task ATransportFailureThrowsHttpRequestException()
     {
         await RunJs("""
 using System;
@@ -368,19 +363,17 @@ public class Program
         {
             var response = await new HttpClient().GetAsync("https://api.test/dead");
             Console.WriteLine("status: " + (int)response.StatusCode);
-            Console.WriteLine("success: " + response.IsSuccessStatusCode);
-            Console.WriteLine("reason: [" + response.ReasonPhrase + "]");
         }
-        catch (Exception e)
+        catch (HttpRequestException e)
         {
-            Console.WriteLine("threw " + e.GetType().Name);
+            Console.WriteLine("HttpRequestException: " + e.Message);
+            Console.WriteLine("statusCode: " + (e.StatusCode == null ? "(null)" : e.StatusCode.ToString()));
         }
     }
 }
 """, """
-status: 0
-success: False
-reason: []
+HttpRequestException: An error occurred while sending the request.
+statusCode: (null)
 """);
     }
 }

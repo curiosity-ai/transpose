@@ -454,7 +454,7 @@ namespace System.Net.Http
                     }
                     else
                     {
-                        requestUri = new Uri(_baseAddress.ToString() + request.RequestUri.ToString());
+                        requestUri = new Uri(Combine(_baseAddress, request.RequestUri));
                     }
                 }
             }
@@ -499,6 +499,28 @@ namespace System.Net.Http
             }
 
             return (pendingRequestsCts, DisposeTokenSource: false, pendingRequestsCts);
+        }
+
+        /// <summary>
+        /// Joins a relative request URI onto the base address on exactly one "/".
+        ///
+        /// This deliberately <b>appends</b> rather than resolving the way <see cref="Uri"/> would: .NET
+        /// treats a leading "/" as root-relative and a base with no trailing "/" as naming a resource,
+        /// and both of those rules drop path segments a caller wrote down. Appending is the simpler
+        /// contract and the one this package documents. What it stopped doing is concatenating blindly,
+        /// which turned the two spellings people actually get wrong into broken URLs — a doubled "//"
+        /// (which many servers route as a different path) and a missing separator that ran the last base
+        /// segment into the first relative one.
+        /// </summary>
+        private static string Combine(Uri baseAddress, Uri relative)
+        {
+            var left = baseAddress.ToString();
+            var right = relative.ToString();
+
+            if (left.EndsWith("/")) left = left.Substring(0, left.Length - 1);
+            if (right.StartsWith("/")) right = right.Substring(1);
+
+            return right.Length == 0 ? left + "/" : left + "/" + right;
         }
 
         private Uri CreateUri(string uri) => string.IsNullOrEmpty(uri) ? null : new Uri(uri);
