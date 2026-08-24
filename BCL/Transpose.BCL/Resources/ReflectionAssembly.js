@@ -26,9 +26,14 @@
             var old = Transpose.Class.staticInitAllow;
             Transpose.Class.staticInitAllow = false;
 
-            callback.call(Transpose.global, asm, Transpose.global);
-
-            Transpose.Class.staticInitAllow = old;
+            // Restored in a finally: staticInitAllow is process-wide, so a define that throws while
+            // this assembly is being registered would otherwise leave the runtime stuck in its
+            // "defining types" state for every script loaded afterwards.
+            try {
+                callback.call(Transpose.global, asm, Transpose.global);
+            } finally {
+                Transpose.Class.staticInitAllow = old;
+            }
         }
 
         Transpose.init();
