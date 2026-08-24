@@ -482,7 +482,12 @@ public sealed partial class Emitter
             var argJs = Capture(() => EmitExpression(expr));
             var byName = new Dictionary<string, string>();
             if (convMethod.Parameters.Length > 0) byName[convMethod.Parameters[0].Name] = argJs;
-            WriteTemplate(template, isStatic: true, isExtension: false, receiver: null, byName,
+            // A conversion operator is static, but its templates are written as if the operand were
+            // the receiver — Transpose.Core's primitives all spell theirs
+            // "{this} != null ? {this}.valueOf() : {this}". So {this} is the operand here; passing
+            // no receiver made SubstituteTemplate fall back to the literal `this`, silently
+            // dropping the value being converted (`Take(this != null ? this.valueOf() : this)`).
+            WriteTemplate(template, isStatic: true, isExtension: false, receiver: argJs, byName,
                 new List<string> { argJs });
             return;
         }
