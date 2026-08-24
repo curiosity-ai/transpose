@@ -192,5 +192,91 @@ typeof:   string
 as enum:  German
 """.Replace("\r\n", "\n").Trim(), output);
         }
+
+        /// <summary>
+        /// A conversion operator is <c>static</c>, but the templates written for one spell the operand
+        /// <c>{this}</c> — every <c>Transpose.Core</c> primitive does, e.g. <c>String</c>'s
+        /// <c>implicit operator string(String value)</c> carries
+        /// <c>"{this} != null ? {this}.valueOf() : {this}"</c>. Emitting the call passed no receiver,
+        /// so <c>{this}</c> fell back to the literal <c>this</c> and the value being converted was
+        /// dropped outright: <c>Show(errorText)</c> came out as
+        /// <c>Show(this != null ? this.valueOf() : this)</c>, which reads the enclosing function's
+        /// <c>this</c> (<c>undefined</c> in a static method under "use strict").
+        /// </summary>
+        [TestMethod]
+        public void ConversionOperatorTemplateResolvesThisToTheOperand()
+        {
+            var code = """
+using System;
+using Transpose;
+
+[External]
+[Name("String")]
+public class JsString
+{
+    [Template("{this} != null ? {this}.valueOf() : {this}")]
+    public static extern implicit operator string(JsString value);
+}
+
+public class Program
+{
+    static void Show(string s) { Console.WriteLine(s); }
+
+    public static void Main()
+    {
+        JsString wrapped = null;
+        Show(wrapped);
+    }
+}
+""";
+            var result = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(result.Success, "translation should succeed\n"
+                + string.Join("\n", result.Diagnostics.Select(d => d.GetMessage())));
+
+            var js = result.Javascript!;
+            StringAssert.Contains(js, "Program.Show(wrapped != null ? wrapped.valueOf() : wrapped)",
+                "{this} in a conversion template is the operand\n" + js);
+            Assert.IsFalse(js.Contains("this != null ? this.valueOf() : this"),
+                "the operand must not be replaced by the enclosing `this`\n" + js);
+        }
+
+        /// <summary>The same conversion, end to end on Node: the wrapper's value has to survive.</summary>
+        [TestMethod]
+        public async Task ConversionOperatorTemplateConvertsTheValueAtRuntime()
+        {
+            var output = await RunTest("""
+using System;
+using Transpose;
+
+[External]
+[Name("String")]
+public class JsString
+{
+    [Template("{this} != null ? {this}.valueOf() : {this}")]
+    public static extern implicit operator string(JsString value);
+}
+
+public class Program
+{
+    static void Show(string s) { Console.WriteLine("got:    " + (s ?? "<null>")); }
+
+    public static void Main()
+    {
+        JsString wrapped = Script.Write<JsString>("new String(\"hello\")");
+        Show(wrapped);
+        string unwrapped = wrapped;
+        Console.WriteLine("typeof: " + Script.Write<string>("typeof {0}", unwrapped));
+        JsString none = null;
+        Show(none);
+    }
+}
+""", skipRoslyn: true);
+
+            Assert.AreEqual("""
+got:    hello
+typeof: string
+got:    <null>
+""".Replace("\r\n", "\n").Trim(), output);
+        }
     }
 }
