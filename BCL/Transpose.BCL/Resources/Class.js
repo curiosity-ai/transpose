@@ -260,6 +260,26 @@
                     key = Transpose.Class.getCachedType(fn, arguments);
 
                     if (key) {
+                        // A cache hit re-offers the static initializer instead of handing the type
+                        // straight back. A constructed generic has no global slot, so unlike a named
+                        // type it has no Class.set getter to run its statics on first read: it used
+                        // to get exactly two chances — the Transpose.get below, which does nothing
+                        // while the runtime is still defining types (staticInitAllow false), and the
+                        // $queue drain in Transpose.init(). Miss both and the type was handed out
+                        // uninitialized for the life of the page, every static field left at its
+                        // declared default — List$1(X)._emptyArray reading null, so every list of
+                        // that element type was built with a null _items. Both misses happen in
+                        // practice: a type created while queueIsBlocked is never queued at all, and
+                        // a throw anywhere in the drain strands everything queued behind it.
+                        //
+                        // Re-offering is free once it has run ($staticInit is nulled first thing).
+                        // The typeof guard is not defensive padding: the cache entry is published
+                        // before $staticInit is attached, so a self-referential base
+                        // (ValueTuple$1 : IValueTuple) comes back through here to a half-built type.
+                        if (typeof key.type.$staticInit === "function") {
+                            key.type.$staticInit();
+                        }
+
                         return key.type;
                     }
 
@@ -1062,11 +1082,18 @@
                 Transpose.Class.staticInitAllow = false;
                 Transpose.Class.queueIsBlocked = true;
 
-                var cfg = prop.apply(null, fn.$typeArguments),
-                    extend = cfg.$inherits || cfg.inherits;
+                // Restored in a finally: both flags are process-wide, so a config that throws here
+                // used to leave the runtime permanently "still defining types" — after which no
+                // constructed generic ever ran its static initializer again.
+                var cfg, extend;
 
-                Transpose.Class.staticInitAllow = old;
-                Transpose.Class.queueIsBlocked = oldIsBlocked;
+                try {
+                    cfg = prop.apply(null, fn.$typeArguments);
+                    extend = cfg.$inherits || cfg.inherits;
+                } finally {
+                    Transpose.Class.staticInitAllow = old;
+                    Transpose.Class.queueIsBlocked = oldIsBlocked;
+                }
 
                 if (extend && Transpose.isFunction(extend)) {
                     extend = extend();

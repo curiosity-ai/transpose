@@ -3818,5 +3818,50 @@ public class Program
         Console.WriteLine(""elementType="" + frames.GetType().GetElementType().Name);
     }
 }";
+
+        /// <summary>
+        /// A constructed generic type must run its static initializer before it is used, even when
+        /// the creation that first cached it happened at a moment the runtime could not initialize
+        /// it (still defining types) and it never reached the static-init queue.
+        ///
+        /// The failure this guards was reported as `new List&lt;Box&lt;ITracesProperty&gt;&gt;()`
+        /// producing a list whose `_items` was null: List$1(T)'s ctor reads the static
+        /// `_emptyArray`, which was still at its declared `null` because nothing had run the
+        /// constructed type's static field initializers. Only the FIRST application of a generic
+        /// definition used to offer them — every later one returned the cached type untouched — so
+        /// one bad moment stranded the type for the life of the page.
+        /// </summary>
+        [TestMethod]
+        public async Task ConstructedGenericInitializesStaticsEvenIfItMissedTheQueue()
+        {
+            var output = await RunTest(@"
+using System;
+using System.Collections.Generic;
+using Transpose;
+
+public class Marker { }
+
+public class Program
+{
+    public static void Main()
+    {
+        // Reproduce the runtime state a type is created in while the bundle is still defining
+        // types, with the static-init queue blocked — the same shape a throw part-way through
+        // Transpose.init() leaves behind for everything queued after it.
+        Script.Write(""Transpose.Class.staticInitAllow = false; Transpose.Class.queueIsBlocked = true"");
+        Script.Write(""System.Collections.Generic.List$1(Marker)"");
+        Script.Write(""Transpose.Class.staticInitAllow = true; Transpose.Class.queueIsBlocked = false"");
+
+        var list = new List<Marker>();
+        Console.WriteLine(""items null? "" + Script.Write<bool>(""list._items === null""));
+
+        list.Add(new Marker());
+        Console.WriteLine(""count="" + list.Count);
+    }
+}", skipRoslyn: true);
+
+            StringAssert.Contains(output, "items null? False");
+            StringAssert.Contains(output, "count=1");
+        }
     }
 }
