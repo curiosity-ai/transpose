@@ -3863,5 +3863,58 @@ public class Program
             StringAssert.Contains(output, "items null? False");
             StringAssert.Contains(output, "count=1");
         }
+
+        /// <summary>
+        /// The second-order shape of the same defect, and the one an application actually hits: a
+        /// static initializer throws part-way through Transpose.init(), so the drain never reaches
+        /// the constructed generics queued behind it. The drain is not resumable — it takes the
+        /// queue by snapshot and clears it — so those types are stranded permanently, and before
+        /// the fix `new List&lt;Marker&gt;()` afterwards built a list with a null _items.
+        ///
+        /// One failing static constructor at load must not silently break every generic queued
+        /// after it for the rest of the session.
+        /// </summary>
+        [TestMethod]
+        public async Task ConstructedGenericSurvivesAThrowThatAbortsTheStaticInitQueue()
+        {
+            var output = await RunTest(@"
+using System;
+using System.Collections.Generic;
+using Transpose;
+
+public class Marker { }
+
+public class Program
+{
+    public static void Main()
+    {
+        // Queue a static initializer that throws, and a constructed generic behind it. Creating
+        // the type while staticInitAllow is false is what a bundle's define phase does, and it is
+        // what puts it on the queue rather than initializing it on the spot.
+        Script.Write(""Transpose.Class.staticInitAllow = false"");
+        Script.Write(""Transpose.Class.$queue.push({ prototype: {}, $staticInit: function () { Transpose.global.$drained = true; throw new Error('a static ctor blew up'); } })"");
+        Script.Write(""System.Collections.Generic.List$1(Marker)"");
+        Script.Write(""Transpose.Class.staticInitAllow = true"");
+        Script.Write(""try { Transpose.init(); } catch (e) { Transpose.global.$aborted = e.message; }"");
+
+        Console.WriteLine(""drain ran? "" + Script.Write<bool>(""Transpose.global.$drained === true""));
+        Console.WriteLine(""drain aborted? "" + Script.Write<bool>(""Transpose.global.$aborted === 'a static ctor blew up'""));
+
+        // List$1(Marker) never came off the queue. Using it has to initialize it anyway.
+        var list = new List<Marker>();
+        Console.WriteLine(""items null? "" + Script.Write<bool>(""list._items === null""));
+
+        list.Add(new Marker());
+        Console.WriteLine(""count="" + list.Count);
+    }
+}", skipRoslyn: true);
+
+            // The scenario has to have actually happened, or the assertions below prove nothing.
+            StringAssert.Contains(output, "drain ran? True");
+            StringAssert.Contains(output, "drain aborted? True");
+
+            StringAssert.Contains(output, "items null? False");
+            StringAssert.Contains(output, "count=1");
+        }
     }
 }
