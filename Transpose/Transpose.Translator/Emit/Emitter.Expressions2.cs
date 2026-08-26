@@ -323,6 +323,26 @@ public sealed partial class Emitter
     }
 
     /// <summary>
+    /// Emits a <c>??</c> operand, parenthesized unless it is trivially atomic. JavaScript refuses
+    /// <c>??</c> mixed bare with <c>&amp;&amp;</c> or <c>||</c> (an early SyntaxError), while C#'s
+    /// <c>??</c> binds looser than both — so <c>a ?? b &amp;&amp; c</c> is valid C# whose naive
+    /// emission does not parse. And an operand can emit arbitrary expression text (Script.Write,
+    /// [Template] members), so anything that is not a plainly atomic node is wrapped.
+    /// </summary>
+    private void EmitCoalesceOperand(ExpressionSyntax operand)
+    {
+        var atomic = operand is IdentifierNameSyntax
+            or LiteralExpressionSyntax
+            or ParenthesizedExpressionSyntax
+            or ThisExpressionSyntax
+            or BaseExpressionSyntax;
+
+        if (!atomic) _w.Write("(");
+        EmitExpression(operand);
+        if (!atomic) _w.Write(")");
+    }
+
+    /// <summary>
     /// True when <paramref name="expr"/> emits as an inline function expression (an arrow function),
     /// i.e. a lambda / anonymous method, or a delegate-creation / cast wrapping one. Such an emission
     /// is not a primary JS expression and must be parenthesized before it can sit in call or
@@ -995,10 +1015,15 @@ public sealed partial class Emitter
     /// arguments in the runtime, so they are excluded.
     /// </summary>
     /// <summary>A method whose <c>params</c> array must be expanded (spread) at the call site,
-    /// per Transpose's <c>[ExpandParams]</c> — the native variadic DOM/JS functions.</summary>
+    /// per Transpose's <c>[ExpandParams]</c> — the native variadic DOM/JS functions. The attribute
+    /// also targets delegates (a variadic JS callback such as <c>String.replaceFn</c>), where it
+    /// sits on the delegate type and governs its Invoke.</summary>
     private static bool HasExpandParams(IMethodSymbol method)
         => method.OriginalDefinition.GetAttributes()
-            .Any(a => TransposeNaming.AttrIs(a, "Transpose.ExpandParamsAttribute"));
+            .Any(a => TransposeNaming.AttrIs(a, "Transpose.ExpandParamsAttribute"))
+           || (method is { MethodKind: MethodKind.DelegateInvoke, ContainingType: { } delegateType }
+               && delegateType.OriginalDefinition.GetAttributes()
+                   .Any(a => TransposeNaming.AttrIs(a, "Transpose.ExpandParamsAttribute")));
 
     /// <summary>Emits a SINGLE argument supplied to a <c>params</c> parameter: the array/collection
     /// itself is passed through, but a lone element (convertible to the element type) is wrapped into
@@ -1784,9 +1809,9 @@ public sealed partial class Emitter
         if (binary.IsKind(SyntaxKind.CoalesceExpression))
         {
             _w.Write("(");
-            EmitExpression(binary.Left);
+            EmitCoalesceOperand(binary.Left);
             _w.Write(" ?? ");
-            EmitExpression(binary.Right);
+            EmitCoalesceOperand(binary.Right);
             _w.Write(")");
             return;
         }
@@ -3415,8 +3440,23 @@ public sealed partial class Emitter
 
     // ---- lambda ------------------------------------------------------------
 
+    /// <summary>
+    /// True when a lambda / anonymous method converts to a delegate whose trailing <c>params</c>
+    /// parameter has the <c>[ExpandParams]</c> (native variadic) calling convention — the attribute
+    /// on the delegate type, per its Delegate target. Such a lambda's last parameter is emitted as
+    /// a JS rest parameter, so a positional caller (the JS engine invoking a binding callback such
+    /// as <c>String.replaceFn</c>) packs the tail into the array the C# body expects; a C#-side
+    /// invocation of the delegate spreads correspondingly through the <c>HasExpandParams</c>
+    /// call-site branch, so both directions see the same packed array.
+    /// </summary>
+    private bool ConvertsToExpandParamsDelegate(ExpressionSyntax lambda)
+        => _model.GetTypeInfo(lambda).ConvertedType is INamedTypeSymbol { TypeKind: TypeKind.Delegate, DelegateInvokeMethod: { } invoke }
+           && invoke.Parameters.Length > 0
+           && invoke.Parameters[^1].IsParams
+           && HasExpandParams(invoke);
+
     private void EmitLambda(IEnumerable<string> parameters, CSharpSyntaxNode body, bool isAsync,
-        SeparatedSyntaxList<ParameterSyntax>? paramSyntax = null)
+        SeparatedSyntaxList<ParameterSyntax>? paramSyntax = null, bool restLastParam = false)
     {
         // Emit an arrow function so `this` is captured lexically, matching C# lambda semantics
         // (a plain `function` would rebind `this` and break `this`-referencing closures).
@@ -3431,8 +3471,13 @@ public sealed partial class Emitter
         var paramList = parameters as IReadOnlyCollection<string> ?? parameters.ToList();
         var isRealDiscard = paramList.Count(p => p == "_") > 1;
         var discardN = 0;
-        _w.Write(string.Join(", ", paramList.Select(p =>
-            p == "_" && isRealDiscard ? "$d" + discardN++ : NameMangler.JsIdentifier(p))));
+        var names = paramList.Select(p =>
+            p == "_" && isRealDiscard ? "$d" + discardN++ : NameMangler.JsIdentifier(p)).ToList();
+        // A lambda targeting an [ExpandParams] delegate receives its variadic tail positionally
+        // (the JS engine calls the callback with individual arguments), so its params parameter
+        // is a rest parameter that packs them back into the array the body expects.
+        if (restLastParam && names.Count > 0) names[^1] = "..." + names[^1];
+        _w.Write(string.Join(", ", names));
         _w.Write(") => ");
 
         // Optional lambda parameters (C# 12): default when undefined.
