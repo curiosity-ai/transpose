@@ -1176,6 +1176,12 @@ internal static class TransposeNaming
         if (string.IsNullOrEmpty(name)) return name;
         return notation switch
         {
+            // CamelCase maps .NET PascalCase onto JS camelCase (Length -> length). A name with no
+            // lowercase letter anywhere is not PascalCase but a constant — NodeFilter.SHOW_TEXT,
+            // Node.ELEMENT_NODE, document.URL, the WebGL GL_* constants — whose JS name is the
+            // all-caps name itself; lowercasing its first letter fabricates an identifier
+            // (sHOW_TEXT) that exists nowhere.
+            Notation.CamelCase when !name.Any(char.IsLower) => name,
             Notation.CamelCase => char.ToLowerInvariant(name[0]) + name.Substring(1),
             Notation.PascalCase => char.ToUpperInvariant(name[0]) + name.Substring(1),
             Notation.LowerCase => name.ToLowerInvariant(),

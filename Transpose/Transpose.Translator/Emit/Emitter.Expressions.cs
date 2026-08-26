@@ -204,13 +204,15 @@ public sealed partial class Emitter
                 break;
             case ParenthesizedLambdaExpressionSyntax lambda:
                 EmitLambda(lambda.ParameterList.Parameters.Select(p => p.Identifier.Text), lambda.Body,
-                    lambda.Modifiers.Any(SyntaxKind.AsyncKeyword), lambda.ParameterList.Parameters);
+                    lambda.Modifiers.Any(SyntaxKind.AsyncKeyword), lambda.ParameterList.Parameters,
+                    restLastParam: ConvertsToExpandParamsDelegate(lambda));
                 break;
             case SimpleLambdaExpressionSyntax simpleLambda:
                 EmitLambda(new[] { simpleLambda.Parameter.Identifier.Text }, simpleLambda.Body, simpleLambda.Modifiers.Any(SyntaxKind.AsyncKeyword));
                 break;
             case AnonymousMethodExpressionSyntax anon:
-                EmitLambda(anon.ParameterList?.Parameters.Select(p => p.Identifier.Text) ?? Enumerable.Empty<string>(), anon.Body, anon.Modifiers.Any(SyntaxKind.AsyncKeyword));
+                EmitLambda(anon.ParameterList?.Parameters.Select(p => p.Identifier.Text) ?? Enumerable.Empty<string>(), anon.Body, anon.Modifiers.Any(SyntaxKind.AsyncKeyword),
+                    restLastParam: ConvertsToExpandParamsDelegate(anon));
                 break;
             case DefaultExpressionSyntax def:
                 _w.Write(DefaultValueLiteral(_model.GetTypeInfo(def).Type ?? _model.GetTypeInfo(def).ConvertedType!));

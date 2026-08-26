@@ -253,7 +253,12 @@ namespace Transpose.Core
             double localeCompare(string that, string[] locales, es5.Intl.CollatorOptions options);
         }
 
+        // The JS engine invokes a replacer positionally — (match, group1…groupN, offset, source) —
+        // so the variadic tail is a native rest argument, not a packed array: [ExpandParams] makes
+        // a lambda bound to this delegate declare a rest parameter (and a C#-side invocation
+        // spread), so `args` actually materializes.
         [Generated]
+        [ExpandParams]
         public delegate string replaceFn(string substring, params object[] args);
     }
 }
