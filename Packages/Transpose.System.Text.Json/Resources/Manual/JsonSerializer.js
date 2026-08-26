@@ -825,6 +825,15 @@
                             return String.fromCharCode(value);
                         }
 
+                        // long/ulong/decimal are runtime OBJECTS, so a plain number in a slot
+                        // declared as one (JS interop, or an assembly an older compiler built, which
+                        // emitted the literal 0 for an unassigned `long`) has skipped the 64-bit
+                        // shape below. Rebuild the declared type so the wire format still follows
+                        // the declaration — a 64-bit integer is written as a string.
+                        if (type === System.Int64 || type === System.UInt64 || type === System.Decimal) {
+                            return type(value).toJSON();
+                        }
+
                         return value;
                     }
 

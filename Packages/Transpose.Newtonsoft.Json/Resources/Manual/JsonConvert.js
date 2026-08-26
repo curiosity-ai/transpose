@@ -870,6 +870,17 @@
                             var version = Transpose.toString(obj);
                             return returnRaw ? version : Newtonsoft.Json.JsonConvert.stringify(version, formatting, settings);
                         } else if (type === System.Int64 || type === System.UInt64 || type === System.Decimal) {
+                            // A value declared long/ulong/decimal is normally a runtime OBJECT
+                            // (System.Int64/UInt64/Decimal), but a plain JavaScript number can still
+                            // reach here — from JS interop, or from an assembly built by a compiler
+                            // that emitted the literal 0 for an unassigned `long` slot. Rebuild the
+                            // declared type from it so the wire format is decided by the
+                            // declaration rather than by what the value happens to be; a bare number
+                            // has no toJSON and threw "obj.toJSON is not a function" instead.
+                            if (typeof obj !== "object") {
+                                obj = type(obj);
+                            }
+
                             return returnRaw ? obj.toJSON() : obj.toString();
                         } else if (type === System.DateTime) {
                             var d = System.DateTime.format(obj, "yyyy'-'MM'-'dd'T'HH':'mm':'ss.FFFFFFFK");

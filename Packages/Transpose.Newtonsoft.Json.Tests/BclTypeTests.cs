@@ -209,6 +209,91 @@ public class App
             nativePrints: "{\"L\":9007199254740993,\"U\":18446744073709551615}\n9007199254740993|18446744073709551615");
     }
 
+    /// <summary>
+    /// An UNASSIGNED 64-bit / decimal member. The serializer switches on the DECLARED type and then
+    /// calls the runtime object's <c>toJSON()</c>, so a slot holding a plain JavaScript number
+    /// instead of a System.Int64 killed the whole call with "obj.toJSON is not a function" — while
+    /// the same type with the member explicitly set to 0 serialized fine, because an assigned
+    /// literal IS wrapped. The compiler now defaults such a slot to the type's zero instance; the
+    /// serializer also rebuilds one from a bare number, so a value arriving from JavaScript keeps
+    /// the declared type's wire format.
+    /// </summary>
+    [TestMethod]
+    public async Task UnassignedSixtyFourBitAndDecimalMembersSerialize()
+    {
+        var code = Header + @"
+public class Probe { public long V { get; set; } public ulong U; public decimal M { get; set; } }
+public class App
+{
+    public static void Main()
+    {
+        Console.WriteLine(JsonConvert.SerializeObject(new Probe()));
+        Console.WriteLine(JsonConvert.SerializeObject(new Probe { V = 0 }));
+        Console.WriteLine(JsonConvert.SerializeObject(new Probe { V = 7L, U = 8UL, M = 1.5m }));
+
+        var back = JsonConvert.DeserializeObject<Probe>(JsonConvert.SerializeObject(new Probe()));
+        Console.WriteLine(back.V + ""|"" + back.U);
+    }
+}";
+        await RunJs(code,
+            expected:     "{\"U\":0,\"M\":0,\"V\":0}\n{\"U\":0,\"M\":0,\"V\":0}\n{\"U\":8,\"M\":1.5,\"V\":7}\n0|0",
+            nativePrints: "{\"U\":0,\"V\":0,\"M\":0.0}\n{\"U\":0,\"V\":0,\"M\":0.0}\n{\"U\":8,\"V\":7,\"M\":1.5}\n0|0");
+    }
+
+    /// <summary>
+    /// The same unassigned 64-bit/decimal slot, reached through every shape an inheritance hierarchy
+    /// puts it in: an abstract get-only property implemented by an override, a virtual auto-property
+    /// overridden by a field-backed one (base and derived hold SEPARATE slots), an interface
+    /// implementation, a `new`-shadowed property, a closed generic base, and a record's positional
+    /// members. Each of those is a different slot-emission path in the compiler, and one of them —
+    /// the abstract auto-property — had no slot at all yet was still being assigned a default.
+    /// Only the 64-bit members are compared against Json.NET here: an unassigned <c>decimal</c>
+    /// carries the separate scale divergence Json.NET has (it writes <c>0.0</c>), and is pinned by
+    /// <see cref="UnassignedSixtyFourBitAndDecimalMembersSerialize"/> instead.
+    /// </summary>
+    [TestMethod]
+    public async Task UnassignedSixtyFourBitMembersRoundTripThroughEveryInheritanceShape()
+    {
+        var code = Header + @"
+public abstract class Doc
+{
+    public abstract long Size { get; }        // abstract: no slot of its own
+    public long Version { get; set; }         // plain auto-property on an abstract base
+    public long Cost;                         // plain field on an abstract base
+    public virtual long Rank { get; set; }    // virtual: the derived override gets its own slot
+}
+public class Report : Doc
+{
+    public override long Size { get { return 3L; } }
+    public override long Rank { get; set; }
+    public ulong Pages { get; set; }
+}
+public interface IStamped { long Stamp { get; set; } }
+public class Stamped : IStamped { public long Stamp { get; set; } }
+public class ShadowBase { public long Key { get; set; } }
+public class Shadowed : ShadowBase { public new long Key { get; set; } }
+public abstract class Box<T> { public T Value { get; set; } }
+public class LongBox : Box<long> { }
+public class App
+{
+    public static void Main()
+    {
+        Console.WriteLine(JsonConvert.SerializeObject(new Report()));
+        Console.WriteLine(JsonConvert.SerializeObject(new Stamped()));
+        Console.WriteLine(JsonConvert.SerializeObject(new Shadowed()));
+        Console.WriteLine(JsonConvert.SerializeObject(new LongBox()));
+
+        var back = JsonConvert.DeserializeObject<Report>(JsonConvert.SerializeObject(new Report { Version = 4L, Rank = 5L, Pages = 6UL }));
+        Console.WriteLine(back.Version + ""|"" + back.Rank + ""|"" + back.Pages + ""|"" + back.Size);
+
+        // The base slot and the override slot are distinct; neither leaks into the other.
+        var r = new Report { Rank = 7L };
+        Console.WriteLine(((Doc)r).Rank + ""|"" + r.Rank);
+    }
+}";
+        await RunAndCompare(code);
+    }
+
     [TestMethod]
     public async Task SixtyFourBitIntegersReadBackFromNumbersAndStrings()
     {
