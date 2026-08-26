@@ -793,7 +793,8 @@ public sealed partial class Emitter
     {
         // A struct-typed slot other than a primitive numeric/bool (DateTime, Guid, Nullable<T>, a
         // user struct) defaults to null in the slot; the zeroed struct is assigned in $initialize.
-        if (type.TypeKind == TypeKind.Struct && !IsPrimitiveNumericOrBool(type))
+        // long/ulong/decimal go the same way: they are JS *objects* at runtime, not numbers.
+        if (type.TypeKind == TypeKind.Struct && (!IsPrimitiveNumericOrBool(type) || IsRuntimeObjectNumeric(type)))
             return "null";
         return DefaultValueLiteral(type);
     }
@@ -844,13 +845,16 @@ public sealed partial class Emitter
             case SpecialType.System_UInt16:
             case SpecialType.System_Int32:
             case SpecialType.System_UInt32:
-            case SpecialType.System_Int64:
-            case SpecialType.System_UInt64:
             case SpecialType.System_Single:
             case SpecialType.System_Double:
-            case SpecialType.System_Decimal:
                 return "0";
         }
+        // long, ulong and decimal are deliberately NOT in that list: tps.js models them as runtime
+        // OBJECTS (System.Int64/UInt64/Decimal), so their default is that type's zero instance, not
+        // the literal 0 — which is a plain JS number and therefore a System.Int32 to everything that
+        // asks. They fall through to the struct path below, i.e. Transpose.getDefaultValue(…), which
+        // keeps a field slot the same shape as every other struct (null in the slot, the real zero
+        // assigned in the constructor) and so stays order-independent during the BCL's self-build.
         // default(T?) is null whatever T is — the null state IS the default, and the runtime's
         // Nullable$1(T).getDefaultValue() returns null for every T, so this is the same value by a
         // shorter route. Routing it through getDefaultValue(Nullable$1(T)) names T for a value that

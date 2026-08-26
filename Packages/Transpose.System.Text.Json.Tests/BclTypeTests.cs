@@ -208,6 +208,92 @@ public sealed class BclTypeTests : JsonTestBase
         expected:     """{"D":1.5,"L":"9007199254740993","U":"18446744073709551615"}""",
         nativePrints: """{"L":9007199254740993,"U":18446744073709551615,"D":1.5}""");
 
+    /// <summary>
+    /// An UNASSIGNED 64-bit / decimal member. long, ulong and decimal are runtime OBJECTS here and
+    /// the shape above is chosen by the DECLARED type, so a slot left holding a plain JavaScript
+    /// number bypassed that shape entirely — this package fell through to writing the bare number,
+    /// while Transpose.Newtonsoft.Json, which calls the object's toJSON(), died on
+    /// "obj.toJSON is not a function" (see its UnassignedSixtyFourBitAndDecimalMembersSerialize).
+    /// The compiler now defaults such a slot to the type's zero instance; this package also rebuilds
+    /// the declared type from a bare number, so a value arriving from JavaScript takes the declared
+    /// wire format rather than whichever one the value's runtime shape happens to select.
+    /// </summary>
+    [TestMethod]
+    public async Task UnassignedSixtyFourBitAndDecimalMembersTakeTheDeclaredWireFormat() => await RunAndCompare("""
+        using System;
+        using System.Text.Json;
+
+        public class Probe { public long V { get; set; } public ulong U { get; set; } public decimal M { get; set; } }
+
+        public static class Program
+        {
+            public static void Main()
+            {
+                Console.WriteLine(JsonSerializer.Serialize(new Probe()));
+                Console.WriteLine(JsonSerializer.Serialize(new Probe { V = 0 }));
+
+                var back = JsonSerializer.Deserialize<Probe>(JsonSerializer.Serialize(new Probe()));
+                Console.WriteLine(back.V + "/" + back.U);
+            }
+        }
+        """);
+
+    /// <summary>
+    /// The same unassigned 64-bit slot, reached through every shape an inheritance hierarchy puts it
+    /// in: an abstract get-only property implemented by an override, a virtual auto-property
+    /// overridden by a field-backed one (base and derived hold SEPARATE slots), an interface
+    /// implementation, a `new`-shadowed property and a closed generic base. Each is a different
+    /// slot-emission path in the compiler, and one of them — the abstract auto-property — had no slot
+    /// at all yet was still being assigned a default, which is what broke System.IO.Stream.Length.
+    /// </summary>
+    [TestMethod]
+    public async Task UnassignedSixtyFourBitMembersRoundTripThroughEveryInheritanceShape() => await RunAndCompare("""
+        using System;
+        using System.Text.Json;
+
+        public abstract class Doc
+        {
+            public abstract long Size { get; }        // abstract: no slot of its own
+            public long Version { get; set; }         // plain auto-property on an abstract base
+            public virtual long Rank { get; set; }    // virtual: the derived override gets its own slot
+        }
+
+        public class Report : Doc
+        {
+            public override long Size => 3L;
+            public override long Rank { get; set; }
+            public ulong Pages { get; set; }
+        }
+
+        public interface IStamped { long Stamp { get; set; } }
+        public class Stamped : IStamped { public long Stamp { get; set; } }
+
+        public class ShadowBase { public long Key { get; set; } }
+        public class Shadowed : ShadowBase { public new long Key { get; set; } }
+
+        public abstract class Box<T> { public T Value { get; set; } }
+        public class LongBox : Box<long> { }
+
+        public static class Program
+        {
+            public static void Main()
+            {
+                Console.WriteLine(JsonSerializer.Serialize(new Report()));
+                Console.WriteLine(JsonSerializer.Serialize(new Stamped()));
+                Console.WriteLine(JsonSerializer.Serialize(new Shadowed()));
+                Console.WriteLine(JsonSerializer.Serialize(new LongBox()));
+
+                var json = JsonSerializer.Serialize(new Report { Version = 4L, Rank = 5L, Pages = 6UL });
+                var back = JsonSerializer.Deserialize<Report>(json);
+                Console.WriteLine(back.Version + "|" + back.Rank + "|" + back.Pages + "|" + back.Size);
+
+                // The base slot and the override slot are distinct; neither leaks into the other.
+                var r = new Report { Rank = 7L };
+                Console.WriteLine(((Doc)r).Rank + "|" + r.Rank);
+            }
+        }
+        """);
+
     [TestMethod]
     public async Task SixtyFourBitIntegersRoundTripThroughTheirStringForm() => await RunJs("""
         using System;

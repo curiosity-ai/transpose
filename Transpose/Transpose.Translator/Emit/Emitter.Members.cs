@@ -201,7 +201,7 @@ public sealed partial class Emitter
             if (m is IFieldSymbol f && !f.IsConst && f.AssociatedSymbol is null
                 && FieldInitializerSyntax(f) is null && NeedsStructDefaultInit(f.Type))
                 yield return (TransposeNaming.MemberJsName(f), f.Type);
-            else if (m is IPropertySymbol p && IsAutoProperty(p)
+            else if (m is IPropertySymbol p && IsAutoProperty(p) && !p.IsAbstract && !p.IsIndexer
                 && AutoPropertyInitializerSyntax(p) is null && NeedsStructDefaultInit(p.Type))
                 yield return (TransposeNaming.MemberJsName(p), p.Type);
         }
@@ -486,10 +486,17 @@ public sealed partial class Emitter
         foreach (var m in type.GetMembers())
         {
             if (m.IsStatic) continue;
+            // This selection must stay in lockstep with InstanceFieldSlots: a member with no slot
+            // has nothing to initialize, and assigning to it anyway writes through whatever the
+            // runtime DID install at that name. An ABSTRACT auto-property is the case that bit —
+            // `public abstract long Length { get; }` (System.IO.Stream) becomes a real getter, so
+            // `this.Length = …` throws "Cannot set property Length of #<ctor> which has only a
+            // getter". An indexer, and a field with no referenceable name, are the same shape.
             ITypeSymbol? slotType = m switch
             {
-                IFieldSymbol f when !f.IsConst && f.AssociatedSymbol is null => f.Type,
-                IPropertySymbol p when IsAutoProperty(p) || IsFieldBackedProperty(p) => p.Type,
+                IFieldSymbol f when !f.IsConst && f.AssociatedSymbol is null && f.CanBeReferencedByName => f.Type,
+                IPropertySymbol p when (IsAutoProperty(p) && !p.IsAbstract && !p.IsIndexer)
+                                       || IsFieldBackedProperty(p) => p.Type,
                 _ => null,
             };
             if (slotType is null) continue;
@@ -525,13 +532,15 @@ public sealed partial class Emitter
         }
     }
 
-    /// <summary>A slot whose C# <c>default(T)</c> is a zeroed struct value rather than null:
-    /// DateTime, Guid, a user struct, ValueTuple, etc. Excludes primitives (already a literal slot
-    /// default), enums (numeric slot default), Nullable&lt;T&gt; (null is correct), and type
-    /// parameters (their default defers to the runtime at construction).</summary>
+    /// <summary>A slot whose C# <c>default(T)</c> is a runtime OBJECT rather than null or a JS
+    /// number: DateTime, Guid, a user struct, ValueTuple — and long/ulong/decimal, whose zero is a
+    /// System.Int64/UInt64/Decimal instance. Excludes the primitives that really are a JS number or
+    /// boolean (already a literal slot default), enums (numeric slot default), Nullable&lt;T&gt;
+    /// (null is correct), and type parameters (their default defers to the runtime at
+    /// construction).</summary>
     private static bool NeedsStructDefaultInit(ITypeSymbol type)
         => type.TypeKind == TypeKind.Struct
-           && !IsPrimitiveNumericOrBool(type)
+           && (!IsPrimitiveNumericOrBool(type) || IsRuntimeObjectNumeric(type))
            && type is not INamedTypeSymbol { ConstructedFrom.SpecialType: SpecialType.System_Nullable_T };
 
     // ---- methods -----------------------------------------------------------

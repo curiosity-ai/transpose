@@ -3916,5 +3916,196 @@ public class Program
             StringAssert.Contains(output, "items null? False");
             StringAssert.Contains(output, "count=1");
         }
+
+        // ---- default(long) / default(decimal) are runtime OBJECTS, not the literal 0 ------------
+
+        /// <summary>
+        /// long, ulong and decimal are modelled by tps.js as OBJECTS (System.Int64/UInt64/Decimal),
+        /// not as JavaScript numbers, so their default has to be that type's zero instance. Emitting
+        /// the literal <c>0</c> for an unassigned slot left a `long` field holding a plain number,
+        /// which reports System.Int32 from GetType() and carries none of the Int64 methods the rest
+        /// of the runtime calls on it — Newtonsoft's serializer, which switches on the DECLARED type,
+        /// died on `obj.toJSON is not a function` for `JsonConvert.SerializeObject(new Probe())`
+        /// while the identical `new Probe { V = 0 }` (an assigned literal, which the emitter DOES
+        /// wrap) worked.
+        /// </summary>
+        [TestMethod]
+        public async Task DefaultSixtyFourBitAndDecimalSlotsAreRuntimeObjects()
+        {
+            await RunTest(@"
+using System;
+public class Probe
+{
+    public long Field;
+    public ulong UField;
+    public decimal MField;
+    public long Prop { get; set; }
+    public decimal MProp { get; set; }
+}
+public struct Holder { public long L; public decimal M; }
+public class Program
+{
+    public static void Main()
+    {
+        var p = new Probe();
+        Console.WriteLine(p.Field.GetType().FullName);
+        Console.WriteLine(p.UField.GetType().FullName);
+        Console.WriteLine(p.MField.GetType().FullName);
+        Console.WriteLine(p.Prop.GetType().FullName);
+        Console.WriteLine(p.MProp.GetType().FullName);
+
+        // A struct slot, an array element and a local `default` take the same route.
+        Console.WriteLine(new Holder().L.GetType().FullName);
+        var arr = new long[2];
+        Console.WriteLine(arr[0].GetType().FullName);
+        long local = default;
+        Console.WriteLine(local.GetType().FullName);
+
+        // ... and the zero has to BE zero, and still support the Int64/Decimal operations.
+        Console.WriteLine(p.Field + 1L);
+        Console.WriteLine(p.MField + 1.5m);
+        Console.WriteLine(p.Field == 0L);
+        Console.WriteLine(p.Prop.ToString());
+    }
+}");
+        }
+
+        /// <summary>
+        /// The default-init above assigns the zero in the constructor, so it must skip members that
+        /// have no slot to assign to. An ABSTRACT auto-property is one: the runtime installs a real
+        /// accessor at that name, so `this.Length = …` throws "Cannot set property Length of
+        /// #&lt;ctor&gt; which has only a getter" — which is what System.IO.Stream, whose
+        /// `public abstract long Length { get; }` is exactly this shape, did.
+        /// </summary>
+        [TestMethod]
+        public async Task AbstractAutoPropertyOfAnObjectNumericTypeGetsNoConstructorDefault()
+        {
+            await RunTest(@"
+using System;
+using System.IO;
+public abstract class Sized
+{
+    public abstract long Length { get; }
+    public abstract decimal Weight { get; }
+}
+public class Fixed : Sized
+{
+    public override long Length { get { return 7L; } }
+    public override decimal Weight { get { return 1.5m; } }
+}
+public class Program
+{
+    public static void Main()
+    {
+        Sized s = new Fixed();
+        Console.WriteLine(s.Length + ""/"" + s.Weight);
+
+        var ms = new MemoryStream(new byte[] { 1, 2, 3 });
+        Console.WriteLine(ms.Length);
+    }
+}");
+        }
+
+        /// <summary>
+        /// The rest of the family the abstract auto-property above belongs to: every shape an
+        /// inheritance hierarchy can put an object-numeric slot in, each a different slot-emission
+        /// path — a virtual auto-property overridden by a field-backed one (base and derived hold
+        /// SEPARATE slots), a base constructor reading a virtual member DURING construction, an
+        /// interface implementation (implicit and explicit), a `new`-shadowed property, a closed
+        /// generic base, statics on an abstract type, records (class and struct), the `field`
+        /// keyword and an indexer. `default(T)` of a struct carrying such slots goes through the
+        /// struct's own getDefaultValue, which is a third path again.
+        /// </summary>
+        [TestMethod]
+        public async Task ObjectNumericDefaultsAreCorrectThroughEveryInheritanceShape()
+        {
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+
+public abstract class Base
+{
+    public long BaseSlot { get; set; }
+    public decimal BaseDec;
+    public virtual long Virt { get; set; }
+    public abstract long Abs { get; }
+    protected Base() { Trace = Virt.ToString() + ""/"" + BaseSlot.ToString(); }
+    public string Trace;
+}
+public class Derived : Base
+{
+    public override long Virt { get; set; }
+    public override long Abs { get { return 42L; } }
+    public long DerivedSlot { get; set; }
+    public Derived() { DerivedSlot = 3L; }
+}
+
+public class Statics { public static long SLong; public static decimal SDec { get; set; } }
+public abstract class AbsStatics { public static long AS { get; set; } }
+public class DerStatics : AbsStatics { }
+
+public interface IStored { long Stored { get; set; } }
+public class Impl : IStored { public long Stored { get; set; } }
+public class ExplicitImpl : IStored { long IStored.Stored { get; set; } }
+
+public class ShadowBase { public long S { get; set; } }
+public class ShadowDerived : ShadowBase { public new long S { get; set; } }
+
+public abstract class GenBase<T> { public abstract T G { get; } public T Slot { get; set; } }
+public class GenLong : GenBase<long> { public override long G { get { return 2L; } } }
+
+public record Rec(long Id, decimal Amount) { public long Extra { get; init; } }
+public record struct RecS(long Id) { public decimal Amount { get; init; } }
+public struct Holder { public long L; public decimal M; public int I; public long P { get; set; } }
+
+public class WithField { public long F { get { return field; } set { field = value; } } }
+public class Indexed
+{
+    private readonly Dictionary<int, long> _m = new Dictionary<int, long>();
+    public long this[int i] { get { long v; return _m.TryGetValue(i, out v) ? v : 0L; } set { _m[i] = value; } }
+}
+
+public class Program
+{
+    static string T(object o) { return o.GetType().FullName; }
+    public static void Main()
+    {
+        var d = new Derived();
+        Console.WriteLine(""trace="" + d.Trace);
+        Console.WriteLine(T(d.BaseSlot) + ""|"" + T(d.BaseDec) + ""|"" + T(d.Virt) + ""|"" + T(d.Abs) + ""|"" + T(d.DerivedSlot));
+        Console.WriteLine(d.BaseSlot + ""/"" + d.BaseDec + ""/"" + d.Virt + ""/"" + d.Abs + ""/"" + d.DerivedSlot);
+
+        // A field-backed override has storage of its own; the base slot must not be clobbered.
+        var o = new Derived(); o.Virt = 8L;
+        Console.WriteLine(((Base)o).Virt + ""|"" + o.Virt);
+
+        Console.WriteLine(T(Statics.SLong) + ""|"" + T(Statics.SDec) + ""|"" + T(DerStatics.AS));
+        Console.WriteLine(Statics.SLong + ""/"" + Statics.SDec + ""/"" + DerStatics.AS);
+
+        Console.WriteLine(T(new Impl().Stored) + ""|"" + T(((IStored)new ExplicitImpl()).Stored));
+        var sd = new ShadowDerived();
+        Console.WriteLine(T(sd.S) + ""|"" + T(((ShadowBase)sd).S));
+        var gl = new GenLong();
+        Console.WriteLine(T(gl.G) + ""|"" + T(gl.Slot));
+
+        var r = new Rec(0L, 0m);
+        Console.WriteLine(T(r.Id) + ""|"" + T(r.Amount) + ""|"" + T(r.Extra));
+        var rs = default(RecS);
+        Console.WriteLine(T(rs.Id) + ""|"" + T(rs.Amount) + ""|"" + rs.Id + ""|"" + rs.Amount);
+
+        // default(T) of a struct goes through the struct's own getDefaultValue.
+        var h = default(Holder);
+        Console.WriteLine(T(h.L) + ""|"" + T(h.M) + ""|"" + T(h.I) + ""|"" + T(h.P));
+        Console.WriteLine((h.L + 1L) + ""/"" + (h.M + 1.5m) + ""/"" + h.L.Equals(0L) + ""/"" + h.L.CompareTo(0L));
+        var harr = new Holder[2];
+        Console.WriteLine(T(harr[0].L) + ""|"" + harr[0].L);
+        Holder a = default; Holder b = a; b.L = 9L;
+        Console.WriteLine(a.L + ""/"" + b.L);
+
+        Console.WriteLine(T(new WithField().F) + ""|"" + T(new Indexed()[7]));
+        Console.WriteLine(default(long) + ""|"" + T(default(long)) + ""|"" + default(decimal) + ""|"" + T(default(decimal)));
+    }
+}");
+        }
     }
 }
