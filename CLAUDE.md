@@ -508,6 +508,27 @@ The short version:
 - **A boxed numeric loses its exact type.** Every JS number is a double, so `(object)1 is double` is
   true and `objects.OfType<double>()` also matches the boxed `int`s. `long`/`ulong`/`decimal` are
   real runtime objects and are unaffected, as are reference types and structs.
+- **A `long`/`ulong` in foreign JavaScript is a plain number (`Emitter.Foreign64.cs`).** tps.js models
+  a 64-bit integer as a `System.Int64`/`UInt64` *object*, and that is right for every value Transpose
+  produces and for the **base library**, which is where those two types are defined — `DateTime.Ticks`,
+  `long.Parse`, `TimeSpan.Ticks` all hand back real instances and keep all 64 bits. It is *not* right
+  for a slot backed by real JavaScript: a binding declares `Blob.size` as `ulong` because that is the
+  nearest C# type for the spec's *unsigned long long*, but the browser returns a plain `number`. So a
+  **member of an `[External]`/`[Scope]` type outside the base library, a member carrying its own
+  `[External]`/`[Template]`, and any member of an `[ObjectLiteral]` type** (in every assembly — a
+  literal *is* a plain JS object) is treated as unboxed: reads, comparisons and `+ - * / %` stay plain
+  JS (`/` through `TransposeR.idiv`, which truncates as C# does), and the representation changes only
+  at the boundary — lifted with `System.Int64(…)` into a managed `long` slot, a box, a BCL call, a
+  pattern subject or a 64-bit receiver; read back with `.toNumber()` when a managed value is written
+  into a foreign parameter, property or literal member.
+
+  Two deliberate edges. **Bitwise and shift operators keep the boxed path** (JavaScript's are 32-bit,
+  so `size & 0xF00000000` would silently lose the high word), as does a **constant outside
+  ±2^53**, so `size == long.MaxValue` stays exact. And the cost: a value stored *into* a foreign slot
+  above 2^53 rounds, because a JS number counts in ones only that far. For an external slot nothing is
+  lost — the value arrived as a number. For an `[ObjectLiteral]` it is a real trade, taken because the
+  alternative put a `{low, high}` object into a plain JS object whose whole purpose is to be read by
+  hand-written JavaScript and serialized to JSON. Covered end to end by `ForeignJs64BitTests`.
 - **`dynamic` has no runtime overload resolver.** A generic call with a `dynamic` argument works when
   the method has one candidate (`Enumerable.Count(dyn)`); with numeric overloads to choose between
   (`Enumerable.Sum(dyn)`) there is no single binding and the emitted call does not exist.

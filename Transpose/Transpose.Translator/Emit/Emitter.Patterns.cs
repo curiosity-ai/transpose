@@ -18,7 +18,7 @@ public sealed partial class Emitter
         _w.Write($"(function ({subject}) {{ return ");
         EmitPatternTest(subject, isPattern.Pattern);
         _w.Write("; })(");
-        EmitExpression(isPattern.Expression);
+        EmitPatternSubject(isPattern.Expression);
         _w.Write(")");
     }
 
@@ -38,7 +38,7 @@ public sealed partial class Emitter
         var hasAwait = OpenIife(switchExpr);
 
         _w.Write($"let {subject} = ");
-        EmitExpression(switchExpr.GoverningExpression);
+        EmitPatternSubject(switchExpr.GoverningExpression);
         _w.Write("; ");
 
         // Pre-declare pattern variables bound in the arms (e.g. `int i` in `> 0 and int i`).

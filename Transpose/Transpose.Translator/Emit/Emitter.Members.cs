@@ -514,11 +514,19 @@ public sealed partial class Emitter
                 ? PropertyBackingName(fbp)
                 : TransposeNaming.MemberJsName(m);
 
+            // An [ObjectLiteral] type's slots live in a plain JS object, so a long/ulong one holds a
+            // plain number rather than a System.Int64 instance (Emitter.Foreign64.cs).
+            var foreignSlot = IsForeignJsSlot(m) && Is64BitInteger(UnwrapNullable(slotType));
+
             if (init is not null && runInitializers)
             {
                 _w.Write($"this.{slot} = ");
-                EmitExpressionConverted(init, slotType);
+                EmitExpressionConverted(init, slotType, foreignSlot);
                 _w.WriteLine(";");
+            }
+            else if (foreignSlot && !IsNullableValueType(slotType))
+            {
+                _w.WriteLine($"this.{slot} = 0;");
             }
             else if (NeedsStructDefaultInit(slotType))
             {
