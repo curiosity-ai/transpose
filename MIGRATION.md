@@ -140,6 +140,25 @@ stylesheets — and it survives packaging: the flag is recorded in the resource
 manifest embedded in the package DLL, so a project referencing the library
 extracts the file without auto-loading it either.
 
+### References you load yourself
+
+The same idea, one level up: `dontLoadReferences` lists referenced **assemblies**
+whose JavaScript your site copies but never scripts, so an application can defer
+a library that did not ask to be deferred. h5 had no equivalent — a referenced
+library was always scripted — so a heavy binding only one screen used was paid
+for on every page load.
+
+```jsonc
+{
+    "dontLoadReferences": [ "Tesserae.Plotly" ]
+}
+```
+
+Everything the assembly ships is still extracted into the site; your code loads
+it when it needs it (`await Transpose.Require.RequireAsync("plotly.js",
+"Tesserae.Plotly.js")`). Entries match an assembly name, case-insensitively,
+with `*`/`?` wildcards; one that matches nothing is reported as `TPS0106`.
+
 ### Cleaning the output folder
 
 h5's `cleanOutputFolderBeforeBuild` / `cleanOutputFolderBeforeBuildPattern`

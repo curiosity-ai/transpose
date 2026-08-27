@@ -91,6 +91,33 @@ internal sealed class TransposeJson
     /// </summary>
     public bool LoadCompiledOutput { get; init; } = true;
 
+    /// <summary>
+    /// <c>dontLoadReferences</c> — the names of referenced assemblies whose JavaScript this project
+    /// copies into its site but does <em>not</em> reference from the generated <c>index.html</c>.
+    /// Each entry is matched (case-insensitively, with <c>*</c>/<c>?</c> wildcards) against a
+    /// reference's assembly name — <c>Tesserae.Plotly</c>, not <c>Tesserae.Plotly.dll</c>.
+    ///
+    /// It is the consumer-side counterpart of <see cref="LoadCompiledOutput"/>: that flag lets a
+    /// <em>library</em> say "copy my bundle but do not script it", and this one lets an
+    /// <em>application</em> say the same about a library that did not. The use it exists for is a
+    /// heavy binding — a chart or map library — that only one screen needs: the application fetches it
+    /// with <c>Transpose.Require</c> (or <c>Transpose.Modules</c>) the first time that screen opens,
+    /// and pays nothing for it on start-up.
+    ///
+    /// Everything the reference contributes is still extracted into the site — its bundle, its
+    /// authored scripts, its stylesheets, its images — so the files are there to be fetched; the only
+    /// thing suppressed is the <c>&lt;script&gt;</c>/<c>&lt;link&gt;</c> index.html would carry, for
+    /// every resource kind alike (the same reach the resource <c>load</c> flag has). Loading the code
+    /// before it is used is then the application's job: reaching a deferred type without doing so
+    /// fails at run time, exactly as it would for any library the page never loaded.
+    ///
+    /// It names an <em>assembly</em>, so it applies to a NuGet package reference and to a project
+    /// reference consumed as a DLL (<c>--separate-assemblies</c>, which is how the SDK builds). A
+    /// project reference compiled from source into this project's own bundle has no separate bundle to
+    /// leave out, and is unaffected.
+    /// </summary>
+    public List<string> DontLoadReferences { get; init; } = new();
+
     /// <summary>reflection.disabled — when true, no reflection metadata is emitted.</summary>
     public bool ReflectionDisabled { get; init; }
 
@@ -154,6 +181,7 @@ internal sealed class TransposeJson
             CleanOutputFolder = merged.CleanOutputFolder ?? true,
             LoadCompiledOutput = merged.LoadCompiledOutput ?? true,
             CleanOutputFolderExclude = merged.CleanOutputFolderExclude,
+            DontLoadReferences = merged.DontLoadReferences,
             ReflectionDisabled = merged.ReflectionDisabled ?? false,
             ReflectionTarget = merged.ReflectionTarget ?? "file",
             ModuleMinChunkBytes = merged.ModuleMinChunkBytes ?? Emitter.DefaultMinChunkBytes,
@@ -177,6 +205,7 @@ internal sealed class TransposeJson
         public bool? CleanOutputFolder;
         public bool? LoadCompiledOutput;
         public List<string> CleanOutputFolderExclude = new();
+        public List<string> DontLoadReferences = new();
         public bool? ReflectionDisabled;
         public string? ReflectionTarget;
         public int? ModuleMinChunkBytes;
@@ -198,6 +227,7 @@ internal sealed class TransposeJson
                 CleanOutputFolder = o.CleanOutputFolder ?? b.CleanOutputFolder,
                 LoadCompiledOutput = o.LoadCompiledOutput ?? b.LoadCompiledOutput,
                 CleanOutputFolderExclude = b.CleanOutputFolderExclude.Concat(o.CleanOutputFolderExclude).ToList(),
+                DontLoadReferences = b.DontLoadReferences.Concat(o.DontLoadReferences).ToList(),
                 ReflectionDisabled = o.ReflectionDisabled ?? b.ReflectionDisabled,
                 ReflectionTarget = o.ReflectionTarget  ?? b.ReflectionTarget,
                 ModuleMinChunkBytes = o.ModuleMinChunkBytes ?? b.ModuleMinChunkBytes,
@@ -231,6 +261,10 @@ internal sealed class TransposeJson
         var cleanExclude = new List<string>();
         if (root.TryGetProperty("cleanOutputFolderExclude", out var ce) && ce.ValueKind == JsonValueKind.Array)
             cleanExclude.AddRange(ce.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!));
+
+        var dontLoadReferences = new List<string>();
+        if (root.TryGetProperty("dontLoadReferences", out var dlr) && dlr.ValueKind == JsonValueKind.Array)
+            dontLoadReferences.AddRange(dlr.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!));
 
         var resources = new List<ResourceGroup>();
         if (root.TryGetProperty("resources", out var res) && res.ValueKind == JsonValueKind.Array)
@@ -267,6 +301,7 @@ internal sealed class TransposeJson
             CleanOutputFolder = Bool(root, "cleanOutputFolder"),
             LoadCompiledOutput = Bool(root, "loadCompiledOutput"),
             CleanOutputFolderExclude = cleanExclude,
+            DontLoadReferences = dontLoadReferences,
             ReflectionDisabled = reflection.ValueKind == JsonValueKind.Object && reflection.TryGetProperty("disabled", out var rd)
                 ? rd.ValueKind == JsonValueKind.True
                 : (bool?)null,

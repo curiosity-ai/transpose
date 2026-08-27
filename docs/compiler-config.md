@@ -69,6 +69,44 @@ The flag survives packaging. When a library declares `"load": false`, that is re
 the resource manifest embedded in its DLL, so a project *referencing* the library also
 extracts the file into its site without referencing it from its own `index.html`.
 
+### References You Load Yourself
+
+A referenced library is scripted from `index.html` in dependency order, before your own bundle.
+That is right for a library the application needs at start-up and wasteful for one a single
+screen needs — a chart or map binding can be several megabytes on every page load. List such a
+reference in `dontLoadReferences` and the compiler extracts everything it contributes into the
+site as usual but references none of it from `index.html`:
+
+```jsonc
+{
+  "dontLoadReferences": [ "Tesserae.Plotly" ]
+}
+```
+
+- Each entry is matched against a referenced assembly's **name** (`Tesserae.Plotly`, not a path),
+  case-insensitively, with `*`/`?` wildcards; a `.dll` suffix is accepted and ignored.
+- It applies to everything that assembly ships — its compiled bundle, its authored scripts, its
+  stylesheets — for the same reason the resource `load` flag does: the point is that the page
+  loads none of it until the application asks.
+- An entry that matches no referenced assembly is reported as a warning (`TPS0106`), so a typo or
+  a dependency you have since dropped does not silently do nothing.
+
+Loading the library is then your code's job, the first time it needs it:
+
+```csharp
+await Transpose.Require.RequireAsync("plotly.js", "Tesserae.Plotly.js");
+var chart = new Tesserae.Plotly.PlotlyChart().Title("deferred chart");
+```
+
+`Require` falls back between the `.js` and `.min.js` spellings of the same file, so one call
+works in a Debug site (which carries the readable bundle) and in a Release site (the minified
+one) alike. Reaching the deferred code *before* it is loaded fails at run time, exactly as it
+would for any library the page never loaded.
+
+This is the consumer-side counterpart of `loadCompiledOutput: false`, which a *library* sets to
+keep its own bundle out of index.html. Use that when the library knows it is loaded on demand,
+and `dontLoadReferences` when the application decides it for a library that does not.
+
 ### Output Folder Cleanup
 
 Transpose keeps the output folder free of stale artifacts with `cleanOutputFolder`

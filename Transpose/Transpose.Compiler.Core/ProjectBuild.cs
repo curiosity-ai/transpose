@@ -463,6 +463,15 @@ internal static class ProjectBuild
                          $"{mods.LazyChunkCount} on demand ({mods.LazyTypeCount} type(s) deferred){ChunkSizes(mods)}");
             log.Info($"  index.html: {(config.HtmlDisabled ? "disabled" : "generated")}");
             if (dllPath is not null) log.Info($"  dll:        {dllPath}");
+            if (siteResult.UnscriptedReferences.Count > 0)
+                log.Info($"  not loaded: {string.Join(", ", siteResult.UnscriptedReferences)} " +
+                         "(dontLoadReferences — extracted, but not referenced from index.html)");
+            // An entry that matches nothing fails silently — the library goes on loading as if the
+            // setting were not there — so say so. A warning rather than an error: a dropped dependency
+            // must not break the build of a project that still lists it here.
+            foreach (var pattern in siteResult.UnmatchedDontLoadReferences)
+                MsBuildDiagnostic.WriteWarning(MsBuildDiagnostic.CodeDontLoadReferenceUnmatched,
+                    $"tps.json 'dontLoadReferences' entry '{pattern}' matched no referenced assembly.");
             if (siteResult.RemovedStaleFiles.Count > 0)
             {
                 var stale = siteResult.RemovedStaleFiles;

@@ -438,6 +438,21 @@ The short version:
   contributes only its load flag; `"loadCompiledOutput": false` is the direct way to say "copy my
   bundle but do not script it" (Curiosity's Admin package, which the app fetches itself).
 
+  **`dontLoadReferences` is the same decision made by the consumer.** `loadCompiledOutput` lets a
+  *library* say "copy my bundle but do not script it"; a list of assembly names in the *application's*
+  tps.json says the same about a library that did not — the case a published package cannot decide for
+  itself, because only one of its consumers wants it lazily. Each entry is matched case-insensitively
+  (with `*`/`?` wildcards, and a `.dll` suffix tolerated) against a referenced assembly's name;
+  everything that assembly contributes is still extracted into the site — its bundle, its authored
+  scripts, its stylesheets — and none of it is referenced from index.html, the same reach the resource
+  `load` flag has. Loading it is then the application's job (`Transpose.Require`, `Transpose.Modules`),
+  and reaching the deferred code before that fails at run time exactly as it would for any library the
+  page never loaded. An entry matching no reference is a warning (`TPS0106`), because its failure mode
+  is otherwise silent: the library goes on loading as if the setting were not there. Measured on an app
+  referencing `Tesserae.Plotly`: 10.5 MB (`Tesserae.Plotly.js` + `plotly.js`) off the initial payload,
+  with the chart screen fetching both — through `Require`'s `.js`/`.min.js` fallback, which is what
+  makes one spelling work in a Debug and a Release site alike — the first time it opens.
+
   Minification is NUglify-based (`JsMinifier`), pinned to `NUglify 1.21.15`; the legacy compiler used
   1.20.7, but that version mis-parenthesised a `??` operand of `&&`/`||` and emitted invalid JS, fixed
   in NUglify 1.21.14 — not the newer 1.22.0, which regressed by inserting a stray empty statement when

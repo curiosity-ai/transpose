@@ -62,6 +62,7 @@ internal static class MsBuildDiagnostic
     public const string CodeCacheNotWritten         = "TPS0103";
     public const string CodeWatchServerFailed       = "TPS0104";
     public const string CodeTypeSizesJsonNotWritten = "TPS0105";
+    public const string CodeDontLoadReferenceUnmatched = "TPS0106";
 
     /// <summary>Formats a Roslyn diagnostic, pointing at its source location when it has one.</summary>
     public static string Format(Diagnostic d)
