@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -1703,7 +1703,23 @@ public sealed partial class Emitter
         {
             var l = Capture(() => EmitExpression(binary.Left));
             var r = Capture(() => EmitExpression(binary.Right));
-            _w.Write($"({l} == null || {r} == null ? {(relational ? "false" : "null")} : ");
+
+            // Only the operands that can actually BE null are tested. C# converts both sides of a
+            // lifted operator to Nullable<T>, so `x?.Count > 0` used to emit `0 == null` for the
+            // literal as well - dead at runtime, and NUglify folds it to TRUE (it reads `null` as 0),
+            // which collapsed the whole guard to `x == null || true` and made every such comparison
+            // answer false in a minified build. See CanBeNullOperand.
+            var nullTests = new List<string>(2);
+            if (CanBeNullOperand(binary.Left)) nullTests.Add($"{l} == null");
+            if (CanBeNullOperand(binary.Right)) nullTests.Add($"{r} == null");
+
+            if (nullTests.Count == 0)
+            {
+                EmitLiftedInnerOperation(binary, l, r, op, leftType, rightType);
+                return;
+            }
+
+            _w.Write($"({string.Join(" || ", nullTests)} ? {(relational ? "false" : "null")} : ");
             EmitLiftedInnerOperation(binary, l, r, op, leftType, rightType);
             _w.Write(")");
             return;
@@ -1904,6 +1920,23 @@ public sealed partial class Emitter
 
     private static bool IsNullableValueType(ITypeSymbol? t)
         => t is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T };
+
+    /// <summary>
+    /// Whether an operand of a lifted <c>Nullable&lt;T&gt;</c> operator can hold null at runtime.
+    /// The operand's CONVERTED type is always <c>Nullable&lt;T&gt;</c> - that is what lifting means -
+    /// so it cannot tell `x?.Count` from the `0` it is compared against; the DECLARED type can, and a
+    /// non-nullable value type is never null. Anything else (a reference type, an unconstrained type
+    /// parameter, an expression with no type at all) stays conservative and keeps its null test.
+    /// </summary>
+    private bool CanBeNullOperand(ExpressionSyntax expr)
+    {
+        var declared = _model.GetTypeInfo(expr).Type;
+
+        if (declared is null) return true;
+        if (IsNullableValueType(declared)) return true;
+
+        return !declared.IsValueType;
+    }
 
     /// <summary><c>T</c> for a <c>Nullable&lt;T&gt;</c>, otherwise the type unchanged.</summary>
     private static ITypeSymbol? UnwrapNullable(ITypeSymbol? t)

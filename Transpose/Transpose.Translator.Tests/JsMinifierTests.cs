@@ -1,4 +1,5 @@
-﻿using Transpose.Compiler;
+﻿using System.Threading.Tasks;
+using Transpose.Compiler;
 
 namespace Transpose.Translator.Tests;
 
@@ -27,6 +28,36 @@ public sealed class JsMinifierTests
         // The unparenthesised mix is the exact syntax error we are guarding against.
         Assert.IsFalse(min.Contains("&&c??") || min.Contains("||c??") || min.Contains("??d&&"),
             $"minifier produced an invalid `??`/`&&`/`||` mix: {min}");
+    }
+
+    // NUglify evaluates a loose `<literal> == null` by coercing `null` to 0, so every FALSY literal
+    // folds to the wrong answer (`0 == null` -> true, `0 != null` -> false, same for `''` and
+    // `false`). We emitted `0 == null` for a lifted `x?.Count > 0` and the fold turned the guard into
+    // `x == null || true`. EvaluateNumericExpressions is killed for this; these rows fail if it comes
+    // back. `1 == null` and the strict `0 === null` were always folded correctly.
+    //
+    // The minified expression is RUN rather than pattern-matched: what matters is that it still means
+    // what JavaScript says it means, whether the minifier folded it or left it alone.
+    [DataTestMethod]
+    [DataRow("0 == null",     "false")]
+    [DataRow("'' == null",    "false")]
+    [DataRow("false == null", "false")]
+    [DataRow("null == 0",     "false")]
+    [DataRow("0 != null",     "true")]
+    [DataRow("'' != null",    "true")]
+    [DataRow("false != null", "true")]
+    [DataRow("null != 0",     "true")]
+    [DataRow("1 == null",     "false")]
+    [DataRow("0 === null",    "false")]
+    [DataRow("0 !== null",    "true")]
+    public async Task LooseNullComparisonAgainstAFalsyLiteralIsNotMisfolded(string expression, string expected)
+    {
+        var min = JsMinifier.Minify($"function f(){{ return ({expression}); }} console.log(f());", "app.js");
+
+        var actual = (await NodeJsRunner.RunAsync(min)).Trim();
+
+        Assert.AreEqual(expected, actual,
+            $"`{expression}` is {expected} in JavaScript, but minified to: {min}");
     }
 
     [TestMethod]

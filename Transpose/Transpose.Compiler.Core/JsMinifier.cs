@@ -1,4 +1,4 @@
-using NUglify;
+﻿using NUglify;
 using NUglify.JavaScript;
 
 namespace Transpose.Compiler;
@@ -62,8 +62,25 @@ internal static class JsMinifier
     private const long KillBlockScopeUnsafeInversions =
         (long)(TreeModifications.InvertIfReturn | TreeModifications.InvertIfContinue);
 
+    // NUglify evaluates a loose `<literal> == null` by coercing `null` to 0 and comparing, so it
+    // folds every FALSY literal to the wrong answer:
+    //
+    //   0 == null  -> true      '' == null    -> true      false == null -> true
+    //   0 != null  -> false     '' != null    -> false     false != null -> false
+    //
+    // (`1 == null` and the strict `0 === null` are folded correctly, which is why this went unnoticed:
+    // it only misfires on a falsy constant, and only under `==`/`!=`.)
+    //
+    // We used to emit `0 == null` ourselves - a lifted `x?.Count > 0` null-tested both operands, the
+    // literal included - and the fold turned that guard into `x == null || true`, so the comparison
+    // answered false for every non-null x. The emitter no longer null-tests an operand that cannot be
+    // null, but the fold is still unsound for any `== null` that reaches the minifier from hand-written
+    // runtime JS, a Script.Write template or a third-party bundle, so it is switched off here too.
+    // Cost measured on the Curiosity front end: 37 bytes on a 3.5 MB bundle (+0.001%).
+    private const long KillUnsoundNullComparisonFold = (long)TreeModifications.EvaluateNumericExpressions;
+
     // Everything the settings profiles below switch off.
-    private const long KillSwitches = KillIfConditionCollapse | KillBlockScopeUnsafeInversions;
+    private const long KillSwitches = KillIfConditionCollapse | KillBlockScopeUnsafeInversions | KillUnsoundNullComparisonFold;
 
     // Safe profile: never rename locals, terminate statements with semicolons, escape non-ASCII.
     private static CodeSettings Safe() => new()
