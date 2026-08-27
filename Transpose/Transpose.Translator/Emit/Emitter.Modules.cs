@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
 using Microsoft.CodeAnalysis;
 
@@ -208,7 +209,28 @@ public sealed partial class Emitter
         }
 
         var dir = string.IsNullOrEmpty(chunkDirectory) ? "" : chunkDirectory.TrimEnd('/') + "/";
-        string ChunkFile(int i) => $"{dir}c{i}.mjs";
+
+        // A chunk is named after the hash of its own text (see ChunkLeafName), so a rebuild renames
+        // exactly the files whose JavaScript changed: a chunk can be served immutably, and a browser
+        // or CDN re-fetches only what actually differs instead of revalidating every file behind a
+        // name that never moves. Two properties make that possible, and both are already invariants
+        // of the chunker rather than anything added for it:
+        //
+        //  - a chunk's text never mentions its OWN name. Every import specifier is relative to the
+        //    chunk *directory*, which is fixed before any hashing (ChunkImport below), so hashing the
+        //    finished text cannot invalidate the text;
+        //  - every import points at a LOWER index — the invariant Chunk() establishes and Coalesce()
+        //    re-checks — so walking the chunks in index order always has the final names of a chunk's
+        //    dependencies in hand by the time that chunk is hashed.
+        //
+        // The names are still deterministic, so two builds of the same sources remain byte-identical.
+        var chunkNames = new string[chunks.Members.Count];
+        var usedChunkNames = new HashSet<string>(StringComparer.Ordinal);
+        string ChunkFile(int i) => chunkNames[i];
+        // The specifier from a chunk to another file. It depends only on the importing chunk's
+        // directory, never on its own (not yet known) file name — which is what lets the name be a
+        // hash of the text these imports are part of.
+        string ChunkImport(string to) => RelativeImport(dir + "c.mjs", to);
 
         var output = new List<(string, string)>();
         for (var i = 0; i < chunks.Members.Count; i++)
@@ -217,7 +239,7 @@ public sealed partial class Emitter
             // Import order is the chunk index, which is the topological order Chunk() assigned, so
             // two builds of the same sources produce byte-identical files.
             foreach (var d in chunks.Deps[i].OrderBy(x => x))
-                w.Append("import '").Append(RelativeImport(ChunkFile(i), ChunkFile(d))).Append("';\n");
+                w.Append("import '").Append(ChunkImport(ChunkFile(d))).Append("';\n");
             // Cross-assembly: a referenced module-mode assembly's chunk holding a type this one uses.
             // Without it the reference would resolve to that assembly's stub, and a stub cannot be
             // resolved synchronously.
@@ -229,7 +251,7 @@ public sealed partial class Emitter
                         foreach (var n in names)
                             if (externalChunks.TryGetValue(n, out var file)) wanted.Add(file);
                 foreach (var file in wanted)
-                    w.Append("import '").Append(RelativeImport(ChunkFile(i), file)).Append("';\n");
+                    w.Append("import '").Append(ChunkImport(file)).Append("';\n");
             }
             // A bare Transpose.define outside the Transpose.assembly(...) wrapper has no ambient
             // assembly, so each chunk names its own before defining anything.
@@ -239,7 +261,9 @@ public sealed partial class Emitter
                 w.Append(Dedent(bodies[t]));
                 w.Append('\n');
             }
-            output.Add((ChunkFile(i), w.ToString()));
+            var js = w.ToString();
+            chunkNames[i] = dir + ChunkLeafName(js, usedChunkNames);
+            output.Add((chunkNames[i], js));
         }
 
         var lazyTypes = new List<INamedTypeSymbol>();
@@ -256,6 +280,28 @@ public sealed partial class Emitter
         foreach (var t in types) result.TypeToChunk[MetaTypeDefName(t)] = ChunkFile(chunks.IndexOf[t]);
         foreach (var kv in skipDeps) result.SkipClusterDeps[kv.Key] = kv.Value;
         return result;
+    }
+
+    /// <summary>
+    /// A chunk's file name: <c>c</c> followed by the first 16 hex digits of the SHA-256 of its
+    /// JavaScript. The name is therefore a fingerprint of the content, which is what makes cache
+    /// invalidation automatic — an unchanged chunk keeps its URL across a rebuild and a changed one
+    /// gets a new one, so chunks can be served with a far-future <c>Cache-Control</c> and no
+    /// deployment ever has to bust a cache by hand. 64 bits is far past collision risk for the
+    /// number of chunks an assembly emits; the loop below is a guard, not an expectation, since two
+    /// chunks cannot legitimately share text (a type is emitted into exactly one chunk and its
+    /// define name is part of that text).
+    ///
+    /// The hash is of the text the emitter produced, not of the minified form a Release site serves:
+    /// minification runs later, in OutputBuilder, and is deterministic, so the emitted text still
+    /// identifies the served bytes exactly.
+    /// </summary>
+    private static string ChunkLeafName(string js, HashSet<string> used)
+    {
+        var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(js)).AsSpan(0, 8));
+        var name = "c" + hash + ".mjs";
+        for (var n = 2; !used.Add(name); n++) name = "c" + hash + "-" + n + ".mjs";
+        return name;
     }
 
     private sealed record ChunkGraph(

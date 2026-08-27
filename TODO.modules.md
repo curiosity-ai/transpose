@@ -245,8 +245,11 @@ imports.
 tps/
   app.js            entry module: imports the eager chunks, the reflection metadata for every type,
                     the manifest of what was deferred, Transpose.init()
-  chunks/c0.mjs …   one file per chunk: side-effect imports of the chunks it references, then the
-                    Transpose.define of each of its types
+  chunks/c<hash>.mjs
+                    one file per chunk: side-effect imports of the chunks it references, then the
+                    Transpose.define of each of its types. The name is the first 16 hex digits of the
+                    SHA-256 of the file's own text (§7i), so a rebuild renames exactly the chunks
+                    whose JavaScript changed and every chunk can be served immutably.
 ```
 
 **Translator** (`Emitter.Modules.cs`, ~300 lines):
@@ -317,7 +320,7 @@ assembly boundary:
 - **It publishes a chunk map** — emitted type name → chunk file — embedded as `Transpose.Modules.json`
   (embedded but *not* listed in `Transpose.Resources.json`, like the `BuildStamp`, so no consumer
   extracts it into a site). A consuming build reads the maps of all its references (`ModuleMap.Read`)
-  and, wherever its own code reaches into a library type, emits `import '../<lib>/cN.mjs'` from the
+  and, wherever its own code reaches into a library type, emits `import '../<lib>/c<hash>.mjs'` from the
   chunk that uses it. Without that the reference would land on the library's stub, and a stub cannot
   be resolved synchronously.
 
@@ -616,6 +619,40 @@ Measured on a consumer built against each, deserializing an `Order` whose graph 
 
 `Serialize`/`SerializeObject` are deliberately left alone: serialization reads an instance it was
 handed and never constructs the type, so marking it would only inflate what a screen fetches.
+
+### 7i. Content-addressed chunk names
+
+A chunk file is named `c<hash>.mjs`, where the hash is the first 16 hex digits of the SHA-256 of the
+file's own text (`ChunkLeafName`, `Emitter.Modules.cs`). The name is therefore a fingerprint of the
+content, which is the whole point: a rebuild renames exactly the chunks whose JavaScript changed, so
+chunks can be served with a far-future `Cache-Control: immutable` and a returning browser (or a CDN)
+re-fetches only what actually differs, with no deployment step to bust a cache by hand. Numbered
+names could not do that — `c17.mjs` means something different after every edit that shifts the
+chunking, and the same URL holding different bytes is the one thing an HTTP cache cannot see.
+
+Two invariants make it possible, and both already held:
+
+- **A chunk's text never mentions its own name.** Every import specifier is computed relative to the
+  chunk *directory*, which is fixed before anything is hashed, so hashing the finished text cannot
+  invalidate the text.
+- **Every import points at an earlier chunk** — the invariant `Chunk()` establishes (Tarjan emits a
+  component only after everything it points at) and `Coalesce()` re-checks. So walking the chunks in
+  index order always has the final names of a chunk's dependencies in hand by the time it is hashed.
+
+The consequence is a cascade, and a wanted one: renaming a chunk changes the text of every chunk that
+imports it, so those are renamed too. They have to be — an unchanged importer would go on importing a
+file that is no longer there. An edit's blast radius is the edited chunk plus its dependents, which is
+also exactly the set whose bytes are no longer valid.
+
+The hash covers the text the emitter produced, not the minified form a Release site serves:
+minification runs later (`OutputBuilder.MinifyModule`) and is deterministic, so the emitted text still
+identifies the served bytes exactly. Names stay deterministic, so two builds of the same sources are
+still byte-identical. And the stale-output prune needs nothing new — the site manifest already records
+what the previous build wrote, so a renamed chunk's predecessor is deleted like any other stale file.
+
+Collisions are guarded but not expected: 64 bits is far past the birthday risk for the number of
+chunks an assembly emits, and two chunks cannot legitimately share text at all (a type is emitted into
+exactly one chunk and its define name is part of that text). A collision would take a `-2` suffix.
 
 ### Not done
 
