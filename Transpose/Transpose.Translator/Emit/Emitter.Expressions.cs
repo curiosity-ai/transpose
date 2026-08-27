@@ -306,7 +306,12 @@ public sealed partial class Emitter
     }
 
     /// <summary>Emits an expression applying a required conversion for its target type.</summary>
-    private void EmitExpressionConverted(ExpressionSyntax expr, ITypeSymbol? targetType)
+    /// <param name="targetIsForeignJs">The slot being written lives in foreign JavaScript (an
+    /// [External] parameter/property, an [ObjectLiteral] member). Only 64-bit integers care: such a
+    /// slot holds a plain number, so a managed System.Int64/UInt64 must be read back out of its box
+    /// on the way in — see <c>Emitter.Foreign64.cs</c>.</param>
+    private void EmitExpressionConverted(ExpressionSyntax expr, ITypeSymbol? targetType,
+        bool targetIsForeignJs = false)
     {
         // Numeric narrowing to an integer type needs truncation.
         var sourceType = _model.GetTypeInfo(expr).Type;
@@ -325,6 +330,78 @@ public sealed partial class Emitter
         {
             EmitUserDefinedConversion(convMethod, expr);
             return;
+        }
+
+        // ---- the foreign-JavaScript 64-bit boundary (Emitter.Foreign64.cs) ----
+        // Into a foreign `long`/`ulong` slot, a narrower value must NOT be widened into an Int64
+        // instance the way a managed slot needs: `blob.slice(0, 10)` passes plain numbers. A numeric
+        // literal is the case that has to be intercepted here, because EmitLiteral builds the
+        // instance from the literal's CONVERTED type rather than from anything at this call site.
+        if (targetIsForeignJs && Is64BitInteger(UnwrapNullable(targetType))
+            && !Is64BitInteger(UnwrapNullable(sourceType))
+            && Plain64ConstantText(expr) is { } foreignConstant)
+        {
+            _w.Write(foreignConstant);
+            return;
+        }
+
+        if (Is64BitInteger(UnwrapNullable(sourceType)))
+        {
+            var plain = EmitsAsPlainJsNumber(expr);
+
+            // Into a managed `long`/`ulong` slot: lift, so every Int64 method downstream works.
+            if (plain && !targetIsForeignJs && Is64BitInteger(UnwrapNullable(targetType)))
+            {
+                // A nullable stays null — System.Int64(null) would be a zero-valued instance, and
+                // `x.HasValue` on it is true.
+                if (IsNullableValueType(sourceType) || IsNullableValueType(targetType))
+                {
+                    var v = Capture(() => EmitExpression(expr));
+                    var ctor = Is64BitUnsigned(UnwrapNullable(targetType)) ? "System.UInt64" : "System.Int64";
+                    _w.Write($"({v} == null ? null : {ctor}({v}))");
+                    return;
+                }
+                EmitLifted64(expr, targetType);
+                return;
+            }
+
+            // Into a foreign one: unwrap, so hand-written JavaScript sees a number.
+            if (!plain && targetIsForeignJs && Is64BitInteger(UnwrapNullable(targetType)))
+            {
+                // A 64-bit constant is written straight out rather than built and unwrapped again.
+                if (Plain64ConstantText(expr) is { } constantText) { _w.Write(constantText); return; }
+
+                if (IsNullableValueType(sourceType) || IsNullableValueType(targetType))
+                {
+                    var v = Capture(() => EmitExpression(expr));
+                    _w.Write($"({v} == null ? {v} : {v}.toNumber())");
+                }
+                else
+                {
+                    _w.Write("(");
+                    EmitExpression(expr);
+                    _w.Write(").toNumber()");
+                }
+                return;
+            }
+
+            // Boxed as object/dynamic/an interface: the box must carry a real Int64/UInt64, or
+            // `o.ToString()`, `o is ulong` and unboxing all see a bare number. A `long?` box keeps
+            // null as null — boxing null in C# yields a null reference, not a zero.
+            if (plain && targetType is { IsReferenceType: true } && !IsStringType(targetType))
+            {
+                if (IsNullableValueType(sourceType))
+                {
+                    var v = Capture(() => EmitExpression(expr));
+                    var ctor = Is64BitUnsigned(UnwrapNullable(sourceType)) ? "System.UInt64" : "System.Int64";
+                    _w.Write($"({v} == null ? null : {ctor}({v}))");
+                }
+                else
+                {
+                    EmitLifted64(expr, sourceType);
+                }
+                return;
+            }
         }
         if (targetType is not null && sourceType is not null
             && IsIntegerType(targetType) && IsFloatingType(sourceType))
@@ -349,7 +426,7 @@ public sealed partial class Emitter
 
         // Implicit widening of a 32-bit integer to long/ulong → wrap as a 64-bit instance.
         // (Numeric literals already self-wrap via their converted type in EmitLiteral.)
-        if (Is64BitInteger(targetType) && sourceType is not null && !Is64BitInteger(sourceType)
+        if (Is64BitInteger(targetType) && !targetIsForeignJs && sourceType is not null && !Is64BitInteger(sourceType)
             && IsIntegerType(sourceType) && expr is not LiteralExpressionSyntax)
         {
             _w.Write(Is64BitUnsigned(targetType) ? "System.UInt64(" : "System.Int64(");
@@ -1033,6 +1110,16 @@ public sealed partial class Emitter
     private void EmitReceiverExpr(ExpressionSyntax? thisTarget)
     {
         if (thisTarget is null) { _w.Write("this"); return; }
+        // A foreign-JS 64-bit receiver is a plain number, and the only members reachable on it are
+        // System.Int64/UInt64's own (`size.CompareTo(…)`, `size.ToString("N0")`), which need a real
+        // instance — so lift it here (Emitter.Foreign64.cs). A NULLABLE receiver is left alone: the
+        // member then belongs to Nullable<T>, which the runtime handles on the raw value-or-null.
+        if (Is64BitInteger(_model.GetTypeInfo(thisTarget).Type)
+            && EmitsAsPlainJsNumber(thisTarget))
+        {
+            EmitLifted64(thisTarget, _model.GetTypeInfo(thisTarget).Type);
+            return;
+        }
         // A numeric-constant receiver must be parenthesized: `0.toString()` is a JS syntax error
         // (the `.` parses as a decimal point), so emit `(0).toString()`.
         if (NeedsReceiverParens(thisTarget))

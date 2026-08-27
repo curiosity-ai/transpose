@@ -239,7 +239,7 @@ public sealed partial class Emitter
             _w.Write($"{TypeRef(symbol.ContainingType)}.{TransposeNaming.MemberJsName(reducedFrom)}(");
             var lead = EmitLeadingTypeArgs(symbol);
             if (lead) _w.Write(", ");
-            if (receiverExpr is not null) EmitExpression(receiverExpr); else _w.Write(condRecv!);
+            if (receiverExpr is not null) EmitExtensionReceiver(receiverExpr, reducedFrom); else _w.Write(condRecv!);
             if (invocation.ArgumentList.Arguments.Count > 0)
             {
                 _w.Write(", ");
@@ -639,7 +639,7 @@ public sealed partial class Emitter
             if (extReceiver is not null)
             {
                 if (!first) _w.Write(", ");
-                EmitExpression(extReceiver);
+                EmitExtensionReceiver(extReceiver, reduced!);
                 first = false;
             }
         }
@@ -677,7 +677,8 @@ public sealed partial class Emitter
                 if (ai >= 0)
                 {
                     if (holders[ai] is not null) _w.Write(holders[ai]!);
-                    else EmitExpressionConverted(args[ai].Expression, symbol.Parameters[k].Type);
+                    else EmitExpressionConverted(args[ai].Expression, symbol.Parameters[k].Type,
+                        IsForeignJsSlot(symbol));
                 }
                 else
                     // Omitted optional (a gap a JS call can't skip) → `void 0`, so the callee's
@@ -692,7 +693,8 @@ public sealed partial class Emitter
                 if (!first) _w.Write(", ");
                 first = false;
                 if (holders[i] is not null) _w.Write(holders[i]!);
-                else EmitExpressionConverted(args[i].Expression, i < symbol.Parameters.Length ? symbol.Parameters[i].Type : null);
+                else EmitExpressionConverted(args[i].Expression, i < symbol.Parameters.Length ? symbol.Parameters[i].Type : null,
+                    IsForeignJsSlot(symbol));
             }
         }
         _w.Write("); ");
@@ -809,6 +811,9 @@ public sealed partial class Emitter
     {
         var args = argList.Arguments;
         var lead = threadTypeArgs && EmitLeadingTypeArgs(method);
+        // A call into hand-written JavaScript: a `long`/`ulong` parameter of it is a plain number,
+        // so a managed Int64 argument is unwrapped on the way in (Emitter.Foreign64.cs).
+        var foreignCallee = IsForeignJsSlot(method);
 
         // Reorder named arguments to parameter order when we know the method.
         if (method is not null && args.Any(a => a.NameColon is not null))
@@ -870,7 +875,7 @@ public sealed partial class Emitter
                     if (k > 0) _w.Write(", ");
                     var pIdx = paramIndexOf[k];
                     var pType = pIdx >= 0 && pIdx < method.Parameters.Length ? method.Parameters[pIdx].Type : null;
-                    EmitExpressionConverted(args[k].Expression, pType);
+                    EmitExpressionConverted(args[k].Expression, pType, foreignCallee);
                 }
                 _w.Write("]; return [");
                 for (var i = 0; i <= lastProvided; i++)
@@ -905,11 +910,11 @@ public sealed partial class Emitter
                     // receives a bare element and a later `foreach` over it throws "Cannot create
                     // Enumerator". (The multi-element / no-named-args case is handled by the params
                     // branch below, which this early-returning named path would otherwise skip.)
-                    EmitParamsSlot(method.Parameters[i].Type, ordered[i]!);
+                    EmitParamsSlot(method.Parameters[i].Type, ordered[i]!, foreignCallee);
                 }
                 else
                 {
-                    EmitExpressionConverted(ordered[i]!, method.Parameters[i].Type);
+                    EmitExpressionConverted(ordered[i]!, method.Parameters[i].Type, foreignCallee);
                 }
             }
             return;
@@ -928,7 +933,7 @@ public sealed partial class Emitter
             {
                 if (!first) _w.Write(", ");
                 first = false;
-                EmitExpressionConverted(args[i].Expression, method.Parameters[i].Type);
+                EmitExpressionConverted(args[i].Expression, method.Parameters[i].Type, foreignCallee);
             }
             var trailing = args.Skip(fixedCount).ToList();
             var elem = (method.Parameters[^1].Type as IArrayTypeSymbol)?.ElementType;
@@ -944,7 +949,7 @@ public sealed partial class Emitter
                 {
                     if (!first) _w.Write(", ");
                     first = false;
-                    EmitExpressionConverted(trailing[i].Expression, elem);
+                    EmitExpressionConverted(trailing[i].Expression, elem, foreignCallee);
                 }
             }
             return;
@@ -964,7 +969,7 @@ public sealed partial class Emitter
                 // positional JS call: emit `void 0` so the callee applies its default. Without this
                 // the params array shifted into the optional's slot (e.g. M("x") on
                 // M(string,int=7,params object[]) emitted M("x", []) — [] landed in the int slot).
-                if (i < args.Count) EmitExpressionConverted(args[i].Expression, method.Parameters[i].Type);
+                if (i < args.Count) EmitExpressionConverted(args[i].Expression, method.Parameters[i].Type, foreignCallee);
                 else _w.Write("void 0");
             }
 
@@ -983,7 +988,7 @@ public sealed partial class Emitter
             if (trailing.Count == 1
                 && (soleArgType is null || _compilation.ClassifyConversion(soleArgType, paramsType).Exists))
             {
-                EmitExpressionConverted(trailing[0].Expression, paramsType);
+                EmitExpressionConverted(trailing[0].Expression, paramsType, foreignCallee);
             }
             else
             {
@@ -993,7 +998,7 @@ public sealed partial class Emitter
                     for (var i = 0; i < trailing.Count; i++)
                     {
                         if (i > 0) _w.Write(", ");
-                        EmitExpressionConverted(trailing[i].Expression, paramsElem);
+                        EmitExpressionConverted(trailing[i].Expression, paramsElem, foreignCallee);
                     }
                     _w.Write("]");
                 }, trailing);
@@ -1005,7 +1010,7 @@ public sealed partial class Emitter
         {
             if (i > 0 || lead) _w.Write(", ");
             var targetType = method is not null && i < method.Parameters.Length ? method.Parameters[i].Type : null;
-            EmitExpressionConverted(args[i].Expression, targetType);
+            EmitExpressionConverted(args[i].Expression, targetType, foreignCallee);
         }
     }
 
@@ -1028,7 +1033,7 @@ public sealed partial class Emitter
     /// <summary>Emits a SINGLE argument supplied to a <c>params</c> parameter: the array/collection
     /// itself is passed through, but a lone element (convertible to the element type) is wrapped into
     /// the params array. Shared by the named-argument path and mirrors the positional params branch.</summary>
-    private void EmitParamsSlot(ITypeSymbol paramsType, ExpressionSyntax arg)
+    private void EmitParamsSlot(ITypeSymbol paramsType, ExpressionSyntax arg, bool foreignCallee = false)
     {
         var paramsElem = ParamsElementType(paramsType);
         var argType = _model.GetTypeInfo(arg).Type;
@@ -1037,14 +1042,14 @@ public sealed partial class Emitter
         // object[] → object exists.
         if (argType is null || _compilation.ClassifyConversion(argType, paramsType).Exists)
         {
-            EmitExpressionConverted(arg, paramsType);   // already the collection
+            EmitExpressionConverted(arg, paramsType, foreignCallee);   // already the collection
         }
         else
         {
             EmitCollectionOf(paramsType, () =>
             {
                 _w.Write("[");
-                EmitExpressionConverted(arg, paramsElem);
+                EmitExpressionConverted(arg, paramsElem, foreignCallee);
                 _w.Write("]");
             }, [arg]);
         }
@@ -1183,9 +1188,12 @@ public sealed partial class Emitter
                     first = false;
                     emitted.Add(name);
                     _w.Write($"{NameMangler.JsPropertyKey(name)}: ");
+                    // A long/ulong member of a plain JS object holds a plain number, so its
+                    // initializer is unwrapped and its default is `0` (Emitter.Foreign64.cs).
+                    var plain64 = Is64BitInteger(UnwrapNullable(prop.Type)) && !IsNullableValueType(prop.Type);
                     if (ctorValue is not null) _w.Write(ctorValue);
-                    else if (propInit is not null) EmitExpression(propInit);
-                    else _w.Write(DefaultValueLiteral(prop.Type));
+                    else if (propInit is not null) EmitForeign64Value(propInit, prop.Type);
+                    else _w.Write(plain64 ? "0" : DefaultValueLiteral(prop.Type));
                 }
             }
             // Constructor-supplied members the init mode did not enumerate — in Ignore mode (the
@@ -1312,8 +1320,17 @@ public sealed partial class Emitter
             var arg = args.FirstOrDefault(a => a.NameColon?.Name.Identifier.Text == p.Name)
                       ?? (i < args.Count && args[i].NameColon is null ? args[i] : null);
 
-            var value = arg is not null ? Capture(() => EmitExpressionConverted(arg.Expression, p.Type))
-                : p.HasExplicitDefaultValue ? ConstantLiteral(p.ExplicitDefaultValue, p.Type)
+            // The value lands in a plain JS object, so a long/ulong one is a plain number.
+            var literal64 = IsObjectLiteralType(type) && Is64BitInteger(UnwrapNullable(p.Type));
+            var value = arg is not null ? Capture(() => EmitExpressionConverted(arg.Expression, p.Type, literal64))
+                : p.HasExplicitDefaultValue
+                    ? (literal64
+                        ? (p.ExplicitDefaultValue is { } dv
+                            ? System.Convert.ToString(dv, CultureInfo.InvariantCulture)!
+                            : "null")
+                        : ConstantLiteral(p.ExplicitDefaultValue, p.Type))
+                : literal64
+                    ? (IsNullableValueType(p.Type) ? "null" : "0")
                 : DefaultValueLiteral(p.Type);
             values.Add((TransposeNaming.MemberJsName(member), value));
         }
@@ -1348,7 +1365,8 @@ public sealed partial class Emitter
                     var memberSym = _model.GetSymbolInfo(name).Symbol;
                     var memberName = memberSym is not null ? TransposeNaming.MemberJsName(memberSym) : NameMangler.JsIdentifier(name.Identifier.Text);
                     _w.Write($"{target}.{memberName} = ");
-                    EmitExpressionConverted(assign.Right, MemberValueType(memberSym));
+                    EmitExpressionConverted(assign.Right, MemberValueType(memberSym),
+                        IsForeignJsSlot(memberSym));
                     _w.Write("; ");
                     break;
                 // Index initializer: [key] = value
@@ -1364,7 +1382,7 @@ public sealed partial class Emitter
                         _w.Write($"{target}[");
                         EmitArgumentList(idx.ArgumentList);
                         _w.Write("] = ");
-                        EmitExpressionConverted(assign.Right, idxProp.Type);
+                        EmitExpressionConverted(assign.Right, idxProp.Type, IsForeignJsSlot(idxProp));
                         _w.Write("; ");
                         break;
                     }
@@ -1772,6 +1790,19 @@ public sealed partial class Emitter
             && Long64Op(binary) is not null
             && !IsDecimalType(leftDeclared) && !IsDecimalType(rightDeclared))
         {
+            // Every 64-bit operand came out of foreign JavaScript, so both sides are already plain
+            // numbers: keep them that way rather than boxing to compare (Emitter.Foreign64.cs).
+            // A comparison's own type is bool, so ask about the operands, not the result.
+            if (IsPlain64Operator(binary)
+                && (Is64BitInteger(leftDeclared) || Is64BitInteger(rightDeclared))
+                && (!Is64BitInteger(leftDeclared) || EmitsAsPlainJsNumber(binary.Left))
+                && (!Is64BitInteger(rightDeclared) || EmitsAsPlainJsNumber(binary.Right))
+                && IsPlain64SafeOperand(binary.Left, leftDeclared)
+                && IsPlain64SafeOperand(binary.Right, rightDeclared))
+            {
+                EmitPlain64Binary(binary);
+                return;
+            }
             EmitLong64Binary(binary, leftDeclared, rightDeclared);
             return;
         }
@@ -1824,6 +1855,20 @@ public sealed partial class Emitter
         // Null-coalescing
         if (binary.IsKind(SyntaxKind.CoalesceExpression))
         {
+            // Both halves have to agree on the 64-bit representation, or the result is a plain
+            // number in one branch and an Int64 in the other and whatever consumes it is wrong half
+            // the time (Emitter.Foreign64.cs). A plain left side pulls the right one down to plain;
+            // otherwise the plain side is lifted.
+            if (Is64BitInteger(UnwrapNullable(_model.GetTypeInfo(binary).Type)))
+            {
+                var plain = IsForeignJs64Value(binary);
+                _w.Write("(");
+                EmitCoalesce64Operand(binary.Left, plain);
+                _w.Write(" ?? ");
+                EmitCoalesce64Operand(binary.Right, plain);
+                _w.Write(")");
+                return;
+            }
             _w.Write("(");
             EmitCoalesceOperand(binary.Left);
             _w.Write(" ?? ");
@@ -1960,13 +2005,35 @@ public sealed partial class Emitter
         var ru = UnwrapNullable(_model.GetTypeInfo(binary.Right).Type ?? rightType);
         var resultType = UnwrapNullable(_model.GetTypeInfo(binary).Type);
 
+        // A foreign-JS 64-bit operand is a plain number, boxed nowhere (Emitter.Foreign64.cs), so it
+        // needs neither `.toNumber()` below nor an Int64 receiver.
+        var leftPlain64 = Is64BitInteger(lu)
+                          && (EmitsAsPlainJsNumber(binary.Left) || Plain64ConstantText(binary.Left) is not null);
+        var rightPlain64 = Is64BitInteger(ru)
+                           && (EmitsAsPlainJsNumber(binary.Right) || Plain64ConstantText(binary.Right) is not null);
+
         // Promoted to floating point despite a 64-bit operand (`long? * 0.5`): read the 64-bit
         // side's magnitude and use plain JS arithmetic, as the non-nullable path does.
         if ((Is64BitInteger(lu) || Is64BitInteger(ru)) && (IsFloatingType(lu) || IsFloatingType(ru)))
         {
-            _w.Write(Is64BitInteger(lu) ? $"({left}).toNumber()" : left);
+            _w.Write(Is64BitInteger(lu) && !leftPlain64 ? $"({left}).toNumber()" : left);
             _w.Write($" {op} ");
-            _w.Write(Is64BitInteger(ru) ? $"({right}).toNumber()" : right);
+            _w.Write(Is64BitInteger(ru) && !rightPlain64 ? $"({right}).toNumber()" : right);
+            return;
+        }
+
+        // Both 64-bit operands are plain: stay in plain JavaScript, division excepted (it truncates
+        // in C# and not in JS). Same rule as the non-nullable path.
+        if ((leftPlain64 || rightPlain64) && IsPlain64Operator(binary)
+            && (!Is64BitInteger(lu) || leftPlain64) && (!Is64BitInteger(ru) || rightPlain64))
+        {
+            // A constant operand was captured in its boxed form for the null test above; in plain
+            // position it is just the number.
+            var pl = Plain64ConstantText(binary.Left) ?? left;
+            var pr = Plain64ConstantText(binary.Right) ?? right;
+            if (op == "/") { _w.Write($"TransposeR.idiv({pl}, {pr})"); return; }
+            var plainOp = op switch { "==" => "===", "!=" => "!==", _ => op };
+            _w.Write($"{pl} {plainOp} {pr}");
             return;
         }
 
@@ -1976,9 +2043,10 @@ public sealed partial class Emitter
             if (longOp == "shr" && unsigned) longOp = "shru";
 
             // The receiver must be a 64-bit instance; lift a plain-number left operand.
-            if (Is64BitInteger(lu)) _w.Write(left);
+            if (Is64BitInteger(lu) && !leftPlain64) _w.Write(left);
             else { _w.Write(unsigned ? "System.UInt64(" : "System.Int64("); _w.Write(left); _w.Write(")"); }
 
+            // The argument passes through as-is — see EmitLong64Binary.
             _w.Write($".{longOp}({right})");
             return;
         }
@@ -2114,8 +2182,9 @@ public sealed partial class Emitter
         var unsigned = Is64BitUnsigned(leftType) || Is64BitUnsigned(rightType);
         if (op == "shr" && unsigned) op = "shru";
 
-        // The receiver must be a 64-bit instance; lift the left operand if it is a plain number.
-        if (Is64BitInteger(leftType))
+        // The receiver must be a 64-bit instance; lift the left operand if it is a plain number —
+        // either a narrower type C# promoted, or a foreign-JS long that was never boxed.
+        if (Is64BitInteger(leftType) && !EmitsAsPlainJsNumber(binary.Left))
         {
             EmitExpression(binary.Left);
         }
@@ -2125,6 +2194,9 @@ public sealed partial class Emitter
             EmitExpression(binary.Left);
             _w.Write(")");
         }
+        // The ARGUMENT needs no lift: every Int64 method reads it through the receiver type's
+        // `getValue`, which turns a plain number into a full 64-bit value (Long.js). Only the
+        // receiver has to be an instance, because only it is dispatched on.
         _w.Write($".{op}(");
         EmitExpression(binary.Right);
         _w.Write(")");
@@ -2161,9 +2233,11 @@ public sealed partial class Emitter
 
     /// <summary>
     /// True if a <c>long</c>/<c>ulong</c>-typed operand is nevertheless emitted as a plain JS number,
-    /// so it must not be given a <c>.toNumber()</c> call. A numeric literal follows its CONVERTED type
-    /// (see <c>EmitLiteral</c>): in <c>0.5 &gt; 0L</c> the literal is converted to double and emitted
-    /// as <c>0</c>. A long-typed *identifier* in the same position is not — it stays an Int64 object.
+    /// so it must not be given a <c>.toNumber()</c> call — and so an Int64 method call on it would
+    /// throw. Two sources: a numeric literal follows its CONVERTED type (see <c>EmitLiteral</c>), so
+    /// in <c>0.5 &gt; 0L</c> the literal is converted to double and emitted as <c>0</c>; and a value
+    /// read out of foreign JavaScript was never boxed at all (see <c>Emitter.Foreign64.cs</c>).
+    /// A long-typed *identifier* is neither — it stays an Int64 object.
     /// </summary>
     private bool EmitsAsPlainJsNumber(ExpressionSyntax operand)
     {
@@ -2183,8 +2257,12 @@ public sealed partial class Emitter
             break;
         }
 
-        return e.IsKind(SyntaxKind.NumericLiteralExpression)
-            && !Is64BitInteger(_model.GetTypeInfo(e).ConvertedType);
+        // A literal converted to `long?` builds an Int64 instance just like one converted to `long`,
+        // so the nullable has to be unwrapped before asking.
+        if (e.IsKind(SyntaxKind.NumericLiteralExpression)
+            && !Is64BitInteger(UnwrapNullable(_model.GetTypeInfo(e).ConvertedType))) return true;
+
+        return IsForeignJs64Value(e);
     }
 
     /// <summary>True if a string-typed concat operand can never be null, so it needs no <c>?? ""</c>
@@ -2260,7 +2338,10 @@ public sealed partial class Emitter
 
         if (op == "=")
         {
-            EmitSimpleAssignmentTo(assignment.Left, () => EmitExpressionConverted(assignment.Right, leftType));
+            // Writing into a foreign-JS 64-bit slot unwraps a managed Int64 (Emitter.Foreign64.cs).
+            var foreignLeft = IsForeignJs64Lvalue(assignment.Left);
+            EmitSimpleAssignmentTo(assignment.Left,
+                () => EmitExpressionConverted(assignment.Right, leftType, foreignLeft));
             return;
         }
 
@@ -2373,10 +2454,38 @@ public sealed partial class Emitter
             return;
         }
 
+        // Compound assignment to a foreign-JS 64-bit slot (`blob.size += n`, an [ObjectLiteral]
+        // field): the slot holds a plain number, so the JS operator is right — except `/=`, which
+        // C# truncates and JS does not (Emitter.Foreign64.cs).
+        if (op != "=" && IsForeignJs64Lvalue(assignment.Left)
+            && op is "+=" or "-=" or "*=" or "/=" or "%=")
+        {
+            EmitExpression(assignment.Left);
+            _w.Write(" = ");
+            if (op == "/=")
+            {
+                _w.Write("TransposeR.idiv(");
+                EmitExpression(assignment.Left);
+                _w.Write(", ");
+                EmitForeign64Value(assignment.Right, leftType);
+                _w.Write(")");
+            }
+            else
+            {
+                _w.Write("(");
+                EmitExpression(assignment.Left);
+                _w.Write($") {op[..^1]} (");
+                EmitForeign64Value(assignment.Right, leftType);
+                _w.Write(")");
+            }
+            return;
+        }
+
         // 64-bit integer / decimal compound assignment: `lhs op= rhs` → `lhs = lhs.<method>(rhs)`.
         // The target is a boxed Int64/UInt64/Decimal instance, so a native JS `+=`/`/=`/… would run
         // string-concat / float ops on the object rather than the type's method (10L += 3L → "103").
         if (op != "=" && (Is64BitInteger(leftType) || IsDecimalType(leftType))
+            && !IsForeignJs64Lvalue(assignment.Left)
             && Long64OrDecimalCompoundMethod(op, leftType) is not null)
         {
             EmitExpression(assignment.Left);
@@ -2691,12 +2800,25 @@ public sealed partial class Emitter
             return;
         }
 
-        // 64-bit negation / bitwise-not → System.Int64/UInt64 methods.
-        if (Is64BitInteger(_model.GetTypeInfo(prefix.Operand).Type))
+        // 64-bit negation / bitwise-not → System.Int64/UInt64 methods. A foreign-JS operand is a
+        // plain number with no such methods; `-x` stays a JS negation, and `~x` is lifted (JS `~` is
+        // 32-bit) by the boxed branch below via EmitLifted64.
+        if (Is64BitInteger(_model.GetTypeInfo(prefix.Operand).Type)
+            && !EmitsAsPlainJsNumber(prefix.Operand))
         {
             if (prefix.IsKind(SyntaxKind.UnaryMinusExpression)) { EmitExpression(prefix.Operand); _w.Write(".neg()"); return; }
             if (prefix.IsKind(SyntaxKind.BitwiseNotExpression)) { EmitExpression(prefix.Operand); _w.Write(".not()"); return; }
             if (prefix.IsKind(SyntaxKind.UnaryPlusExpression)) { EmitExpression(prefix.Operand); return; }
+        }
+
+        // Plain (foreign-JS) 64-bit operand: `-x`/`+x` are the JS operators, but `~x` must be lifted
+        // — JavaScript's `~` truncates to 32 bits, which would drop the high word of a real size.
+        if (Is64BitInteger(_model.GetTypeInfo(prefix.Operand).Type) && EmitsAsPlainJsNumber(prefix.Operand)
+            && prefix.IsKind(SyntaxKind.BitwiseNotExpression))
+        {
+            EmitLifted64(prefix.Operand, _model.GetTypeInfo(prefix.Operand).Type);
+            _w.Write(".not()");
+            return;
         }
 
         // decimal negation → System.Decimal.neg().
@@ -2723,6 +2845,7 @@ public sealed partial class Emitter
         // native JS ++/-- would coerce it to a plain number (precision loss above 2^53, decimal
         // corruption). Rebuild through the type's method. Prefix yields the NEW value.
         if ((prefix.IsKind(SyntaxKind.PreIncrementExpression) || prefix.IsKind(SyntaxKind.PreDecrementExpression))
+            && !IsForeignJs64Lvalue(prefix.Operand)
             && IncDecStep(_model.GetTypeInfo(prefix.Operand).Type, prefix.IsKind(SyntaxKind.PreIncrementExpression)) is { } step)
         {
             _w.Write("(");
@@ -2744,6 +2867,7 @@ public sealed partial class Emitter
         // value; in a void (statement / for-incrementor) context the result is discarded, so the
         // cheaper new-value form suffices.
         if ((postfix.IsKind(SyntaxKind.PostIncrementExpression) || postfix.IsKind(SyntaxKind.PostDecrementExpression))
+            && !IsForeignJs64Lvalue(postfix.Operand)
             && IncDecStep(_model.GetTypeInfo(postfix.Operand).Type, postfix.IsKind(SyntaxKind.PostIncrementExpression)) is { } step)
         {
             if (IsVoidContext(postfix))
@@ -2849,12 +2973,14 @@ public sealed partial class Emitter
             }
             _w.Write(NarrowIntegerClip(t));
             _w.Write("(");
-            if (Is64BitInteger(sourceType))
+            if (Is64BitInteger(sourceType) && !EmitsAsPlainJsNumber(expr))
             {
                 // Bring the 64-bit value down to its low 32-bit word (a plain JS number) first;
                 // clip* then mask/sign-extend to the final width.
                 _w.Write("System.Int64.clip32("); EmitExpression(expr); _w.Write(")");
             }
+            // A foreign-JS 64-bit value is already a plain number (Emitter.Foreign64.cs); the outer
+            // clip* masks it to the target width on its own.
             else if (IsDecimalType(sourceType))
             {
                 _w.Write("("); EmitExpression(expr); _w.Write(").toFloat()");
@@ -2904,6 +3030,7 @@ public sealed partial class Emitter
         // --- from 64-bit to floating: read the numeric magnitude. ---
         if (Is64BitInteger(sourceType) && IsFloatingType(targetType))
         {
+            if (EmitsAsPlainJsNumber(expr)) { EmitExpression(expr); return; }
             _w.Write("("); EmitExpression(expr); _w.Write(").toNumber()");
             return;
         }
@@ -2914,6 +3041,7 @@ public sealed partial class Emitter
         // print the raw number instead of the member name. ---
         if (Is64BitInteger(sourceType) && targetType is { TypeKind: TypeKind.Enum })
         {
+            if (EmitsAsPlainJsNumber(expr)) { EmitExpression(expr); return; }
             _w.Write("("); EmitExpression(expr); _w.Write(").toNumber()");
             return;
         }

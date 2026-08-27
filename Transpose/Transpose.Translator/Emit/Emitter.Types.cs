@@ -198,7 +198,11 @@ public sealed partial class Emitter
                         : nestedName;
                 }
 
-                var ns = named.ContainingNamespace?.ToDisplayString();
+                // ToDisplayString() renders the global namespace as the literal "<global namespace>",
+                // which is not a name — an [External] type declared outside any namespace was emitted
+                // as `<global namespace>.Thing`, a syntax error that breaks the whole bundle. Such a
+                // type binds to a bare JS global, so it has no namespace at all.
+                var ns = named.ContainingNamespace is { IsGlobalNamespace: false } cns ? cns.ToDisplayString() : null;
                 // A type-level [Transpose.Namespace] overrides the emitted namespace: false/"" drops
                 // it (so Transpose.Core's String/Number/… bind to the JS globals), a string replaces it.
                 if (TransposeNaming.NamespaceOverride(named) is { } nsOverride)

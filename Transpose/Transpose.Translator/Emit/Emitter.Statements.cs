@@ -879,7 +879,7 @@ public sealed partial class Emitter
         _w.WriteLine($"{label}: {{");
         _w.Indent();
         _w.Write($"let {subject} = ");
-        EmitExpression(switchStmt.Expression);
+        EmitPatternSubject(switchStmt.Expression);
         _w.WriteLine(";");
 
         _breakTargets.Push(label);
