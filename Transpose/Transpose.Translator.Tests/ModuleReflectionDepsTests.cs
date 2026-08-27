@@ -42,7 +42,7 @@ public static class Wire
 ";
 
         private static IEnumerable<string> ImportsOf(string js) =>
-            Regex.Matches(js, @"^import '\./(c\d+\.mjs)';$", RegexOptions.Multiline).Select(x => x.Groups[1].Value);
+            Regex.Matches(js, @"^import '\./(c[0-9a-f]+(?:-\d+)?\.mjs)';$", RegexOptions.Multiline).Select(x => x.Groups[1].Value);
 
         /// <summary>Everything the chunk holding <paramref name="typeName"/> pulls in, transitively.</summary>
         private static HashSet<string> ChunkClosure(Emitter.ModuleOutput m, string typeName)

@@ -573,7 +573,7 @@ The short version:
   built against the package was missing 243 icons/illustrations, both variable-font families and the
   favicon.
 - **Lazily-loaded modules (done).** `outputBy: "Module"` in a project's `tps.json` makes a site build
-  emit one ES module per chunk (`chunks/cN.mjs`) plus an entry module, and index.html carries a single
+  emit one ES module per chunk (`chunks/c<hash>.mjs`) plus an entry module, and index.html carries a single
   `<script type="module">`. A **chunk is a strongly-connected component of the reference graph**
   `TypeRef` records while emitting each type — the smallest sound unit, because `Transpose.define`
   resolves `inherits` eagerly, so a per-class split cannot order a reference cycle. Components come
@@ -588,6 +588,20 @@ The short version:
   what it measures (Tesserae's sample gallery: the app's initial payload 1,109 KB → 164 KB raw, all
   140 samples rendering identically).
 
+  **A chunk is named after the hash of its own text** (`c<hash>.mjs` — the first 16 hex digits of the
+  SHA-256 of the file, `ChunkLeafName`), so a rebuild renames exactly the chunks whose JavaScript
+  changed: a chunk can be served immutably and a returning browser or CDN re-fetches only what really
+  differs, with nothing to bust by hand. Two invariants that already held make it work — a chunk's
+  text never mentions its *own* name (an import specifier is relative to the chunk *directory*, which
+  is fixed before any hashing), and every import points at an earlier chunk, so hashing in index
+  order always has a chunk's dependencies' final names in hand. Renaming a chunk therefore renames
+  the chunks that import it, which is required rather than incidental: an unchanged importer would
+  import a file that is no longer there. The hash is of the emitted text, not of the minified form a
+  Release site serves — minification is later and deterministic, so it still identifies the served
+  bytes — and the stale-output prune deletes a renamed chunk's predecessor with no extra machinery,
+  because the site manifest already records what the previous build wrote. See **`TODO.modules.md`**
+  §7i.
+
   Three things are load-bearing and were found by running it, not by reasoning: the entry module
   emits its **reflection metadata before the manifest** (`Modules.register` ends with a
   `Transpose.init()`, and `init` runs `Main` — anything after it would not exist yet); the stub
@@ -601,7 +615,7 @@ The short version:
   handlers) and publishes a chunk map — emitted type name → chunk file — embedded as
   `Transpose.Modules.json` (embedded but *not* listed in `Transpose.Resources.json`, like the
   `BuildStamp`, so nothing extracts it into a site). A consuming build merges its references' maps
-  (`ModuleMap.Read`) and emits `import '../<lib>/cN.mjs'` from whichever of its own chunks reaches
+  (`ModuleMap.Read`) and emits `import '../<lib>/c<hash>.mjs'` from whichever of its own chunks reaches
   into a library type — without that the reference would land on the library's stub, which cannot be
   resolved synchronously. Covered by `ModulePackageTests`.
 

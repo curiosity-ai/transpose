@@ -48,7 +48,7 @@ namespace Transpose.Translator.Tests
             m.Chunks.First(c => Regex.IsMatch(c.js, @"Transpose\.definei?\(""" + Regex.Escape(typeName) + @"""")).relPath;
 
         private static IEnumerable<string> ImportsOf(string js) =>
-            Regex.Matches(js, @"^import '\./(c\d+\.mjs)';$", RegexOptions.Multiline).Select(x => x.Groups[1].Value);
+            Regex.Matches(js, @"^import '\./(c[0-9a-f]+(?:-\d+)?\.mjs)';$", RegexOptions.Multiline).Select(x => x.Groups[1].Value);
 
         [TestMethod]
         public void MutuallyReferencingTypesShareOneChunk()
@@ -472,7 +472,7 @@ public class Program { public static void Main() { Console.WriteLine(new UsesBot
         }
 
         [TestMethod]
-        public void TheChunkGraphIsADagInFileOrder()
+        public void TheChunkGraphIsADagInEmissionOrder()
         {
             var m = Emit(@"
 using System;
@@ -482,17 +482,85 @@ public class Circle : IShape { public double R; public double Area() { return R 
 public class Pair { public Square A = new Square(); public Circle B = new Circle(); }
 public class Program { public static void Main() { Console.WriteLine(new Pair().A.Area()); } }
 ");
-            // Chunks are numbered in topological order, so every import points at a LOWER index.
-            // That is what makes the side-effect imports sound and the file names deterministic.
+            // Chunks are EMITTED in topological order, so every import points at a chunk emitted
+            // EARLIER. That is what makes the side-effect imports sound — and, since a chunk is named
+            // after the hash of its own text, it is also what lets a chunk's dependencies already
+            // have their final names when it is hashed. The order is the position in Chunks, not
+            // anything readable off the (content-addressed) file name.
+            var position = m.Chunks.Select((c, i) => (c.relPath, i))
+                                   .ToDictionary(x => System.IO.Path.GetFileName(x.relPath), x => x.i);
             foreach (var (relPath, js) in m.Chunks)
             {
-                var self = int.Parse(Regex.Match(relPath, @"c(\d+)\.mjs").Groups[1].Value);
+                var self = position[System.IO.Path.GetFileName(relPath)];
                 foreach (var dep in ImportsOf(js))
-                {
-                    var to = int.Parse(Regex.Match(dep, @"c(\d+)\.mjs").Groups[1].Value);
-                    Assert.IsTrue(to < self, $"{relPath} imports {dep}, which is not earlier in the order");
-                }
+                    Assert.IsTrue(position[dep] < self,
+                        $"{relPath} imports {dep}, which is not earlier in the order");
             }
+        }
+
+        [TestMethod]
+        public void AChunkIsNamedAfterTheHashOfItsContent()
+        {
+            var m = Emit(@"
+using System;
+public class Leaf { public int N; }
+public class Trunk { public Leaf L = new Leaf(); }
+public class Program { public static void Main() { Console.WriteLine(new Trunk().L.N); } }
+");
+            foreach (var (relPath, js) in m.Chunks)
+            {
+                var expected = "c" + Convert.ToHexStringLower(
+                    System.Security.Cryptography.SHA256.HashData(
+                        System.Text.Encoding.UTF8.GetBytes(js)).AsSpan(0, 8)) + ".mjs";
+                Assert.AreEqual(expected, System.IO.Path.GetFileName(relPath),
+                    "a chunk file is named after the hash of its own JavaScript — that is what makes a "
+                    + "rebuild rename exactly the files whose content changed");
+            }
+        }
+
+        [TestMethod]
+        public void EditingOneTypeRenamesOnlyItsOwnChunkAndItsDependents()
+        {
+            const string before = @"
+using System;
+public class Untouched { public int Stable() { return 1; } }
+public class Edited { public int Value() { return 41; } }
+public class Program { public static void Main() { Console.WriteLine(new Untouched().Stable() + new Edited().Value()); } }
+";
+            var m1 = Emit(before);
+            var m2 = Emit(before.Replace("return 41;", "return 42;"));
+
+            // The point of hashing: the chunk whose JavaScript changed gets a new URL, so a browser
+            // or CDN holding the old one re-fetches it, and every chunk that did NOT change keeps its
+            // name and is never re-fetched.
+            Assert.AreNotEqual(ChunkOf(m1, "Edited"), ChunkOf(m2, "Edited"),
+                "the edited type's chunk must be renamed, or a cached copy would be served forever");
+            Assert.AreEqual(ChunkOf(m1, "Untouched"), ChunkOf(m2, "Untouched"),
+                "an untouched chunk must keep its name, or every rebuild would invalidate the whole site");
+        }
+
+        [TestMethod]
+        public void ARenamedDependencyRenamesTheChunksThatImportIt()
+        {
+            const string before = @"
+using System;
+public class Dep { public int Value() { return 41; } }
+public class User { public Dep D = new Dep(); }
+public class Program { public static void Main() { Console.WriteLine(new User().D.Value()); } }
+";
+            var m1 = Emit(before);
+            var m2 = Emit(before.Replace("return 41;", "return 42;"));
+
+            // A chunk's text contains the names of the chunks it imports, so a renamed dependency is a
+            // changed importer — which it has to be: the old importer would import a file that is no
+            // longer there.
+            Assert.AreNotEqual(ChunkOf(m1, "Dep"), ChunkOf(m2, "Dep"));
+            Assert.AreNotEqual(ChunkOf(m1, "User"), ChunkOf(m2, "User"),
+                "a chunk importing a renamed chunk must itself be renamed");
+            StringAssert.Contains(
+                m2.Chunks.First(c => c.relPath == ChunkOf(m2, "User")).js,
+                System.IO.Path.GetFileName(ChunkOf(m2, "Dep")),
+                "and it must import the NEW name");
         }
 
         [TestMethod]

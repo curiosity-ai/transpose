@@ -27,9 +27,17 @@ namespace Transpose.Translator.Tests
             ModuleEmitTests.Emit(source, minChunkBytes: min, maxChunkBytes: max);
 
         private static IEnumerable<string> ImportsOf(string js) =>
-            Regex.Matches(js, @"^import '\./(c\d+\.mjs)';$", RegexOptions.Multiline).Select(x => x.Groups[1].Value);
+            Regex.Matches(js, @"^import '\./(c[0-9a-f]+(?:-\d+)?\.mjs)';$", RegexOptions.Multiline).Select(x => x.Groups[1].Value);
 
-        private static int IndexOfChunk(string relPath) => int.Parse(Regex.Match(relPath, @"c(\d+)\.mjs").Groups[1].Value);
+        /// <summary>Where a chunk sits in the emission order. A chunk file is named after the hash of
+        /// its content, so the order is its position in <c>Chunks</c> — there is no index to read off
+        /// the name.</summary>
+        private static Func<string, int> PositionIn(Emitter.ModuleOutput m)
+        {
+            var byName = m.Chunks.Select((c, i) => (name: System.IO.Path.GetFileName(c.relPath), i))
+                                 .ToDictionary(x => x.name, x => x.i);
+            return relPath => byName[System.IO.Path.GetFileName(relPath)];
+        }
 
         /// <summary>Ten independent types, each with a body big enough to be worth measuring.</summary>
         private static string Widgets(int count, int bodyLines, string prefix = "W")
@@ -97,12 +105,13 @@ public class Program { public static void Main() { System.Console.WriteLine(new 
         }
 
         [TestMethod]
-        public void EveryImportStillPointsAtALowerNumberedChunk()
+        public void EveryImportStillPointsAtAnEarlierChunk()
         {
             // The merged graph has to stay a DAG, and the emitter's invariant is stronger than that:
-            // a chunk only ever imports lower-numbered chunks. That is what makes the file names
-            // deterministic, and — because Transpose.define resolves `inherits` eagerly — what makes
-            // the evaluation order sound. A merge is the one operation that could break it.
+            // a chunk only ever imports chunks emitted before it. That is what lets a chunk be named
+            // after the hash of its own text (its dependencies' names are already final), and —
+            // because Transpose.define resolves `inherits` eagerly — what makes the evaluation order
+            // sound. A merge is the one operation that could break it.
             var body = new StringBuilder(Widgets(24, 10));
             for (var i = 0; i < 8; i++)
                 body.Append($"public class Mid{i} {{ public int Go(int n) {{ return new W{i}().Run(n) + new W{i + 8}().Run(n) + new W{i + 16}().Run(n); }} }}\n");
@@ -110,12 +119,13 @@ public class Program { public static void Main() { System.Console.WriteLine(new 
 
             var m = Emit(body.ToString(), min: 6 * 1024, max: 12 * 1024);
 
+            var position = PositionIn(m);
             foreach (var (relPath, js) in m.Chunks)
             {
-                var self = IndexOfChunk(relPath);
+                var self = position(relPath);
                 foreach (var imported in ImportsOf(js))
-                    Assert.IsTrue(IndexOfChunk(imported) < self,
-                        $"{relPath} imports {imported}, which is not a lower-numbered chunk");
+                    Assert.IsTrue(position(imported) < self,
+                        $"{relPath} imports {imported}, which is not an earlier chunk");
             }
         }
 
