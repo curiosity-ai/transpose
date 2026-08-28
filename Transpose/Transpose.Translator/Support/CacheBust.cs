@@ -20,7 +20,8 @@ namespace Transpose.Translator;
 /// characters — because a page can carry several assemblies, each stamped when *it* was built, and the
 /// runtime keeps the greatest one it is given (see <c>Resources/Require.js</c>). That makes the newest
 /// build on the page win whatever order the bundles happen to load in, which a plain random value
-/// could not do.
+/// could not do. The stamp is what orders; the random tail only keeps two builds apart, so two tokens
+/// minted in the same millisecond compare either way — which no two builds ever are.
 /// </para>
 /// </summary>
 public static class CacheBust

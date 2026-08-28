@@ -43,10 +43,13 @@ namespace Transpose.Translator.Tests
                     $"'{c}' is not a base-36 digit; the token goes into a URL query and a JS string "
                     + "literal, so it has to need escaping in neither");
 
-            // The two were minted in the same run, so the later one is never the smaller: the runtime
-            // keeps the greatest token a page's assemblies give it, and that has to be the newest build.
-            Assert.IsTrue(string.CompareOrdinal(second, first) >= 0,
-                $"'{second}' minted after '{first}' must not sort before it");
+            // What orders is the 8-digit TIME STAMP, and only that: the runtime keeps the greatest token
+            // a page's assemblies give it, and that has to be the newest build. The 3-character tail is
+            // random and orders nothing — it is there to keep two builds apart, and two tokens minted
+            // in the same millisecond (which is what this loop does, and what no two builds do) can
+            // therefore compare either way.
+            Assert.IsTrue(string.CompareOrdinal(second.Substring(0, 8), first.Substring(0, 8)) >= 0,
+                $"'{second}' minted after '{first}' must not stamp an earlier time");
         }
 
         [TestMethod]

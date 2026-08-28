@@ -844,6 +844,7 @@ The short version:
   entries. And it is minted **monotonically** (8 base-36 digits of the build time + 3 random), because
   a page carries several assemblies stamped at different times and loading in an order nobody
   controls: the runtime keeps the *greatest* token it is given, so the newest build on the page wins.
+  The time stamp is what orders — the random tail only keeps two builds apart.
 - **Wider `tps.json` surface** (outputBy, module formats, locales, before/after build, etc.).
 - **Incremental compilation (done for body-level edits; on by default via the SDK).** `--incremental`
   reuses the previous build of a project: nothing at all is compiled when every input hashes the same

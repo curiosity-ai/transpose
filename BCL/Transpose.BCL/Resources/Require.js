@@ -67,8 +67,9 @@
         /// Registers a build's cache-busting token. A page can carry several compiled assemblies, each
         /// stamped when *it* was built and loading in whatever order index.html (or an import graph)
         /// puts them in, so the greatest token wins rather than the last one: the compiler mints them
-        /// as a fixed-width base-36 time stamp plus a random tail, which makes "greater" mean "newer
-        /// build". Assigning $bust directly overrides that, which is what a host or a test does.
+        /// as a fixed-width base-36 time stamp (plus a random tail that only keeps two builds apart),
+        /// which makes "greater" mean "newer build". Assigning $bust directly overrides that, which is
+        /// what a host or a test does.
         cacheBust: function (token) {
             if (typeof token === "string" && token > require.$bust) require.$bust = token;
             return require.$bust;
