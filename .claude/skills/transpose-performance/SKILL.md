@@ -185,6 +185,9 @@ A compiler optimization that changes output is a bug, not an optimization. Befor
    covers both the package build and the site build):
    ```bash
    cd <tesserae>
+   # Each build stamps a fresh cache-busting token into its bundles (Transpose.Require), which is the
+   # one line of the output that is not reproducible. Pin it so the diff is about your change.
+   export TRANSPOSE_CACHE_BUST=fixed
    rm -rf Tesserae/bin Tesserae/obj Tesserae.Tests/bin Tesserae.Tests/obj
    $BASE --project Tesserae.Tests/Tesserae.Tests.csproj -c Debug -q
    cp -r Tesserae.Tests/bin/Debug/netstandard2.0/tps /tmp/out-base
@@ -193,9 +196,12 @@ A compiler optimization that changes output is a bug, not an optimization. Befor
    cp -r Tesserae.Tests/bin/Debug/netstandard2.0/tps /tmp/out-new
    diff -r /tmp/out-base /tmp/out-new
    ```
-   Output is byte-reproducible as of the enumerator-naming fix, so `diff -r` should be silent. If you
-   are comparing against a compiler older than that fix, normalise `$e<hex>` names first
-   (see [`scripts/compare-site.sh`](scripts/compare-site.sh)).
+   Output is byte-reproducible as of the enumerator-naming fix, so `diff -r` should be silent — with
+   `TRANSPOSE_CACHE_BUST` pinned; without it every bundle differs by its `Transpose.Require.cacheBust`
+   line and the diff tells you nothing. A baseline compiler predating cache-busting emits no such line
+   at all, so compare that one with `TRANSPOSE_CACHE_BUST=` (empty, i.e. busting off) instead. If you
+   are comparing against a compiler older than the enumerator-naming fix, normalise `$e<hex>` names
+   first (see [`scripts/compare-site.sh`](scripts/compare-site.sh)).
 3. **Touching `UnsupportedFeatureScanner`**: also diff the diagnostics of a file exercising every rule
    (pointers, `unsafe`, `checked`, `nint`, P/Invoke, `System.IO`/`System.Threading` types, a using
    alias and a static import) — see the scanner section of `TODO.optimization.md`.

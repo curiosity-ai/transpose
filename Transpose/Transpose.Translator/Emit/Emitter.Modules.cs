@@ -475,6 +475,10 @@ public sealed partial class Emitter
 
         if (!string.IsNullOrEmpty(AssemblyVersion))
             sb.Append("Transpose.assemblyVersion(\"").Append(_assemblyName).Append("\", \"").Append(AssemblyVersion).Append("\");\n");
+        // This build's cache-busting token — see the same call in Emitter.Emit's prelude. The entry
+        // module is the one place a module-mode assembly runs eagerly, so it is where it belongs.
+        if (!string.IsNullOrEmpty(CacheBustToken))
+            sb.Append("Transpose.Require && Transpose.Require.cacheBust && Transpose.Require.cacheBust(\"").Append(CacheBustToken).Append("\");\n");
         sb.Append("Transpose.$useAssembly(\"").Append(_assemblyName).Append("\");\n\n");
 
         // Reflection metadata describes declarations only, so it is always eager and always covers

@@ -19,6 +19,13 @@
     //     once cannot know which build is consuming it, so asking for either name has to work;
     //   * remembers what it loaded, so N callers share one fetch — and forgets what failed, so a
     //     later caller can retry rather than inheriting a poisoned result forever.
+    //   * busts the browser/CDN cache: every URL it injects carries this build's token as a query
+    //     ("assets/js/graph-kit.min.js?1q9v3k2abc"), so a redeployed page never serves the copy the
+    //     browser kept of a file whose NAME did not change. The token is stamped into each compiled
+    //     assembly's prelude (Transpose.Require.cacheBust), so it moves when a build moves and stands
+    //     still when nothing was rebuilt. It is applied at injection only — everything that identifies
+    //     a URL (the shared-fetch table, isLoaded, "index.html already carries this file") still works
+    //     on the URL as asked for.
     //
     // Loading is sequential when several URLs are given: a plugin that extends a library has to
     // arrive after it, and that is the common case (d3 then d3.lasso). A caller that genuinely wants
@@ -29,6 +36,9 @@
         $pending: {},
         // resolved url -> true once it is on the page
         $loaded: {},
+        // this page's cache-busting token, appended to every URL that is actually fetched. Set by the
+        // prelude of each compiled assembly; "" (nothing stamped it) means no busting at all.
+        $bust: "",
 
         /// Loads one or more URLs, in order, and completes when the last one has run. `kind` is one
         /// of Transpose.Require.kinds; 0 (auto) picks the element from the URL.
@@ -53,6 +63,17 @@
         },
 
         kinds: { auto: 0, script: 1, module: 2, style: 3 },
+
+        /// Registers a build's cache-busting token. A page can carry several compiled assemblies, each
+        /// stamped when *it* was built and loading in whatever order index.html (or an import graph)
+        /// puts them in, so the greatest token wins rather than the last one: the compiler mints them
+        /// as a fixed-width base-36 time stamp (plus a random tail that only keeps two builds apart),
+        /// which makes "greater" mean "newer build". Assigning $bust directly overrides that, which is
+        /// what a host or a test does.
+        cacheBust: function (token) {
+            if (typeof token === "string" && token > require.$bust) require.$bust = token;
+            return require.$bust;
+        },
 
         $one: function (url, kind) {
             if (typeof document === "undefined") {
@@ -147,6 +168,24 @@
             return null;
         },
 
+        /// The URL as it is fetched: the one that was asked for plus this build's token, as a query
+        /// with no value ("x.js?1q9v3k2abc", "x.js?v=7&1q9v3k2abc"). Only http(s) — and a URL that was
+        /// never resolved to a scheme at all — is served by something that caches; a data:/blob:
+        /// payload carries its own bytes and a query would corrupt it.
+        $bustUrl: function (url) {
+            if (!require.$bust) return url;
+            var colon = url.indexOf(":");
+            if (colon > 0) {
+                var scheme = url.substring(0, colon).toLowerCase();
+                if (scheme !== "http" && scheme !== "https") return url;
+            }
+            // A fragment stays at the end, where the browser expects it.
+            var hash = url.indexOf("#");
+            var head = hash >= 0 ? url.substring(0, hash) : url;
+            var tail = hash >= 0 ? url.substring(hash) : "";
+            return head + (head.indexOf("?") >= 0 ? "&" : "?") + require.$bust + tail;
+        },
+
         /// The element already serving this URL, if any. Compared on the resolved src/href — the
         /// attribute is whatever spelling the page was written with, the property is absolute.
         $find: function (resolved) {
@@ -181,16 +220,21 @@
 
         $inject: function (url, kind) {
             return new Promise(function (resolve, reject) {
+                // The cache-busting token goes on here and nowhere else: $pending, $loaded, isLoaded and
+                // $find all key off the URL as the caller asked for it, so a token changing between
+                // builds never turns one file into two entries, and a file index.html already carries
+                // (without a token) is still recognised rather than fetched a second time.
+                var fetched = require.$bustUrl(url);
                 var element;
                 if (kind === require.kinds.style) {
                     element = document.createElement("link");
                     element.rel = "stylesheet";
-                    element.href = url;
+                    element.href = fetched;
                 } else {
                     element = document.createElement("script");
                     if (kind === require.kinds.module) element.type = "module";
                     else element.type = "text/javascript";
-                    element.src = url;
+                    element.src = fetched;
                 }
 
                 element.addEventListener("load", function () { resolve(true); });
