@@ -160,6 +160,77 @@ public static class CompilationBuilder
     private static MetadataReference ReadReference(string path)
     {
         CompileProgress.Report($"reading assembly {Path.GetFullPath(path)}");
-        return MetadataReference.CreateFromFile(path);
+
+        var full = Path.GetFullPath(path);
+        var info = new FileInfo(full);
+        var stamp = (info.Length, info.LastWriteTimeUtc.Ticks);
+
+        lock (_references)
+        {
+            if (_references.TryGetValue(full, out var cached) && cached.Stamp == stamp)
+            {
+                cached.LastUsed = ++_useCounter;
+                return cached.Reference;
+            }
+
+            // CreateFromImage, not CreateFromFile: the reference is cached, and CreateFromFile keeps
+            // the file mapped for as long as it lives — which is the very thing that made a rebuild of
+            // a referenced project fail to write its own DLL (see OutputBuilder.AssemblyResources,
+            // which avoids Assembly.LoadFrom for the same reason). Reading the bytes costs one copy
+            // and leaves nothing holding the file.
+            var reference = MetadataReference.CreateFromImage(File.ReadAllBytes(full), filePath: full);
+            // Keyed by path, so a rebuilt assembly replaces its predecessor rather than accumulating:
+            // a long-running host recompiles the same paths over and over.
+            _references[full] = new Cached(stamp, reference, ++_useCounter);
+
+            // A build binds against a handful of assemblies and asks for the same ones every time, so
+            // the cap is only ever reached by a host that compiles unrelated projects one after
+            // another — the test suites, which build a package DLL under a fresh temp path per test.
+            // Dropping the least recently used entry lets Roslyn release what it decoded from it,
+            // which is the whole point; the working set of an ordinary build never comes close.
+            while (_references.Count > MaxCachedReferences)
+            {
+                var oldest = _references.OrderBy(e => e.Value.LastUsed).First().Key;
+                _references.Remove(oldest);
+            }
+
+            return reference;
+        }
     }
+
+    /// <summary>How many assemblies stay decoded at once — comfortably more than any one project
+    /// binds against, so a real build never evicts anything.</summary>
+    private const int MaxCachedReferences = 64;
+
+    private sealed class Cached((long Length, long Ticks) stamp, MetadataReference reference, long lastUsed)
+    {
+        public (long Length, long Ticks) Stamp { get; } = stamp;
+        public MetadataReference Reference { get; } = reference;
+        public long LastUsed { get; set; } = lastUsed;
+    }
+
+    private static long _useCounter;
+
+    /// <summary>
+    /// One <see cref="MetadataReference"/> per assembly file, reused across compilations.
+    ///
+    /// <para>
+    /// Roslyn decodes a reference's metadata — and caches the symbols it builds from it — against the
+    /// <see cref="MetadataReference"/> INSTANCE. A fresh instance per compilation therefore re-reads
+    /// and re-decodes the whole assembly, and holds the result in native memory the GC cannot account
+    /// for or reclaim: measured at ~12 MB per compilation for the 10.4 MB base library alone, which is
+    /// what walked the translator test suite's host up to the container's 13 GB limit and had it
+    /// OOM-killed partway through. It matters wherever one process compiles more than once — the test
+    /// suites, <c>tps --watch</c>, and <c>Transpose.Compiler.Library</c> hosts like
+    /// <c>curiosity-cli serve --watch</c>. A one-shot <c>tps</c> build compiles once and neither gains
+    /// nor loses.
+    /// </para>
+    ///
+    /// <para>
+    /// The stamp (length + last write time) is what keeps that sound in exactly the case that makes
+    /// caching tempting to get wrong: watch mode rebuilds a referenced project's DLL between
+    /// compilations, and the next build must bind against the new one.
+    /// </para>
+    /// </summary>
+    private static readonly Dictionary<string, Cached> _references = new(StringComparer.Ordinal);
 }
