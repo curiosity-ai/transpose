@@ -1,4 +1,4 @@
-<Project Sdk="Transpose.Build.Target/26.7.3049">
+<Project Sdk="Transpose.Build.Target/26.8.4125">
     <PropertyGroup>
         <TargetFramework>netstandard2.1</TargetFramework>
         <!-- Inherits LangVersion=latest from the Transpose.Build.Target SDK; pin an older
@@ -6,9 +6,9 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="Transpose.BCL" Version="26.7.3104" />
-        <PackageReference Include="Transpose.Core" Version="26.7.3106" />
-        <PackageReference Include="Transpose.Newtonsoft.Json" Version="26.7.3066" />
+        <PackageReference Include="Transpose.BCL" Version="26.8.4619" />
+        <PackageReference Include="Transpose.Core" Version="26.8.4597" />
+        <PackageReference Include="Transpose.Newtonsoft.Json" Version="26.8.4599" />
         <PackageReference Include="Tesserae" Version="2026.7.68468" />
     </ItemGroup>
 </Project>
