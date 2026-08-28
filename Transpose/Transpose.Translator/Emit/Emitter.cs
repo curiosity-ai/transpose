@@ -60,6 +60,13 @@ public sealed partial class Emitter
     /// <summary>Assembly version string emitted into a separate metadata file's header.</summary>
     public string AssemblyVersion { get; set; } = "1.0.0.0";
 
+    /// <summary>
+    /// This build's cache-busting token (<see cref="CacheBust"/>), handed to the runtime loader in the
+    /// assembly prelude so every URL <c>Transpose.Require</c> fetches at run time carries it as a
+    /// query — <c>my-library.min.js?<em>token</em></c>. Empty turns cache-busting off.
+    /// </summary>
+    public string CacheBustToken { get; set; } = "";
+
     /// <summary>When <see cref="MetadataTarget"/> is File/Assembly, the standalone metadata
     /// script (a full Transpose.assembly wrapper) produced by the last <see cref="Emit"/>; else null.</summary>
     public string? MetadataScript { get; private set; }
@@ -130,6 +137,19 @@ public sealed partial class Emitter
         // assembly body.
         if (!string.IsNullOrEmpty(AssemblyVersion))
             _w.WriteLine($"Transpose.assemblyVersion(\"{_assemblyName}\", \"{AssemblyVersion}\");");
+
+        // This build's cache-busting token. Transpose.Require appends it to every URL it fetches, so a
+        // redeployed page never gets a stale copy of a vendored bundle or stylesheet whose name did not
+        // change. It is registered once per assembly rather than baked into each call site: the URLs
+        // stay identical build over build (which is what lets --incremental splice in a cached type's
+        // JavaScript), and the loader keeps dedupe, IsLoaded and "index.html already carries this file"
+        // working on the un-busted URL. The runtime keeps the greatest token it is given, so on a page
+        // carrying several assemblies the newest build wins whatever order the bundles load in.
+        // The call is guarded because a site can be built by this compiler against an OLDER runtime
+        // (BuildStamp only rules out the reverse), and an unbustable page is a missing optimisation
+        // where a TypeError in the prelude is a blank one.
+        if (!string.IsNullOrEmpty(CacheBustToken))
+            _w.WriteLine($"Transpose.Require && Transpose.Require.cacheBust && Transpose.Require.cacheBust(\"{CacheBustToken}\");");
 
         _w.Write($"Transpose.assembly(\"{_assemblyName}\", function ($asm, globals) ");
         _w.Block(() =>

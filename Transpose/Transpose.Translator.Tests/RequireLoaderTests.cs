@@ -12,6 +12,11 @@ namespace Transpose.Translator.Tests
     /// and can be told which URLs 404. That is what lets the two behaviours worth guarding be asserted
     /// without a browser: which element a URL is loaded with, and the <c>.js</c> ⇄ <c>.min.js</c>
     /// fallback that lets a library published once work in a site built either way.
+    ///
+    /// The stub also pins the cache-busting token (<c>Transpose.Require.$bust</c>) to <c>b1</c>, so the
+    /// query every fetched URL carries is the same in every run — the real one is minted per build and
+    /// would otherwise differ each time. What that token does to a URL, and what it deliberately does
+    /// NOT do to the loader's idea of a URL's identity, is asserted here alongside everything else.
     /// </summary>
     [TestClass]
     public class RequireLoaderTests : TranslatorTestBase
@@ -47,6 +52,10 @@ public static class Dom
                 },
                 getElementsByTagName: function (tag) { return byTag[tag] || []; }
             };
+            // The token the compiled bundle stamped is a fresh one per build; keep it (one test is
+            // about it) and pin a fixed one, so what a request URL looks like can be written down.
+            globalThis.__stamped = Transpose.Require.$bust;
+            Transpose.Require.$bust = 'b1';
             document.head = {
                 appendChild: function (element) {
                     var url = element.src || element.href;
@@ -68,6 +77,12 @@ public static class Dom
     public static void Missing(string url) => Script.Write(""__missing[{0}] = true;"", url);
 
     public static string Requested => Script.Write<string>(""__requested.join('\\n')"");
+
+    /// The token the compiler stamped into this bundle's prelude, before Install() pinned it.
+    public static string Stamped => Script.Write<string>(""__stamped"");
+
+    /// Puts the compiler's own token back, for the one test that is about it.
+    public static void UsedStampedCacheBust() => Script.Write(""Transpose.Require.$bust = __stamped;"");
 }
 ";
 
@@ -93,13 +108,15 @@ public class Program
 }", skipRoslyn: true);
 
             Assert.AreEqual(
-                "style https://site.test/app/assets/css/site.css\n"
-                + "script https://site.test/app/assets/js/d3.js\n"
-                + "module https://site.test/app/chunks/c0.mjs\n"
-                + "module https://site.test/app/Admin.js?v=7",
+                "style https://site.test/app/assets/css/site.css?b1\n"
+                + "script https://site.test/app/assets/js/d3.js?b1\n"
+                + "module https://site.test/app/chunks/c0.mjs?b1\n"
+                + "module https://site.test/app/Admin.js?v=7&b1",
                 output,
                 "a .css is a stylesheet link, a .mjs a module, anything else a classic script — and an "
-                + "explicit kind wins over the extension");
+                + "explicit kind wins over the extension. Every one of them is fetched with the build's "
+                + "cache-busting token appended — as the query when there is none, and after the "
+                + "caller's own query when there is one");
         }
 
         [TestMethod]
@@ -113,8 +130,8 @@ public class Program
     public static async Task Main()
     {
         Dom.Install();
-        Dom.Missing(""https://site.test/app/assets/js/graph-kit.min.js"");
-        Dom.Missing(""https://site.test/app/assets/js/only-minified.js"");
+        Dom.Missing(""https://site.test/app/assets/js/graph-kit.min.js?b1"");
+        Dom.Missing(""https://site.test/app/assets/js/only-minified.js?b1"");
 
         await Require.RequireAsync(""assets/js/graph-kit.min.js"");
         await Require.RequireAsync(""assets/js/only-minified.js"");
@@ -124,10 +141,10 @@ public class Program
 }", skipRoslyn: true);
 
             Assert.AreEqual(
-                "script https://site.test/app/assets/js/graph-kit.min.js\n"
-                + "script https://site.test/app/assets/js/graph-kit.js\n"
-                + "script https://site.test/app/assets/js/only-minified.js\n"
-                + "script https://site.test/app/assets/js/only-minified.min.js",
+                "script https://site.test/app/assets/js/graph-kit.min.js?b1\n"
+                + "script https://site.test/app/assets/js/graph-kit.js?b1\n"
+                + "script https://site.test/app/assets/js/only-minified.js?b1\n"
+                + "script https://site.test/app/assets/js/only-minified.min.js?b1",
                 output,
                 "the fallback goes both ways: a site keeps whichever variant its own build called for");
         }
@@ -149,8 +166,8 @@ public class Program
         await Require.RequireAsync(""https://site.test/app/assets/js/lib.js"");
         Console.WriteLine(""loaded: "" + Require.IsLoaded(""assets/js/lib.js""));
 
-        Dom.Missing(""https://site.test/app/gone.js"");
-        Dom.Missing(""https://site.test/app/gone.min.js"");
+        Dom.Missing(""https://site.test/app/gone.js?b1"");
+        Dom.Missing(""https://site.test/app/gone.min.js?b1"");
         for (var attempt = 0; attempt < 2; attempt++)
         {
             try
@@ -172,15 +189,17 @@ public class Program
                 "loaded: True\n"
                 + "failed: Transpose.Require: failed to load 'https://site.test/app/gone.js'.\n"
                 + "failed: Transpose.Require: failed to load 'https://site.test/app/gone.js'.\n"
-                + "script https://site.test/app/assets/js/lib.js\n"
-                + "script https://site.test/app/gone.js\n"
-                + "script https://site.test/app/gone.min.js\n"
-                + "script https://site.test/app/gone.js\n"
-                + "script https://site.test/app/gone.min.js",
+                + "script https://site.test/app/assets/js/lib.js?b1\n"
+                + "script https://site.test/app/gone.js?b1\n"
+                + "script https://site.test/app/gone.min.js?b1\n"
+                + "script https://site.test/app/gone.js?b1\n"
+                + "script https://site.test/app/gone.min.js?b1",
                 output,
                 "a successful load is shared by every later caller; a failed one is forgotten, so the "
                 + "second attempt really tries again — and it reports the URL that was asked for, not "
-                + "the counterpart it also tried");
+                + "the counterpart it also tried, nor the token appended to fetch it. Three spellings "
+                + "of one file are still one fetch: the token is applied where the element is created, "
+                + "so it never turns one entry into two");
         }
 
         [TestMethod]
@@ -207,7 +226,44 @@ public class Program
 }", skipRoslyn: true);
 
             Assert.AreEqual("loaded before: True\nrequests: []", output,
-                "a file the page already carries is waited on, never fetched a second time");
+                "a file the page already carries is waited on, never fetched a second time — index.html "
+                + "wrote it without a cache-busting token, and busting happens at injection, so the "
+                + "element is still recognised");
+        }
+
+        /// <summary>
+        /// The token itself: the compiler stamps one into every bundle it emits, and it is what the
+        /// loader appends. The other tests pin it so their URLs can be written down; this one puts the
+        /// real one back, which is what a deployed page carries — a file whose name did not change is
+        /// still asked for under a URL nothing has cached.
+        /// </summary>
+        [TestMethod]
+        public async Task EveryFetchCarriesTheTokenThisBuildStampedAsync()
+        {
+            var output = await RunTest(Preamble + @"
+public class Program
+{
+    public static async Task Main()
+    {
+        Dom.Install();
+        Dom.UsedStampedCacheBust();
+
+        await Require.RequireAsync(""assets/js/lib.js"");
+
+        // A cache-busting query says nothing about what kind of file it is, and nothing about which
+        // file it is: the element is still picked from the extension, and asking again is still free.
+        await Require.RequireAsync(""assets/js/lib.js"");
+        Console.WriteLine(""stamped: "" + (Dom.Stamped.Length > 0));
+        Console.WriteLine(""loaded: "" + Require.IsLoaded(""assets/js/lib.js""));
+        Console.WriteLine(Dom.Requested == ""script https://site.test/app/assets/js/lib.js?"" + Dom.Stamped);
+    }
+}", skipRoslyn: true);
+
+            Assert.AreEqual("stamped: True\nloaded: True\nTrue", output,
+                "the compiler stamps this build's token into the bundle it emits (CacheBustTests covers "
+                + "what one looks like; the suite pins it), the loader appends it to what it fetches, "
+                + "and nothing else about the loader notices — one fetch, and IsLoaded still answers "
+                + "for the URL as it was asked for");
         }
     }
 }

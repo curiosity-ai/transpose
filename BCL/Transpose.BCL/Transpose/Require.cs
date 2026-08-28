@@ -47,6 +47,24 @@ namespace Transpose
     /// (<c>d3.js</c> then <c>d3.lasso.js</c>), which is the common case. Ask in separate calls, and
     /// await them together, when they are genuinely independent.
     /// </para>
+    ///
+    /// <para>
+    /// Every URL it fetches carries the build's cache-busting token as a query —
+    /// <c>my-library.min.js?1q9v3k2abc</c> — so a page that has been rebuilt and redeployed never
+    /// serves the copy a browser or a CDN kept of a file whose <em>name</em> did not change. The
+    /// compiler stamps one token per build into each assembly it emits and the newest one on the page
+    /// wins, so it moves when a build moves and stands still when nothing was rebuilt. Set
+    /// <c>TRANSPOSE_CACHE_BUST</c> to pin the token, or to empty to switch this off, when a build's
+    /// output has to be byte-identical to another's.
+    /// </para>
+    ///
+    /// <para>
+    /// The token is added where the element is created and nowhere else, so it changes nothing about
+    /// a URL's identity: three spellings of one file are still one fetch,
+    /// <see cref="IsLoaded(string)"/> answers about the URL as it was asked for, and a file
+    /// <c>index.html</c> already carries — written there without a token — is still recognised rather
+    /// than fetched a second time.
+    /// </para>
     /// </summary>
     /// <example>
     /// <code>

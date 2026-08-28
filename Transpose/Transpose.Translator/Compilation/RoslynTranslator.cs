@@ -218,11 +218,16 @@ public sealed class RoslynTranslator
         TranslationException? emitterFailure = null;
         try
         {
+            // One token for this build, shared by every emitter it runs (module entry and bundle are
+            // two walks of the same compilation and must agree). CacheBust.NewToken mints a fresh one
+            // per build, so a redeployed page re-fetches whatever Transpose.Require loads at run time.
+            var cacheBustToken = CacheBust.NewToken();
             Emitter NewEmitter() => new Emitter(compilation, assemblyName, models, incremental)
             {
                 ReflectionEnabled = reflectionEnabled,
                 MetadataTarget = metadataTarget,
                 AssemblyVersion = string.IsNullOrWhiteSpace(assemblyVersion) ? "1.0.0.0" : assemblyVersion!,
+                CacheBustToken = cacheBustToken,
             };
             var emitter = NewEmitter();
             if (emitModules)

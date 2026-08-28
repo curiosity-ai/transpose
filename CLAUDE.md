@@ -389,7 +389,9 @@ The short version:
   build. Do not "tidy them away".
 - Any change here must keep the emitted site **byte-identical** — output is reproducible, so
   `diff -r` against a baseline compiler is the gate. The emitted **assembly** is reproducible as well
-  (`deterministic: true`), so the DLL is diffable too. The test suite is the other gate.
+  (`deterministic: true`), so the DLL is diffable too. The test suite is the other gate. One line of a
+  bundle is deliberately *not* reproducible — the per-build `Transpose.Require.cacheBust("…")` stamp
+  (see the Require section) — so export `TRANSPOSE_CACHE_BUST=fixed` for both builds before diffing.
 - The benchmark corpus is the **tesserae** submodule at `benchmarks/tesserae`
   (`git submodule update --init benchmarks/tesserae`). Recorded reports live in `docs/perf/`.
 - **Debug and Release are structurally different builds.** Debug emits a *metadata-only* assembly
@@ -822,6 +824,26 @@ The short version:
   above: a library published once cannot know which build is consuming it, so asking for either name
   has to work. Several URLs load in order, because a plugin has to arrive after the library it
   extends. Covered by `RequireLoaderTests`, which runs the real runtime against a DOM stub.
+
+  **Everything it fetches is cache-busted per build.** A file `Require` loads is fetched by a URL the
+  compiler does not version — `assets/js/graph-kit.min.js` is the same URL after the bytes behind it
+  changed — so a browser or a CDN holding the previous copy has no reason to ask again. Every build
+  therefore mints one token (`Transpose.Translator/Support/CacheBust.cs`) and stamps it into each
+  assembly's prelude as `Transpose.Require.cacheBust("…")`, next to the `Transpose.assemblyVersion`
+  call and in the entry module in module mode; the loader appends it as a query to every URL it
+  injects (`my-library.min.js?1q9v3k2abc`, `Admin.js?v=7&1q9v3k2abc`). `TRANSPOSE_CACHE_BUST` pins the
+  token, or switches busting off when set to empty/`0`/`none` — which is what a build whose output has
+  to be **byte-identical** to a baseline's (the reproducibility gate under Performance above) sets.
+
+  Three details are load-bearing. The token is registered **once per assembly**, not baked into each
+  call site: the emitted JavaScript of a type is then the same build over build, which is what lets
+  `--incremental` splice a cached type's JS back in, and a computed URL is busted as readily as a
+  literal one. It is applied **at injection only** (`$inject`), never in what identifies a URL — so
+  the shared-fetch table, `IsLoaded` and "index.html already carries this file" all keep working on
+  the URL as it was asked for, and a token that moves between builds never turns one file into two
+  entries. And it is minted **monotonically** (8 base-36 digits of the build time + 3 random), because
+  a page carries several assemblies stamped at different times and loading in an order nobody
+  controls: the runtime keeps the *greatest* token it is given, so the newest build on the page wins.
 - **Wider `tps.json` surface** (outputBy, module formats, locales, before/after build, etc.).
 - **Incremental compilation (done for body-level edits; on by default via the SDK).** `--incremental`
   reuses the previous build of a project: nothing at all is compiled when every input hashes the same
