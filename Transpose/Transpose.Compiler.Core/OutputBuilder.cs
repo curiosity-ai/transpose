@@ -91,8 +91,18 @@ internal static class OutputBuilder
     /// <summary>The outcome of assembling a site: the directory it was written to, and every stale
     /// file that <c>cleanOutputFolder</c> pruned (files from a previous build this one did not
     /// re-produce). <see cref="RemovedStaleFiles"/> is empty when cleaning is disabled or nothing was
-    /// stale.</summary>
-    public readonly record struct SiteBuildResult(string OutputDir, IReadOnlyList<string> RemovedStaleFiles);
+    /// stale.
+    ///
+    /// <see cref="UnscriptedReferences"/> names the referenced assemblies <c>dontLoadReferences</c>
+    /// kept out of index.html (extracted, but not scripted), and <see cref="UnmatchedDontLoadReferences"/>
+    /// the entries of that list which matched no reference at all — a typo or a dependency that has
+    /// since been dropped, which would otherwise do nothing silently. Both are reported by the caller;
+    /// the site build itself writes no diagnostics.</summary>
+    public readonly record struct SiteBuildResult(
+        string OutputDir,
+        IReadOnlyList<string> RemovedStaleFiles,
+        IReadOnlyList<string> UnscriptedReferences,
+        IReadOnlyList<string> UnmatchedDontLoadReferences);
 
     /// <summary>
     /// One stylesheet a site build produces <em>from files on disk</em> — a <c>tps.json</c> resource
@@ -169,7 +179,7 @@ internal static class OutputBuilder
         // keeps exactly one of those sets — the one its own profile calls for. A package that offers
         // no module variant falls back to its minified/formatted bundle even in a chunked site, which
         // is how a plain library (Transpose.Newtonsoft.Json, a vendored binding) keeps working.
-        void RouteTaggedPackageJs(IReadOnlyList<EmbeddedJs> jsFiles)
+        void RouteTaggedPackageJs(IReadOnlyList<EmbeddedJs> jsFiles, bool scripted)
         {
             var takeModules = siteIsChunked && jsFiles.Any(f => f.Variant == JsVariant.ModuleEntry);
 
@@ -189,7 +199,7 @@ internal static class OutputBuilder
                 }
 
                 WriteText(f.Rel, f.Text);
-                if (!f.Load) continue;
+                if (!f.Load || !scripted) continue;
                 jsOuts.Add(new JsOut
                 {
                     Path = f.Rel,
@@ -218,7 +228,10 @@ internal static class OutputBuilder
         // every consumer that fetches the file by path — a module loader, a `new Worker(...)`, an
         // import map — none of which this compiler rewrites. It matches what the same resource group
         // does when it is built from disk rather than extracted from a package (ProcessResourceGroup).
-        void RoutePackageJs(IReadOnlyList<EmbeddedJs> jsFiles)
+        // `scripted` is the consumer-side `dontLoadReferences` verdict for the assembly these files
+        // came from: false writes every one of them into the site exactly as usual and injects none of
+        // them into index.html, so the application can fetch the library itself when it first needs it.
+        void RoutePackageJs(IReadOnlyList<EmbeddedJs> jsFiles, bool scripted = true)
         {
             // A package says which of ITS OWN compiled files are interchangeable and what each one is
             // for, so those are chosen by a filter rather than a guess. Its authored resources carry no
@@ -228,7 +241,7 @@ internal static class OutputBuilder
             var tagged = jsFiles.Where(f => f.Variant is not null).ToList();
             if (tagged.Count > 0)
             {
-                RouteTaggedPackageJs(tagged);
+                RouteTaggedPackageJs(tagged, scripted);
                 jsFiles = jsFiles.Where(f => f.Variant is null).ToList();
                 if (jsFiles.Count == 0) return;
             }
@@ -251,7 +264,7 @@ internal static class OutputBuilder
                     // A standalone .min.js is still a Release-only script as far as index.html goes,
                     // matching how the same group routes from disk. A .dontload resource is on disk
                     // (above) but never injected into either HTML.
-                    if (f.Load) jsOuts.Add(new JsOut { Path = f.Rel, IsMinified = IsMinifiedName(f.FileName), IsModule = f.Module });
+                    if (f.Load && scripted) jsOuts.Add(new JsOut { Path = f.Rel, IsMinified = IsMinifiedName(f.FileName), IsModule = f.Module });
                     continue;
                 }
 
@@ -269,7 +282,7 @@ internal static class OutputBuilder
                 var pre = byName[counterpart];   // pre-built .min.js from the package
                 WriteText(pre.Rel, pre.Text);
                 if (wantMinified) o.MinifiedPath = pre.Rel;
-                if (f.Load) jsOuts.Add(o);
+                if (f.Load && scripted) jsOuts.Add(o);
             }
         }
 
@@ -283,11 +296,22 @@ internal static class OutputBuilder
         //    post-order walk of the assembly reference graph (dependencies first), matching how the
         //    legacy compiler loaded assemblies. The TransposeR shim loads immediately after the
         //    Transpose runtime (tps.js) and before any generated code that calls into it.
+        // tps.json `dontLoadReferences`: assemblies whose JavaScript this site copies but never
+        // scripts. The application loads them itself (Transpose.Require / Transpose.Modules) the first
+        // time it needs them, so a heavy binding only one screen uses costs nothing on start-up.
+        var dontLoad = new DontLoadReferenceMatcher(config.DontLoadReferences);
+
         foreach (var dll in TopologicalOrder(project.ReferencePaths))
         {
+            // A suppressed reference contributes its files and none of its index.html entries — its
+            // stylesheets no more than its scripts, exactly the reach the resource `load` flag has.
+            // The CSS links are collected by the extractors, so hand them a list that is thrown away.
+            var scripted = !dontLoad.Matches(Path.GetFileNameWithoutExtension(dll));
+            var css = scripted ? cssLinks : new List<string>();
+
             RoutePackageJs(projectDlls.Contains(dll)
-                ? ExtractProjectDllResources(dll, outputDir, cssLinks, utf8, written)
-                : ExtractEmbeddedJs(dll, outputDir, cssLinks, written));
+                ? ExtractProjectDllResources(dll, outputDir, css, utf8, written)
+                : ExtractEmbeddedJs(dll, outputDir, css, written), scripted);
 
             if (string.Equals(Path.GetFileNameWithoutExtension(dll), "Transpose", StringComparison.OrdinalIgnoreCase))
                 EmitCompilerJs("tps.shim.js", RoslynTranslator.RuntimeShim);
@@ -362,7 +386,7 @@ internal static class OutputBuilder
 
         WriteManifest(manifestPath, outputDir, written, utf8);
 
-        return new SiteBuildResult(outputDir, removed);
+        return new SiteBuildResult(outputDir, removed, dontLoad.Matched, dontLoad.Unmatched);
     }
 
     /// <summary>
@@ -1430,6 +1454,79 @@ internal static class OutputBuilder
                 if (!Directory.EnumerateFileSystemEntries(dir).Any()) Directory.Delete(dir);
             }
             catch { /* ignore: a concurrently-recreated or locked directory is not fatal */ }
+        }
+    }
+
+    /// <summary>
+    /// The tps.json <c>dontLoadReferences</c> list, compiled once per build: which referenced
+    /// assemblies must be extracted into the site but left out of index.html.
+    ///
+    /// A pattern is matched against the reference's <em>assembly name</em> (<c>Tesserae.Plotly</c>, not
+    /// the DLL's path or file name) with <c>*</c>/<c>?</c> wildcards, and always case-insensitively:
+    /// an assembly name is a name, not a path, so the same tps.json must behave the same on every
+    /// operating system.
+    ///
+    /// It records what it matched, so the build can report the references it left unscripted, and what
+    /// it did not — an entry naming an assembly this project does not reference is almost always a typo
+    /// or a dependency that has since been dropped, and its silent failure mode (the library loads
+    /// normally, as if the setting were not there) is exactly the one worth a warning.
+    /// </summary>
+    private sealed class DontLoadReferenceMatcher
+    {
+        private readonly List<(string pattern, System.Text.RegularExpressions.Regex regex)> _patterns;
+        private readonly HashSet<string> _matchedPatterns = new(StringComparer.OrdinalIgnoreCase);
+        private readonly SortedSet<string> _matchedAssemblies = new(StringComparer.OrdinalIgnoreCase);
+
+        public DontLoadReferenceMatcher(IReadOnlyList<string> patterns)
+            => _patterns = patterns
+                .Where(p => !string.IsNullOrWhiteSpace(p))
+                // A `.dll` suffix is what the file on disk is called and a natural thing to write, so
+                // accept it rather than silently matching nothing; the pattern is kept as authored for
+                // the "matched nothing" report, which has to echo what the user wrote.
+                .Select(p => (p.Trim(), NameGlobToRegex(TrimDll(p.Trim()))))
+                .ToList();
+
+        private static string TrimDll(string pattern)
+            => pattern.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) ? pattern[..^4] : pattern;
+
+        public bool Matches(string assemblyName)
+        {
+            if (_patterns.Count == 0) return false;
+
+            var matched = false;
+            foreach (var (pattern, regex) in _patterns)
+            {
+                if (!regex.IsMatch(assemblyName)) continue;
+                _matchedPatterns.Add(pattern);
+                matched = true;
+            }
+            if (matched) _matchedAssemblies.Add(assemblyName);
+            return matched;
+        }
+
+        /// <summary>The assembly names kept out of index.html, in name order.</summary>
+        public IReadOnlyList<string> Matched => _matchedAssemblies.ToList();
+
+        /// <summary>The declared entries that matched no referenced assembly, in the order written.</summary>
+        public IReadOnlyList<string> Unmatched => _patterns
+            .Select(p => p.pattern)
+            .Where(p => !_matchedPatterns.Contains(p))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        private static System.Text.RegularExpressions.Regex NameGlobToRegex(string glob)
+        {
+            var sb = new StringBuilder("^");
+            foreach (var c in glob)
+            {
+                if (c == '*') sb.Append(".*");
+                else if (c == '?') sb.Append('.');
+                else sb.Append(System.Text.RegularExpressions.Regex.Escape(c.ToString()));
+            }
+            sb.Append('$');
+            return new System.Text.RegularExpressions.Regex(sb.ToString(),
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant |
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         }
     }
 
