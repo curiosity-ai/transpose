@@ -773,8 +773,9 @@ The short version:
   class resolved from a string: the type joins the eager roots, like the attribute classes the
   metadata constructs. The shipped JSON bindings carry the attribute — Newtonsoft's four
   `DeserializeObject<T>`/`DeserializeAnonymousType<T>` overloads and System.Text.Json's two
-  `Deserialize<TValue>` overloads — so an application needs no declaration of its own; both projects
-  pin `Transpose.BCL` 26.8.4102, the first release carrying the attribute. See
+  `Deserialize<TValue>` overloads — so an application needs no declaration of its own. The attribute
+  first shipped in `Transpose.BCL` 26.8.4102, so that is the floor those two packages need; they pin
+  the current release like everything else here. See
   `Emitter.ReflectionDeps.cs`, `ModuleReflectionDepsTests` and `TODO.modules.md` §7h.
 
   **`[LoadsTypeArguments]` is the same attribute pointing the other way.** A generic call emits its
