@@ -223,6 +223,7 @@ internal sealed class TransposeJson
                 HtmlTitle        = o.HtmlTitle         ?? b.HtmlTitle,
                 HtmlBody         = o.HtmlBody          ?? b.HtmlBody,
                 HtmlHead         = o.HtmlHead          ?? b.HtmlHead,
+                HtmlMeta         = o.HtmlMeta          ?? b.HtmlMeta,
                 Resources        = b.Resources.Concat(o.Resources).ToList(),
                 CleanOutputFolder = o.CleanOutputFolder ?? b.CleanOutputFolder,
                 LoadCompiledOutput = o.LoadCompiledOutput ?? b.LoadCompiledOutput,
