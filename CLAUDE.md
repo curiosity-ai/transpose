@@ -895,6 +895,19 @@ The short version:
   write its DLL (`IOException`, which is exactly what watch mode used to do on its second rebuild of a
   multi-project app), and resolution is by assembly identity, so a re-read of a rebuilt DLL silently
   returns the copy loaded the first time.
+- **A reference assembly is read once per process (`CompilationBuilder.ReadReference`).** Roslyn decodes
+  a reference's metadata, and caches the symbols it builds from it, against the `MetadataReference`
+  **instance** — so a fresh one per compilation re-reads and re-decodes the whole assembly and holds
+  the result in native memory the GC cannot account for or reclaim. Measured at ~12 MB per compilation
+  for the 10.4 MB base library alone (300 translations: RSS 3.7 GB against a 337 MB managed heap, and
+  an aggressive full collect gave back almost none of it), which is what walked the translator suite's
+  test host into the container's 13 GB limit and had it OOM-killed with ~80 tests still to run. The
+  references are therefore cached by path, and each is read with `CreateFromImage` rather than
+  `CreateFromFile` so nothing keeps the file mapped — the locking failure the bullet above is about.
+  The cache entry carries the file's length and last-write time, because the case that makes caching
+  tempting to get wrong is watch mode rebuilding a referenced project's DLL between two compilations;
+  a stale entry there would bind the previous build, silently. A one-shot `tps` build compiles once and
+  neither gains nor loses. `MetadataReferenceCacheTests` covers all three properties.
 
 A compilation server is still intentionally **out of scope** — though the measurements in
 `TODO.incremental.md` say what it would be worth (the residual cost of an incremental build is almost
