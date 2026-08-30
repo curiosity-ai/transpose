@@ -631,10 +631,29 @@ The short version:
   lazy relative to, so it defers everything (its eager set is just the chunks holding `[Ready]`
   handlers) and publishes a chunk map — emitted type name → chunk file — embedded as
   `Transpose.Modules.json` (embedded but *not* listed in `Transpose.Resources.json`, like the
-  `BuildStamp`, so nothing extracts it into a site). A consuming build merges its references' maps
-  (`ModuleMap.Read`) and emits `import '../<lib>/c<hash>.mjs'` from whichever of its own chunks reaches
-  into a library type — without that the reference would land on the library's stub, which cannot be
-  resolved synchronously. Covered by `ModulePackageTests`.
+  `BuildStamp`, so nothing extracts it into a site). Without an import, a reference into a library
+  would land on its stub, which cannot be resolved synchronously. Covered by `ModulePackageTests`.
+
+  **A cross-assembly import names the type, and the site resolves it.** A chunk file name is the hash
+  of its own text, so a package that had written its dependency's file names into its own chunks went
+  stale the moment that dependency shipped: `Tesserae.GraphKit` compiled against Tesserae 1.0 kept
+  importing `../Tesserae/c0f13a9b….mjs`, Tesserae 1.1 no longer had that file, nothing about GraphKit
+  had changed so nothing rebuilt it, and the app 404'd on the first screen that needed the chunk. So
+  the emitter writes `import 'tps-type:tss.UI';` — the *type*, which does not move — and
+  `ModuleLinker` (`Transpose.Compiler.Core`, driven by `OutputBuilder`) turns each placeholder into a
+  path when the **site** is assembled, reading each reference's published chunk map and walking the
+  assemblies in dependency order. The translator no longer reads those maps at all, so a compilation's
+  output no longer depends on which build of a library is installed. Four consequences: a placeholder
+  nothing in the site defines is simply dropped (the library was taken as a single bundle, so its code
+  is already on the page); a file the link *changes* is renamed to the hash of its new text — and the
+  rename cascades into its importers and the entry module's `Transpose.Modules.register` manifest —
+  so a chunk URL still identifies its bytes; a package built before this existed carries real paths,
+  matches no placeholder and passes through byte-identical; and the DLL always carries the placeholder
+  form while the site always carries the linked one, which is what keeps a package a self-contained,
+  version-independent artifact. `ModuleSpecifier` (`Transpose.Translator/Support`) owns the
+  vocabulary — the prefix, the relative-path arithmetic, and a reader for a module's *leading* import
+  block that works on minified text (a package embeds its chunks already minified). See
+  `TODO.modules.md` §7j and `ModuleLinkTests`.
 
   A fourth load-bearing detail, found the same way as the three above: **a stub is retired in place,
   never deleted.** `Class.set` already copies the members of whatever previously occupied a type's

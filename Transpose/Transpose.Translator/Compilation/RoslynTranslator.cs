@@ -87,7 +87,6 @@ public sealed class RoslynTranslator
         IncrementalPlan? incremental = null,
         bool emitModules = false,
         string chunkDirectory = "chunks",
-        IReadOnlyDictionary<string, string>? externalChunks = null,
         bool packageModules = false,
         IReadOnlyDictionary<string, List<string>>? externalSkipClusterDeps = null,
         int minChunkBytes = Emitter.DefaultMinChunkBytes,
@@ -237,7 +236,7 @@ public sealed class RoslynTranslator
                 // metadata script and the "javascript" of this build is the entry module.
                 CompileProgress.Report("emitting JavaScript modules");
                 moduleOutput = PhaseTimings.Measure("emit JavaScript (modules)",
-                    () => emitter.EmitModules(chunkDirectory, externalChunks, packageModules, externalSkipClusterDeps,
+                    () => emitter.EmitModules(chunkDirectory, packageModules, externalSkipClusterDeps,
                                               minChunkBytes, maxChunkBytes, chunkOracle));
                 js = moduleOutput.EntryJs;
             }
