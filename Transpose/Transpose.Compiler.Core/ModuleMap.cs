@@ -3,37 +3,28 @@ using System.Text.Json;
 namespace Transpose.Compiler;
 
 /// <summary>
-/// Reads the chunk maps that module-mode packages publish (<c>Transpose.Modules.json</c>, embedded
-/// by <see cref="ResourceEmbedder"/>) and merges them into the single lookup the translator needs:
-/// emitted type name → site-relative chunk file.
+/// Reads what a module-mode package publishes for the next compiler: its chunk map
+/// (<c>Transpose.Modules.json</c> — emitted type name → the site-relative chunk file that defines it)
+/// and its <c>[SkipTypeClustering]</c> member dependency sets, both embedded by
+/// <see cref="ResourceEmbedder"/>.
 ///
-/// A consuming build uses it to turn a reference to a library type into an <c>import</c> of the
-/// chunk that defines it. Without that the reference would resolve to the library's stub, and a stub
-/// cannot be resolved synchronously — which is exactly the failure the module runtime is designed to
-/// report loudly rather than paper over.
+/// The chunk map is what a site build resolves a package's type placeholders through
+/// (<see cref="ModuleLinker"/>): a reference into a library has to become an <c>import</c> of the
+/// chunk defining that type, or it would resolve to the library's stub — and a stub cannot be
+/// resolved synchronously, which is exactly the failure the module runtime reports loudly rather
+/// than papers over.
 /// </summary>
 internal static class ModuleMap
 {
-    /// <summary>Merges the chunk maps of every reference that has one. A later reference never
-    /// overwrites an earlier entry: two assemblies claiming the same type name would be a name
-    /// collision the compiler cannot resolve, and the first (dependency-order) reference wins,
-    /// matching how the site build orders their JavaScript.</summary>
-    public static Dictionary<string, string> Read(IEnumerable<string> referencePaths)
+    /// <summary>One assembly's published chunk map — emitted type name → the site-relative chunk file
+    /// that defines it — or null when it was not built as modules. This is the mapping a consuming
+    /// build resolves a package's type placeholders through (see <see cref="ModuleLinker"/>).</summary>
+    public static Dictionary<string, string>? ReadOne(string referencePath)
     {
-        var merged = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var dll in referencePaths)
-        {
-            var json = TryReadResource(dll, ResourceEmbedder.ModuleMapName);
-            if (json is null) continue;
-            try
-            {
-                var map = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
-                if (map is null) continue;
-                foreach (var kv in map) merged.TryAdd(kv.Key, kv.Value);
-            }
-            catch (JsonException) { /* a malformed map is not worth failing a build over */ }
-        }
-        return merged;
+        var json = TryReadResource(referencePath, ResourceEmbedder.ModuleMapName);
+        if (json is null) return null;
+        try { return JsonSerializer.Deserialize<Dictionary<string, string>>(json); }
+        catch (JsonException) { return null; }   // a malformed map is not worth failing a build over
     }
 
     /// <summary>The <c>[SkipTypeClustering]</c> member dependency sets of every reference that

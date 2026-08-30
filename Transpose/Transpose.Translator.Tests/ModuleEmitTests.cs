@@ -26,7 +26,6 @@ namespace Transpose.Translator.Tests
         internal static Emitter.ModuleOutput Emit(
             string source,
             bool packageModules = false,
-            IReadOnlyDictionary<string, string>? externalChunks = null,
             string chunkDirectory = "chunks",
             int minChunkBytes = 0,
             int maxChunkBytes = 0,
@@ -36,7 +35,7 @@ namespace Transpose.Translator.Tests
                 new[] { ("App.cs", source) }, CompilationBuilder.DefaultAssemblyName,
                 extraReferencePaths: null, preprocessorSymbols: new[] { "DEBUG", "TRACE" },
                 emitAssembly: false, emitModules: true,
-                chunkDirectory: chunkDirectory, externalChunks: externalChunks, packageModules: packageModules,
+                chunkDirectory: chunkDirectory, packageModules: packageModules,
                 minChunkBytes: minChunkBytes, maxChunkBytes: maxChunkBytes, chunkOracle: chunkOracle);
             if (!result.Success)
                 Assert.Fail("translation failed:\n" + string.Join("\n", result.Errors.Select(d => d.GetMessage())));

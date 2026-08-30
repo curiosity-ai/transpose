@@ -57,7 +57,7 @@ public sealed class ModulePackageTests
         var dll = LibraryPackage(out var map);
 
         // Read back exactly the way a consuming build does.
-        var read = ModuleMap.Read(new[] { dll });
+        var read = ModuleMap.ReadOne(dll)!;
         CollectionAssert.AreEquivalent(map.Keys.ToList(), read.Keys.ToList());
         foreach (var kv in map) Assert.AreEqual(kv.Value, read[kv.Key]);
     }
@@ -80,19 +80,21 @@ public sealed class ModulePackageTests
         // An ordinary single-bundle package: reading its (absent) map must be empty rather than
         // throwing, so a site can mix module-mode and single-bundle references.
         var plain = PackageDll("Plain", new List<EmbeddedItem> { new("Plain.js", System.Text.Encoding.UTF8.GetBytes("var p = 1;"), null) }, moduleMap: null);
-        Assert.AreEqual(0, ModuleMap.Read(new[] { plain }).Count);
+        Assert.IsNull(ModuleMap.ReadOne(plain));
     }
 
     [TestMethod]
     public void MapsFromSeveralReferencesMerge()
     {
-        var a = PackageDll("A", new List<EmbeddedItem>(), new Dictionary<string, string> { ["A.One"] = "chunks/A/c0.mjs" });
-        var b = PackageDll("B", new List<EmbeddedItem>(), new Dictionary<string, string> { ["B.Two"] = "chunks/B/c3.mjs" });
+        // The site build accumulates one lookup as it places each reference in dependency order, which
+        // is what lets a package's placeholder name a type from any of them.
+        var linker = new ModuleLinker();
+        linker.LinkAssembly(new Dictionary<string, string> { ["A.One"] = "chunks/A/c0.mjs" }, Array.Empty<ModuleFile>());
+        linker.LinkAssembly(new Dictionary<string, string> { ["B.Two"] = "chunks/B/c3.mjs" }, Array.Empty<ModuleFile>());
 
-        var merged = ModuleMap.Read(new[] { a, b });
-        Assert.AreEqual(2, merged.Count);
-        Assert.AreEqual("chunks/A/c0.mjs", merged["A.One"]);
-        Assert.AreEqual("chunks/B/c3.mjs", merged["B.Two"]);
+        Assert.AreEqual(2, linker.TypeToChunk.Count);
+        Assert.AreEqual("chunks/A/c0.mjs", linker.TypeToChunk["A.One"]);
+        Assert.AreEqual("chunks/B/c3.mjs", linker.TypeToChunk["B.Two"]);
     }
 
     // ---------------------------------------------------------------- helpers

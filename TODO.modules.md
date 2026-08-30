@@ -654,6 +654,74 @@ Collisions are guarded but not expected: 64 bits is far past the birthday risk f
 chunks an assembly emits, and two chunks cannot legitimately share text at all (a type is emitted into
 exactly one chunk and its define name is part of that text). A collision would take a `-2` suffix.
 
+### 7j. Cross-assembly imports are linked at the site build, not written by the package
+
+§7i names every chunk after the hash of its own text, which is exactly what a *consumer* of a package
+must not depend on. A package that resolved a cross-assembly reference at its own build time wrote
+its dependency's file names into its own chunks:
+
+```js
+// Tesserae.GraphKit's chunk, compiled against Tesserae 1.0
+import '../Tesserae/c0f13a9b4c8d21e7.mjs';
+```
+
+Ship Tesserae 1.1 without touching GraphKit and that file no longer exists. Nothing about GraphKit
+changed, so nothing rebuilds it and nothing warns; the application 404s on the first screen that
+needs the chunk. The two packages are only version-locked because of a *file name*, which is not a
+thing a package should be sensitive to at all.
+
+So a cross-assembly reference is emitted as the **type** it actually is, and resolved when the site is
+assembled:
+
+```js
+// what the package embeds — independent of which build of Tesserae it compiled against
+import 'tps-type:tss.UI';
+// what the site writes
+import '../Tesserae/c21798f619001.mjs';
+```
+
+The vocabulary is `ModuleSpecifier` (`Transpose.Translator/Support/ModuleSpecifier.cs`): the
+`tps-type:` prefix, the relative-path arithmetic, and a reader for a module's **leading** import block
+that works on formatted and minified text alike (a package embeds its chunks already minified).
+Reading only the leading block is what makes the rewrite safe — no string literal in a body can be
+mistaken for a specifier.
+
+`ModuleLinker` (`Transpose.Compiler.Core`) does the resolving, inside `OutputBuilder.Build`, fed one
+assembly at a time in the dependency order the site already places them in — every reference first,
+this project's own chunks last, since they are the ones that reach into the libraries. Each
+assembly's own `Transpose.Modules.json` supplies its type → chunk mapping; the linker re-keys it
+through the renames below and accumulates the lookup the next assembly resolves against.
+
+Four properties are worth stating:
+
+- **A placeholder nothing in the site defines is dropped**, not reported. That is the ordinary case
+  for a library the site took as a single bundle: its code is already on the page and there is no
+  chunk to import. It is also what a *Debug* site does with everything — it takes no package's module
+  variant at all.
+- **Resolving renames.** The text changed, so the chunk is renamed to the hash of what it now
+  contains, or §7i's guarantee would quietly break: two deployments of one application against
+  different Tesserae versions would serve different bytes under one URL, and a browser holding the
+  first would import a chunk that is gone. The rename cascades exactly as it does inside an assembly —
+  into the chunks that import it and into the entry module's `Transpose.Modules.register` manifest,
+  which names chunk files too — which is why chunks are linked in dependency order.
+- **A file the link does not change keeps its name and its bytes.** A package built before this
+  existed carries real paths, no placeholder matches, and it passes through untouched — so old
+  packages keep working exactly as they did (with the staleness they already had). The reverse
+  direction is covered by the `BuildStamp`: a package that emits placeholders raises
+  `minimumCompilerVersion`, so an older `tps` fails with TPS0008 rather than shipping a site full of
+  bare `tps-type:` specifiers.
+- **The DLL always carries the placeholder form; the site always carries the linked form.** The link
+  happens on the way *into a site*, so `CollectEmbeddableItems` embeds what the emitter produced. A
+  package is therefore a self-contained, version-independent artifact, and its published chunk map
+  matches the chunk files inside it.
+
+The translator no longer reads its references' chunk maps at all (`externalChunks` is gone from
+`EmitModules`), which is the reason the fix is worth the indirection: a compilation's output no longer
+depends on which build of a library happens to be installed. `ModuleLinkTests` covers the whole path,
+including the reported scenario end to end — build Lib v1, build a package against it, rebuild Lib
+with different chunk names, assemble a site, and assert every import in every file it wrote points at
+a file that is there.
+
 ### Not done
 
 - **Coalescing across assemblies at the site build** — see §7g. The pass runs per assembly, so a

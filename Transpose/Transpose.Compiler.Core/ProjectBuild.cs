@@ -360,10 +360,12 @@ internal static class ProjectBuild
         var chunkOracle = wantsModules ? ChunkOracle.TryLoad(project.ProjectDir) : null;
         if (chunkOracle is { IsEmpty: false })
             log.Info($"  chunks:     {ChunkOracle.FileName} — {chunkOracle.Groups.Count} measured group(s)");
-        // Every referenced assembly that was itself built as modules contributes its type → chunk map.
-        var externalChunks = wantsModules ? ModuleMap.Read(project.ReferencePaths) : null;
-        // ...and, for a [SkipTypeClustering] facade in one of them, the per-member dependency sets a
-        // call site here has to turn into imports (the facade's own chunk carries none of them).
+        // A [SkipTypeClustering] facade in a referenced assembly publishes per-member dependency sets,
+        // which a call site here has to turn into imports (the facade's own chunk carries none of them).
+        //
+        // Its chunk FILE names are deliberately not read: a cross-assembly reference is emitted as a
+        // type placeholder and resolved when the site is assembled, so what this compilation emits does
+        // not depend on which build of a library happens to be installed. See ModuleLinker.
         var externalSkipDeps = wantsModules ? ModuleMap.ReadSkipClusterDeps(project.ReferencePaths) : null;
 
         var translator = new RoslynTranslator();
@@ -386,7 +388,6 @@ internal static class ProjectBuild
                 emitModules: wantsModules,
                 // Per assembly, so two module-mode assemblies in one site cannot collide.
                 chunkDirectory: "chunks/" + project.AssemblyName,
-                externalChunks: externalChunks,
                 externalSkipClusterDeps: externalSkipDeps,
                 // A library has no entry point to be lazy relative to: nothing is eager beyond its
                 // [Ready] handlers, and its consumers pull in what they actually use.
@@ -472,6 +473,12 @@ internal static class ProjectBuild
             foreach (var pattern in siteResult.UnmatchedDontLoadReferences)
                 MsBuildDiagnostic.WriteWarning(MsBuildDiagnostic.CodeDontLoadReferenceUnmatched,
                     $"tps.json 'dontLoadReferences' entry '{pattern}' matched no referenced assembly.");
+            // An import naming a file the site does not have is a 404 on whichever screen first needs
+            // that chunk, and nothing says so at build time. The usual cause is a package built by a
+            // compiler that wrote its dependency's chunk file names instead of type placeholders, and
+            // whose dependency has since been updated — rebuilding that package fixes it.
+            foreach (var dangling in siteResult.DanglingModuleImports)
+                MsBuildDiagnostic.WriteWarning(MsBuildDiagnostic.CodeDanglingModuleImport, dangling + ".");
             if (siteResult.RemovedStaleFiles.Count > 0)
             {
                 var stale = siteResult.RemovedStaleFiles;
@@ -871,7 +878,6 @@ internal static class ProjectBuild
                 // a single bundle here, silently replacing the chunked DLL its own build produced.
                 emitModules: tpscfg is { OutputByModule: true },
                 chunkDirectory: "chunks/" + project.AssemblyName,
-                externalChunks: tpscfg is { OutputByModule: true } ? ModuleMap.Read(project.ReferencePaths) : null,
                 externalSkipClusterDeps: tpscfg is { OutputByModule: true } ? ModuleMap.ReadSkipClusterDeps(project.ReferencePaths) : null,
                 packageModules: true,
                 minChunkBytes: MinChunkBytes(options, tpscfg),

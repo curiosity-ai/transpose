@@ -59,8 +59,6 @@ public sealed partial class Emitter
     /// </summary>
     /// <param name="chunkDirectory">Site-relative folder the chunk files go in. Per assembly, so two
     /// module-mode assemblies in one site cannot collide.</param>
-    /// <param name="externalChunks">Define name → site-relative chunk file, merged from every
-    /// referenced assembly that was itself built as modules.</param>
     /// <param name="packageMode">A library: nothing is eager beyond what its own [Ready] handlers
     /// need, because there is no entry point to be lazy relative to — the consumer's chunks import
     /// what they use, and everything else stays a stub until something asks for it.</param>
@@ -73,7 +71,6 @@ public sealed partial class Emitter
     /// <see cref="ChunkOracle"/>.</param>
     public ModuleOutput EmitModules(
         string chunkDirectory = "chunks",
-        IReadOnlyDictionary<string, string>? externalChunks = null,
         bool packageMode = false,
         IReadOnlyDictionary<string, List<string>>? externalSkipClusterDeps = null,
         int minChunkBytes = DefaultMinChunkBytes,
@@ -103,12 +100,12 @@ public sealed partial class Emitter
                 Parallel.ForEach(types, type =>
                 {
                     var seen = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
-                    var ext = externalChunks is null ? null : new HashSet<string>(StringComparer.Ordinal);
+                    var ext = new HashSet<string>(StringComparer.Ordinal);
                     bodies[type] = EmitOnlyType(this, type, seen, ext).ToString();
                     TypeSizeReport.Record(_assemblyName, type.ToDisplayString(), bodies[type]);
                     seen.Remove(type);
                     refs[type] = ClusterRefsFor(type, seen);
-                    if (ext is not null) extRefs[type] = ext;
+                    extRefs[type] = ext;
                 }));
         }
         catch (AggregateException ex) when (ex.Flatten().InnerExceptions.OfType<TranslationException>().FirstOrDefault() is { } te)
@@ -240,19 +237,22 @@ public sealed partial class Emitter
             // two builds of the same sources produce byte-identical files.
             foreach (var d in chunks.Deps[i].OrderBy(x => x))
                 w.Append("import '").Append(ChunkImport(ChunkFile(d))).Append("';\n");
-            // Cross-assembly: a referenced module-mode assembly's chunk holding a type this one uses.
-            // Without it the reference would resolve to that assembly's stub, and a stub cannot be
+            // Cross-assembly: a type of a referenced assembly this chunk reaches into. Without an
+            // import the reference would resolve to that assembly's stub, and a stub cannot be
             // resolved synchronously.
-            if (externalChunks is not null)
-            {
-                var wanted = new SortedSet<string>(StringComparer.Ordinal);
-                foreach (var t in chunks.Members[i])
-                    if (extRefs.TryGetValue(t, out var names))
-                        foreach (var n in names)
-                            if (externalChunks.TryGetValue(n, out var file)) wanted.Add(file);
-                foreach (var file in wanted)
-                    w.Append("import '").Append(ChunkImport(file)).Append("';\n");
-            }
+            //
+            // It is written as a TYPE, not as the chunk file that holds the type today: a chunk's name
+            // is the hash of its own text, so it moves on every rebuild of the library, and a package
+            // that had written its dependency's file names in here would point at chunks that no
+            // longer exist the moment that dependency shipped a new version. The site build resolves
+            // each placeholder against the chunk map of the library it is actually assembling — see
+            // ModuleSpecifier and ModuleLinker.
+            var wanted = new SortedSet<string>(StringComparer.Ordinal);
+            foreach (var t in chunks.Members[i])
+                if (extRefs.TryGetValue(t, out var names))
+                    foreach (var n in names) wanted.Add(n);
+            foreach (var name in wanted)
+                w.Append("import '").Append(ModuleSpecifier.ForType(name)).Append("';\n");
             // A bare Transpose.define outside the Transpose.assembly(...) wrapper has no ambient
             // assembly, so each chunk names its own before defining anything.
             w.Append("Transpose.$useAssembly(\"").Append(_assemblyName).Append("\");\n");
@@ -272,7 +272,7 @@ public sealed partial class Emitter
 
         var result = new ModuleOutput
         {
-            EntryJs = BuildEntryModule(types, chunks, eager, lazyTypes, ChunkFile, externalChunks),
+            EntryJs = BuildEntryModule(types, chunks, eager, lazyTypes, ChunkFile),
             EagerChunkCount = eager.Count,
             LazyChunkCount = chunks.Members.Count - eager.Count,
             LazyTypeCount = lazyTypes.Count,
@@ -404,23 +404,22 @@ public sealed partial class Emitter
         return new ChunkGraph(components, deps, indexOf);
     }
 
-    /// <summary>The chunk files of the attribute classes the metadata records that come from a
-    /// referenced module-mode assembly, sorted so the entry module is byte-identical run to run.
-    /// Empty when reflection is off or no reference was built as modules.</summary>
-    private IEnumerable<string> ExternalMetadataAttributeChunks(
-        List<INamedTypeSymbol> types, IReadOnlyDictionary<string, string>? externalChunks)
+    /// <summary>The attribute classes the metadata records that come from a referenced assembly, as
+    /// type placeholders the site build turns into imports of the chunks that define them. Sorted, so
+    /// the entry module is byte-identical run to run; empty when reflection is off.</summary>
+    private IEnumerable<string> ExternalMetadataAttributeTypes(List<INamedTypeSymbol> types)
     {
-        if (!ReflectionEnabled || externalChunks is null) return Array.Empty<string>();
+        if (!ReflectionEnabled) return Array.Empty<string>();
 
         var mine = new HashSet<INamedTypeSymbol>(types, SymbolEqualityComparer.Default);
-        var files = new SortedSet<string>(StringComparer.Ordinal);
+        var names = new SortedSet<string>(StringComparer.Ordinal);
 
         void Collect(IEnumerable<AttributeData> attrs)
         {
             foreach (var a in ReflectableAttributes(attrs))
                 if (a.AttributeClass?.OriginalDefinition is INamedTypeSymbol ac && !mine.Contains(ac)
-                    && externalChunks.TryGetValue(DefineName(ac), out var file))
-                    files.Add(file);
+                    && TransposeNaming.IsTransposeCompiledSource(ac))
+                    names.Add(DefineName(ac));
         }
 
         foreach (var t in types)
@@ -428,7 +427,7 @@ public sealed partial class Emitter
             Collect(t.GetAttributes());
             foreach (var m in t.GetMembers()) Collect(m.GetAttributes());
         }
-        return files;
+        return names;
     }
 
     /// <summary>Every attribute class this compilation emits that the reflection metadata records —
@@ -459,8 +458,7 @@ public sealed partial class Emitter
     /// <em>every</em> type, and starts the runtime.</summary>
     private string BuildEntryModule(
         List<INamedTypeSymbol> types, ChunkGraph chunks, HashSet<int> eager,
-        List<INamedTypeSymbol> lazyTypes, Func<int, string> chunkFile,
-        IReadOnlyDictionary<string, string>? externalChunks)
+        List<INamedTypeSymbol> lazyTypes, Func<int, string> chunkFile)
     {
         var sb = new StringBuilder();
         sb.Append("/**\n * Transpose.Translator generated output (module entry).\n */\n");
@@ -469,8 +467,8 @@ public sealed partial class Emitter
         // An attribute class the metadata constructs can live in a referenced module-mode assembly,
         // where it is no more constructible from a stub than a local one is - and no chunk of this
         // assembly imports it, since the metadata takes no part in chunking.
-        foreach (var file in ExternalMetadataAttributeChunks(types, externalChunks))
-            sb.Append("import './").Append(file).Append("';\n");
+        foreach (var name in ExternalMetadataAttributeTypes(types))
+            sb.Append("import '").Append(ModuleSpecifier.ForType(name)).Append("';\n");
         sb.Append('\n');
 
         if (!string.IsNullOrEmpty(AssemblyVersion))
@@ -604,23 +602,9 @@ public sealed partial class Emitter
         return string.Join("\n", lines);
     }
 
-    /// <summary>
-    /// An ES module specifier from one site-relative file to another. Both may sit in different
-    /// per-assembly chunk folders (a consumer importing a library's chunk), so this walks up with
-    /// <c>../</c> as needed. Always explicitly relative — a bare name would be a bare specifier,
-    /// which the browser resolves through the import map rather than as a path.
-    /// </summary>
-    internal static string RelativeImport(string from, string to)
-    {
-        var fromParts = from.Split('/');
-        var toParts = to.Split('/');
-        var common = 0;
-        while (common < fromParts.Length - 1 && common < toParts.Length - 1
-               && string.Equals(fromParts[common], toParts[common], StringComparison.Ordinal)) common++;
-        var up = fromParts.Length - 1 - common;
-        var prefix = up == 0 ? "./" : string.Concat(Enumerable.Repeat("../", up));
-        return prefix + string.Join("/", toParts.Skip(common));
-    }
+    /// <summary>An ES module specifier from one site-relative file to another — see
+    /// <see cref="ModuleSpecifier.Relative"/>, which the site build's linker uses for the same job.</summary>
+    internal static string RelativeImport(string from, string to) => ModuleSpecifier.Relative(from, to);
 }
 
 internal static class ModuleOutputExtensions

@@ -97,12 +97,19 @@ internal static class OutputBuilder
     /// kept out of index.html (extracted, but not scripted), and <see cref="UnmatchedDontLoadReferences"/>
     /// the entries of that list which matched no reference at all — a typo or a dependency that has
     /// since been dropped, which would otherwise do nothing silently. Both are reported by the caller;
-    /// the site build itself writes no diagnostics.</summary>
+    /// the site build itself writes no diagnostics.
+    ///
+    /// <see cref="DanglingModuleImports"/> names every <c>import</c> in a module the site wrote whose
+    /// target is not in the site — a 404 at run time, on whichever screen first needs the chunk. A
+    /// current package cannot produce one (its cross-assembly imports are type placeholders resolved
+    /// against this build), but a package built before that could, and the failure is otherwise
+    /// completely silent until someone clicks the wrong thing.</summary>
     public readonly record struct SiteBuildResult(
         string OutputDir,
         IReadOnlyList<string> RemovedStaleFiles,
         IReadOnlyList<string> UnscriptedReferences,
-        IReadOnlyList<string> UnmatchedDontLoadReferences);
+        IReadOnlyList<string> UnmatchedDontLoadReferences,
+        IReadOnlyList<string> DanglingModuleImports);
 
     /// <summary>
     /// One stylesheet a site build produces <em>from files on disk</em> — a <c>tps.json</c> resource
@@ -131,6 +138,14 @@ internal static class OutputBuilder
         // Whether this site is itself chunked. A package's module entry + chunks are only worth
         // extracting when they are — otherwise its classic bundle is the right payload.
         var siteIsChunked = modules is not null;
+        // Resolves the type placeholders every emitted module carries into imports of the chunks that
+        // define those types in THIS site. Fed one assembly at a time, in the dependency order the
+        // loop below already walks, and finally this project's own chunks — which import into the
+        // libraries linked before them. See ModuleLinker for why a package cannot write the paths.
+        var linker = new ModuleLinker();
+        // Every ES module this build writes, site-relative path → its JavaScript, so the imports can be
+        // checked against what actually landed once the site is complete (see DanglingModuleImports).
+        var modulesWritten = new List<(string rel, string js)>();
 
         var jsOuts = new List<JsOut>();    // JS in load order (runtime → libs → resources → app)
         var cssLinks = new List<string>();
@@ -179,9 +194,13 @@ internal static class OutputBuilder
         // keeps exactly one of those sets — the one its own profile calls for. A package that offers
         // no module variant falls back to its minified/formatted bundle even in a chunked site, which
         // is how a plain library (Transpose.Newtonsoft.Json, a vendored binding) keeps working.
-        void RouteTaggedPackageJs(IReadOnlyList<EmbeddedJs> jsFiles, bool scripted)
+        void RouteTaggedPackageJs(IReadOnlyList<EmbeddedJs> jsFiles, bool scripted, string? dllPath)
         {
             var takeModules = siteIsChunked && jsFiles.Any(f => f.Variant == JsVariant.ModuleEntry);
+            // Only a package whose modules this site actually takes is linked: one consumed as a
+            // single bundle contributes no chunk to import into, and registering its types would have
+            // another library's placeholders resolve to files that are not in the site.
+            if (takeModules && dllPath is not null) jsFiles = LinkPackageModules(jsFiles, dllPath);
 
             foreach (var f in jsFiles)
             {
@@ -199,6 +218,7 @@ internal static class OutputBuilder
                 }
 
                 WriteText(f.Rel, f.Text);
+                if (f.Variant is JsVariant.ModuleChunk or JsVariant.ModuleEntry) modulesWritten.Add((f.Rel, f.Text));
                 if (!f.Load || !scripted) continue;
                 jsOuts.Add(new JsOut
                 {
@@ -210,6 +230,21 @@ internal static class OutputBuilder
                     IsMinified = f.Variant == JsVariant.Minified,
                 });
             }
+        }
+
+        // Hands a package's module entry and chunks to the linker and takes back their final names and
+        // text. Everything else the package ships passes through untouched.
+        IReadOnlyList<EmbeddedJs> LinkPackageModules(IReadOnlyList<EmbeddedJs> jsFiles, string dllPath)
+        {
+            var modular = jsFiles.Where(f => f.Variant is JsVariant.ModuleChunk or JsVariant.ModuleEntry).ToList();
+            var linked = linker.LinkAssembly(
+                ModuleMap.ReadOne(dllPath),
+                modular.Select(f => new ModuleFile(f.Rel, f.Text, f.Variant == JsVariant.ModuleChunk)).ToList());
+
+            var byRel = new Dictionary<string, EmbeddedJs>(StringComparer.Ordinal);
+            for (var i = 0; i < modular.Count; i++)
+                byRel[modular[i].Rel] = modular[i] with { Rel = linked[i].Rel, Text = linked[i].Text };
+            return jsFiles.Select(f => byRel.TryGetValue(f.Rel, out var l) && f.Variant == l.Variant ? l : f).ToList();
         }
 
         // Routes a package's embedded JS into the output — the runtime bundles and compiled library
@@ -231,7 +266,7 @@ internal static class OutputBuilder
         // `scripted` is the consumer-side `dontLoadReferences` verdict for the assembly these files
         // came from: false writes every one of them into the site exactly as usual and injects none of
         // them into index.html, so the application can fetch the library itself when it first needs it.
-        void RoutePackageJs(IReadOnlyList<EmbeddedJs> jsFiles, bool scripted = true)
+        void RoutePackageJs(IReadOnlyList<EmbeddedJs> jsFiles, bool scripted = true, string? dllPath = null)
         {
             // A package says which of ITS OWN compiled files are interchangeable and what each one is
             // for, so those are chosen by a filter rather than a guess. Its authored resources carry no
@@ -241,7 +276,7 @@ internal static class OutputBuilder
             var tagged = jsFiles.Where(f => f.Variant is not null).ToList();
             if (tagged.Count > 0)
             {
-                RouteTaggedPackageJs(tagged, scripted);
+                RouteTaggedPackageJs(tagged, scripted, dllPath);
                 jsFiles = jsFiles.Where(f => f.Variant is null).ToList();
                 if (jsFiles.Count == 0) return;
             }
@@ -311,7 +346,7 @@ internal static class OutputBuilder
 
             RoutePackageJs(projectDlls.Contains(dll)
                 ? ExtractProjectDllResources(dll, outputDir, css, utf8, written)
-                : ExtractEmbeddedJs(dll, outputDir, css, written), scripted);
+                : ExtractEmbeddedJs(dll, outputDir, css, written), scripted, dll);
 
             if (string.Equals(Path.GetFileNameWithoutExtension(dll), "Transpose", StringComparison.OrdinalIgnoreCase))
                 EmitCompilerJs("tps.shim.js", RoslynTranslator.RuntimeShim);
@@ -352,16 +387,27 @@ internal static class OutputBuilder
         // site, so there is no build that wants to read one, and no .min sibling to switch to.
         if (modules is not null)
         {
-            foreach (var (rel, chunkJs) in modules.Chunks)
+            // This project's own modules are linked last, against every library already placed: its
+            // chunks are the ones that reach into them. The entry module (`javascript` here) is part
+            // of the same link — it imports the eager chunks and names the deferred ones — so it is
+            // handed in with them and taken back rewritten.
+            var own = new List<ModuleFile>(modules.Chunks.Count + 1);
+            foreach (var (rel, chunkJs) in modules.Chunks) own.Add(new ModuleFile(rel, chunkJs, IsChunk: true));
+            own.Add(new ModuleFile(config.FileName, javascript, IsChunk: false));
+
+            foreach (var file in linker.LinkAssembly(modules.TypeToChunk, own))
             {
-                var dest = Path.Combine(outputDir, rel.Replace('/', Path.DirectorySeparatorChar));
+                if (!file.IsChunk) { javascript = file.Text; continue; }   // the entry, written below
+                var dest = Path.Combine(outputDir, file.Rel.Replace('/', Path.DirectorySeparatorChar));
                 Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-                File.WriteAllText(dest, MinifyModule(chunkJs, rel), utf8);
+                File.WriteAllText(dest, MinifyModule(file.Text, file.Rel), utf8);
                 written.Add(Path.GetFullPath(dest));
+                modulesWritten.Add((file.Rel, file.Text));
             }
         }
 
         EmitCompilerJs(config.FileName, javascript, isModule: modules is not null);
+        if (modules is not null) modulesWritten.Add((config.FileName, javascript));
 
         // 3b. Reflection metadata as a separate file (reflection.target: "file") — loads right
         //     after the bundle whose types it describes, matching the existing compiler.
@@ -379,6 +425,24 @@ internal static class OutputBuilder
         //    from its own manifest — then persist the current file list as the next manifest. Files
         //    other projects/packages/tools placed in a shared output folder are never in this project's
         //    manifest, so they are never touched.
+        // 4b. Every import in every module written above has to name a file that is here. A current
+        //     package's cross-assembly imports are type placeholders resolved against this build, so it
+        //     cannot produce a dangling one; a package built before that wrote its dependency's chunk
+        //     FILE names, which stop existing the moment that dependency ships a new version. The
+        //     failure mode is a 404 on whichever screen first needs the chunk and nothing at build
+        //     time, so it is worth one line of check.
+        var dangling = new List<string>();
+        foreach (var (rel, js) in modulesWritten)
+            foreach (var import in ModuleSpecifier.ReadLeading(js))
+            {
+                if (dangling.Count >= 50) break;
+                var target = ModuleSpecifier.Resolve(rel, import.Specifier);
+                if (target is not null
+                    && written.Contains(Path.GetFullPath(Path.Combine(outputDir, target.Replace('/', Path.DirectorySeparatorChar)))))
+                    continue;
+                dangling.Add($"{rel} imports '{import.Specifier}', which this build did not write");
+            }
+
         var manifestPath = ManifestPath(outputDir, project.AssemblyName);
         var removed = config.CleanOutputFolder
             ? PruneStaleFiles(outputDir, written, ReadManifest(manifestPath, outputDir), config.CleanOutputFolderExclude)
@@ -386,7 +450,7 @@ internal static class OutputBuilder
 
         WriteManifest(manifestPath, outputDir, written, utf8);
 
-        return new SiteBuildResult(outputDir, removed, dontLoad.Matched, dontLoad.Unmatched);
+        return new SiteBuildResult(outputDir, removed, dontLoad.Matched, dontLoad.Unmatched, dangling);
     }
 
     /// <summary>
