@@ -109,6 +109,12 @@ Packages/                      # Additional binding libraries (all [assembly: Ex
 ├── Transpose.Howler/          #   package Transpose.Howler
 ├── Transpose.WebGL2/          #   package Transpose.WebGL2
 ├── Transpose.P2/              #   package Transpose.P2
+├── Transpose.Workers/         #   package Transpose.Workers — shared workers as ordinary C#.
+│                              #   WorkerChannel (page side), WorkerHub/SharedWorkerHost (worker
+│                              #   side); the hub runs in a worker OR, where the browser has no
+│                              #   SharedWorker, in the page itself, so one implementation serves
+│                              #   both. Typed payloads go through the browser's own JSON, so the
+│                              #   package forces no serializer on a consumer
 ├── Transpose.HttpClient/      #   package Transpose.HttpClient
 ├── Transpose.HttpClient.Tests/# MSTest suite for it. The package is real C# over the browser's
 │                              #   XMLHttpRequest, so the suite compiles Transpose.Core + the package
@@ -229,6 +235,9 @@ metadata, not a web resource, so `OutputBuilder` never extracts it into a site.
 - `[Script]` — raw JS body.
 - `[GlobalMethods]` / `[Scope]` — project static members / a type onto ambient JS globals.
 - `[ObjectLiteral]` — treat a class/struct as a plain JS object.
+- `[SharedWorkerEntry("name")]` — the static method a shared worker starts at. Makes the build
+  emit `<name>.worker.js` beside the bundle: the site's own scripts in load order, then
+  `Transpose.init()`, then the marked method. See the shared-worker section below.
 - `[SkipTypeClustering]` / `[ConstructsTypeArguments]` / `[NeverDefer]` / `[LoadsTypeArguments]` —
   module-output chunking: keep a facade out of the reference graph, mark a generic method that
   *constructs* its type arguments reflectively, pin a type into the initial payload, and mark a
@@ -816,6 +825,64 @@ The short version:
 
   Still single-bundle: `--incremental` (chunk assignment is a whole-program property — do not combine
   them yet) and watch mode.
+- **Shared workers (done).** A `SharedWorker` needs a script URL of its own, and a Transpose project
+  had no way to produce one: its output is a bundle for a page, whose entry point runs `Main` and
+  whose code expects a document. `[SharedWorkerEntry("live")]` on a static method makes the build
+  write a second entry beside the bundle — `live.worker.js` — that `importScripts` the site's own
+  script list, in load order and in the variant this configuration produced, calls
+  `Transpose.init()`, and then calls the marked method. The worker is therefore ordinary C# in the
+  ordinary project, and the name on the attribute is both the file's base name and the worker's
+  name, which is what the browser keys an instance by. Finding the entries is a declaration scan
+  (`SharedWorkerEntryScan`), so it is free for the incremental cache and identical for the bundle
+  and the module walk; `TransposeR0004`/`TransposeR0005` reject a method that cannot be an entry
+  point and two entries sharing a name.
+
+  **`Transpose.ready` is a no-op in worker scope**, detected as `self instanceof WorkerGlobalScope`.
+  This is load-bearing rather than tidy: the emitted `Transpose.ready(...)` registrations sit at the
+  end of an assembly body, so `importScripts` of a bundle schedules every `[Ready]` handler in it,
+  and `ready` treats a missing `document` as "already loaded". Every such handler builds UI, so a
+  worker that loaded a real application's bundle died on `document is not defined` before its own
+  entry was ever called. `[Ready]` means the *page* is ready; code meant for a worker is named by
+  `[SharedWorkerEntry]`.
+
+  **A `[Ready]` handler is also deferred out of the assembly body.** `Transpose.assembly` forces
+  `staticInitAllow` to false for the whole body it evaluates, and `$staticInit` is a no-op while that
+  is false *and does not re-arm* — so a handler running inside the body saw types with their static
+  fields at their declared defaults. Since `tps` emits `defer` scripts and the HTML spec sets
+  `readyState` to `interactive` **before** deferred scripts run, that was every page: a
+  `Dictionary<string, List<T>>` built in a `[Ready]` handler got a null prime table out of
+  `HashHelpers` and threw. `Transpose.ready` now queues such a handler and `Transpose.init()` releases
+  it once the static initializers have run — and *before* it schedules `Main`, which `[Ready]` has
+  always preceded. Deferring to `init()` rather than to `DOMContentLoaded` is deliberate: it fixes the
+  actual cause and leaves the on-demand case alone (a package fetched after load sees `complete`, and
+  waiting on a `DOMContentLoaded` that has been and gone would never run at all). Covered by
+  `ReadyHandlerStaticInitTests`, which fails without it.
+
+  The reusable surface is the **`Transpose.Workers`** package, real transpiled C# over
+  `Transpose.Core` — which is free, since Core is `[assembly: External]` and emits 289 bytes of
+  nothing. `WorkerChannel.Connect(name, entryPoint)` is the page side; `SharedWorkerHost.Run(name,
+  configure)` plus `WorkerHub` is the worker side. The hub runs **in whichever scope it finds
+  itself**: inside a shared worker it installs `onconnect`, and inside a page — the per-tab fallback,
+  where the browser has no `SharedWorker` — it registers itself for the channel to reach in-process
+  over a `LoopLink`. That is the point of routing everything through `IWorkerLink`: one
+  implementation of the hub, so the fallback cannot answer differently from the real worker. The
+  fallback is deliberately per-tab (one connection each, as before shared workers were an option)
+  rather than a leader election, so there is no lease protocol to get wrong.
+
+  Two things a shared worker forces on a caller, both surfaced in the API rather than hidden.
+  **Nothing reports a closed tab** — a gone page's port simply stops answering — so `WorkerChannel`
+  sends a goodbye on `pagehide`, which is what makes `OnDisconnect` fire; a tab killed outright sends
+  nothing, so a worker that must not leak should also expire a silent client. And **one worker serves
+  every page of an origin, including pages signed in as different people**, so `WorkerClient.Tag` is
+  where a worker records whose page it is and `BroadcastTo` is how it fans out to one user's tabs;
+  `Broadcast` reaches everyone, which is a bug wherever the payload is per-user.
+
+  Payloads are strings, with `Send<T>`/`On<T>`/`RequestAsync<TAsk,TReply>` overloads serializing
+  through the browser's own `JSON`. That is a deliberate limit: it round-trips *data*, so a reply
+  reads back with the right fields and no prototype. A transport has no business choosing a JSON
+  library for every consumer, and an application that needs real instances back sends a string and
+  uses its own serializer.
+
 - **The module runtime.** `Resources/Modules.js`
   provides `Transpose.Modules` — a registry of types whose JavaScript lives in a module that has not
   been fetched. `Modules.Register(manifest)` stubs each such type at the same global path and in the
