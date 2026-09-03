@@ -711,16 +711,41 @@
                 }
             };
 
+            // A handler must not run while Transpose.assembly is still registering types.
+            //
+            // Transpose.assembly forces staticInitAllow to false for the whole of an assembly body,
+            // and $staticInit is a no-op while it is false -- and does not re-arm. tps emits its
+            // scripts with `defer`, and the HTML spec sets readyState to "interactive" BEFORE
+            // deferred scripts run, so the branch below used to treat the page as loaded and run the
+            // handler inside the body. Anything it touched whose static initializer had not run yet
+            // came back with its static fields at their declared defaults: a
+            // Dictionary<string, List<T>> built there got a null primes table out of HashHelpers and
+            // died on "Cannot read properties of null". A constructed generic is the worst case,
+            // since it has no global slot whose getter would offer the initializer again -- the same
+            // hazard Class.js documents for List$1(X)._emptyArray.
+            //
+            // Deferring to init() rather than to DOMContentLoaded is deliberate: it fixes the actual
+            // cause, and it leaves every existing DOM-timing case alone -- in particular a package
+            // fetched on demand long after load, where readyState is already "complete"/"interactive"
+            // and waiting on a DOMContentLoaded that has been and gone would never run at all.
+            var run = function () {
+                if (Transpose.Class && Transpose.Class.staticInitAllow === false) {
+                    Transpose.Class.$queueReady.push(delayfn);
+                } else {
+                    delayfn();
+                }
+            };
+
             if (typeof Transpose.global.jQuery !== "undefined") {
-                Transpose.global.jQuery(delayfn);
+                Transpose.global.jQuery(run);
             } else {
                 if (typeof Transpose.global.document === "undefined" ||
                     Transpose.global.document.readyState === "complete" ||
                     Transpose.global.document.readyState === "loaded" ||
                     Transpose.global.document.readyState === "interactive") {
-                    delayfn();
+                    run();
                 } else {
-                    Transpose.on("DOMContentLoaded", Transpose.global.document, delayfn);
+                    Transpose.on("DOMContentLoaded", Transpose.global.document, run);
                 }
             }
         },

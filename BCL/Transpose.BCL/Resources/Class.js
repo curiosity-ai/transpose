@@ -1158,6 +1158,10 @@
             Transpose.Class.$queue.length = 0;
             Transpose.Class.$queueEntry.length = 0;
 
+            // Entry points are collected rather than scheduled here, so every static initializer and
+            // every deferred [Ready] handler has run before Main does -- see below.
+            var mains = [];
+
             for (var i = 0; i < queue.length; i++) {
                 var t = queue[i];
 
@@ -1166,22 +1170,43 @@
                 }
 
                 if (t.prototype.$main) {
-                    (function (cls, name) {
-                        Transpose.ready(function () {
-                            var task = cls[name]();
-
-                            if (task && task.continueWith) {
-                                task.continueWith(function () {
-                                    setTimeout(function () {
-                                        task.getAwaitedResult();
-                                    }, 0);
-                                });
-                            }
-                        });
-                    })(t, t.prototype.$main.name || "Main");
-
-                    t.prototype.$main = null;
+                    mains.push(t);
                 }
+            }
+
+            // Now that the static initializers have run, release the [Ready] handlers that were
+            // registered while the assembly body was still being evaluated (see Transpose.ready).
+            // Taken by swap rather than iterated in place: a handler may register another one.
+            //
+            // Before Main, not after: [Ready] has always run first -- it is where an application
+            // registers what its entry point then uses -- and deferring the handlers out of the
+            // assembly body must not quietly reverse the two.
+            var ready = Transpose.Class.$queueReady;
+
+            if (ready.length > 0) {
+                Transpose.Class.$queueReady = [];
+
+                for (var r = 0; r < ready.length; r++) {
+                    ready[r]();
+                }
+            }
+
+            for (var m = 0; m < mains.length; m++) {
+                (function (cls, name) {
+                    Transpose.ready(function () {
+                        var task = cls[name]();
+
+                        if (task && task.continueWith) {
+                            task.continueWith(function () {
+                                setTimeout(function () {
+                                    task.getAwaitedResult();
+                                }, 0);
+                            });
+                        }
+                    });
+                })(mains[m], mains[m].prototype.$main.name || "Main");
+
+                mains[m].prototype.$main = null;
             }
         }
     };
@@ -1189,6 +1214,8 @@
     Transpose.Class = base;
     Transpose.Class.$queue = [];
     Transpose.Class.$queueEntry = [];
+    // [Ready] handlers registered while an assembly body was still running -- see Transpose.ready.
+    Transpose.Class.$queueReady = [];
     Transpose.define = Transpose.Class.define;
     Transpose.definei = Transpose.Class.definei;
     Transpose.init = Transpose.Class.init;
