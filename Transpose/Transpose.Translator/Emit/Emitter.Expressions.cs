@@ -1251,7 +1251,87 @@ public sealed partial class Emitter
         // self-contained; otherwise a bare instance template is relative to the receiver.
         var absolute = isStatic || isExtension || receiver is null
                        || template.Contains("{this") || template.Contains("<self>");
-        _w.Write(absolute ? sub : receiver + "." + sub);
+        var text = absolute ? sub : receiver + "." + sub;
+
+        // A template whose own text is a binary/ternary expression is not a primary JS expression,
+        // but the C# node it replaces (an invocation, a member access, a conversion) is — so the
+        // emitter around it is entitled to drop it straight into an operand position, where the
+        // template's operators then bind wrongly. `Script.IsUndefined(x)` is `{0} === undefined`, so
+        // `!Script.IsUndefined(x)` emitted `!x === undefined`, i.e. `(!x) === undefined`, which is
+        // false for every x. Parenthesizing here fixes every such member at once, including one a
+        // user wrote, rather than each template having to remember its own parentheses. This is the
+        // same guard EmitCoalesceOperand applies to a `??` operand, for the same reason.
+        if (TemplateIsNonPrimary(template)) text = "(" + text + ")";
+
+        _w.Write(text);
+    }
+
+    /// <summary>
+    /// True when a [Template]'s own text carries an operator outside any bracket or string — i.e.
+    /// its expansion is not a primary expression and has to be parenthesized before it can be an
+    /// operand. Read from the template rather than the substituted text so the verdict depends only
+    /// on the member, not on whatever an argument happened to emit.
+    /// </summary>
+    private static bool TemplateIsNonPrimary(string template)
+    {
+        // Placeholders stand in for arbitrary argument JS; blank them so only the template's own
+        // punctuation is considered ({0} === undefined -> "     === undefined").
+        var stripped = template.Replace("<self>", "");
+        var t = new System.Text.StringBuilder(stripped);
+
+        for (var i = 0; i < t.Length; i++)
+        {
+            if (t[i] != '{') continue;
+
+            var close = stripped.IndexOf('}', i);
+            if (close < 0) break;
+            for (var j = i; j <= close; j++) t[j] = ' ';
+            i = close;
+        }
+
+        var text = t.ToString();
+        var depth = 0;
+
+        for (var i = 0; i < text.Length; i++)
+        {
+            var c = text[i];
+
+            if (c is '(' or '[' or '{') { depth++; continue; }
+            if (c is ')' or ']' or '}') { depth--; continue; }
+
+            // Skip a string literal wholesale: a URL carries ':' and '/' that mean nothing here.
+            if (c is '"' or '\'' or '`')
+            {
+                var end = text.IndexOf(c, i + 1);
+                i = end < 0 ? text.Length : end;
+                continue;
+            }
+
+            if (depth > 0) continue;
+
+            // Two-character operators first, so '==' is not read as a bare '='.
+            if (i + 1 < text.Length)
+            {
+                var pair = text.Substring(i, 2);
+                if (pair is "==" or "!=" or "<=" or ">=" or "&&" or "||" or "??") return true;
+            }
+
+            // A ternary, a comma expression, or an assignment.
+            if (c is '?' or ':' or ',' or '=') return true;
+
+            // An arithmetic or relational operator, only when spaced as an infix operator — so a
+            // unary minus or a path separator inside a bare word is not mistaken for one.
+            if (c is ' ' && i + 2 < text.Length && text[i + 2] == ' '
+                && text[i + 1] is '+' or '-' or '*' or '/' or '%' or '<' or '>' or '&' or '|' or '^')
+            {
+                return true;
+            }
+
+            if (c is 'i' && text.Length - i >= 10 && text.Substring(i, 10) == "instanceof") return true;
+            if (c is 't' && text.Length - i >= 7  && text.Substring(i, 7)  == "typeof ") return true;
+        }
+
+        return false;
     }
 
     /// <summary>
