@@ -677,7 +677,32 @@
             return scope;
         },
 
+        // True inside a worker of any kind (dedicated, shared or service). WorkerGlobalScope is
+        // defined only there, and only there is `self` an instance of it, so this does not mistake a
+        // page for a worker or the other way round -- and it does not rely on `document` being
+        // absent, which is also true of a plain Node run.
+        isWorkerScope: (function () {
+            try {
+                return typeof WorkerGlobalScope !== "undefined"
+                    && typeof self !== "undefined"
+                    && self instanceof WorkerGlobalScope;
+            } catch (e) {
+                return false;
+            }
+        }()),
+
         ready: function (fn, scope) {
+            // [Ready] means "the page is ready", and a worker has no page. A worker that loads an
+            // application's bundle -- which is how a [SharedWorkerEntry] reaches its own code -- would
+            // otherwise run every one of that application's startup handlers the moment the bundle is
+            // imported, immediately, because the branch below treats a missing `document` as "already
+            // loaded". Every such handler builds UI, so the worker died on `document is not defined`
+            // before its entry point was ever called. Code that is meant to run in a worker is named
+            // by [SharedWorkerEntry], which the generated worker script calls directly.
+            if (Transpose.isWorkerScope) {
+                return;
+            }
+
             var delayfn = function () {
                 if (scope) {
                     fn.apply(scope);

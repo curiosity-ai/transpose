@@ -212,6 +212,13 @@ public sealed class RoslynTranslator
         if (diagnostics.Count > 0 && diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error))
             return new AssemblyBuildResult(null, null, null, diagnostics);
 
+        // A declaration scan, so it costs nothing to run before the emit and answers the same for the
+        // bundle and the module walk. A malformed entry stops the build here rather than emitting a
+        // worker script that could not start.
+        var workerEntries = SharedWorkerEntryScan.Collect(compilation, new NameMangler(), diagnostics);
+        if (diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error))
+            return new AssemblyBuildResult(null, null, null, diagnostics);
+
         string? js = null, metadataJs = null;
         Emitter.ModuleOutput? moduleOutput = null;
         TranslationException? emitterFailure = null;
@@ -302,6 +309,7 @@ public sealed class RoslynTranslator
             DeclarationHashes = declarationHashes,
             Modules = moduleOutput,
             HasBundle = !emitModules || alsoEmitBundle,
+            SharedWorkerEntries = workerEntries,
         };
     }
 

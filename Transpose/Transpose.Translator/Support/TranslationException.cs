@@ -47,6 +47,26 @@ internal static class Diagnostics
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true);
 
+    public static readonly DiagnosticDescriptor BadSharedWorkerEntry = new(
+        id: "TransposeR0004",
+        title: "Invalid shared-worker entry point",
+        messageFormat: "'{0}' carries [SharedWorkerEntry] but {1}. A shared worker's entry point runs "
+                     + "once, with no caller and no page to answer to, so it has to be a static void "
+                     + "method taking no parameters.",
+        category: "Transpose.Translator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    public static readonly DiagnosticDescriptor DuplicateSharedWorkerName = new(
+        id: "TransposeR0005",
+        title: "Duplicate shared-worker name",
+        messageFormat: "Two [SharedWorkerEntry] methods are both named '{0}', so each would emit the "
+                     + "same worker script over the other. A shared worker is identified by its name, "
+                     + "so give one of them a different one: {1}",
+        category: "Transpose.Translator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
     public static Diagnostic Create(DiagnosticDescriptor descriptor, Location? location, params object[] args) =>
         Diagnostic.Create(descriptor, location ?? Location.None, args);
 }
