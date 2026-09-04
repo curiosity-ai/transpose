@@ -96,6 +96,24 @@ MyApp.Utils.sayHello();
   }
   ```
 
+- **Plain copies for workers and storage**: a value built from C# is not what `postMessage` or
+  `structuredClone` accept — every C# array carries a `$type` property holding a *function* (the
+  runtime's element-type bookkeeping), a class instance is a prototype and delegate fields around
+  its data, and a boxed value is a wrapper. The `DataCloneError` quotes a function body and names
+  nothing useful. Two helpers on `Script` produce the plain form:
+  - `Script.ToPlainObject(x)` (also `ToObjectLiteral`) is **shallow**: `Transpose.toPlain` — a class
+    instance becomes what its `toJSON` returns, an array is rebuilt, one level only.
+  - `Script.ToPlainObjectCopy(x)` is a **deep, structured-clone-safe copy**: fresh plain objects and
+    arrays carrying the data alone, functions and `undefined` members dropped, `toJSON` honoured,
+    boxed values unboxed, `Date`s and typed arrays kept, shared references and cycles preserved. Use it
+    for a whole graph crossing to a web worker or into IndexedDB — a JSON schema, a worker's
+    `createData`, an editor's view state — in place of a `JSON.parse(JSON.stringify(x))` round trip.
+
+  ```csharp
+  var schema = new { type = "object", required = new[] { "name" } };
+  worker.postMessage(Script.ToPlainObjectCopy(schema));   // {"type":"object","required":["name"]}, no $type
+  ```
+
 - **Tasks and Promises**: While C# `Task` and JavaScript `Promise` are conceptually similar, they are not automatically interchangeable when calling external code.
   - Use `.ToTask()` (available on `es5.Promise<T>`) to convert a JavaScript `Promise` into a C# `Task` that can be awaited.
 

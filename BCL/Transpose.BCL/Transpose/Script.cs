@@ -113,7 +113,7 @@ namespace Transpose
         /// <param name="obj">The object to test against.</param>
         /// <param name="member">The member to check if in the object.</param>
         /// <returns>true if member in object; false otherwise.</returns>
-        [Template("{member} in {obj}")]
+        [Template("({member} in {obj})")]
         public static extern bool In(object obj, string member);
 
         /// <summary>
@@ -325,11 +325,40 @@ namespace Transpose
         [Template("{action:body}")]
         public static extern object FromLambda(Action action);
 
+        /// <summary>
+        /// A SHALLOW plain-object view of <paramref name="o"/>: <c>Transpose.toPlain</c>. A plain object
+        /// or a primitive is returned as it is; a class instance becomes what its <c>toJSON</c> returns
+        /// (its fields and properties, the runtime bookkeeping left out); an array is rebuilt with each
+        /// element passed through the same rule; anything else is copied member by member with the
+        /// functions skipped. One level only - a C# array nested inside a plain object keeps its
+        /// <c>$type</c>. For a whole graph that has to survive <c>postMessage</c> or
+        /// <c>structuredClone</c>, use <see cref="ToPlainObjectCopy{T}"/>.
+        /// </summary>
         [Template("{o:plain}")]
         public static extern T ToPlainObject<T>(T o);
 
+        /// <summary>Same as <see cref="ToPlainObject{T}"/>.</summary>
         [Template("{o:plain}")]
         public static extern T ToObjectLiteral<T>(T o);
+
+        /// <summary>
+        /// A structured-clone-safe DEEP copy of <paramref name="o"/>: fresh plain objects and arrays
+        /// carrying the data alone, for a value that has to cross <c>postMessage</c> into a web worker or
+        /// <c>structuredClone</c> into IndexedDB. A value built from C# fails both as it stands - every
+        /// array carries a <c>$type</c> property holding a <b>function</b>, a class instance is a prototype
+        /// and delegate fields around its data, a boxed value is a wrapper with a constructor - and the
+        /// <c>DataCloneError</c> names a function body and nothing else.
+        ///
+        /// Behaves like <c>JSON.parse(JSON.stringify(o))</c> where the two can agree - members holding a
+        /// function or <c>undefined</c> are left out, a type's own <c>toJSON</c> is honoured, every object
+        /// in the result is a fresh one - and keeps what the text form loses where they cannot: a
+        /// <c>Date</c> stays a <c>Date</c>, a typed array and an <c>ArrayBuffer</c> pass through as
+        /// themselves, a boxed value is unboxed, <c>NaN</c> and infinities are kept, and a shared reference
+        /// or a cycle is copied with the same shape instead of throwing. Nothing is filtered by name, so a
+        /// JSON schema's <c>$schema</c> and <c>$ref</c> arrive intact.
+        /// </summary>
+        [Template("Transpose.toPlainCopy({o})")]
+        public static extern T ToPlainObjectCopy<T>(T o);
 
         /// <summary>
         /// Runs the function in a try/catch statement
