@@ -113,7 +113,7 @@ namespace Transpose
         /// <param name="obj">The object to test against.</param>
         /// <param name="member">The member to check if in the object.</param>
         /// <returns>true if member in object; false otherwise.</returns>
-        [Template("{member} in {obj}")]
+        [Template("({member} in {obj})")]
         public static extern bool In(object obj, string member);
 
         /// <summary>
