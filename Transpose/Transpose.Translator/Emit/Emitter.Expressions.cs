@@ -1354,9 +1354,13 @@ public sealed partial class Emitter
     }
 
     /// <summary>
-    /// Applies the <c>:raw</c> template modifier: a constant string argument is inserted as raw
+    /// Applies a template argument modifier. <c>:raw</c>: a constant string argument is inserted as raw
     /// JS code rather than a quoted string — e.g. <c>Script.Call&lt;string&gt;("x.toString", 16)</c>
     /// with template <c>{name:raw}({args})</c> emits <c>x.toString(16)</c>, not <c>"x.toString"(…)</c>.
+    /// <c>:array</c>: a params argument as an array literal. <c>:plain</c>: the argument passed through
+    /// the runtime's <c>Transpose.toPlain</c>, which is what <c>Script.ToPlainObject</c> /
+    /// <c>ToObjectLiteral</c> are declared with — an unknown modifier falls through to the bare argument,
+    /// which had made both of those a silent no-op.
     /// </summary>
     private static string ApplyArgModifier(string? modifier, string value)
     {
@@ -1371,6 +1375,9 @@ public sealed partial class Emitter
             // resolve to the bare spread form (a, b).
             case "array":
                 return "[" + value + "]";
+            // :plain — the shallow plain-object view (Script.ToPlainObject / ToObjectLiteral).
+            case "plain":
+                return "Transpose.toPlain(" + value + ")";
             default:
                 return value;
         }
