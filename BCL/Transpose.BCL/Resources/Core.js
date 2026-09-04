@@ -351,6 +351,110 @@
             return newo;
         },
 
+        /// A structured-clone-safe DEEP copy of a value - fresh plain objects and arrays carrying the
+        /// data alone - for anything that has to cross postMessage into a web worker or
+        /// structuredClone into IndexedDB. A value built from C# fails both as it stands: every array
+        /// System.Array.init creates carries a $type property holding a FUNCTION, a class instance is a
+        /// prototype and delegate fields around its data, and a boxed value is a wrapper with a
+        /// constructor. The DataCloneError names a function body and nothing else.
+        ///
+        /// This is Script.ToPlainObjectCopy. It replaces the JSON.parse(JSON.stringify(o)) round trip
+        /// and keeps to what that produced where the two can agree: a member whose value is a function
+        /// or undefined is left out, a type's own toJSON is honoured (the base Class toJSON is how an
+        /// instance serialises its fields, List's returns its items, Uri and Guid their text), and every
+        /// object and array in the result is a fresh one. Where they differ it keeps what the text form
+        /// lost: a Date stays a Date, a typed array and an ArrayBuffer pass through (they are already
+        /// clone-safe and carry no $type), a boxed value is unboxed, NaN and infinities are kept, and a
+        /// shared reference or a cycle is copied with the same shape instead of throwing. Nothing is
+        /// filtered by name - a JSON schema's $schema and $ref are data, and $type only ever sits on an
+        /// array, which is rebuilt rather than copied.
+        toPlainCopy: function (o) {
+            return Transpose.toPlainCopyCore(o, new Map(), true);
+        },
+
+        /// The recursive half of toPlainCopy. `seen` maps every source object already copied to its
+        /// copy, which is what makes a shared reference come out shared and a cycle a cycle rather than
+        /// a stack overflow. `honourToJson` is false for the value a toJSON just returned: as with
+        /// JSON.stringify, its members' toJSON are asked, its own is not asked again.
+        toPlainCopyCore: function (o, seen, honourToJson) {
+            if (o == null) {
+                return o;
+            }
+
+            var kind = typeof o;
+
+            if (kind !== "object") {
+                // A bare function has no plain form: a member holding one is skipped by the caller,
+                // an array slot holding one becomes null, as with JSON.
+                return kind === "function" ? undefined : o;
+            }
+
+            if (o.$boxed) {
+                return Transpose.toPlainCopyCore(o.v, seen, true);
+            }
+
+            if (seen.has(o)) {
+                return seen.get(o);
+            }
+
+            if (Transpose.isDate(o)) {
+                var date = new Date(o.getTime());
+
+                seen.set(o, date);
+
+                return date;
+            }
+
+            if (ArrayBuffer.isView(o) || o instanceof ArrayBuffer) {
+                return o;
+            }
+
+            if (Array.isArray(o)) {
+                var arr = [];
+
+                seen.set(o, arr);
+
+                for (var i = 0; i < o.length; i++) {
+                    var item = Transpose.toPlainCopyCore(o[i], seen, true);
+
+                    arr.push(item === undefined ? null : item);
+                }
+
+                return arr;
+            }
+
+            if (honourToJson && typeof o.toJSON === "function") {
+                var serialised = o.toJSON();
+
+                if (serialised !== o) {
+                    var viaJson = Transpose.toPlainCopyCore(serialised, seen, false);
+
+                    seen.set(o, viaJson);
+
+                    return viaJson;
+                }
+            }
+
+            var copy = {},
+                keys = Object.keys(o);
+
+            seen.set(o, copy);
+
+            for (var k = 0; k < keys.length; k++) {
+                var key = keys[k],
+                    member = o[key],
+                    memberKind = typeof member;
+
+                if (memberKind === "undefined" || memberKind === "function") {
+                    continue;
+                }
+
+                copy[key] = Transpose.toPlainCopyCore(member, seen, true);
+            }
+
+            return copy;
+        },
+
         ref: function (o, n) {
             if (Transpose.isArray(n)) {
                 n = System.Array.toIndex(o, n);
