@@ -34,8 +34,9 @@ internal sealed class ProjectXml
     private const int MaxImportDepth = 32;
 
     /// <summary>Every element of the project and its imports, paired with the directory of the file
-    /// that declared it. Project-own elements come first, so a first-match property lookup gives the
-    /// project precedence over what it imports.</summary>
+    /// that declared it, in document order — the project's own elements first, then each import's,
+    /// which is where an <c>&lt;Import&gt;</c> of a .projitems sits in a real project file and so the
+    /// order MSBuild's last-write-wins evaluation sees (<see cref="Property"/>).</summary>
     private readonly List<(XElement element, string declaringDir)> _elements = new();
 
     private readonly HashSet<string> _visited = new(StringComparer.OrdinalIgnoreCase);
@@ -111,10 +112,40 @@ internal sealed class ProjectXml
     /// the project itself, never from an import, since the SDK is a property of the project.</summary>
     public string? SdkName { get; private set; }
 
-    /// <summary>The first value found for a property, searching the project before its imports —
-    /// mirroring the previous single-document behaviour, extended across imports.</summary>
+    /// <summary>
+    /// The value MSBuild would evaluate for a property: the <b>last</b> declaration wins, because that
+    /// is what MSBuild does — a project that writes <c>&lt;LangVersion&gt;</c> in two
+    /// <c>&lt;PropertyGroup&gt;</c>s compiles with the second one. Reading the first is how <c>tps</c>
+    /// and an IDE came to disagree about the same csproj: the compiler took 7.2 from the top of the
+    /// file while the editor took the 7 written further down, so the editor reported errors on code
+    /// that built, in a language version nothing was actually compiling at.
+    ///
+    /// Conditions are not evaluated anywhere in this resolver, so a declaration guarded by one (on
+    /// itself or on any group above it) is not a value that can be trusted: it is skipped while an
+    /// unguarded declaration exists, and used only when every candidate is guarded.
+    /// </summary>
     public string? Property(string name)
-        => _elements.FirstOrDefault(e => e.element.Name.LocalName == name).element?.Value;
+    {
+        var candidates = _elements
+            .Where(e => e.element.Name.LocalName == name)
+            .Select(e => e.element)
+            .ToList();
+        if (candidates.Count == 0) return null;
+
+        var unconditional = candidates.Where(e => !IsConditional(e)).ToList();
+        var winning       = unconditional.Count > 0 ? unconditional : candidates;
+
+        return winning[winning.Count - 1].Value;
+    }
+
+    /// <summary>Whether the element, or anything containing it, carries a <c>Condition</c>.</summary>
+    private static bool IsConditional(XElement element)
+    {
+        for (var e = element; e is not null; e = e.Parent)
+            if (e.Attribute("Condition") is not null) return true;
+
+        return false;
+    }
 
     /// <summary>
     /// Resolves an MSBuild path expression to an absolute path, or null when it cannot be resolved

@@ -301,6 +301,35 @@ design. There *is* an opt-in build cache (`--incremental`, off by default) — s
 **`TODO.incremental.md`** for what it reuses, why that is sound, and what it measures; a build with
 the cache disabled behaves exactly as it always did.
 
+#### The compiler and the IDE must read the same csproj
+
+Nothing compiles a Transpose project except `tps` — the SDK drops `CoreCompile` — but an IDE still
+evaluates the project with MSBuild and analyses the sources with its own compiler front end (Rider's
+ReSharper engine, VS's Roslyn). Wherever the two disagree about a property, the editor reports errors
+on code that builds, or accepts code that does not. Two things keep them in step:
+
+- **`LangVersion` is defaulted in `Sdk.props`, and that is the only place it can be.** Roslyn's
+  `Microsoft.CSharp.Core.targets` caps an unset `LangVersion` at the newest version the *target
+  framework* supports — 7.3 for netstandard2.0, which every Transpose project targets — and it is
+  imported from the SDK's `Sdk.targets`, so the default that used to sit in `Sdk.targets` below it
+  never applied. Every project was therefore analysed as C# 7.3 while `tps` compiled it at `Latest`,
+  and modern C# (a switch expression, a target-typed `new`, a collection expression) showed up in the
+  editor as an error in code that built cleanly. The cap is about the framework a compilation binds
+  against; a Transpose project binds against `Transpose.dll` and is never handed to csc, so it does
+  not apply. A project's own `<LangVersion>` still wins, and `tps` reads that same property, so a pin
+  constrains both.
+- **`TRANSPOSE` is appended to `DefineConstants` in `Sdk.targets`** (after the project body, so a
+  project that assigns `DefineConstants` outright cannot drop it). `tps` defines it unconditionally;
+  without it in the evaluated project an editor analyses the `#if !TRANSPOSE` half of shared source —
+  the half written against the real BCL — and reports errors in code this project never compiles.
+
+The corresponding rule on the compiler's side is that `ProjectXml.Property` answers with the **last**
+declaration of a property, as MSBuild's last-write-wins evaluation does, skipping declarations guarded
+by a `Condition` while an unguarded one exists (conditions are evaluated nowhere in this resolver, so a
+guarded value cannot be trusted). Reading the *first* is what let Curiosity.FrontEnd.API — which pins
+`<LangVersion>` twice, 7.2 then 7 — compile at 7.2 while Rider analysed it at 7 and flagged eighteen
+errors nothing was failing on. `ProjectPropertyPrecedenceTests` pins the rule.
+
 Because there is no MSBuild evaluation, `ProjectXml` does the one bit of evaluation that changes
 which files compile: it follows `<Import Project="…"/>` transitively and flattens the result, so a
 **shared project**'s `.projitems` (where its `<Compile>` items live) is picked up. Each item is

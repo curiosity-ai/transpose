@@ -167,8 +167,9 @@ public sealed class ProjectImportTests
     public void PropertiesAndPackageReferencesComeThroughImports()
     {
         // Sources are not the only thing an import can carry: a shared .props commonly sets properties
-        // and package references, and the flattened view has to surface those too. The project's own
-        // value wins over an imported one.
+        // and package references, and the flattened view has to surface those too. An import written
+        // below the project's own PropertyGroup is evaluated after it, so its value is the one that
+        // stands — verified against `dotnet msbuild -getProperty:AssemblyName` on this very shape.
         Write("Shared/Common.props", """
             <Project>
               <PropertyGroup>
@@ -189,7 +190,7 @@ public sealed class ProjectImportTests
             """);
 
         var resolved = ProjectResolver.Resolve(csproj);
-        Assert.AreEqual("from-project", resolved.AssemblyName, "the project's own property must win");
+        Assert.AreEqual("from-import", resolved.AssemblyName, "MSBuild is last-write-wins, and the import is written last");
         Assert.IsTrue(resolved.DefineConstants.Contains("FROM_IMPORT"),
             "a define declared only in an imported file must still reach the compilation");
     }
