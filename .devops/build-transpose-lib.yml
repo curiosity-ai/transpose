@@ -68,7 +68,7 @@ steps:
     packagesToPack: '$(transposeBase)'
     configuration: '$(buildConfiguration)'
     versioningScheme: 'off'
-    buildProperties: 'Version="$(targetVersion)";AllowUnsafeBlocks="True";LangVersion="latest"'
+    buildProperties: 'Version="$(targetVersion)";AllowUnsafeBlocks="True"'
 
 - task: NuGetCommand@2
   displayName: 'push nuget'

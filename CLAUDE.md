@@ -308,16 +308,22 @@ evaluates the project with MSBuild and analyses the sources with its own compile
 ReSharper engine, VS's Roslyn). Wherever the two disagree about a property, the editor reports errors
 on code that builds, or accepts code that does not. Two things keep them in step:
 
-- **`LangVersion` is defaulted in `Sdk.props`, and that is the only place it can be.** Roslyn's
-  `Microsoft.CSharp.Core.targets` caps an unset `LangVersion` at the newest version the *target
-  framework* supports — 7.3 for netstandard2.0, which every Transpose project targets — and it is
-  imported from the SDK's `Sdk.targets`, so the default that used to sit in `Sdk.targets` below it
-  never applied. Every project was therefore analysed as C# 7.3 while `tps` compiled it at `Latest`,
-  and modern C# (a switch expression, a target-typed `new`, a collection expression) showed up in the
-  editor as an error in code that built cleanly. The cap is about the framework a compilation binds
-  against; a Transpose project binds against `Transpose.dll` and is never handed to csc, so it does
-  not apply. A project's own `<LangVersion>` still wins, and `tps` reads that same property, so a pin
-  constrains both.
+- **`LangVersion` is *overwritten* in `Sdk.targets` with the one version the compiler supports (C# 14
+  today), and `tps` ignores the project's own value.** There is only one such version — whatever the
+  Roslyn `Transpose.Translator` references understands — so it is not a project's to choose: a lower
+  pin can only reject syntax that translates fine, and `latest` is a different statement altogether
+  ("whatever the *reader's* Roslyn supports"), which puts an editor or SDK newer than the compiler on
+  a language `tps` cannot parse. Writing the number in both halves is what keeps them reading the same
+  C#; `ProjectPropertyPrecedenceTests.LangVersionMatchesTheCompiler` fails if a Roslyn bump raises the
+  newest version and `Sdk.targets` is not updated with it. It has to be written in `Sdk.targets`, after
+  the project body and after Roslyn's `Microsoft.CSharp.Core.targets` — which caps an *unset*
+  `LangVersion` at the newest version the *target framework* supports (7.3 for netstandard2.0, which
+  every Transpose project targets), so a default written anywhere earlier is either capped away or
+  beaten by a project's pin. That cap is about the framework a compilation binds against; a Transpose
+  project binds against `Transpose.dll` and is never handed to csc, so it does not apply, and leaving
+  it in force had every project analysed as C# 7.3 while `tps` compiled at the latest — modern C# (a
+  switch expression, a target-typed `new`, a collection expression) showing up in the editor as an
+  error in code that built cleanly.
 - **`TRANSPOSE` is appended to `DefineConstants` in `Sdk.targets`** (after the project body, so a
   project that assigns `DefineConstants` outright cannot drop it). `tps` defines it unconditionally;
   without it in the evaluated project an editor analyses the `#if !TRANSPOSE` half of shared source —

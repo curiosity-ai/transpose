@@ -111,9 +111,27 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <!-- LangVersion is defaulted in Sdk.props, which is the only place it can be: Roslyn's
-         Microsoft.CSharp.Core.targets — imported above — caps an unset one at the target framework's
-         newest supported version, so a default written here would never apply. -->
+    <!-- The C# language version an IDE analyses this project with, and the one `tps` compiles it at.
+         There is exactly one such version — whatever the Roslyn the compiler is built on supports —
+         so this is set outright rather than defaulted: a Transpose project does not get to choose it.
+
+         Pinning a *lower* version can only reject syntax `tps` compiles happily, and `latest` is not
+         the same statement at all — it means "whatever the reader's Roslyn supports", so an editor
+         (or an SDK) newer than the compiler accepts a feature `tps` cannot parse, and an older one
+         silently analyses at less than the compiler allows. Writing the number is what keeps the two
+         reading the same language. `tps` ignores <LangVersion> in the csproj for the same reason.
+
+         It has to be written *here*, after the project body and after Roslyn's
+         Microsoft.CSharp.Core.targets (imported above, and where an unset LangVersion is capped at
+         the target framework's newest supported version — 7.3 for netstandard2.0, which every
+         Transpose project targets). That cap is about the framework a compilation binds against; a
+         Transpose project binds against Transpose.dll and is never handed to csc, so it does not
+         apply, and leaving it in force made an IDE report modern C# as an error in code that builds.
+
+         Keep this in step with the Microsoft.CodeAnalysis.CSharp version Transpose.Translator
+         references — LangVersionMatchesTheCompiler in ProjectPropertyPrecedenceTests fails when the
+         two drift apart. -->
+    <LangVersion>14</LangVersion>
 
     <!-- `tps` compiles every project with TRANSPOSE defined, so the IDE has to see it too: without it
          an editor analyses the `#if !TRANSPOSE` branch of shared source (the half written against the

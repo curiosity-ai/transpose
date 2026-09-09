@@ -82,6 +82,16 @@ internal sealed class ResolvedProject
 
 internal static class ProjectResolver
 {
+    /// <summary>
+    /// The one C# language version a Transpose project compiles at: the newest the Roslyn this
+    /// compiler is built on understands. Nothing about a Transpose project makes a lower version
+    /// meaningful — it binds against Transpose.dll rather than a framework and is never handed to
+    /// csc, so a pin can only reject syntax that translates fine — and the SDK writes this same
+    /// version into <c>&lt;LangVersion&gt;</c> unconditionally so an IDE analyses the project the way
+    /// <c>tps</c> compiles it (Sdk.targets in Transpose.Build.Target).
+    /// </summary>
+    public const LanguageVersion SupportedLanguageVersion = LanguageVersion.Latest;
+
     public static ResolvedProject Resolve(string csprojPath, string configuration = "Debug", bool separateAssemblies = false)
     {
         csprojPath = Path.GetFullPath(csprojPath);
@@ -128,7 +138,11 @@ internal static class ProjectResolver
         foreach (var fx in FrameworkDefines(targetFramework))
             if (!defines.Contains(fx)) defines.Add(fx);
 
-        var lang = ParseLangVersion(doc.Property("LangVersion"));
+        // Deliberately NOT read from the csproj: a Transpose project compiles at the one version this
+        // compiler supports, and the SDK writes that same version into <LangVersion> unconditionally
+        // (Sdk.targets) so an IDE analyses what tps compiles. Honouring a project's own pin here
+        // would recreate that divergence in the other direction — the editor at C# 14, tps at 7.2.
+        var lang = SupportedLanguageVersion;
 
         // Default (bundle) mode: translate the whole closure of source projects into one JS
         // output. Separate-assembly mode: compile only this project's own sources and reference
@@ -813,15 +827,5 @@ internal static class ProjectResolver
         }
 
         return result;
-    }
-
-    private static LanguageVersion ParseLangVersion(string? v)
-    {
-        if (string.IsNullOrWhiteSpace(v)) return LanguageVersion.Latest;
-        return v.Trim().ToLowerInvariant() switch
-        {
-            "latest" or "latestmajor" or "preview" or "default" => LanguageVersion.Latest,
-            _ => LanguageVersionFacts.TryParse(v, out var parsed) ? parsed : LanguageVersion.Latest,
-        };
     }
 }

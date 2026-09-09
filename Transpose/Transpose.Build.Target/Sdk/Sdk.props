@@ -12,24 +12,10 @@
 
   <Import Project="$(CustomAfterTransposeProps)" Condition=" '$(CustomAfterTransposeProps)' != '' And Exists('$(CustomAfterTransposeProps)') " />
 
-  <PropertyGroup>
-    <!-- The C# language version an IDE analyses this project with, and the one `tps` compiles it at.
-         It has to be defaulted *here*, in the props, because Roslyn's Microsoft.CSharp.Core.targets
-         caps an unset LangVersion at the newest version the target framework supports (7.3 for
-         netstandard2.0, which is what every Transpose project targets) — and it is imported from
-         Sdk.targets below, so a default written there arrives too late to ever apply.
-
-         That cap is about the *framework* a compilation binds against, and a Transpose project binds
-         against Transpose.dll and is never handed to csc, so it does not apply: the translator
-         supports the latest C# (collection expressions, list patterns, the `field` keyword, ref
-         structs, …) whatever the TFM says. Leaving it capped made the IDE report modern C# as an
-         error in code `tps` compiles happily — the whole point of setting it.
-
-         A project can still pin an older version with <LangVersion> in its .csproj; `tps` reads the
-         same property out of the csproj, so the two stay in step. -->
-    <LangVersion Condition="'$(LangVersion)' == ''">latest</LangVersion>
-  </PropertyGroup>
-
+  <!-- <LangVersion> is set in Sdk.targets, not here: a Transpose project always compiles at the one
+       version the compiler supports, so the value has to be written *after* the project body (and
+       after Roslyn's own targets) to beat both a project-declared pin and the target framework's
+       cap. See the comment there. -->
 
   <Target Name="CheckReSharper" BeforeTargets="PrepareForBuild" Condition="'$(ReSharperBuild)' == 'true'">
     <Error Text="Transpose is not compatible with ReSharper and you should disable it for the project." />

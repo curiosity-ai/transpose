@@ -77,8 +77,10 @@ becomes:
 
 Notes:
 - Replace `*` with the latest published versions (see the badges in the README).
-- `netstandard2.0` and `netstandard2.1` both work. The SDK inherits
-  `LangVersion=latest`; pin `<LangVersion>` only if you need an older one.
+- `netstandard2.0` and `netstandard2.1` both work. The SDK sets `<LangVersion>` to
+  the C# version the compiler supports (14 today) and `tps` compiles at that
+  version regardless, so drop any `<LangVersion>` pin you were carrying — it no
+  longer does anything, in the editor or in the build.
 - If you had `<UpdateH5>false</UpdateH5>`, drop it — there is no global-tool
   auto-update to disable (see Step 4).
 - A **library** you distribute as a package keeps `<GeneratePackageOnBuild>true</GeneratePackageOnBuild>`;
