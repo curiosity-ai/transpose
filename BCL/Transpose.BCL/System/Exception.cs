@@ -18,8 +18,15 @@ namespace System
         /// <summary>
         /// Gets a message that describes the current exception.
         /// </summary>
+        /// <remarks>
+        /// Read through a helper for the same reason as <see cref="StackTrace"/>: a value caught by
+        /// <c>catch (Exception)</c> may be a real <see cref="Exception"/>, a raw JavaScript error
+        /// (both carry a <c>message</c>) or a bare value someone threw - a string, an object - which
+        /// has no <c>message</c> field, so reading the member directly reported no message at all.
+        /// </remarks>
         public virtual extern string Message
         {
+            [Transpose.Template("TransposeR.message({this})")]
             get;
         }
 
