@@ -578,9 +578,25 @@ The short version:
   so `size & 0xF00000000` would silently lose the high word), as does a **constant outside
   ±2^53**, so `size == long.MaxValue` stays exact. And the cost: a value stored *into* a foreign slot
   above 2^53 rounds, because a JS number counts in ones only that far. For an external slot nothing is
-  lost — the value arrived as a number. For an `[ObjectLiteral]` it is a real trade, taken because the
-  alternative put a `{low, high}` object into a plain JS object whose whole purpose is to be read by
-  hand-written JavaScript and serialized to JSON. Covered end to end by `ForeignJs64BitTests`.
+  lost — the value arrived as a number. For an `[ObjectLiteral]` it would be a real loss, which is why
+  a literal **declared in source** may no longer have a 64-bit member at all (see the next bullet);
+  the literal path here serves the ones this compiler does not materialise — a binding library's
+  `[External]` option bag, and a package built before that check existed. Covered end to end by
+  `ForeignJs64BitTests`.
+- **An `[ObjectLiteral]` member must hold a plain JavaScript value (`ObjectLiteralMemberScanner`).**
+  Such an instance *is* a plain JS object — that is the whole point: it crosses into JSON and into
+  hand-written JavaScript — so every field and property it declares is checked at its declaration and
+  rejected with **TransposeR0004** when its type has no JavaScript representation of its own. Allowed:
+  `bool`, `char`, `string`, `object`/`dynamic`, the numeric types up to 32 bits (`sbyte`…`uint`,
+  `float`, `double`), an enum, `T?` and `T[]` of those, a delegate (a JS function — the callback slot
+  every option bag has), and another `[ObjectLiteral]` type. Rejected: `long`/`ulong` (unwrapped to a
+  plain number in a literal, so representable but silently lossy above 2^53 — the trade this replaces),
+  `decimal`, `nint`/`nuint`, any other struct (`DateTime`, `Guid`, a ValueTuple, a user struct), and
+  any non-literal class or interface (`List<T>`, a DTO). Only *slots* count — a static, a constant, an
+  indexer and a computed property hold nothing in the object — and only on a type Transpose itself
+  materialises: an `[External]`/`[Scope]`-projected literal (Howler's option bags, the DOM's dictionary
+  types) describes an object that already exists in JavaScript, and its author decides what its slots
+  hold. Covered by `ObjectLiteralMemberTypeTests`.
 - **`dynamic` has no runtime overload resolver.** A generic call with a `dynamic` argument works when
   the method has one candidate (`Enumerable.Count(dyn)`); with numeric overloads to choose between
   (`Enumerable.Sum(dyn)`) there is no single binding and the emitted call does not exist.

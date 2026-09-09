@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -5,7 +6,8 @@ namespace Transpose.Translator.Tests
 {
     /// <summary>
     /// <c>long</c>/<c>ulong</c> that live in FOREIGN JavaScript — an <c>[External]</c> binding's
-    /// member, an <c>[ObjectLiteral]</c>'s field.
+    /// member, an external <c>[ObjectLiteral]</c>'s field. (A literal declared in SOURCE may no longer
+    /// have a 64-bit member at all: see <see cref="SourceObjectLiteral64BitMemberIsRejected"/>.)
     ///
     /// <para>
     /// tps.js models a 64-bit integer as a System.Int64/UInt64 OBJECT, and that is right for every
@@ -31,175 +33,49 @@ namespace Transpose.Translator.Tests
         // ---- [ObjectLiteral] ---------------------------------------------------
 
         /// <summary>
-        /// An <c>[ObjectLiteral]</c> instance IS a plain JS object — that is the point of the
-        /// attribute, since it crosses into JSON and into hand-written JavaScript — so a
-        /// <c>long</c>/<c>ulong</c> member of one holds a plain number. The whole operator surface
-        /// runs against the same program with the attribute removed, which is what .NET does.
+        /// A <c>long</c>/<c>ulong</c> slot in a literal declared IN SOURCE is now rejected outright
+        /// (TransposeR0004, <c>ObjectLiteralMemberScanner</c>) rather than unwrapped.
+        ///
+        /// <para>
+        /// It used to be the sharpest illustration of the rule this file is about: an
+        /// <c>[ObjectLiteral]</c> instance IS a plain JS object, so its 64-bit members were emitted as
+        /// plain numbers — representable, but silently lossy above 2^53, since a JS number counts in
+        /// ones only that far. That was a deliberate trade (the alternative put a <c>{low, high}</c>
+        /// Int64 object into an object whose entire purpose is to be read by hand-written JavaScript
+        /// and serialized to JSON), and it is now an error instead: a type Transpose itself
+        /// materialises should not have a slot that quietly rounds. <c>ObjectLiteralMemberTypeTests</c>
+        /// covers the check; this pins that the rule reaches the case this file documented.
+        /// </para>
+        ///
+        /// <para>
+        /// The unwrapping itself stays — see <see cref="ObjectLiteral64BitMembersAreWrittenAsPlainNumbers"/>
+        /// for the shape that still reaches it, a binding library's literal, whose slots are the
+        /// browser's plain numbers and are not this compiler's to declare.
+        /// </para>
         /// </summary>
         [TestMethod]
-        public async Task ObjectLiteral64BitMembersBehaveLikeNativeDotNet()
+        public void SourceObjectLiteral64BitMemberIsRejected()
         {
-            const string body = """
-    public static void Main()
-    {
-        var i = new Info { Id = 7L, Bytes = 3000000000UL, Maybe = 12L };
-
-        // Reads and the operators that used to call Int64 methods on a bare number.
-        Console.WriteLine(i.Id);
-        Console.WriteLine(i.Bytes);
-        Console.WriteLine(i.Id + 1);
-        Console.WriteLine(i.Id - 10);
-        Console.WriteLine(i.Id * 3);
-        Console.WriteLine(i.Bytes / 1024);
-        Console.WriteLine(i.Id % 4);
-        Console.WriteLine(i.Id > 3);
-        Console.WriteLine(i.Id >= 7);
-        Console.WriteLine(i.Id < 3);
-        Console.WriteLine(i.Id == 7);
-        Console.WriteLine(i.Id != 7);
-        Console.WriteLine(i.Bytes >= 3000000000UL);
-
-        // Conversions out of the foreign representation.
-        Console.WriteLine(i.Id.ToString());
-        Console.WriteLine((double)i.Bytes);
-        Console.WriteLine((int)i.Id);
-        Console.WriteLine((short)i.Id);
-        Console.WriteLine(-i.Id);
-        Console.WriteLine($"interp {i.Id} {i.Bytes}");
-
-        // Into a managed slot, where the Int64 methods are real again.
-        long managed = i.Id;
-        Console.WriteLine(managed + 1L);
-        Console.WriteLine(managed.ToString());
-        Console.WriteLine(managed * managed);
-
-        // Boxing: the box has to carry a real Int64, or `is long` and ToString are wrong.
-        object boxed = i.Id;
-        Console.WriteLine(boxed is long);
-        Console.WriteLine(boxed.ToString());
-
-        // Writes back into the literal: a managed Int64 must not be stored as an object.
-        i.Id = managed * 2L;
-        Console.WriteLine(i.Id);
-        i.Id += 5;
-        Console.WriteLine(i.Id);
-        i.Id -= 2;
-        Console.WriteLine(i.Id);
-        i.Id *= 3;
-        Console.WriteLine(i.Id);
-        i.Id++;
-        Console.WriteLine(i.Id);
-        --i.Id;
-        Console.WriteLine(i.Id);
-        i.Bytes /= 3;
-        Console.WriteLine(i.Bytes);
-
-        // Nullable members.
-        Console.WriteLine(i.Maybe + 1);
-        Console.WriteLine(i.Maybe.HasValue);
-        Console.WriteLine(i.Maybe.Value + 2);
-        Console.WriteLine((i.Maybe ?? 0L) * 2);
-        Console.WriteLine(i.Maybe > 5L);
-
-        // Into a managed nullable: null has to survive the lift, not become a zero instance.
-        long? liftedNullable = i.Maybe;
-        Console.WriteLine(liftedNullable.HasValue);
-        Console.WriteLine(liftedNullable + 3L);
-
-        // A ternary boxes both branches, so the result is usable either way round.
-        Console.WriteLine((i.Id > 0 ? i.Id : i.Id + 1) + 1L);
-
-        i.Maybe = null;
-        Console.WriteLine(i.Maybe.HasValue);
-        Console.WriteLine(i.Maybe ?? -1L);
-        Console.WriteLine(i.Maybe + 1 == null);
-        long? nulled = i.Maybe;
-        Console.WriteLine(nulled.HasValue);
-        Console.WriteLine(nulled ?? -2L);
-
-        // Bitwise and shifts keep the full 64-bit width, which JavaScript's own operators do not.
-        var w = new Info { Id = 4294967296L };
-        Console.WriteLine(w.Id & 4294967296L);
-        Console.WriteLine(w.Id | 1L);
-        Console.WriteLine(w.Id ^ 1L);
-        Console.WriteLine(w.Id >> 2);
-        Console.WriteLine(w.Id << 2);
-        Console.WriteLine(~w.Id);
-
-        // A METHOD on the literal type is ordinary transpiled C#: its long parameter is managed,
-        // even though the type's own slots are not, so a plain slot is lifted on the way in.
-        Console.WriteLine(Info.Doubled(i.Id));
-        Console.WriteLine(Info.Doubled(3L));
-        Console.WriteLine(i.Describe());
-
-        // Patterns: the subject is lifted once, so constants and relationals compare by value.
-        Console.WriteLine(w.Id switch { > 4000000000L => "big", _ => "small" });
-        Console.WriteLine(w.Id is 4294967296L);
-        Console.WriteLine(w.Id is > 1L and < 9223372036854775807L);
-        switch (w.Id)
-        {
-            case 4294967296L: Console.WriteLine("case hit"); break;
-            default: Console.WriteLine("case missed"); break;
-        }
-
-        // Collections and the BCL take the managed representation.
-        var list = new List<long> { i.Id, w.Id };
-        Console.WriteLine(list[0] + list[1]);
-        Console.WriteLine(Math.Max(i.Id, w.Id));
-        Console.WriteLine(i.Id.CompareTo(w.Id));
-        Console.WriteLine(i.Id.Equals(20L));
-    }
-""";
-
-            var code = $$"""
+            var result = new RoslynTranslator().Translate("""
 using System;
-using System.Collections.Generic;
 using Transpose;
-using Fixture;
 
-namespace Fixture
-{
-    [ObjectLiteral]
-    public class Info
-    {
-        public long Id { get; set; }
-        public ulong Bytes { get; set; }
-        public long? Maybe { get; set; }
-
-        public static long Doubled(long n) => n * 2L + 1L;
-        public string Describe() => (Id + 1L).ToString();
-    }
-}
-
-public class Program
-{
-{{body}}
-}
-""";
-
-            // Natively the same program with a plain class: [ObjectLiteral] changes the JavaScript
-            // representation, never the C# semantics, so .NET is the oracle for every line above.
-            var native = $$"""
-using System;
-using System.Collections.Generic;
-
+[ObjectLiteral]
 public class Info
 {
     public long Id { get; set; }
     public ulong Bytes { get; set; }
     public long? Maybe { get; set; }
-
-    public static long Doubled(long n) => n * 2L + 1L;
-    public string Describe() => (Id + 1L).ToString();
 }
 
-public class Program
-{
-{{body}}
-}
-""";
+public class Program { public static void Main() { Console.WriteLine(new Info().Id); } }
+""");
 
-            await RunTest(code, overrideRoslynCode: native);
+            Assert.IsFalse(result.Success, "a 64-bit slot in a source [ObjectLiteral] must not compile");
+            var errors = string.Join("\n", result.Errors.Select(d => d.GetMessage()));
+            StringAssert.Contains(errors, "'Id' is a 'long'", errors);
+            StringAssert.Contains(errors, "'Bytes' is a 'ulong'", errors);
+            StringAssert.Contains(errors, "'Maybe' is a 'long?'", errors);
         }
 
         // ---- [External] --------------------------------------------------------
@@ -458,8 +334,11 @@ public class Program
         }
 
         /// <summary>
-        /// The other half of the same rule: an <c>[ObjectLiteral]</c>'s 64-bit members are plain
-        /// numbers in the object it builds, including its declared defaults.
+        /// The other half of the same rule, on the literal that can still declare a 64-bit slot: a
+        /// binding library's. Such a type is <c>[External]</c> — it describes an option bag that
+        /// already exists in JavaScript, whose <c>size</c>-style members are the browser's plain
+        /// numbers — so it is exempt from the check above, and the object Transpose builds for it must
+        /// hold plain numbers rather than Int64 instances.
         /// </summary>
         [TestMethod]
         public void ObjectLiteral64BitMembersAreWrittenAsPlainNumbers()
@@ -470,11 +349,12 @@ using Fixture;
 
 namespace Fixture
 {
+    [External]
     [ObjectLiteral]
     public class Info
     {
-        public long Id { get; set; }
-        public ulong Bytes { get; set; }
+        public long id { get; set; }
+        public ulong bytes { get; set; }
     }
 }
 
@@ -483,19 +363,19 @@ public class Program
     public static void Main()
     {
         long managed = 5L;
-        var a = new Info { Id = 7L, Bytes = 3000000000UL };
-        var b = new Info { Id = managed };
-        System.Console.WriteLine(a.Id + b.Id + (long)a.Bytes);
+        var a = new Info { id = 7L, bytes = 3000000000UL };
+        var b = new Info { id = managed };
+        System.Console.WriteLine(a.id + b.id + (long)a.bytes);
     }
 }
 """);
 
-            Assert.IsTrue(js.Contains("Id = 7") || js.Contains("Id: 7"), "a long literal member is a plain number\n" + js);
-            Assert.IsTrue(js.Contains("Bytes = 3000000000") || js.Contains("Bytes: 3000000000"),
+            Assert.IsTrue(js.Contains("id = 7") || js.Contains("id: 7"), "a long literal member is a plain number\n" + js);
+            Assert.IsTrue(js.Contains("bytes = 3000000000") || js.Contains("bytes: 3000000000"),
                 "a ulong literal member is a plain number\n" + js);
             Assert.IsTrue(js.Contains("(managed).toNumber()"),
                 "a managed Int64 written into a literal member is unwrapped\n" + js);
-            Assert.IsFalse(js.Contains("Id = System.Int64(") || js.Contains("Bytes = System.UInt64("),
+            Assert.IsFalse(js.Contains("id = System.Int64(") || js.Contains("bytes = System.UInt64("),
                 "no Int64 instance is stored in a plain JS object\n" + js);
         }
 
@@ -535,12 +415,12 @@ public class Program
         /// <summary>
         /// The cost of the rule, pinned so nobody rediscovers it as a mystery. A slot in a plain JS
         /// object holds a JS number, and a JS number counts in ones only up to 2^53 — so a
-        /// <c>long</c> above that rounds when it is stored in an <c>[External]</c> or
-        /// <c>[ObjectLiteral]</c> member. For an external slot nothing is lost: the browser gave a
-        /// number in the first place. For an object literal it is a real trade, taken deliberately —
-        /// the alternative stored a <c>{low, high}</c> Int64 object in an object whose entire purpose
-        /// is to be read by hand-written JavaScript and serialized to JSON. Managed <c>long</c>s,
-        /// which is everything else, keep their full 64 bits (see
+        /// <c>long</c> above that rounds when it is stored in an <c>[External]</c> member — a
+        /// binding's own literal included. Nothing is lost there: the browser gave a number in the
+        /// first place. It is a source <c>[ObjectLiteral]</c>, where the value really is a managed
+        /// <c>long</c> the compiler chose to flatten, that is now rejected instead of rounded (see
+        /// <see cref="SourceObjectLiteral64BitMemberIsRejected"/>). Managed <c>long</c>s, which is
+        /// everything else, keep their full 64 bits (see
         /// <see cref="BaseLibrary64BitMembersStayBoxed"/>).
         /// </summary>
         [TestMethod]
@@ -553,8 +433,9 @@ using Fixture;
 
 namespace Fixture
 {
+    [External]
     [ObjectLiteral]
-    public class Info { public long Id { get; set; } }
+    public class Info { public long id { get; set; } }
 }
 
 public class Program
@@ -562,13 +443,13 @@ public class Program
     public static void Main()
     {
         // Exact: inside the safe-integer range.
-        var ok = new Info { Id = 9007199254740991L };
-        Console.WriteLine(ok.Id);
-        Console.WriteLine(ok.Id == 9007199254740991L);
+        var ok = new Info { id = 9007199254740991L };
+        Console.WriteLine(ok.id);
+        Console.WriteLine(ok.id == 9007199254740991L);
 
         // Rounded: past it. .NET would print 9223372036854775807 for both lines.
-        var big = new Info { Id = long.MaxValue };
-        Console.WriteLine(big.Id);
+        var big = new Info { id = long.MaxValue };
+        Console.WriteLine(big.id);
 
         // A managed long is unaffected — it never leaves the Int64 representation.
         long managed = long.MaxValue;

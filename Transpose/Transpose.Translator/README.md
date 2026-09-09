@@ -83,6 +83,8 @@ Two consequences worth keeping in mind when changing this code:
 A record may also carry `[ObjectLiteral]`, which makes it the declaration of a plain JavaScript
 object's shape: `new Point(1, 2)` on `[ObjectLiteral] record Point(int X, int Y)` emits `{X: 1, Y: 2}`
 (the positional arguments become the literal's members; the synthesized `EqualityContract` does not).
+Being that shape's declaration, its members — the positional ones included — must hold values
+JavaScript can represent on its own; `ObjectLiteralMemberScanner` rejects the rest (TransposeR0004).
 
 `RecordTests.cs` covers all of the above end to end, diffing against native .NET.
 

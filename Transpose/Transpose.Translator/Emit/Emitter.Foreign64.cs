@@ -39,10 +39,16 @@ namespace Transpose.Translator;
 /// are 32-bit, so <c>size &amp; 0xF00000000</c> would silently lose the high word — and so does a
 /// <b>constant outside ±2^53</b>, which keeps <c>size == long.MaxValue</c> exact. And the cost: a
 /// value stored INTO a foreign slot above 2^53 rounds, because a JS number counts in ones only that
-/// far. For an external slot nothing is lost — the value arrived as a number. For an
-/// <c>[ObjectLiteral]</c> it is a real trade, taken because the alternative put a
-/// <c>{low, high}</c> object into an object whose whole purpose is to be read by hand-written
-/// JavaScript and serialized to JSON.
+/// far. For an external slot nothing is lost — the value arrived as a number.
+/// </para>
+///
+/// <para>
+/// That cost is why an <c>[ObjectLiteral]</c> declared in SOURCE may no longer have a 64-bit member
+/// at all: there the value really is a managed <c>long</c> the compiler chose to flatten, so
+/// <see cref="ObjectLiteralMemberScanner"/> rejects the declaration (TransposeR0004) rather than
+/// rounding it silently. The literal branch below therefore serves the literals this compiler does
+/// NOT materialise — a binding library's <c>[External]</c> option bag, and a package compiled before
+/// the check existed — whose slots hold the browser's own plain numbers.
 /// </para>
 /// </summary>
 public sealed partial class Emitter
