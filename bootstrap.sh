@@ -25,6 +25,16 @@ echo "==> Building the tps compiler"
 dotnet build Transpose/Transpose.Compiler/Transpose.Compiler.csproj -c Debug -v q >/dev/null
 TPS="$ROOT/Transpose/Transpose.Compiler/bin/Debug/net10.0/tps.dll"
 
+# The one language version the compiler supports, read from where the SDK injects it into every
+# Transpose project (Sdk.targets) rather than written again here. build_ref below compiles the SAME
+# sources with plain csc, which never sees that injection — so hard-coding a number is what lets the
+# two halves drift, and they did: BCL/Transpose.Core built fine as a reference assembly at 7.2 while
+# `tps` rejected it at 14 over `class required`, a C# 11 keyword.
+SDK_TARGETS="$ROOT/Transpose/Transpose.Build.Target/Sdk/Sdk.targets"
+LANG_VERSION="$(sed -n 's:.*<LangVersion>\(.*\)</LangVersion>.*:\1:p' "$SDK_TARGETS" | head -1)"
+[ -n "$LANG_VERSION" ] || { echo "could not read <LangVersion> from $SDK_TARGETS" >&2; exit 1; }
+echo "==> Compiling at C# $LANG_VERSION (from Sdk.targets)"
+
 # --- helper: compile a project's C# to a self-contained reference assembly (no transpilation) ---
 build_ref() {
   local proj_dir="$1" asm="$2"; shift 2
@@ -40,7 +50,7 @@ build_ref() {
     <DisableImplicitFrameworkReferences>true</DisableImplicitFrameworkReferences>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <DebugType>None</DebugType><DebugSymbols>false</DebugSymbols>
-    <LangVersion>7.2</LangVersion><AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>$LANG_VERSION</LangVersion><AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <DefineConstants>Transpose;CORE;TRACE</DefineConstants>
     <NoWarn>1591,0626,0824,0660,0661,0169,0649,0067,0414,0108,0114</NoWarn>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>

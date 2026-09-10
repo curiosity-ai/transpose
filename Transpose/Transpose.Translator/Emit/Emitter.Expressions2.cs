@@ -1249,7 +1249,7 @@ public sealed partial class Emitter
 
     /// <summary>True if <paramref name="type"/> or any of its base types is [ObjectLiteral]. The
     /// attribute is Inherited, so a derived literal type counts even when only the base carries it.</summary>
-    private static bool IsObjectLiteralType(ITypeSymbol? type)
+    internal static bool IsObjectLiteralType(ITypeSymbol? type)
     {
         for (var t = type; t is not null; t = t.BaseType)
             if (t.GetAttributes().Any(a => TransposeNaming.AttrIs(a, "Transpose.ObjectLiteralAttribute")))

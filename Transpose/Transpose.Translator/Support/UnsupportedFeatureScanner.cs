@@ -308,29 +308,31 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
     public override void VisitClassDeclaration(ClassDeclarationSyntax node)
     {
         CheckUnsafeModifier(node.Modifiers, node);
-        CheckDuplicateJsNames(node);
+        CheckTypeDeclaration(node);
         base.VisitClassDeclaration(node);
     }
 
     public override void VisitRecordDeclaration(RecordDeclarationSyntax node)
     {
-        CheckDuplicateJsNames(node);
+        CheckTypeDeclaration(node);
         base.VisitRecordDeclaration(node);
     }
 
     public override void VisitInterfaceDeclaration(InterfaceDeclarationSyntax node)
     {
         // Reached for a default interface implementation, which has a body and so is emitted.
-        CheckDuplicateJsNames(node);
+        CheckTypeDeclaration(node);
         base.VisitInterfaceDeclaration(node);
     }
 
     /// <summary>
-    /// Reports members of this type that would be emitted under the same JavaScript name. Runs off the
-    /// walk the scanner is already doing, reusing its semantic model, so it costs one
-    /// <c>GetDeclaredSymbol</c> per type declaration rather than a second pass over the trees.
+    /// The checks that are properties of a whole type rather than of a syntax node: members that
+    /// would collide on one JavaScript name, and an <c>[ObjectLiteral]</c> slot with no plain JS
+    /// representation. Runs off the walk the scanner is already doing, reusing its semantic model, so
+    /// it costs one <c>GetDeclaredSymbol</c> per type declaration rather than a second pass over the
+    /// trees.
     /// </summary>
-    private void CheckDuplicateJsNames(TypeDeclarationSyntax node)
+    private void CheckTypeDeclaration(TypeDeclarationSyntax node)
     {
         if (_model.GetDeclaredSymbol(node) is not INamedTypeSymbol type) return;
 
@@ -340,6 +342,7 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
         }
 
         DuplicateJsNameScanner.Report(type, _diagnostics);
+        ObjectLiteralMemberScanner.Report(type, _diagnostics);
     }
 
     public override void VisitFieldDeclaration(FieldDeclarationSyntax node)
@@ -513,7 +516,7 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
         {
             Report(node, "Inline arrays are not supported in the browser environment.");
         }
-        CheckDuplicateJsNames(node);
+        CheckTypeDeclaration(node);
         base.VisitStructDeclaration(node);
     }
 

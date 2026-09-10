@@ -47,6 +47,15 @@ internal static class Diagnostics
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true);
 
+    public static readonly DiagnosticDescriptor ObjectLiteralMember = new(
+        id: "TransposeR0004",
+        title: "Unsupported [ObjectLiteral] member type",
+        messageFormat: "'{0}' is a '{2}', which an [ObjectLiteral] type cannot hold: '{1}' is emitted as a plain JavaScript object, "
+                     + "so every field and property of it must hold a value JavaScript can represent on its own. {3}",
+        category: "Transpose.Translator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
     public static Diagnostic Create(DiagnosticDescriptor descriptor, Location? location, params object[] args) =>
         Diagnostic.Create(descriptor, location ?? Location.None, args);
 }
