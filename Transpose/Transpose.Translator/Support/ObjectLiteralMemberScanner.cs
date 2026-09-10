@@ -75,12 +75,31 @@ internal static class ObjectLiteralMemberScanner
             if (m.IsStatic) continue;
             if (m is IFieldSymbol f && !f.IsConst && f.AssociatedSymbol is null && f.CanBeReferencedByName)
                 yield return f;
-            else if (m is IPropertySymbol p && !p.IsIndexer && !p.IsWriteOnly
+            else if (m is IPropertySymbol p && !p.IsIndexer && !p.IsWriteOnly && !IsComputedByJs(p)
                      && (Emitter.IsAutoProperty(p) || Emitter.IsRecordPositionalProperty(p)
                          || Emitter.IsFieldBackedProperty(p) || Emitter.IsExternProperty(p)))
                 yield return p;
         }
     }
+
+    /// <summary>
+    /// A property whose value is COMPUTED by hand-written JavaScript rather than read out of the
+    /// object: a <c>[Template]</c> or <c>[Script]</c> on the property or its getter. Its declared type
+    /// describes what the template produces, not what the slot holds, so it says nothing about the
+    /// object's shape — the exact opposite of a bodyless <c>extern</c> property with no template,
+    /// which IS a slot read (a DOM dictionary's <c>offset</c>).
+    ///
+    /// Mosaik's <c>NodeOrEdge</c> is the shape this exists for: a JSON-parsed literal exposing
+    /// <c>Time Timestamp { [Template("Mosaik.Schema.Time.Parse({this}.Timestamp)")] get; }</c>. The
+    /// object holds a string; the property hands back a parsed <c>Time</c>, and nothing of that type
+    /// is ever stored.
+    /// </summary>
+    private static bool IsComputedByJs(IPropertySymbol p)
+        => HasJsBody(p) || (p.GetMethod is { } getter && HasJsBody(getter));
+
+    private static bool HasJsBody(ISymbol symbol)
+        => TransposeNaming.GetTemplate(symbol.OriginalDefinition) is not null
+           || TransposeNaming.GetScriptBody(symbol.OriginalDefinition) is not null;
 
     /// <summary>
     /// True if a value of this type is something JavaScript can hold on its own, with no tps.js
@@ -143,8 +162,78 @@ internal static class ObjectLiteralMemberScanner
         // A delegate is a JS function — the callback slot every option bag has.
         if (type.TypeKind == TypeKind.Delegate) return true;
 
-        // And a literal may hold another literal, which is how a nested shape is declared.
-        return Emitter.IsObjectLiteralType(type);
+        // A literal may hold another literal, which is how a nested shape is declared.
+        if (Emitter.IsObjectLiteralType(type)) return true;
+
+        // An [External]/[Scope] type OUTSIDE the base library IS a native JavaScript value: the
+        // compiler emits no class for it, and whatever occupies the slot came from JavaScript in the
+        // first place. That is a DOM node (Sortable's `HTMLElement item`), a real JS Array or Map
+        // (Transpose.Core's ReadOnlyArray/ReadOnlyMap), a binding's own object. The base library is
+        // the exception, and the reason this is not simply "is it external": it DEFINES the runtime
+        // objects — System.Int64, DateTime, List<T>, decimal are all [External] there and all are
+        // tps.js instances. This is the same line Emitter.IsForeignJsSlot draws for a 64-bit slot,
+        // deliberately: the slots it treats as foreign JavaScript are exactly the ones whose types
+        // are native JS values.
+        //
+        // Type arguments are not recursed into, unlike an array's element type. A C# array IS the
+        // JSON array of its elements, so what it holds is part of the shape; an external generic's
+        // arguments need not be — a Promise<T> or a Union<…> says nothing about what lands in the
+        // object, and demanding a plain T there would reject working code.
+        if (TransposeNaming.IsExternalType(type)
+            && type.ContainingAssembly?.Name != Emitter.BaseLibraryAssemblyName) return true;
+
+        // And the same thing declared member by member rather than at the type level.
+        return IsJsBackedBinding(type);
+    }
+
+    /// <summary>
+    /// A type nothing can construct into a tps.js instance: every constructor it declares is bound to
+    /// hand-written JavaScript (<c>extern</c> and/or <c>[Template]</c>) and it has no storage of its
+    /// own, so whatever occupies a slot of this type came out of JavaScript. This is
+    /// <c>[External]</c> spelled member by member, which is what a type does when it needs one real
+    /// member (an explicit interface implementation, an implicit conversion) that an external type
+    /// could not carry.
+    ///
+    /// Tesserae's <c>ReadOnlyArray&lt;T&gt;</c> and <c>ReadOnlyMap&lt;TKey,TValue&gt;</c> are the
+    /// shape: a compile-time alias whose constructor is <c>[Template("{data}")]</c>, so — as its own
+    /// summary puts it — "at runtime the reference will be the underlying array". A slot typed as one
+    /// holds a JS Array; rejecting it would reject the array it actually is.
+    ///
+    /// The base library is excluded for the reason it always is: <c>List&lt;T&gt;</c>,
+    /// <c>StringBuilder</c> and friends are declared exactly this way there and ARE tps.js instances.
+    /// </summary>
+    private static bool IsJsBackedBinding(ITypeSymbol type)
+    {
+        if (type is not INamedTypeSymbol { TypeKind: TypeKind.Class or TypeKind.Struct } named) return false;
+        if (named.ContainingAssembly?.Name == Emitter.BaseLibraryAssemblyName) return false;
+
+        // A declared constructor is required: a type with only the implicit parameterless one is an
+        // ordinary class that happens to have no fields yet, not a binding onto an existing value.
+        var ctors = named.InstanceConstructors.Where(c => !c.IsImplicitlyDeclared).ToArray();
+        if (ctors.Length == 0) return false;
+        if (!ctors.All(c => c.IsExtern || TransposeNaming.GetTemplate(c.OriginalDefinition) is not null))
+            return false;
+
+        return !HasEmittedInstanceState(named);
+    }
+
+    /// <summary>
+    /// True if the type carries instance storage the emitter allocates — a field, or a property with a
+    /// backing slot. An <c>extern</c> property is not storage: it reads through to whatever JavaScript
+    /// put at that name, which is why <see cref="Emitter.IsAutoProperty"/> excludes it.
+    /// </summary>
+    private static bool HasEmittedInstanceState(INamedTypeSymbol type)
+    {
+        foreach (var m in type.GetMembers())
+        {
+            if (m.IsStatic) continue;
+            if (m is IFieldSymbol f && !f.IsConst && f.AssociatedSymbol is null && f.CanBeReferencedByName)
+                return true;
+            if (m is IPropertySymbol p && !p.IsIndexer
+                && (Emitter.IsAutoProperty(p) || Emitter.IsFieldBackedProperty(p) || Emitter.IsRecordPositionalProperty(p)))
+                return true;
+        }
+        return false;
     }
 
     /// <summary>The fix, on the same line as the error — MSBuild matches diagnostics per line.</summary>

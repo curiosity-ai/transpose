@@ -589,11 +589,18 @@ The short version:
   rejected with **TransposeR0004** when its type has no JavaScript representation of its own. Allowed:
   `bool`, `char`, `string`, `object`/`dynamic`, the numeric types up to 32 bits (`sbyte`…`uint`,
   `float`, `double`), an enum, `T?` and `T[]` of those, a delegate (a JS function — the callback slot
-  every option bag has), and another `[ObjectLiteral]` type. Rejected: `long`/`ulong` (unwrapped to a
+  every option bag has), and another `[ObjectLiteral]` type. Also allowed, because
+  they are not tps.js objects at all: an `[External]`/`[Scope]` type **outside the base library**
+  (a DOM node, a real JS Array — `Transpose.Core`'s `ReadOnlyArray`; the base library is the exception,
+  since `DateTime`/`List<T>`/`decimal` are declared `[External]` *there* and ARE runtime instances), and
+  the same thing spelled member by member — a type whose every constructor is `extern`/`[Template]`-bound
+  and which has no storage of its own (Tesserae's `ReadOnlyArray<T>`, Curiosity's `UID128`: "instances
+  will just be strings so far as the JS runtime is concerned"). Rejected: `long`/`ulong` (unwrapped to a
   plain number in a literal, so representable but silently lossy above 2^53 — the trade this replaces),
   `decimal`, `nint`/`nuint`, any other struct (`DateTime`, `Guid`, a ValueTuple, a user struct), and
   any non-literal class or interface (`List<T>`, a DTO). Only *slots* count — a static, a constant, an
-  indexer and a computed property hold nothing in the object — and only on a type Transpose itself
+  indexer, a computed property and a `[Template]`/`[Script]` getter (which computes a value from the
+  object rather than reading one out of it) hold nothing in the object — and only on a type Transpose itself
   materialises: an `[External]`/`[Scope]`-projected literal (Howler's option bags, the DOM's dictionary
   types) describes an object that already exists in JavaScript, and its author decides what its slots
   hold. Covered by `ObjectLiteralMemberTypeTests`.

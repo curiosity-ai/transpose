@@ -55,7 +55,7 @@ public sealed partial class Emitter
 {
     /// <summary>The base library's assembly name — the one assembly whose <c>long</c>/<c>ulong</c>
     /// externs really are backed by System.Int64/UInt64, because it defines them.</summary>
-    private const string BaseLibraryAssemblyName = "Transpose";
+    internal const string BaseLibraryAssemblyName = "Transpose";
 
     /// <summary>
     /// True if a <c>long</c>/<c>ulong</c> member holds a PLAIN JS number rather than a

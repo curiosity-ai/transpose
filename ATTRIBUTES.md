@@ -79,10 +79,14 @@ Because the instance *is* a plain JS object, every field and property it declare
 JavaScript can represent on its own; anything else is a tps.js runtime object that would land inside
 an object whose purpose is to be read by hand-written JavaScript and serialized to JSON. Allowed:
 `bool`, `char`, `string`, `object`/`dynamic`, the numeric types up to 32 bits (`sbyte`…`uint`,
-`float`, `double`), an enum, `T?` and `T[]` of those, a delegate, and another `[ObjectLiteral]` type.
+`float`, `double`), an enum, `T?` and `T[]` of those, a delegate, another `[ObjectLiteral]` type, an
+`[External]`/`[Scope]` type from outside the base library (a DOM node, a real JS Array), and a type whose
+every constructor is `extern`/`[Template]`-bound and which has no storage of its own — `[External]`
+spelled member by member (Tesserae's `ReadOnlyArray<T>`, Curiosity's `UID128`).
 Rejected with **TransposeR0004**: `long`/`ulong` (a runtime object, and a lossy plain number above
 2^53 — see `Emitter.Foreign64.cs`), `decimal`, `nint`/`nuint`, any other struct, and any non-literal
-class or interface. Only slots are checked — statics, constants, indexers and computed properties
+class or interface. Only slots are checked — statics, constants, indexers, computed properties and
+`[Template]`/`[Script]` getters (which compute a value from the object rather than read one out of it)
 hold nothing in the object — and only on a type Transpose itself materialises: an `[External]` or
 `[Scope]`-projected literal describes an object that already exists in JavaScript.
 

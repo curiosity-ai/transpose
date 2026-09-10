@@ -475,6 +475,176 @@ public class Program { public static void Main() { Console.WriteLine(new Box<int
             Assert.IsTrue(result.Success, string.Join("\n", result.Errors.Select(d => d.GetMessage())));
         }
 
+        /// <summary>
+        /// An <c>[External]</c> type outside the base library IS a native JavaScript value — a DOM
+        /// node, a real JS Array, a binding's own object — so a literal may hold one. This is what an
+        /// option bag handed to a JS library is made of: Tesserae's Sortable/hotkeys/tippy bindings all
+        /// declare <c>HTMLElement</c> slots, and 6 of them were rejected before this case existed.
+        /// </summary>
+        [TestMethod]
+        public void ExternalNonBclTypeIsAllowed()
+        {
+            var result = new RoslynTranslator().Translate("""
+using System;
+using Transpose;
+
+[External]
+public class HTMLElement { }
+
+[ObjectLiteral]
+public class SortableEvent
+{
+    public HTMLElement item;
+    public HTMLElement from;
+    public int         oldIndex;
+}
+
+public class Program { public static void Main() { Console.WriteLine(new SortableEvent().oldIndex); } }
+""");
+
+            Assert.IsTrue(result.Success, string.Join("\n", result.Errors.Select(d => d.GetMessage())));
+        }
+
+        /// <summary>
+        /// The base library is the exception that stops the rule above from swallowing everything:
+        /// <c>DateTime</c>, <c>List&lt;T&gt;</c> and <c>decimal</c> are all declared <c>[External]</c>
+        /// there and all ARE tps.js instances, because that assembly is where they are defined.
+        /// </summary>
+        [TestMethod]
+        public void BaseLibraryExternalTypeIsStillRejected()
+        {
+            var result = new RoslynTranslator().Translate("""
+using System;
+using System.Text;
+using Transpose;
+
+[ObjectLiteral]
+public class Bag { public StringBuilder Text { get; set; } }
+
+public class Program { public static void Main() { var b = new Bag(); } }
+""");
+
+            Assert.IsFalse(result.Success, "a BCL type is a runtime object however it is declared there");
+            StringAssert.Contains(string.Join("\n", result.Errors.Select(d => d.GetMessage())), "'Text' is a 'StringBuilder'");
+        }
+
+        /// <summary>
+        /// <c>[External]</c> spelled member by member: every constructor bound to hand-written
+        /// JavaScript and no storage of its own, so nothing tps.js builds can land in the slot. Both
+        /// corpora grow this independently — Tesserae's <c>ReadOnlyArray&lt;T&gt;</c> ("at runtime the
+        /// reference will be the underlying array") and Curiosity's <c>UID128</c> ("instances will just
+        /// be strings so far as the JS runtime is concerned").
+        /// </summary>
+        [TestMethod]
+        public void JsBackedBindingIsAllowed()
+        {
+            var result = new RoslynTranslator().Translate("""
+using System;
+using Transpose;
+
+public sealed class ReadOnlyArray<T>
+{
+    [Template("{data}")]
+    public extern ReadOnlyArray(T[] data);
+    public extern int Length { [Name("length")] get; }
+}
+
+public sealed class UID128
+{
+    [Template("{value}")]
+    public extern UID128(string value);
+}
+
+[ObjectLiteral]
+public class Doc
+{
+    public ReadOnlyArray<string> Tags;
+    public UID128                UID;
+}
+
+public class Program { public static void Main() { Console.WriteLine(new Doc().Tags is object); } }
+""");
+
+            Assert.IsTrue(result.Success, string.Join("\n", result.Errors.Select(d => d.GetMessage())));
+        }
+
+        /// <summary>
+        /// The line that keeps the rule above from admitting every DTO: storage. A type with a real
+        /// field builds a real object, whatever its constructor is bound to.
+        /// </summary>
+        [TestMethod]
+        public void ATemplatedConstructorDoesNotExcuseStorage()
+        {
+            var result = new RoslynTranslator().Translate("""
+using System;
+using Transpose;
+
+public sealed class Wrapper
+{
+    [Template("{data}")]
+    public extern Wrapper(string data);
+    public int Count { get; set; }
+}
+
+[ObjectLiteral]
+public class Doc { public Wrapper W; }
+
+public class Program { public static void Main() { var d = new Doc(); } }
+""");
+
+            Assert.IsFalse(result.Success, "a type with a field of its own is a real object");
+            StringAssert.Contains(string.Join("\n", result.Errors.Select(d => d.GetMessage())), "'W' is a 'Wrapper'");
+        }
+
+        /// <summary>
+        /// A <c>[Template]</c> on the getter COMPUTES the value from the object rather than reading a
+        /// slot, so the property's declared type describes the template's result, not the shape.
+        /// Curiosity's <c>NodeOrEdge</c> is the shape: a JSON-parsed literal whose <c>Timestamp</c>
+        /// parses the string the object actually holds.
+        /// </summary>
+        [TestMethod]
+        public void TemplateComputedPropertyIsNotASlot()
+        {
+            var result = new RoslynTranslator().Translate("""
+using System;
+using Transpose;
+
+[ObjectLiteral(ObjectCreateMode.Constructor)]
+public abstract class NodeOrEdge
+{
+    protected NodeOrEdge() { }
+    public string Type { get; }
+    public extern DateTime TimestampAsDateTime { [Template("System.DateTime.parse({this}.Timestamp)")] get; }
+}
+
+public class Program { public static void Main() { Console.WriteLine("ok"); } }
+""");
+
+            Assert.IsTrue(result.Success, string.Join("\n", result.Errors.Select(d => d.GetMessage())));
+        }
+
+        /// <summary>
+        /// And the other side of it: a bodyless <c>extern</c> property with NO template is a plain slot
+        /// read (`this.when`), so its type is the shape and is checked. A DOM dictionary binding
+        /// declares its members exactly this way.
+        /// </summary>
+        [TestMethod]
+        public void ExternPropertyWithoutATemplateIsStillASlot()
+        {
+            var result = new RoslynTranslator().Translate("""
+using System;
+using Transpose;
+
+[ObjectLiteral]
+public class Frame { public extern DateTime when { get; set; } }
+
+public class Program { public static void Main() { var f = new Frame(); } }
+""");
+
+            Assert.IsFalse(result.Success, "an extern slot with no template still names a slot");
+            StringAssert.Contains(string.Join("\n", result.Errors.Select(d => d.GetMessage())), "'when' is a 'DateTime'");
+        }
+
         /// <summary>The control: none of this applies to an ordinary transpiled class.</summary>
         [TestMethod]
         public void APlainClassKeepsItsRuntimeTypedMembers()
