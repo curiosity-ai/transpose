@@ -94,6 +94,7 @@ Each is asserted by the test named beside it, so this list stays true.
 | deserializing to `object` | a `JsonElement` | the raw parsed JavaScript value | `DeserializingToObjectReturnsTheRawParsedValue` |
 | an assembly-qualified `$type` | unrecognised discriminator | also matches the bare type name | `AnAssemblyQualifiedDiscriminatorStillMatchesTheBareName` |
 | an integer written `1.0` / `2e0` | rejected (the token carries a decimal point) | accepted (the value is integral) | `AnIntegralNumberWrittenWithADecimalPointIsAccepted` |
+| a **null** document | `ArgumentNullException` | the target's `default` | `ANullDocumentReadsBackAsTheDefault` |
 
 The first two are inherited from `Transpose.Newtonsoft.Json` on purpose: the Curiosity server's
 `Long`/`ULong`-from-string converters and its `JsonStringEnumConverter` are written against exactly
@@ -102,9 +103,19 @@ deliberately stays a JSON number, because the server has no decimal-from-string 
 
 The `1.0` row is the one nobody chose: System.Text.Json rejects it by reading the token's *text*, while a document here has already been through `JSON.parse`, which resolves `1.0` and `1` to the same JavaScript number. A value with a real fraction (`1.5`) is still rejected, as is one outside the target's range.
 
-The last one exists so a store written by Json.NET's `TypeNameHandling` (which wrote
+The `$type` one exists so a store written by Json.NET's `TypeNameHandling` (which wrote
 `"Some.Type, Some.Assembly"` into `$type`) keeps deserializing against a hierarchy that declares the
 bare type name as its discriminator.
+
+The **null document** is the one deviation adopted from `Transpose.Newtonsoft.Json` rather than from
+the Curiosity server. Note that *real* Json.NET throws `ArgumentNullException` here too — returning
+`default(T)` is a long-standing behaviour of the Transpose binding, not of Json.NET — but every
+Transpose front-end moving onto this package was written against it, because reading a slot that was
+never written (local storage, a cached response, an unset node field) is an ordinary thing to do and
+answering it with `default(T)` is what those call sites expect. Only "no document at all" is
+affected: an empty or whitespace-only string, and any malformed document, still throw exactly as
+System.Text.Json does — so a slot holding corrupt JSON is still reported rather than silently read
+as nothing.
 
 ## Declaring a hierarchy the attribute cannot reach
 

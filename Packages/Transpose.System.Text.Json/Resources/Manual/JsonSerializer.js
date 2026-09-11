@@ -1035,6 +1035,16 @@
                 Deserialize: function (json, type, options) {
                     var o = System.Text.Json.JsonSerializer.opts(options);
 
+                    // A null document reads back as the target's default rather than throwing.
+                    // System.Text.Json raises ArgumentNullException, but Transpose.Newtonsoft.Json —
+                    // which every Transpose front-end reaching for this package is moving off — answers
+                    // default(T), and a caller reading a slot that was never written (local storage, a
+                    // cached response, an unset node field) relies on it. An empty or malformed document
+                    // still throws, so only "no document at all" is affected.
+                    if (json === null || json === undefined) {
+                        return Transpose.getDefaultValue(type);
+                    }
+
                     if (typeof json !== "string") {
                         System.Text.Json.JsonSerializer.fail("The input does not contain any JSON tokens.");
                     }
