@@ -331,6 +331,18 @@ public sealed partial class Emitter
     /// </summary>
     private void EmitCoalesceOperand(ExpressionSyntax operand)
     {
+        // Both halves of `??` are conversion sites, so a user-defined implicit conversion applies
+        // here as it does at an assignment or an argument: `nullableDateTimeOffset ?? dateTime`
+        // has to run DateTimeOffset's implicit operator on the right half, or the expression hands
+        // back a raw Date where every later member access expects a DateTimeOffset.
+        var info = _model.GetTypeInfo(operand);
+
+        if (UserDefinedImplicitConversion(info.Type, info.ConvertedType) is { } conv)
+        {
+            EmitUserDefinedConversion(conv, operand); // a call expression — already primary
+            return;
+        }
+
         var atomic = operand is IdentifierNameSyntax
             or LiteralExpressionSyntax
             or ParenthesizedExpressionSyntax
@@ -1535,6 +1547,97 @@ public sealed partial class Emitter
         return asm == "Transpose" || (asm is not null && asm.StartsWith("Transpose.", System.StringComparison.Ordinal));
     }
 
+    /// <summary>The user-defined operator <paramref name="expression"/> binds to, when it is one this
+    /// compiler emits a call for: declared in source, or a Transpose BCL/package operator that is
+    /// either implemented (has a body) or carries a [Template]. Null for everything else — an
+    /// implicitly declared record ==/!=, an <c>extern</c> operator with no template (System.Type's
+    /// ==, which is reference equality), an [External]/DOM operator — which fall through to the
+    /// built-in paths.</summary>
+    private IMethodSymbol? EmittableUserDefinedOperator(ExpressionSyntax expression)
+        => _model.GetSymbolInfo(expression).Symbol is IMethodSymbol { MethodKind: MethodKind.UserDefinedOperator, IsImplicitlyDeclared: false, Parameters.Length: 2 } op
+           && (op.Locations.Any(l => l.IsInSource) || IsEmittableBclOperator(op))
+           && (TransposeNaming.GetTemplate(op.OriginalDefinition) is not null || !op.IsExtern)
+            ? op
+            : null;
+
+    /// <summary>Writes a call to a user-defined binary operator from already-emitted operand JS,
+    /// through its [Template] when it has one. A [Template] operator (e.g. DateTime + TimeSpan →
+    /// adddt({0}, {1})) binds its operands both by parameter name ({d}/{t}) AND positionally
+    /// ({0}/{1}) — operator templates use the positional form. Shared by the plain and the lifted
+    /// (Nullable&lt;T&gt;) paths, which differ only in how the operands were produced.</summary>
+    private void WriteUserDefinedBinaryOperator(IMethodSymbol opMethod, string left, string right)
+    {
+        if (TransposeNaming.GetTemplate(opMethod.OriginalDefinition) is { } tpl)
+        {
+            var pars = opMethod.Parameters;
+            WriteTemplate(tpl, isStatic: true, isExtension: false, null,
+                new() { [pars[0].Name] = left, [pars[1].Name] = right }, new() { left, right });
+            return;
+        }
+
+        _w.Write($"{TypeRef(opMethod.ContainingType)}.{TransposeNaming.MemberJsName(opMethod)}({left}, {right})");
+    }
+
+    /// <summary>An operator C# lifts over <c>Nullable&lt;T&gt;</c> to a null-propagating (arithmetic)
+    /// or false-on-null (relational) form. == / != are excluded: they stay bool and are handled by
+    /// their own equality paths.</summary>
+    private static bool IsLiftableOperator(string op)
+        => op is "+" or "-" or "*" or "/" or "%" or "&" or "|" or "^" or "<<" or ">>"
+              or "<" or ">" or "<=" or ">=";
+
+    /// <summary>The runtime helper for DateTime / TimeSpan addition and subtraction, or null when
+    /// the operand pair is not one of those. Shared by the plain and the lifted paths.</summary>
+    private static string? DateTimeTimeSpanHelper(ITypeSymbol? leftType, ITypeSymbol? rightType, bool subtract)
+        => (leftType?.ToDisplayString(), rightType?.ToDisplayString(), subtract) switch
+        {
+            ("System.DateTime", "System.DateTime", true) => "TransposeR.dtSub",
+            ("System.DateTime", "System.TimeSpan", true) => "TransposeR.dtSubTs",
+            ("System.DateTime", "System.TimeSpan", false) => "TransposeR.dtAddTs",
+            ("System.TimeSpan", "System.TimeSpan", true) => "TransposeR.tsSub",
+            ("System.TimeSpan", "System.TimeSpan", false) => "TransposeR.tsAdd",
+            _ => null,
+        };
+
+    /// <summary>Emits an operand of a user-defined operator, applying the conversion C# inserted to
+    /// reach the operator's parameter type. Structs are deliberately NOT copied: an operator takes
+    /// its operands by value and cannot write back through them, so cloning every operand of every
+    /// <c>==</c> would only cost output size.</summary>
+    private void EmitOperatorOperand(ExpressionSyntax operand, ITypeSymbol? parameterType)
+        => EmitExpressionConverted(operand, parameterType, copyStructs: false);
+
+    /// <summary>The implicit conversion operator C# inserts to reach <paramref name="targetType"/>
+    /// from <paramref name="sourceType"/>, when it is one this compiler materialises as a call (see
+    /// <see cref="ShouldEmitUserConversion"/>). Null when no user-defined conversion applies.</summary>
+    private IMethodSymbol? UserDefinedImplicitConversion(ITypeSymbol? sourceType, ITypeSymbol? targetType)
+        => sourceType is not null && targetType is not null
+           && !SymbolEqualityComparer.Default.Equals(sourceType, targetType)
+           && _compilation.ClassifyConversion(sourceType, targetType)
+               is { IsUserDefined: true, IsImplicit: true, MethodSymbol: IMethodSymbol conv }
+           && ShouldEmitUserConversion(conv)
+            ? conv
+            : null;
+
+    /// <summary>The JS for an already-emitted operand converted to <paramref name="targetType"/>
+    /// through a user-defined implicit conversion operator, or the snippet unchanged when none
+    /// applies. The syntax-level sibling is <see cref="EmitExpressionConverted"/>; this form exists
+    /// for a lifted operator, whose operands are emitted once for the null test and once for the
+    /// operation and so are captured before either.</summary>
+    private string ConvertedOperandJs(string operandJs, ITypeSymbol? sourceType, ITypeSymbol? targetType)
+    {
+        if (UserDefinedImplicitConversion(sourceType, targetType) is not { } conv) return operandJs;
+
+        var template = TransposeNaming.GetTemplate(conv.OriginalDefinition) ?? TransposeNaming.GetTemplate(conv);
+        if (template is not null)
+        {
+            var byName = new Dictionary<string, string>();
+            if (conv.Parameters.Length > 0) byName[conv.Parameters[0].Name] = operandJs;
+            return Capture(() => WriteTemplate(template, isStatic: true, isExtension: false,
+                receiver: operandJs, byName, new List<string> { operandJs }));
+        }
+
+        return $"{TypeRef(conv.ContainingType)}.{TransposeNaming.MemberJsName(conv)}({operandJs})";
+    }
+
     /// <summary>True if the operand is the <c>null</c> literal (or a constant that evaluates to null,
     /// e.g. <c>default</c> for a reference/nullable type or a const null) — the marker for a
     /// null-test comparison rather than a value comparison.</summary>
@@ -1573,33 +1676,42 @@ public sealed partial class Emitter
         // User-defined operator overloads → static op_ method call.
         // (Records synthesize op_Equality/op_Inequality; those are implicitly declared
         // and handled by the value-equality path below, so exclude them here.)
-        if (_model.GetSymbolInfo(binary).Symbol is IMethodSymbol { MethodKind: MethodKind.UserDefinedOperator, IsImplicitlyDeclared: false } opMethod
-            && (opMethod.Locations.Any(l => l.IsInSource) || IsEmittableBclOperator(opMethod)))
+        //
+        // A nullable operand of an arithmetic / relational operator is left to the lifted path
+        // below, which guards the null and then comes back here through EmitLiftedInnerOperation:
+        // calling the operator on a null operand dereferences it (`DateTimeOffset? - DateTimeOffset`
+        // ran op_Subtraction on null and read `null.UtcDateTime`).
+        var liftedOperands = IsNullableValueType(leftType) || IsNullableValueType(rightType);
+
+        if (EmittableUserDefinedOperator(binary) is { } opMethod
+            && !(liftedOperands && IsLiftableOperator(op)))
         {
-            // A [Template] operator (e.g. DateTime + TimeSpan → adddt({0}, {1})) expands via the
-            // template. Bind the operands both by parameter name ({d}/{t}) AND positionally
-            // ({0}/{1}) — operator templates use the positional form.
-            if (TransposeNaming.GetTemplate(opMethod.OriginalDefinition) is { } opTpl)
+            // Each operand is a conversion site: C# converts it to the operator's parameter type,
+            // and a user-defined implicit conversion there changes the runtime representation and
+            // must actually run. `DateTime.UtcNow - someDateTimeOffset` binds to
+            // DateTimeOffset's operator, and passing the raw Date meant the operator read
+            // `undefined.ticks` off the missing m_dateTime.
+            var l = Capture(() => EmitOperatorOperand(binary.Left, opMethod.Parameters[0].Type));
+            var r = Capture(() => EmitOperatorOperand(binary.Right, opMethod.Parameters[1].Type));
+
+            // Lifted == / != stays bool and answers for null itself — null equals only null — so the
+            // operator is reached only with two values. (`DateTimeOffset? == DateTimeOffset?` ran
+            // op_Equality on the nulls and read `null.UtcDateTime`.)
+            var nullTests = new List<string>(2);
+            if (liftedOperands && CanBeNullOperand(binary.Left)) nullTests.Add($"{l} == null");
+            if (liftedOperands && CanBeNullOperand(binary.Right)) nullTests.Add($"{r} == null");
+
+            if (nullTests.Count > 0 && op is "==" or "!=")
             {
-                var l = Capture(() => EmitExpression(binary.Left));
-                var r = Capture(() => EmitExpression(binary.Right));
-                var pars = opMethod.Parameters;
-                WriteTemplate(opTpl, isStatic: true, isExtension: false, null,
-                    new() { [pars[0].Name] = l, [pars[1].Name] = r }, new() { l, r });
-                return;
-            }
-            // Only call the static op_ method when it is actually implemented (has a body). An
-            // `extern` operator with no [Template] — e.g. System.Type's ==/!= on the [External]
-            // reflection type — is reference equality; fall through to the built-in path below.
-            if (!opMethod.IsExtern)
-            {
-                _w.Write($"{TypeRef(opMethod.ContainingType)}.{TransposeNaming.MemberJsName(opMethod)}(");
-                EmitExpression(binary.Left);
-                _w.Write(", ");
-                EmitExpression(binary.Right);
+                var sameNullness = $"({l} == null) {(op == "==" ? "===" : "!==")} ({r} == null)";
+                _w.Write($"({string.Join(" || ", nullTests)} ? {sameNullness} : ");
+                WriteUserDefinedBinaryOperator(opMethod, l, r);
                 _w.Write(")");
                 return;
             }
+
+            WriteUserDefinedBinaryOperator(opMethod, l, r);
+            return;
         }
 
         // is / as
@@ -1672,28 +1784,15 @@ public sealed partial class Emitter
         }
 
         // DateTime / TimeSpan arithmetic.
-        var lName = leftType?.ToDisplayString();
-        var rName = rightType?.ToDisplayString();
-        if ((lName is "System.DateTime" or "System.TimeSpan") && (binary.IsKind(SyntaxKind.AddExpression) || binary.IsKind(SyntaxKind.SubtractExpression)))
+        if ((binary.IsKind(SyntaxKind.AddExpression) || binary.IsKind(SyntaxKind.SubtractExpression))
+            && DateTimeTimeSpanHelper(leftType, rightType, binary.IsKind(SyntaxKind.SubtractExpression)) is { } helper)
         {
-            var helper = (lName, rName, sub: binary.IsKind(SyntaxKind.SubtractExpression)) switch
-            {
-                ("System.DateTime", "System.DateTime", true) => "TransposeR.dtSub",
-                ("System.DateTime", "System.TimeSpan", true) => "TransposeR.dtSubTs",
-                ("System.DateTime", "System.TimeSpan", false) => "TransposeR.dtAddTs",
-                ("System.TimeSpan", "System.TimeSpan", true) => "TransposeR.tsSub",
-                ("System.TimeSpan", "System.TimeSpan", false) => "TransposeR.tsAdd",
-                _ => null,
-            };
-            if (helper is not null)
-            {
-                _w.Write($"{helper}(");
-                EmitExpression(binary.Left);
-                _w.Write(", ");
-                EmitExpression(binary.Right);
-                _w.Write(")");
-                return;
-            }
+            _w.Write($"{helper}(");
+            EmitExpression(binary.Left);
+            _w.Write(", ");
+            EmitExpression(binary.Right);
+            _w.Write(")");
+            return;
         }
 
         // String concatenation
@@ -2004,6 +2103,24 @@ public sealed partial class Emitter
         var lu = UnwrapNullable(_model.GetTypeInfo(binary.Left).Type ?? leftType);
         var ru = UnwrapNullable(_model.GetTypeInfo(binary.Right).Type ?? rightType);
         var resultType = UnwrapNullable(_model.GetTypeInfo(binary).Type);
+
+        // Lifting only adds the null guard — the non-null half still runs the UNDERLYING operator.
+        // The plain JS operator is not it: `DateTime? - DateTime?` yielded a millisecond number
+        // rather than a TimeSpan, `TimeSpan? + TimeSpan?` concatenated the two strings, and a
+        // DateTimeOffset? comparison read the raw struct objects.
+        if (EmittableUserDefinedOperator(binary) is { } liftedOp)
+        {
+            WriteUserDefinedBinaryOperator(liftedOp,
+                ConvertedOperandJs(left, lu, liftedOp.Parameters[0].Type),
+                ConvertedOperandJs(right, ru, liftedOp.Parameters[1].Type));
+            return;
+        }
+
+        if ((op is "+" or "-") && DateTimeTimeSpanHelper(lu, ru, op == "-") is { } liftedHelper)
+        {
+            _w.Write($"{liftedHelper}({left}, {right})");
+            return;
+        }
 
         // A foreign-JS 64-bit operand is a plain number, boxed nowhere (Emitter.Foreign64.cs), so it
         // needs neither `.toNumber()` below nor an Int64 receiver.
@@ -2494,6 +2611,16 @@ public sealed partial class Emitter
             return;
         }
 
+        // `lhs op= rhs` where the operation is a user-defined operator or a DateTime/TimeSpan
+        // helper: rebuild it as `lhs = <operation>` — the JS compound operator is not it.
+        if (CompoundOperatorValueJs(assignment, op, leftType, rightType) is { } compound)
+        {
+            EmitExpression(assignment.Left);
+            _w.Write(" = ");
+            _w.Write(compound);
+            return;
+        }
+
         EmitExpression(assignment.Left);
         _w.Write($" {op} ");
         EmitExpressionConverted(assignment.Right, leftType);
@@ -2643,6 +2770,47 @@ public sealed partial class Emitter
         _w.Write(")");
     }
 
+    /// <summary>The new value of a compound assignment whose underlying operation is not a
+    /// JavaScript operator — a user-defined operator (<c>dateTimeOffset += timeSpan</c>) or a
+    /// DateTime/TimeSpan helper (<c>dateTime += timeSpan</c>, which as a JS <c>+=</c> concatenated a
+    /// Date and a TimeSpan into a string). Null when the plain JS compound operator is right, so the
+    /// caller carries on.</summary>
+    private string? CompoundOperatorValueJs(AssignmentExpressionSyntax assignment, string op,
+        ITypeSymbol? leftType, ITypeSymbol? rightType)
+    {
+        if (op == "=") return null;
+
+        var binOp = op[..^1];
+        var lu = UnwrapNullable(leftType);
+        var ru = UnwrapNullable(rightType);
+        var leftJs = Capture(() => EmitExpression(assignment.Left));
+
+        string? valueJs = null;
+
+        if (EmittableUserDefinedOperator(assignment) is { } opMethod)
+        {
+            var rightJs = Capture(() => EmitOperatorOperand(assignment.Right, opMethod.Parameters[1].Type));
+            valueJs = Capture(() => WriteUserDefinedBinaryOperator(opMethod,
+                ConvertedOperandJs(leftJs, lu, opMethod.Parameters[0].Type), rightJs));
+        }
+        else if (binOp is "+" or "-" && DateTimeTimeSpanHelper(lu, ru, binOp == "-") is { } helper)
+        {
+            var rightJs = Capture(() => EmitExpression(assignment.Right));
+            valueJs = $"{helper}({leftJs}, {rightJs})";
+        }
+
+        if (valueJs is null) return null;
+
+        // Lifted over Nullable<T>: a null operand leaves the result null rather than reaching the
+        // operator, exactly as the binary form does.
+        var nullTests = new List<string>(2);
+        if (IsNullableValueType(leftType) && CanBeNullOperand(assignment.Left)) nullTests.Add($"{leftJs} == null");
+        if (IsNullableValueType(rightType) && CanBeNullOperand(assignment.Right))
+            nullTests.Add($"{Capture(() => EmitExpression(assignment.Right))} == null");
+
+        return nullTests.Count > 0 ? $"({string.Join(" || ", nullTests)} ? null : {valueJs})" : valueJs;
+    }
+
     /// <summary>
     /// Emits the NEW element value for a compound assignment to a collection indexer — the second
     /// argument of <c>coll.setItem(i, …)</c>. Mirrors the value computation of the plain-lvalue
@@ -2653,6 +2821,13 @@ public sealed partial class Emitter
     private void EmitCompoundElementValue(AssignmentExpressionSyntax assignment, string op,
         ITypeSymbol? leftType, ITypeSymbol? rightType)
     {
+        // A user-defined operator or a DateTime/TimeSpan helper — see CompoundOperatorValueJs.
+        if (CompoundOperatorValueJs(assignment, op, leftType, rightType) is { } compound)
+        {
+            _w.Write(compound);
+            return;
+        }
+
         // Delegate / event combine-remove.
         if ((op == "+=" || op == "-=")
             && (leftType is { TypeKind: TypeKind.Delegate }
@@ -2857,8 +3032,43 @@ public sealed partial class Emitter
             return;
         }
 
+        // A user-defined unary operator declared outside this compilation — reached last, so the
+        // 64-bit / decimal / 32-bit branches above keep their dedicated handling. Honoured through
+        // its [Template] (System.TimeSpan's `-` is `System.TimeSpan.neg({t})`) or its emitted op_
+        // method; without this the raw JS `-` reached a TimeSpan object and produced NaN.
+        if (_model.GetSymbolInfo(prefix).Symbol is IMethodSymbol { MethodKind: MethodKind.UserDefinedOperator, IsImplicitlyDeclared: false, Parameters.Length: 1 } unaryOp
+            && !prefix.IsKind(SyntaxKind.PreIncrementExpression) && !prefix.IsKind(SyntaxKind.PreDecrementExpression)
+            && (TransposeNaming.GetTemplate(unaryOp.OriginalDefinition) is not null
+                || (!unaryOp.IsExtern && (unaryOp.Locations.Any(l => l.IsInSource) || IsEmittableBclOperator(unaryOp)))))
+        {
+            // Lifted over Nullable<T>: null propagates rather than reaching the operator.
+            var operandType = _model.GetTypeInfo(prefix.Operand).Type;
+            var operandJs = Capture(() => EmitOperatorOperand(prefix.Operand, unaryOp.Parameters[0].Type));
+            var call = Capture(() => WriteUnaryOperator(unaryOp, operandJs));
+
+            if (IsNullableValueType(operandType) && CanBeNullOperand(prefix.Operand))
+                _w.Write($"({operandJs} == null ? null : {call})");
+            else
+                _w.Write(call);
+            return;
+        }
+
         _w.Write(prefix.OperatorToken.Text);
         EmitExpression(prefix.Operand);
+    }
+
+    /// <summary>Writes a call to a user-defined unary operator from already-emitted operand JS,
+    /// through its [Template] when it has one (see <see cref="WriteUserDefinedBinaryOperator"/>).</summary>
+    private void WriteUnaryOperator(IMethodSymbol opMethod, string operandJs)
+    {
+        if (TransposeNaming.GetTemplate(opMethod.OriginalDefinition) is { } tpl)
+        {
+            WriteTemplate(tpl, isStatic: true, isExtension: false, null,
+                new() { [opMethod.Parameters[0].Name] = operandJs }, new() { operandJs });
+            return;
+        }
+
+        _w.Write($"{TypeRef(opMethod.ContainingType)}.{TransposeNaming.MemberJsName(opMethod)}({operandJs})");
     }
 
     private void EmitPostfixUnary(PostfixUnaryExpressionSyntax postfix)
