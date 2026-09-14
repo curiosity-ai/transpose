@@ -116,6 +116,60 @@ public static class TransposeCompilerLibrary
         }
     }
 
+    /// <summary>
+    /// Installs the NuGet packages <paramref name="request"/>'s project binds against — the library
+    /// form of <c>tps restore …</c>. Run it before <see cref="BuildProject"/> when the host cannot
+    /// assume the packages folder is already filled; a host that ships no .NET SDK has no other way to
+    /// fill it.
+    /// </summary>
+    /// <remarks>
+    /// Not serialized against compilation: a restore installs files and touches none of the
+    /// process-wide translator state <see cref="Compile"/> takes the gate for. It is safe to run while
+    /// another project compiles — and pointless to run while <i>this</i> project compiles, since the
+    /// build reads the folder this fills.
+    /// </remarks>
+    public static async Task<RestoreResult> RestoreAsync(RestoreRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var lines = new List<string>();
+        var log   = new CollectingLog(lines, request.OnProgress);
+
+        var options = new RestoreOptions
+        {
+            CsprojPath              = LocateProject(request.ProjectPath),
+            PackagesFolder          = request.PackagesFolder,
+            Sources                 = request.Sources.ToList(),
+            IgnoreConfiguredSources = request.IgnoreConfiguredSources,
+            Force                   = request.Force,
+            MaxParallelDownloads    = request.MaxParallelDownloads,
+            HttpTimeout             = request.HttpTimeout,
+        };
+
+        // The diagnostics are returned on the result, so they go to the caller's log rather than to
+        // whatever console this library happens to be hosted in.
+        var previousSink = MsBuildDiagnostic.Sink;
+        RestoreOutcome outcome;
+
+        try
+        {
+            MsBuildDiagnostic.Sink = (line, _) => log.Info(line);
+            outcome = await PackageRestore.RunAsync(options, log, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            MsBuildDiagnostic.Sink = previousSink;
+        }
+
+        return new RestoreResult(
+            outcome.Success,
+            outcome.PackagesFolder,
+            outcome.Errors.ToList(),
+            outcome.Warnings.ToList(),
+            outcome.Packages.Select(p => new RestoredPackageInfo(p.Id, p.Version, p.Folder, p.Downloaded, p.Source)).ToList(),
+            lines);
+    }
+
     /// <summary>Resolves a project argument the way the <c>tps</c> CLI does: a <c>.csproj</c> path as given,
     /// or the single <c>.csproj</c> in a directory.</summary>
     internal static string LocateProject(string projectPath)

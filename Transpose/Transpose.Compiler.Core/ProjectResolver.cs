@@ -636,8 +636,15 @@ internal static class ProjectResolver
             if (!isDeclared && declared.ContainsKey(id)) continue;
             if (!visited.Add(id + "@" + version)) continue;
 
+            // A cache folder is named by the version as NuGet normalizes it, which is not always the
+            // spelling the project wrote (`1.0` installs as `1.0.0`), so both are tried — the written
+            // one first, since that is what a cache filled by an older client can carry.
+            var normalized = NuGetVersions.Normalize(version);
+
             var pkgDir = roots
-                .Select(r => Path.Combine(r, id.ToLowerInvariant(), version))
+                .SelectMany(r => string.Equals(normalized, version, StringComparison.OrdinalIgnoreCase)
+                    ? new[] { Path.Combine(r, id.ToLowerInvariant(), version) }
+                    : new[] { Path.Combine(r, id.ToLowerInvariant(), version), Path.Combine(r, id.ToLowerInvariant(), normalized) })
                 .FirstOrDefault(Directory.Exists);
             if (pkgDir is null) continue;
 
@@ -653,7 +660,9 @@ internal static class ProjectResolver
 
             // Follow the package's declared dependencies so transitive BCL/interop types resolve.
             var nuspec = Path.Combine(pkgDir, id.ToLowerInvariant() + ".nuspec");
-            if (!File.Exists(nuspec)) continue;
+            if (!File.Exists(nuspec))
+                nuspec = Directory.EnumerateFiles(pkgDir, "*.nuspec", SearchOption.TopDirectoryOnly).FirstOrDefault() ?? "";
+            if (nuspec.Length == 0 || !File.Exists(nuspec)) continue;
             try
             {
                 var ndoc = XDocument.Load(nuspec);

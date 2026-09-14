@@ -96,9 +96,10 @@ public sealed class CompilationRequest
     /// Resolves <paramref name="packageId"/> <paramref name="version"/> (and its transitive
     /// dependencies) from the local NuGet global-packages cache and references every assembly it
     /// contributes — exactly what a <c>&lt;PackageReference&gt;</c> in a csproj does. The package must
-    /// already be restored (e.g. by a prior <c>dotnet restore</c>/<c>nuget install</c> that pulled it
-    /// into <c>~/.nuget/packages</c> or the <c>NUGET_PACKAGES</c> directory) — this does not download
-    /// anything.
+    /// already be installed in <c>~/.nuget/packages</c> (or the <c>NUGET_PACKAGES</c> directory) — this
+    /// does not download anything. <see cref="TransposeCompilerLibrary.RestoreAsync"/> is what installs
+    /// a *project's* packages without a .NET SDK; for a bare id and version, a prior
+    /// <c>dotnet restore</c>/<c>nuget install</c> is still the way in.
     /// </summary>
     public CompilationRequest WithPackageReference(string packageId, string version)
     {
@@ -109,7 +110,7 @@ public sealed class CompilationRequest
         if (resolved.Count == 0)
             throw new InvalidOperationException(
                 $"Could not resolve package '{packageId}' {version} from the local NuGet cache. " +
-                "Restore it first (e.g. `dotnet restore`/`nuget install`) — this does not download packages.");
+                "Install it first (`tps restore` on a project that references it, or `dotnet restore`/`nuget install`) — this does not download packages.");
 
         foreach (var (_, path, _) in resolved)
             if (!_referencePaths.Contains(path, StringComparer.OrdinalIgnoreCase)) _referencePaths.Add(path);
