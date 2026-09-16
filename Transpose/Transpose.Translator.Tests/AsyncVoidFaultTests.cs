@@ -83,8 +83,10 @@ public class Program
         [TestMethod]
         public async Task AsyncVoidStillRunsItsBodyToCompletion()
         {
-            // Reporting the fault must not change the happy path: the body runs, in order, exactly as
-            // it did before — so this one is diffed against native .NET rather than asserted on.
+            // Reporting the fault must not change the happy path: the body still runs to its end — so
+            // this one is diffed against native .NET rather than asserted on. The two are awaited one
+            // at a time because .NET resumes an async void continuation on the thread pool, so two in
+            // flight together finish in either order and the diff would be flaky.
             await RunTest(@"
 using System;
 using System.Threading.Tasks;
@@ -94,8 +96,9 @@ public class Program
 
     public static async Task Main()
     {
-        Action lambda = async () => { await Task.Delay(1); Console.WriteLine(""ran lambda""); };
         Method(""method"");
+        await Task.Delay(100);
+        Action lambda = async () => { await Task.Delay(1); Console.WriteLine(""ran lambda""); };
         lambda();
         await Task.Delay(100);
         Console.WriteLine(""<<DONE>>"");
