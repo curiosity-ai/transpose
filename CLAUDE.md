@@ -554,6 +554,20 @@ The short version:
   with the chart screen fetching both — through `Require`'s `.js`/`.min.js` fallback, which is what
   makes one spelling work in a Debug and a Release site alike — the first time it opens.
 
+  **What a deferred assembly ships decides whether deferring it can work at all**, so the build
+  classifies every suppressed reference and says so: `TPS0110` for one that ships a compiled bundle
+  (a reminder — nothing loads it for you), and `TPS0109` for one built as **ES modules**, which is
+  never what the author wanted. Such a package already defers its own code: its chunks are fetched on
+  demand and its entry module does not even import them, so all this setting keeps off the page is
+  that entry — and the entry is what calls `Transpose.Modules.register`, which stubs every one of its
+  types at its global name. Without it the *namespace object* those types live under never exists, so
+  the first reference to one is a bare `ReferenceError` (`gk is not defined`, from
+  `Tesserae.GraphKit`) instead of a fetch, reflection sees nothing of the assembly, and
+  `Modules.LoadAsync` cannot reach a type that is in no manifest. An assembly carrying only authored
+  assets — a vendored script, a stylesheet, fonts — is the unambiguous case and is reported as
+  neither. Both are warnings rather than errors: a deferred library the application *does* load is a
+  working configuration. `DontLoadReferenceTests` pins the classification.
+
   Minification is NUglify-based (`JsMinifier`), pinned to `NUglify 1.21.15`; the legacy compiler used
   1.20.7, but that version mis-parenthesised a `??` operand of `&&`/`||` and emitted invalid JS, fixed
   in NUglify 1.21.14 — not the newer 1.22.0, which regressed by inserting a stray empty statement when

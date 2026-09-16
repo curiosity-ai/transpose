@@ -101,7 +101,34 @@ var chart = new Tesserae.Plotly.PlotlyChart().Title("deferred chart");
 `Require` falls back between the `.js` and `.min.js` spellings of the same file, so one call
 works in a Debug site (which carries the readable bundle) and in a Release site (the minified
 one) alike. Reaching the deferred code *before* it is loaded fails at run time, exactly as it
-would for any library the page never loaded.
+would for any library the page never loaded — as a bare `ReferenceError` on the namespace object
+the library's types live under (`gk is not defined`), usually from inside a promise with no stack
+worth reading. Because nothing loads the bundle for you, the build says so once per deferred
+library that ships compiled Transpose code (`TPS0110`).
+
+#### Do not defer a library built as ES modules
+
+A library whose own `tps.json` says `"outputBy": "Module"` — every Tesserae-family package does —
+is the one case where this setting cannot help and can only hurt, and the build reports it as
+`TPS0109`.
+
+Such a package **already** defers its own code: it ships one chunk file per group of types, its
+entry module does not import them, and they are fetched on demand. What the entry module *does*
+is call `Transpose.Modules.register`, which stubs every one of those types at its global name.
+Keeping the entry out of index.html therefore saves only the entry itself (tens of kilobytes) and
+removes the registration — so the namespace object its types would have been placed on never
+exists at all, and the first reference to one of them is a `ReferenceError` rather than an
+on-demand fetch. Reflection sees nothing of the assembly either.
+
+Leave such a reference scripted. If you really must defer it, its entry module is what you have to
+load, as a module:
+
+```csharp
+await Transpose.Require.RequireAsync(RequireKind.Module, "./Tesserae.GraphKit.js");
+```
+
+and that has to happen before *anything* touches one of its types — including reflection, and
+including code in other libraries you do not control.
 
 This is the consumer-side counterpart of `loadCompiledOutput: false`, which a *library* sets to
 keep its own bundle out of index.html. Use that when the library knows it is loaded on demand,

@@ -88,6 +88,53 @@ public sealed class DontLoadReferenceTests
         var items = OutputBuilder.CollectEmbeddableItems(
             libProjectDir, libConfig, assemblyName + ".js", $"var {assemblyName.Replace('.', '_')} = 1;", null);
 
+        return EmbedInto(assemblyName, items);
+    }
+
+    /// <summary>
+    /// The same package built as ES modules (<c>outputBy: Module</c>): it ships the module entry and
+    /// one chunk on top of the two bundle variants, which is what every current Tesserae-family
+    /// package looks like.
+    /// </summary>
+    private string ModulePackageDll(string assemblyName)
+    {
+        var libProjectDir = Path.Combine(_libDir, assemblyName);
+        Directory.CreateDirectory(libProjectDir);
+        File.WriteAllText(Path.Combine(libProjectDir, "vendor.js"), "// the vendored library");
+        File.WriteAllText(Path.Combine(libProjectDir, "tps.json"), $@"{{
+            ""fileName"": ""{assemblyName}.js"",
+            ""outputBy"": ""Module"",
+            ""resources"": [ {{ ""name"": ""{assemblyName}-vendor.js"", ""files"": [ ""vendor.js"" ] }} ]
+        }}");
+        var libConfig = TransposeJson.TryLoad(libProjectDir, "Release")!;
+
+        var modules = new Emitter.ModuleOutput { EntryJs = "Transpose.Modules.register({});" };
+        modules.Chunks.Add(($"chunks/{assemblyName}/c0123456789abcdef.mjs", "var chunk = 1;"));
+
+        var items = OutputBuilder.CollectEmbeddableItems(
+            libProjectDir, libConfig, assemblyName + ".js", $"var {assemblyName.Replace('.', '_')} = 1;", null,
+            modules: modules);
+
+        return EmbedInto(assemblyName, items);
+    }
+
+    /// <summary>
+    /// An assembly carrying nothing but authored assets — a vendored script, a stylesheet — and no
+    /// compiled output of its own. This is the shape <c>dontLoadReferences</c> is unambiguously for,
+    /// so the build must say nothing about it.
+    /// </summary>
+    private string AssetsOnlyDll(string assemblyName)
+    {
+        var items = new List<EmbeddedItem>
+        {
+            new(assemblyName + "-vendor.js", System.Text.Encoding.UTF8.GetBytes("// vendored"), null),
+            new(assemblyName + ".css",       System.Text.Encoding.UTF8.GetBytes(".lib { }"),    null),
+        };
+        return EmbedInto(assemblyName, items);
+    }
+
+    private string EmbedInto(string assemblyName, List<EmbeddedItem> items)
+    {
         byte[] bytes;
         using (var asm = AssemblyDefinition.CreateAssembly(
                    new AssemblyNameDefinition(assemblyName, new Version(1, 0, 0, 0)), assemblyName, ModuleKind.Dll))
@@ -224,6 +271,83 @@ public sealed class DontLoadReferenceTests
 
         CollectionAssert.AreEqual(new[] { "Tesserae.Plotly" }, result.UnmatchedDontLoadReferences.ToArray());
         CollectionAssert.AreEqual(new[] { "Tesserae" }, result.UnscriptedReferences.ToArray());
+    }
+
+    // ------------------------------------------------- what the deferred assembly actually ships
+
+    [TestMethod]
+    public void DeferringAModuleBuiltPackageIsReported()
+    {
+        // The failure this exists to catch, end to end. A package built as ES modules already defers
+        // its own code — its chunks are fetched on demand and its entry does not import them — so the
+        // only thing this setting keeps off the page is the entry, which is what calls
+        // Transpose.Modules.register. Without those stubs the namespace object the types are placed
+        // on never exists, and the first reference to one dies on a bare ReferenceError.
+        var graphKit = ModulePackageDll("Tesserae.GraphKit");
+
+        var result = Build(AppConfig(@"{
+            ""fileName"": ""app.js"",
+            ""dontLoadReferences"": [ ""Tesserae.GraphKit"" ]
+        }"), Project(graphKit));
+
+        CollectionAssert.AreEqual(
+            new[] { new OutputBuilder.DeferredReference("Tesserae.GraphKit", "Tesserae.GraphKit.js") },
+            result.DeferredModuleReferences.ToArray(),
+            "a deferred module package must be reported, named with the file the application has to load instead");
+        Assert.AreEqual(0, result.DeferredCompiledReferences.Count,
+            "it is reported once, as the module case — not also as a plain bundle");
+
+        // Reported, not refused: the files are still extracted and the site still builds, because an
+        // application that does load the entry itself is a working configuration.
+        AssertInOutput("Tesserae.GraphKit.js", "the entry module must still be extracted, under its site name");
+        Assert.IsFalse(IndexHtml().Contains("Tesserae.GraphKit"), "and still kept out of index.html");
+    }
+
+    [TestMethod]
+    public void DeferringASingleBundlePackageIsReportedSeparately()
+    {
+        // The case the setting exists for (a chart binding one screen needs). Still worth saying once
+        // per build: nothing loads the bundle automatically, and forgetting to fails the same way.
+        var plotly = PackageDll("Tesserae.Plotly");
+
+        var result = Build(AppConfig(@"{
+            ""fileName"": ""app.js"",
+            ""dontLoadReferences"": [ ""Tesserae.Plotly"" ]
+        }"), Project(plotly));
+
+        CollectionAssert.AreEqual(
+            new[] { new OutputBuilder.DeferredReference("Tesserae.Plotly", "Tesserae.Plotly.js") },
+            result.DeferredCompiledReferences.ToArray());
+        Assert.AreEqual(0, result.DeferredModuleReferences.Count);
+    }
+
+    [TestMethod]
+    public void DeferringAnAssetsOnlyAssemblySaysNothing()
+    {
+        // No compiled code of its own means nothing can reference one of its types, so there is no
+        // failure to warn about — this is what the setting is unambiguously for.
+        var icons = AssetsOnlyDll("Some.Icons");
+
+        var result = Build(AppConfig(@"{
+            ""fileName"": ""app.js"",
+            ""dontLoadReferences"": [ ""Some.Icons"" ]
+        }"), Project(icons));
+
+        CollectionAssert.AreEqual(new[] { "Some.Icons" }, result.UnscriptedReferences.ToArray());
+        Assert.AreEqual(0, result.DeferredModuleReferences.Count);
+        Assert.AreEqual(0, result.DeferredCompiledReferences.Count);
+    }
+
+    [TestMethod]
+    public void AScriptedReferenceIsNeverReportedAsDeferred()
+    {
+        var graphKit = ModulePackageDll("Tesserae.GraphKit");
+        var plotly = PackageDll("Tesserae.Plotly");
+
+        var result = Build(AppConfig(@"{ ""fileName"": ""app.js"" }"), Project(graphKit, plotly));
+
+        Assert.AreEqual(0, result.DeferredModuleReferences.Count);
+        Assert.AreEqual(0, result.DeferredCompiledReferences.Count);
     }
 
     [TestMethod]

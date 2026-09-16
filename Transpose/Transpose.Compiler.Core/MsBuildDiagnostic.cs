@@ -67,6 +67,8 @@ internal static class MsBuildDiagnostic
     public const string CodeDontLoadReferenceUnmatched = "TPS0106";
     public const string CodeDanglingModuleImport    = "TPS0107";
     public const string CodeRestoreIncomplete       = "TPS0108";
+    public const string CodeDeferredModuleRef       = "TPS0109";
+    public const string CodeDeferredCompiledRef     = "TPS0110";
 
     /// <summary>Formats a Roslyn diagnostic, pointing at its source location when it has one.</summary>
     public static string Format(Diagnostic d)

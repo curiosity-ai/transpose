@@ -103,13 +103,34 @@ internal static class OutputBuilder
     /// target is not in the site — a 404 at run time, on whichever screen first needs the chunk. A
     /// current package cannot produce one (its cross-assembly imports are type placeholders resolved
     /// against this build), but a package built before that could, and the failure is otherwise
-    /// completely silent until someone clicks the wrong thing.</summary>
+    /// completely silent until someone clicks the wrong thing.
+    ///
+    /// <see cref="DeferredModuleReferences"/> and <see cref="DeferredCompiledReferences"/> split
+    /// <see cref="UnscriptedReferences"/> by what the assembly actually ships, because
+    /// <c>dontLoadReferences</c> means something different for each and only one of them is safe on
+    /// its own. An assembly shipping an <b>ES-module entry</b> already defers its own code — its
+    /// chunks are fetched on demand and its entry does not even import them — so suppressing that
+    /// entry saves only the entry itself and removes the one thing that registers the assembly's
+    /// types with <c>Transpose.Modules</c>; a reference to any of them then fails at run time with a
+    /// <c>ReferenceError</c> on the namespace object the stubs would have created. An assembly
+    /// shipping a <b>single compiled bundle</b> is the case the setting exists for (a chart binding
+    /// on one screen), and is still only correct when the application loads that bundle itself.
+    /// Neither is an error — a deferred library the application does load is a working
+    /// configuration — so both are reported as warnings by the caller.</summary>
     public readonly record struct SiteBuildResult(
         string OutputDir,
         IReadOnlyList<string> RemovedStaleFiles,
         IReadOnlyList<string> UnscriptedReferences,
         IReadOnlyList<string> UnmatchedDontLoadReferences,
-        IReadOnlyList<string> DanglingModuleImports);
+        IReadOnlyList<string> DanglingModuleImports,
+        IReadOnlyList<DeferredReference> DeferredModuleReferences,
+        IReadOnlyList<DeferredReference> DeferredCompiledReferences);
+
+    /// <summary>One assembly <c>dontLoadReferences</c> kept out of index.html, together with the file
+    /// the application has to load in its place — the name the library's own tps.json gave its bundle
+    /// (or its module entry, which travels as <c>.mjs</c> and lands under that same name), so a
+    /// diagnostic can quote what to pass to <c>Transpose.Require</c> instead of guessing at it.</summary>
+    public readonly record struct DeferredReference(string Assembly, string File);
 
     /// <summary>
     /// One stylesheet a site build produces <em>from files on disk</em> — a <c>tps.json</c> resource
@@ -336,6 +357,13 @@ internal static class OutputBuilder
         // time it needs them, so a heavy binding only one screen uses costs nothing on start-up.
         var dontLoad = new DontLoadReferenceMatcher(config.DontLoadReferences);
 
+        // The suppressed references, split by what each one ships — see SiteBuildResult for why the
+        // two mean different things. Classified here, where the assembly's embedded manifest is in
+        // hand, and deliberately keyed off what the PACKAGE carries rather than off `siteIsChunked`:
+        // otherwise one tps.json would be diagnosed in a Release build and clean in a Debug one.
+        var deferredModuleRefs   = new List<DeferredReference>();
+        var deferredCompiledRefs = new List<DeferredReference>();
+
         foreach (var dll in TopologicalOrder(project.ReferencePaths))
         {
             // A suppressed reference contributes its files and none of its index.html entries — its
@@ -344,9 +372,24 @@ internal static class OutputBuilder
             var scripted = !dontLoad.Matches(Path.GetFileNameWithoutExtension(dll));
             var css = scripted ? cssLinks : new List<string>();
 
-            RoutePackageJs(projectDlls.Contains(dll)
+            var embedded = projectDlls.Contains(dll)
                 ? ExtractProjectDllResources(dll, outputDir, css, utf8, written)
-                : ExtractEmbeddedJs(dll, outputDir, css, written), scripted, dll);
+                : ExtractEmbeddedJs(dll, outputDir, css, written);
+
+            if (!scripted)
+            {
+                var name = Path.GetFileNameWithoutExtension(dll);
+                // FileName is already the name the file lands under in the site (SiteName, for the
+                // module entry), which is the name the application would ask Transpose.Require for.
+                if (embedded.FirstOrDefault(f => f.Variant == JsVariant.ModuleEntry) is { Variant: not null } entry)
+                    deferredModuleRefs.Add(new DeferredReference(name, entry.FileName));
+                else if (embedded.FirstOrDefault(f => f.Variant == JsVariant.Formatted) is { Variant: not null } bundle)
+                    deferredCompiledRefs.Add(new DeferredReference(name, bundle.FileName));
+                // Anything else ships only authored resources — a vendored bundle, a stylesheet, a
+                // font — which is what this setting is unambiguously for. Nothing to say.
+            }
+
+            RoutePackageJs(embedded, scripted, dll);
 
             if (string.Equals(Path.GetFileNameWithoutExtension(dll), "Transpose", StringComparison.OrdinalIgnoreCase))
                 EmitCompilerJs("tps.shim.js", RoslynTranslator.RuntimeShim);
@@ -450,7 +493,8 @@ internal static class OutputBuilder
 
         WriteManifest(manifestPath, outputDir, written, utf8);
 
-        return new SiteBuildResult(outputDir, removed, dontLoad.Matched, dontLoad.Unmatched, dangling);
+        return new SiteBuildResult(outputDir, removed, dontLoad.Matched, dontLoad.Unmatched, dangling,
+                                   deferredModuleRefs, deferredCompiledRefs);
     }
 
     /// <summary>

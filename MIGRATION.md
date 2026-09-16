@@ -159,7 +159,11 @@ for on every page load.
 Everything the assembly ships is still extracted into the site; your code loads
 it when it needs it (`await Transpose.Require.RequireAsync("plotly.js",
 "Tesserae.Plotly.js")`). Entries match an assembly name, case-insensitively,
-with `*`/`?` wildcards; one that matches nothing is reported as `TPS0106`.
+with `*`/`?` wildcards; one that matches nothing is reported as `TPS0106`, and
+one naming a library built as ES modules as `TPS0109` — such a package already
+defers its own chunks, and suppressing its entry only removes the registration
+that makes its types resolvable at all. See
+[compiler-config.md](docs/compiler-config.md#references-you-load-yourself).
 
 ### Cleaning the output folder
 

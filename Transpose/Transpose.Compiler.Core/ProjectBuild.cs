@@ -473,6 +473,25 @@ internal static class ProjectBuild
             foreach (var pattern in siteResult.UnmatchedDontLoadReferences)
                 MsBuildDiagnostic.WriteWarning(MsBuildDiagnostic.CodeDontLoadReferenceUnmatched,
                     $"tps.json 'dontLoadReferences' entry '{pattern}' matched no referenced assembly.");
+            // Deferring a library that was built as ES MODULES is never what the author wanted: its
+            // chunks already load on demand (its entry module does not even import them), so the only
+            // thing kept off the page is that entry — which is what registers the assembly's types
+            // with Transpose.Modules. Without those stubs the namespace object they would be placed
+            // on does not exist at all, and the first reference to one of its types dies on a bare
+            // ReferenceError, typically from inside a promise with no stack to read.
+            foreach (var (assembly, file) in siteResult.DeferredModuleReferences)
+                MsBuildDiagnostic.WriteWarning(MsBuildDiagnostic.CodeDeferredModuleRef,
+                    $"tps.json 'dontLoadReferences' defers '{assembly}', which is built as ES modules — its chunks already load on demand, " +
+                    $"so this only keeps its entry module (and with it the registration of its types) off the page. Remove the entry, or load " +
+                    $"'{file}' with Transpose.Require.RequireAsync(RequireKind.Module, …) before anything reaches one of its types.");
+            // A single-bundle library is the case the setting exists for, and is still only correct
+            // when the application loads the bundle itself — nothing does it automatically, and the
+            // failure is the same bare ReferenceError. Said once per build rather than left to be
+            // discovered on whichever screen touches the library first.
+            foreach (var (assembly, file) in siteResult.DeferredCompiledReferences)
+                MsBuildDiagnostic.WriteWarning(MsBuildDiagnostic.CodeDeferredCompiledRef,
+                    $"tps.json 'dontLoadReferences' defers '{assembly}', which ships compiled Transpose code — nothing loads it for you, so the " +
+                    $"application must await Transpose.Require.RequireAsync(\"{file}\") before reaching any of its types.");
             // An import naming a file the site does not have is a 404 on whichever screen first needs
             // that chunk, and nothing says so at build time. The usual cause is a package built by a
             // compiler that wrote its dependency's chunk file names instead of type placeholders, and
