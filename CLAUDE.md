@@ -621,6 +621,22 @@ The short version:
   does: C# resolves `someArray.SequenceEqual(other)` to *it* rather than to `Enumerable.SequenceEqual`
   (the array-to-span conversion beats array-to-`IEnumerable`), so that very common LINQ call would
   otherwise throw "getItem is not a function".
+- **An `async void` body reports its fault (`TransposeR.fireAndForget`).** Every other async body
+  returns a tps.js Task through `TransposeR.fromPromise`, but an `async void` method, an `async void`
+  local function, and an async lambda converted to a **void-returning delegate**
+  (`window.setTimeout(async _ => …)`, a DOM event handler) produce a Task nobody can reach — the
+  delegate's caller has no return value to await. Handing one back lost the failure *in silence*, and
+  more completely than plain JavaScript would: `fromPromise` attaches a rejection handler, so the
+  engine's unhandled-rejection report never fired either, and nothing in the runtime reports an
+  unobserved faulted Task. Those bodies therefore emit through `TransposeR.fireAndForget`, which
+  returns nothing and reports the fault — `console.error` by default, or the handler an application
+  installs with `Transpose.Script.SetUnhandledExceptionHandler`. That is the browser's analogue of
+  .NET rethrowing an async void fault on the SynchronizationContext, and like .NET it reports *every*
+  exception, cancellation included. Deciding it by the **converted delegate's** return type is what
+  keeps it narrow: a lambda with a natural function type (`var f = async () => …`) and
+  `Task.Run(async () => …)` both infer a Task-returning delegate, so their Task is still returned.
+  See `EmitMaybeAsyncBody` (`Emitter.Members.cs`), `ConvertsToVoidDelegate`
+  (`Emitter.Expressions2.cs`) and `AsyncVoidFaultTests`.
 - **A boxed numeric loses its exact type.** Every JS number is a double, so `(object)1 is double` is
   true and `objects.OfType<double>()` also matches the boxed `int`s. `long`/`ulong`/`decimal` are
   real runtime objects and are unaffected, as are reference types and structs.

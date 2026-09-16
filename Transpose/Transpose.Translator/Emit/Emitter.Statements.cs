@@ -977,7 +977,7 @@ public sealed partial class Emitter
                         if (symbol?.ReturnsVoid == true) EmitExpressionStatement(localFn.ExpressionBody.Expression);
                         else { _w.Write("return "); EmitExpression(localFn.ExpressionBody.Expression); _w.WriteLine(";"); }
                     }
-                });
+                }, asyncVoid: isAsync && symbol?.ReturnsVoid == true);
             }
         });
         _w.WriteLine(";");

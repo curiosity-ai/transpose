@@ -205,14 +205,17 @@ public sealed partial class Emitter
             case ParenthesizedLambdaExpressionSyntax lambda:
                 EmitLambda(lambda.ParameterList.Parameters.Select(p => p.Identifier.Text), lambda.Body,
                     lambda.Modifiers.Any(SyntaxKind.AsyncKeyword), lambda.ParameterList.Parameters,
-                    restLastParam: ConvertsToExpandParamsDelegate(lambda));
+                    restLastParam: ConvertsToExpandParamsDelegate(lambda),
+                    asyncVoid: lambda.Modifiers.Any(SyntaxKind.AsyncKeyword) && ConvertsToVoidDelegate(lambda));
                 break;
             case SimpleLambdaExpressionSyntax simpleLambda:
-                EmitLambda(new[] { simpleLambda.Parameter.Identifier.Text }, simpleLambda.Body, simpleLambda.Modifiers.Any(SyntaxKind.AsyncKeyword));
+                EmitLambda(new[] { simpleLambda.Parameter.Identifier.Text }, simpleLambda.Body, simpleLambda.Modifiers.Any(SyntaxKind.AsyncKeyword),
+                    asyncVoid: simpleLambda.Modifiers.Any(SyntaxKind.AsyncKeyword) && ConvertsToVoidDelegate(simpleLambda));
                 break;
             case AnonymousMethodExpressionSyntax anon:
                 EmitLambda(anon.ParameterList?.Parameters.Select(p => p.Identifier.Text) ?? Enumerable.Empty<string>(), anon.Body, anon.Modifiers.Any(SyntaxKind.AsyncKeyword),
-                    restLastParam: ConvertsToExpandParamsDelegate(anon));
+                    restLastParam: ConvertsToExpandParamsDelegate(anon),
+                    asyncVoid: anon.Modifiers.Any(SyntaxKind.AsyncKeyword) && ConvertsToVoidDelegate(anon));
                 break;
             case DefaultExpressionSyntax def:
                 _w.Write(DefaultValueLiteral(_model.GetTypeInfo(def).Type ?? _model.GetTypeInfo(def).ConvertedType!));

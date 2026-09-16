@@ -713,7 +713,7 @@ public sealed partial class Emitter
                     if (entry.ReturnsVoid) EmitExpressionStatement(decl.ExpressionBody.Expression);
                     else { _w.Write("return "); EmitExpressionConverted(decl.ExpressionBody.Expression, entry.ReturnType); _w.WriteLine(";"); }
                 }
-            });
+            }, asyncVoid: entry.IsAsync && entry.ReturnsVoid);
         });
     }
 
@@ -823,7 +823,7 @@ public sealed partial class Emitter
                     if (returnsVoid) EmitExpressionStatement(arrow.Expression);
                     else { _w.Write("return "); EmitExpressionConverted(arrow.Expression, method.ReturnType); _w.WriteLine(";"); }
                 }
-            });
+            }, asyncVoid: method.IsAsync && method.ReturnsVoid);
         });
     }
 
@@ -832,11 +832,21 @@ public sealed partial class Emitter
     /// whose promise is adapted to an tps.js Task via TransposeR.fromPromise. This gives async
     /// methods the same contract as tps.js's own state-machine output: they return a Task
     /// that composes with Task.Run/WhenAll/ContinueWith and carries faults through the Task.
+    /// <para>
+    /// <paramref name="asyncVoid"/> marks the one async body whose Task nobody can ever observe: a
+    /// C# <c>async void</c> method or local function, or an async lambda converted to a void-returning
+    /// delegate (<c>window.setTimeout(async _ =&gt; …)</c>, a DOM event handler). Handing a Task back
+    /// there loses the failure in silence — <c>fromPromise</c> attaches a rejection handler, so not
+    /// even the engine's unhandled-rejection report fires — so it goes through
+    /// <c>TransposeR.fireAndForget</c>, which reports the fault the way .NET reports an async void
+    /// fault on the SynchronizationContext. It also makes the emitted function return
+    /// <c>undefined</c>, which is what a void delegate's JS callers already expect.
+    /// </para>
     /// </summary>
-    private void EmitMaybeAsyncBody(bool isAsync, Action emitStatements)
+    private void EmitMaybeAsyncBody(bool isAsync, Action emitStatements, bool asyncVoid = false)
     {
         if (!isAsync) { emitStatements(); return; }
-        _w.Write("return TransposeR.fromPromise((async () => ");
+        _w.Write(asyncVoid ? "TransposeR.fireAndForget((async () => " : "return TransposeR.fromPromise((async () => ");
         _w.Block(emitStatements);
         _w.WriteLine(")());");
     }

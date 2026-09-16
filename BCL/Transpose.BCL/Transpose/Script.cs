@@ -167,6 +167,21 @@ namespace Transpose
         public static extern void Debugger();
 
         /// <summary>
+        /// Sets the handler invoked when an <c>async void</c> method, local function or lambda fails.
+        /// <para>
+        /// Such a body's Task is unreachable — the delegate's caller has no return value to await — so
+        /// its exception would otherwise be lost. .NET rethrows it on the SynchronizationContext, which
+        /// on a browser has no equivalent, so Transpose reports it instead: by default it is written to
+        /// <c>console.error</c>. Replace the handler to route it somewhere else (an error overlay, a
+        /// telemetry endpoint); it is a single global, set it once at start-up. Passing <c>null</c>
+        /// silences the reporting, which puts the failure back where it was: nowhere.
+        /// </para>
+        /// </summary>
+        /// <param name="handler">Receives the exception that faulted the <c>async void</c> body.</param>
+        [Template("TransposeR.onUnhandledException = {handler}")]
+        public static extern void SetUnhandledExceptionHandler(Action<Exception> handler);
+
+        /// <summary>
         /// The eval() method evaluates JavaScript code represented as a string.
         /// </summary>
         /// <typeparam name="T"></typeparam>

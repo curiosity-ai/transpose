@@ -3826,14 +3826,30 @@ public sealed partial class Emitter
            && invoke.Parameters[^1].IsParams
            && HasExpandParams(invoke);
 
+    /// <summary>
+    /// True when a lambda / anonymous method converts to a delegate whose Invoke returns <c>void</c>.
+    /// An <c>async</c> lambda in that position is C#'s <c>async void</c>: the delegate's caller has no
+    /// return value to look at, so the Task the body produces can never be awaited and its failure has
+    /// nowhere to go — see the <c>asyncVoid</c> branch of <see cref="EmitMaybeAsyncBody"/>.
+    /// A lambda with no conversion target (one given a natural function type, <c>var f = async () =&gt; …</c>)
+    /// infers a <b>Task</b>-returning delegate and is deliberately not this case: there the Task is a
+    /// value the C# code holds and can await.
+    /// </summary>
+    private bool ConvertsToVoidDelegate(ExpressionSyntax lambda)
+        => _model.GetTypeInfo(lambda).ConvertedType
+            is INamedTypeSymbol { TypeKind: TypeKind.Delegate, DelegateInvokeMethod.ReturnsVoid: true };
+
     private void EmitLambda(IEnumerable<string> parameters, CSharpSyntaxNode body, bool isAsync,
-        SeparatedSyntaxList<ParameterSyntax>? paramSyntax = null, bool restLastParam = false)
+        SeparatedSyntaxList<ParameterSyntax>? paramSyntax = null, bool restLastParam = false,
+        bool asyncVoid = false)
     {
         // Emit an arrow function so `this` is captured lexically, matching C# lambda semantics
         // (a plain `function` would rebind `this` and break `this`-referencing closures).
         // An async lambda returns an tps.js Task (via the TransposeR.fromPromise wrapper in
         // EmitMaybeAsyncBody), so it composes with Task.Run/WhenAll/ContinueWith; the outer
-        // function is therefore not itself `async`.
+        // function is therefore not itself `async`. One converted to a VOID-returning delegate is
+        // C#'s `async void` and returns nothing instead — its fault is reported rather than
+        // packed into a Task nobody can reach (see EmitMaybeAsyncBody).
         _w.Write("(");
         // A parameter named "_" is a real discard only when it appears two or more times —
         // C# then makes it inaccessible in the body, so it's safe (and necessary, since "use
@@ -3873,7 +3889,7 @@ public sealed partial class Emitter
                     EmitExpression(exprBody);
                     _w.WriteLine(";");
                 }
-            });
+            }, asyncVoid: asyncVoid);
         });
     }
 
