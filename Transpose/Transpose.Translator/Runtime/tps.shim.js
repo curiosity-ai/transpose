@@ -54,6 +54,25 @@
         var fn = TransposeR.toStrFn(t);
         return fn ? fn(v) : TransposeR.toStr(v);
     };
+    // Exception.Message. Same story as stackTrace below: the value caught by `catch (Exception)`
+    // may be a real System.Exception, a raw JS error (both carry a `message`, so both already
+    // worked), or a bare value someone threw - a string, an object literal - whose text was
+    // reported as an empty message because there was no `message` field to read.
+    TransposeR.message = function (e) {
+        if (e === null || e === undefined) { return null; }
+        if (typeof e === "string") { return e; }
+        if (typeof e.message === "string") { return e.message; }
+        // A DOM event - a WebSocket or XHR `error` - carries no message and stringifies to
+        // "[object Event]", which says nothing. Name the event and what raised it, as
+        // System.Exception.create does for the same value (kept here rather than delegating to it:
+        // the shim ships with the application and cannot assume the runtime it loads has that
+        // function).
+        if (typeof e.type === "string" && e.type.length > 0 && "target" in e) {
+            var raisedBy = (e.target && e.target.constructor && e.target.constructor.name !== "Object") ? e.target.constructor.name : null;
+            return "A JavaScript '" + e.type + "' event was raised" + (raisedBy ? " by " + raisedBy : "") + ".";
+        }
+        return TransposeR.toStr(e);
+    };
     // Exception.StackTrace. A value caught by `catch (Exception)` is either a real System.Exception,
     // which captured an Error into `errorStack` when it was constructed, or a raw JS error thrown by
     // interop / a rejected promise, which has a native `stack` and no `errorStack`. C# matches both,
@@ -62,6 +81,42 @@
         if (e === null || e === undefined) { return null; }
         if (e.errorStack && e.errorStack.stack !== null && e.errorStack.stack !== undefined) { return e.errorStack.stack; }
         return (e.stack !== null && e.stack !== undefined) ? e.stack : null;
+    };
+    // The value a `catch` clause binds. What the engine threw may be anything at all - an Error, a
+    // string, a DOM event - and a handler that asks `catch (NullReferenceException)`,
+    // `e is IOException`, `e.GetType()` or `e.GetBaseException()` only gets an answer if that value
+    // is a System.Exception. Most of all: a null dereference raises a native TypeError, so the most
+    // common exception in any program did not match the handler that names it. Normalise once, on
+    // entry, exactly as every other JS -> C# seam does (Task.Run, fromPromise, toPromise); a real
+    // exception is returned unchanged, so nothing is allocated for a C#-thrown one.
+    //
+    // A bare `throw;` still rethrows the ORIGINAL value rather than this wrapper, which is what
+    // keeps its identity and its native frames usable by an outer JavaScript handler. The wrapper is
+    // remembered against the value it wraps, so an outer C# catch of that same rethrow binds the
+    // SAME exception instance - reference equality across a rethrow holds, and anything the inner
+    // handler recorded on it (e.Data) survives. A WeakMap rather than a field on the error, so the
+    // value an outer JS handler receives is untouched; a thrown primitive cannot be a key and simply
+    // gets a fresh wrapper, which has no identity to lose.
+    TransposeR.$caught = TransposeR.$caught || new WeakMap();
+    TransposeR.caught = function (e) {
+        if (Transpose.is(e, System.Exception)) { return e; }
+        if (e === null || e === undefined || (typeof e !== "object" && typeof e !== "function")) {
+            return System.Exception.create(e);
+        }
+        var known = TransposeR.$caught.get(e);
+        if (known) { return known; }
+        var ex = System.Exception.create(e);
+        TransposeR.$caught.set(e, ex);
+        return ex;
+    };
+    // An exception filter (`catch (E e) when (expr)`). The CLR runs the filter with the exception
+    // still in flight and SWALLOWS anything the filter itself throws, treating it as "does not
+    // match" - so the exception being handled keeps propagating. Evaluating the filter inline
+    // instead let a fault inside it (the usual one: a null dereference in the `when` clause)
+    // replace the error the handler existed to report, which is the one thing nobody can debug.
+    // Note a C# filter can never contain `await`, so a plain arrow is safe here.
+    TransposeR.filter = function (test) {
+        try { return !!test(); } catch (e) { return false; }
     };
     TransposeR.is = function (v, t) { return Transpose.is(v, t); };
     TransposeR.as = function (v, t) { return Transpose.as ? Transpose.as(v, t) : (Transpose.is(v, t) ? v : null); };
