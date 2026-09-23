@@ -241,10 +241,28 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
         base.VisitFixedStatement(node);
     }
 
+    // `stackalloc` into a Span/ReadOnlySpan is safe code and is emitted as a span over an ordinary array
+    // (Emitter.Spans.cs); into a pointer it is unsafe code, which has no browser equivalent.
     public override void VisitStackAllocArrayCreationExpression(StackAllocArrayCreationExpressionSyntax node)
     {
-        Report(node, "stackalloc is not supported in the browser environment.");
+        if (!StackAllocTargetsSpan(node))
+            Report(node, "stackalloc into a pointer is not supported in the browser environment; allocate into a Span<T> instead.");
         base.VisitStackAllocArrayCreationExpression(node);
+    }
+
+    public override void VisitImplicitStackAllocArrayCreationExpression(ImplicitStackAllocArrayCreationExpressionSyntax node)
+    {
+        if (!StackAllocTargetsSpan(node))
+            Report(node, "stackalloc into a pointer is not supported in the browser environment; allocate into a Span<T> instead.");
+        base.VisitImplicitStackAllocArrayCreationExpression(node);
+    }
+
+    private bool StackAllocTargetsSpan(ExpressionSyntax node)
+    {
+        var info = _model.GetTypeInfo(node);
+        var type = info.ConvertedType ?? info.Type;
+        return type is INamedTypeSymbol { IsGenericType: true } named
+               && named.OriginalDefinition.ToDisplayString() is "System.Span<T>" or "System.ReadOnlySpan<T>";
     }
 
     private void CheckUnsafeModifier(SyntaxTokenList modifiers, SyntaxNode node)
@@ -469,22 +487,6 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
         base.VisitParenthesizedLambdaExpression(node);
     }
 
-    // Span/ReadOnlySpan constant-string pattern matching (`span is "literal"`) is not modeled.
-    public override void VisitIsPatternExpression(IsPatternExpressionSyntax node)
-    {
-        // Only a *string-literal* constant pattern can be the span-pattern form (`span is "text"`),
-        // so screen on the literal before binding the operand — `x is null`, `x is 0` and every
-        // other constant pattern would otherwise pay for a semantic query that cannot match.
-        if (node.Pattern is ConstantPatternSyntax { Expression: LiteralExpressionSyntax literal }
-            && literal.Token.IsKind(SyntaxKind.StringLiteralToken)
-            && _model.GetTypeInfo(node.Expression).Type is INamedTypeSymbol t
-            && t.OriginalDefinition.ToDisplayString() is "System.ReadOnlySpan<T>" or "System.Span<T>")
-        {
-            Report(node, "Span pattern matching is not supported in the browser environment.");
-        }
-        base.VisitIsPatternExpression(node);
-    }
-
     // An enum's members are emitted as plain JS numbers, so a 64-bit underlying type cannot be
     // represented: JavaScript numbers hold integers exactly only up to 2^53, and the runtime matches a
     // value to its member by that number. `enum E : long { X = long.MaxValue }` silently produced a
@@ -570,6 +572,36 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
     };
 
     private static readonly string[] TasksNamespaceSegments = { "System", "Threading", "Tasks" };
+
+    /// <summary>
+    /// The diagnostic message for a type named by its full metadata-style name (<c>System.IO.Path</c>)
+    /// that the browser BCL does not declare at all, or null when the name is not in a denied namespace
+    /// or is one of the allowed types. The same rule as <see cref="DeniedNamespaceMessage"/>, for a
+    /// name that never bound to a symbol — see <see cref="BrowserApiDiagnostics"/>.
+    /// </summary>
+    internal static string? DeniedApiMessage(string fullName)
+    {
+        var lastDot = fullName.LastIndexOf('.');
+        if (lastDot <= 0) return null;
+        var ns = fullName.Substring(0, lastDot).Split('.');
+        if (NamespaceSegmentsMatch(ns, TasksNamespaceSegments)) return null;
+        if (AllowedThreadingTypes.Contains(fullName)) return null;
+        foreach (var (segments, msg) in DeniedNamespaces)
+            if (NamespaceSegmentsMatch(ns, segments)) return string.Format(msg, fullName);
+        // `using System.Net.Sockets;` — the missing name is the denied namespace itself.
+        var asNamespace = fullName.Split('.');
+        foreach (var (segments, msg) in DeniedNamespaces)
+            if (NamespaceSegmentsMatch(asNamespace, segments)) return string.Format(msg, fullName);
+        return null;
+
+        static bool NamespaceSegmentsMatch(string[] ns, string[] prefix)
+        {
+            if (ns.Length < prefix.Length) return false;
+            for (var i = 0; i < prefix.Length; i++)
+                if (!string.Equals(ns[i], prefix[i], StringComparison.Ordinal)) return false;
+            return true;
+        }
+    }
 
     private readonly HashSet<Location> _reportedApiLocations = new();
 
