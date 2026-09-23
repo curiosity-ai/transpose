@@ -85,6 +85,34 @@ When a project references another project, the site build consumes the
 referenced project's already-built package DLL (extracting its compiled JS)
 instead of recompiling its sources — so a dependency is compiled once and reused.
 
+### Restoring packages without the .NET SDK
+
+`tps` resolves `PackageReference`s out of the NuGet global-packages folder, and
+filling that folder used to be `dotnet restore`'s job — which made the .NET SDK a
+prerequisite of compiling with a tool that otherwise needs nothing but itself. It
+now installs them itself:
+
+````bash
+tps restore MyApp.csproj
+tps MyApp.csproj              # …or `tps MyApp.csproj --restore` to do both
+````
+
+It reads the `nuget.config` chain, fetches from a V3 feed or a plain folder of
+`.nupkg` files (`--source`, repeatable, consulted before the configured sources),
+and lays each package out exactly as NuGet does — so a later `dotnet restore` over
+the same folder accepts what it finds as already installed, and vice versa. This
+restores what the *compiler* binds against; building the same project through
+MSBuild additionally needs its SDK package, which only MSBuild resolves. Lock
+files, package-source mapping, authenticated feeds and floating versions are out
+of scope.
+
+The same thing is available in process through `Transpose.Compiler.Library`:
+
+````csharp
+var restored = await TransposeCompilerLibrary.RestoreAsync(
+    new RestoreRequest("/src/App/App.csproj") { OnProgress = Console.WriteLine });
+````
+
 ### Compiling from your own .NET application
 
 `Transpose.Compiler.Library` lets a .NET application compile C# source held in

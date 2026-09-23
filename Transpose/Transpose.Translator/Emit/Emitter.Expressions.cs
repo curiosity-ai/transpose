@@ -205,14 +205,17 @@ public sealed partial class Emitter
             case ParenthesizedLambdaExpressionSyntax lambda:
                 EmitLambda(lambda.ParameterList.Parameters.Select(p => p.Identifier.Text), lambda.Body,
                     lambda.Modifiers.Any(SyntaxKind.AsyncKeyword), lambda.ParameterList.Parameters,
-                    restLastParam: ConvertsToExpandParamsDelegate(lambda));
+                    restLastParam: ConvertsToExpandParamsDelegate(lambda),
+                    asyncVoid: lambda.Modifiers.Any(SyntaxKind.AsyncKeyword) && ConvertsToVoidDelegate(lambda));
                 break;
             case SimpleLambdaExpressionSyntax simpleLambda:
-                EmitLambda(new[] { simpleLambda.Parameter.Identifier.Text }, simpleLambda.Body, simpleLambda.Modifiers.Any(SyntaxKind.AsyncKeyword));
+                EmitLambda(new[] { simpleLambda.Parameter.Identifier.Text }, simpleLambda.Body, simpleLambda.Modifiers.Any(SyntaxKind.AsyncKeyword),
+                    asyncVoid: simpleLambda.Modifiers.Any(SyntaxKind.AsyncKeyword) && ConvertsToVoidDelegate(simpleLambda));
                 break;
             case AnonymousMethodExpressionSyntax anon:
                 EmitLambda(anon.ParameterList?.Parameters.Select(p => p.Identifier.Text) ?? Enumerable.Empty<string>(), anon.Body, anon.Modifiers.Any(SyntaxKind.AsyncKeyword),
-                    restLastParam: ConvertsToExpandParamsDelegate(anon));
+                    restLastParam: ConvertsToExpandParamsDelegate(anon),
+                    asyncVoid: anon.Modifiers.Any(SyntaxKind.AsyncKeyword) && ConvertsToVoidDelegate(anon));
                 break;
             case DefaultExpressionSyntax def:
                 _w.Write(DefaultValueLiteral(_model.GetTypeInfo(def).Type ?? _model.GetTypeInfo(def).ConvertedType!));
@@ -310,8 +313,11 @@ public sealed partial class Emitter
     /// [External] parameter/property, an [ObjectLiteral] member). Only 64-bit integers care: such a
     /// slot holds a plain number, so a managed System.Int64/UInt64 must be read back out of its box
     /// on the way in — see <c>Emitter.Foreign64.cs</c>.</param>
+    /// <param name="copyStructs">Whether a struct read out of existing storage is cloned. False for
+    /// an operand of a user-defined operator: the operator takes it by value and cannot write back
+    /// through it, so a copy would only cost output size on every <c>==</c>.</param>
     private void EmitExpressionConverted(ExpressionSyntax expr, ITypeSymbol? targetType,
-        bool targetIsForeignJs = false)
+        bool targetIsForeignJs = false, bool copyStructs = true)
     {
         // Numeric narrowing to an integer type needs truncation.
         var sourceType = _model.GetTypeInfo(expr).Type;
@@ -460,7 +466,7 @@ public sealed partial class Emitter
 
         // Value types (user-defined structs) are copied when assigned / passed / returned
         // from a referencing expression, so mutations to the copy don't alias the source.
-        if (IsSourceStruct(sourceType) && IsReferencingExpression(expr))
+        if (copyStructs && IsSourceStruct(sourceType) && IsReferencingExpression(expr))
         {
             _w.Write("TransposeR.clone(");
             EmitExpression(expr);

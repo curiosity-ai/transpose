@@ -23,6 +23,12 @@ public static class Program
             return args.Length == 0 ? 1 : 0;
         }
 
+        // The one verb tps has. Restore is a different job from compiling — it is the only thing here
+        // that touches the network, and it is normally run once against a checkout rather than on every
+        // build — so it is asked for by name instead of as one more flag on a build that does not want
+        // it. `--restore` on a build is the other half, for a caller that wants both in one command.
+        if (args[0] is "restore") return RunRestore(args[1..]);
+
         string? projectArg = null;
         string? outPath = null;
         string? siteDir = null;
@@ -48,6 +54,9 @@ public static class Program
         string? cacheDir = null;
         var watch = false;
         var watchPort = 4300;
+        var restoreFirst = false;
+        var restoreSources = new List<string>();
+        string? packagesFolder = null;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -84,6 +93,9 @@ public static class Program
                 case "--incremental": incremental = true; break;
                 case "--no-incremental": incremental = false; break;
                 case "--cache-dir": cacheDir = args[++i]; incremental = true; break;
+                case "--restore": restoreFirst = true; break;
+                case "--source": restoreSources.Add(args[++i]); break;
+                case "--packages": packagesFolder = args[++i]; break;
                 case "--watch": watch = true; break;
                 case "--watch-port": watchPort = int.Parse(args[++i]); break;
                 case "--metadata-only-assembly": metadataOnlyAssembly = true; break;
@@ -141,6 +153,18 @@ public static class Program
             MsBuildDiagnostic.WriteError(MsBuildDiagnostic.CodeWatchRequiresSiteBuild,
                 "--watch requires a site build: the project must have a tps.json and not use --emit-package, --build-runtime, or --out.");
             return 1;
+        }
+
+        if (restoreFirst)
+        {
+            var restored = Restore(new RestoreOptions
+            {
+                CsprojPath     = csproj,
+                PackagesFolder = packagesFolder,
+                Sources        = restoreSources,
+            });
+
+            if (restored != 0) return restored;
         }
 
         var sw = Stopwatch.StartNew();
@@ -319,6 +343,71 @@ public static class Program
         return null;
     }
 
+    /// <summary>
+    /// <c>tps restore &lt;project&gt;</c>: installs the packages the project binds against into the NuGet
+    /// global-packages folder, so a machine with nothing but <c>tps</c> on it can compile a project
+    /// whose packages have never been fetched.
+    /// </summary>
+    private static int RunRestore(string[] args)
+    {
+        string? projectArg = null;
+        string? packages = null;
+        var sources = new List<string>();
+        var ignoreConfigured = false;
+        var force = false;
+        var quiet = false;
+
+        for (var i = 0; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--packages": packages = args[++i]; break;
+                case "--source" or "-s": sources.Add(args[++i]); break;
+                case "--no-configured-sources": ignoreConfigured = true; break;
+                case "--force" or "-f": force = true; break;
+                case "--quiet" or "-q": quiet = true; break;
+                case "--project" or "-p": projectArg = args[++i]; break;
+                default:
+                    if (projectArg is null) projectArg = args[i];
+                    else
+                    {
+                        MsBuildDiagnostic.WriteError(MsBuildDiagnostic.CodeInvalidCommandLine, $"Unexpected argument '{args[i]}'.");
+                        return 1;
+                    }
+                    break;
+            }
+        }
+
+        var csproj = LocateProject(projectArg);
+        if (csproj is null)
+        {
+            MsBuildDiagnostic.WriteError(MsBuildDiagnostic.CodeProjectNotFound, $"No .csproj found at '{projectArg}'.");
+            return 1;
+        }
+
+        return Restore(new RestoreOptions
+        {
+            CsprojPath              = csproj,
+            PackagesFolder          = packages,
+            Sources                 = sources,
+            IgnoreConfiguredSources = ignoreConfigured,
+            Force                   = force,
+        }, quiet);
+    }
+
+    private static int Restore(RestoreOptions options, bool quiet = false)
+    {
+        try
+        {
+            return PackageRestore.RunAsync(options, quiet ? BuildLog.Silent : BuildLog.Console).GetAwaiter().GetResult().ExitCode;
+        }
+        catch (Exception ex)
+        {
+            MsBuildDiagnostic.WriteError(MsBuildDiagnostic.CodeRestoreFailed, MsBuildDiagnostic.SingleLine(ex.Message));
+            return 1;
+        }
+    }
+
     private static void ShowHelp()
     {
         Console.WriteLine("""
@@ -326,8 +415,30 @@ public static class Program
 
             Usage:
               tps <project.csproj | directory> [options]
+              tps restore <project.csproj | directory> [restore options]
+
+            Restore:
+              tps resolves <PackageReference>s out of the NuGet global-packages folder and used to
+              leave filling it to `dotnet restore`, which made the .NET SDK a prerequisite of
+              compiling with a tool that otherwise needs nothing but itself. `tps restore` installs
+              them itself — from a folder of .nupkg files or a V3 feed — laid out exactly as NuGet
+              lays them out, so the folder it produces is one a later `dotnet restore` accepts as
+              already installed. It restores what tps binds against; building the same project with
+              MSBuild still needs its SDK package, which only MSBuild resolves.
+
+              --packages <dir>      Where packages are installed. Default: NUGET_PACKAGES, then the
+                                    configured globalPackagesFolder, then ~/.nuget/packages.
+              -s, --source <src>    A folder of .nupkg files or a V3 feed's index.json, consulted
+                                    BEFORE the configured sources. Repeatable.
+              --no-configured-sources
+                                    Consult only --source, ignoring the nuget.config chain — what an
+                                    offline build wants, where an unreachable source costs a timeout
+                                    per package rather than an error.
+              -f, --force           Re-download a package that is already installed.
 
             Options:
+              --restore             Restore before building (accepts --source and --packages too).
+                                    Off by default: a build should not reach the network unasked.
               -o, --out <file.js>   Output path (default: <project>/bin/<assembly>.js)
               -c, --configuration <name>
                                     Build configuration (Debug/Release; default Debug). Release

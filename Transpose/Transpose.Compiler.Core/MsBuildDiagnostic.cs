@@ -56,6 +56,8 @@ internal static class MsBuildDiagnostic
     public const string CodeAssemblyEmitFailed      = "TPS0006";
     public const string CodeWatchRequiresSiteBuild  = "TPS0007";
     public const string CodeCompilerTooOld          = "TPS0008";
+    public const string CodeRestoreFailed           = "TPS0009";
+    public const string CodeRestoreNoSource         = "TPS0010";
     public const string CodeReferenceNotFound       = "TPS0100";
     public const string CodeMissingRuntimeBundle    = "TPS0101";
     public const string CodeTimingJsonNotWritten    = "TPS0102";
@@ -64,6 +66,7 @@ internal static class MsBuildDiagnostic
     public const string CodeTypeSizesJsonNotWritten = "TPS0105";
     public const string CodeDontLoadReferenceUnmatched = "TPS0106";
     public const string CodeDanglingModuleImport    = "TPS0107";
+    public const string CodeRestoreIncomplete       = "TPS0108";
 
     /// <summary>Formats a Roslyn diagnostic, pointing at its source location when it has one.</summary>
     public static string Format(Diagnostic d)

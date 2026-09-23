@@ -209,6 +209,32 @@
         return tcs.task;
     };
 
+    // An `async void` body hands its Task to nobody: a C# `async void` method or local function,
+    // and any async lambda converted to a void-returning delegate (`window.setTimeout(async _ => …)`,
+    // a DOM event handler), is called for its effect and the JS callback's return value is
+    // unreachable. Returning a Task there did not merely lose the failure, it hid it: fromPromise
+    // attaches a rejection handler, so the engine's own unhandled-rejection report never fired
+    // either, and the exception was swallowed in complete silence — quieter than plain JavaScript.
+    // Report it instead, which is what .NET does by rethrowing an async void fault on the
+    // SynchronizationContext. `TransposeR.onUnhandledException` is the hook an application replaces
+    // (Transpose.Script.SetUnhandledExceptionHandler, from C#) to route it to its own telemetry.
+    TransposeR.onUnhandledException = function (e) {
+        if (typeof console === "undefined" || !console.error) { return; }
+        console.error("Unhandled exception in an async void method: " + TransposeR.toStr(e));
+        console.error(e);
+    };
+    TransposeR.fireAndForget = function (p) {
+        Promise.resolve(p).catch(function (e) {
+            // Clearing the hook (setting it to null) is how an application asks for silence.
+            var handler = TransposeR.onUnhandledException;
+            if (typeof handler !== "function") { return; }
+            // A handler that throws must not become a second unhandled rejection, which in turn
+            // nothing would report; report that directly and stop there.
+            try { handler(System.Exception.create(e)); }
+            catch (e2) { if (typeof console !== "undefined" && console.error) { console.error(e2); } }
+        });
+    };
+
     // Spread source → JS array (arrays pass through; other enumerables are drained).
     TransposeR.spread = function (x) {
         if (x == null) { return []; }

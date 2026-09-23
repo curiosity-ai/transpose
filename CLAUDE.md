@@ -46,6 +46,11 @@ Transpose/                     # The compiler toolchain
 │   │                          #   decision, ReloadHub (websocket) and the injected live-reload script
 │   ├── ProjectResolver.cs     #   reads the .csproj (raw XML), globs sources, resolves references
 │   ├── ProjectXml.cs          #   csproj + <Import> flattening (shared projects' .projitems)
+│   ├── PackageRestore.cs      #   `tps restore`: installs the packages ProjectResolver reads back
+│   ├── NuGetSettings.cs       #   the nuget.config chain, reduced to sources + globalPackagesFolder
+│   ├── NuGetVersions.cs       #   version normalization + dependency-range lower bound (shared with
+│   │                          #   ProjectResolver — the two have to agree or the miss is silent)
+│   ├── NuGetFrameworks.cs     #   which <group> of a nuspec's dependencies a target framework takes
 │   ├── OutputBuilder.cs       #   site build (runtime + bundle + resources + index.html) + stale-output prune
 │   ├── ResourceEmbedder.cs    #   embeds JS + resources into the package DLL (Mono.Cecil)
 │   ├── RuntimeAssembler.cs    #   stitches Resources/*.js + generated ClassPath files into tps.js
@@ -59,6 +64,8 @@ Transpose/                     # The compiler toolchain
 │   ├── CompilationResult.cs   #   JS/assembly bytes + diagnostics on success, formatted errors on failure
 │   ├── ProjectBuildRequest.cs #   build a real on-disk .csproj (the library form of `tps --project`)
 │   ├── ProjectBuildResult.cs  #   exit code + site directory + formatted errors/warnings + captured output
+│   ├── RestoreRequest.cs      #   install a project's packages (the library form of `tps restore`)
+│   ├── RestoreResult.cs       #   what was installed, plus errors/warnings/output
 │   ├── TransposeWatcher.cs    #   watch mode for a host that runs its own web server: Start/BeginWatching +
 │   │                          #   HandleWebSocketAsync. Used by `curiosity-cli serve --watch` (mosaik repo)
 │   └── TransposeCompilerLibrary.cs # Compile/BuildProject (+Async) — serialized (CompileProgress/PhaseTimings
@@ -301,9 +308,9 @@ The SDK passes `--incremental` by default; a project turns it off with
 `<TransposeIncremental>false</TransposeIncremental>`.
 
 `tps` reads the csproj directly (no MSBuild evaluation), globs `**/*.cs`, resolves
-`PackageReference`s from the NuGet cache, synthesizes `[assembly: ...]` from `<AssemblyAttribute>`
-items, transpiles, and writes the site (runtime + bundle + resources + `index.html`) or a package
-DLL (`--emit-package`). **There is no compilation server** — the new compiler is a plain CLI, by
+`PackageReference`s from the NuGet cache (which it can now fill itself — see **Restoring packages**
+below), synthesizes `[assembly: ...]` from `<AssemblyAttribute>` items, transpiles, and writes the
+site (runtime + bundle + resources + `index.html`) or a package DLL (`--emit-package`). **There is no compilation server** — the new compiler is a plain CLI, by
 design. There *is* an opt-in build cache (`--incremental`, off by default) — see
 **`TODO.incremental.md`** for what it reuses, why that is sound, and what it measures; a build with
 the cache disabled behaves exactly as it always did.
@@ -365,11 +372,68 @@ first; also `TRANSPOSE_TYPE_SIZES=1`/`=20` and `TRANSPOSE_TYPE_SIZES_JSON=<file>
 MSBuild-driven build),
 `--metadata-only-assembly` / `--no-metadata-only-assembly`,
 `--max-errors <n>` (a cap; by default **every** error is reported, ordered by file and line),
+`--restore` (install the project's packages before building; `--source`/`--packages` go with it — see
+**Restoring packages** below),
 `--watch` / `--watch-port <n>` (rebuild a site on every source change — root project and every
 referenced project — and serve it over Kestrel on localhost; the served index.html carries an
 injected script that reconnects over a websocket and reloads the page after each rebuild, or swaps
 the page's stylesheets in place when only CSS changed; see `Transpose.Compiler.Core/WatchSession.cs`
 for the engine and `Transpose.Compiler/WatchMode.cs` for the dev server).
+
+### Restoring packages (`tps restore`)
+
+`tps` resolves a `PackageReference` by reading the package's folder out of the NuGet global-packages
+cache, and filling that cache was `dotnet restore`'s job — so compiling with a tool that otherwise
+needs nothing but itself required the whole .NET SDK, for one command. A container that ships `tps`
+(or hosts `Transpose.Compiler.Library`) had to ship the SDK with it. `PackageRestore`
+(`Transpose.Compiler.Core`) does it instead: `tps restore <project>`, `tps <project> --restore`, or
+`TransposeCompilerLibrary.RestoreAsync(new RestoreRequest(csproj))`.
+
+**It is not a general-purpose NuGet client, and the shape of what it is follows from one rule: it has
+to install exactly what `ProjectResolver` goes looking for afterwards.** The two are halves of one
+operation, and a disagreement between them is *silent* — the package is on disk, the resolver looks
+for it under a name nothing wrote, and the build reports missing types for a package that restored
+perfectly. So:
+
+- **The graph walk mirrors the resolver's**, per project in the ProjectReference closure rather than
+  over one union of their declared sets. Both rules matter and they interact: a package a project
+  declares itself suppresses every transitive demand for it *within that project*, but a sibling
+  project that does not declare it still resolves the transitive version, and the build binds the
+  higher of the two — a union-based restore would leave that second version uninstalled.
+- **Version normalization and range reading live in `NuGetVersions`**, used by both sides. NuGet
+  installs `1.0` as `1.0.0`, and the resolver now tries both spellings.
+- **Every version the walk reaches is installed**, including several of one package reached through
+  different dependencies. They look redundant and are not: the resolver walks each one and follows its
+  nuspec, so a version left uninstalled is a dependency chain that stops being followed.
+- **A package is laid out the way NuGet lays it out** — lower-cased folder and nuspec, the `lib` tree,
+  the `.nupkg` and its `.sha512`, `.nupkg.metadata` written last — extracted to a staging folder and
+  moved into place, so a folder that exists is a folder that is complete. Measured against a
+  `dotnet restore` of the starter front-end: the same thirteen packages at the same versions, laid out
+  the same way, byte-identical `.nupkg` and `.sha512`. The one value that differs is the marker's
+  `contentHash` (NuGet's is the *signed content* hash, past the signature; ours is the file's), which
+  is read back only to validate a `packages.lock.json` — a file nothing in this toolchain writes.
+
+Sources are a folder of `.nupkg` files or a V3 feed's `index.json`, read from the `nuget.config` chain
+(`NuGetSettings`) with `--source` consulted **first** — a host that ships the packages it was built
+from should answer out of that folder rather than reach a feed for a version it already has. A config
+that clears or disables every source is respected rather than answered with nuget.org; the default
+source is only assumed when no config said anything about sources at all.
+
+**A package the project declares and no source has is an error (`TPS0009`); one reached through a
+dependency is a warning (`TPS0108`).** The dependency group this walk picks is the one NuGet would
+pick (`NuGetFrameworks`), but there is no lock file to check that against, and a transitive package
+that is genuinely needed and absent surfaces afterwards as a C# error naming the type — which says
+more than a restore can.
+
+Deliberately out of scope, because nothing in the toolchain reads them: lock files, package-source
+mapping, authenticated feeds, signature verification, `project.assets.json`, and **floating versions**
+(refused outright — the resolver looks a package up by the exact version the project writes down, so
+installing *some* version would leave the build unable to find it). Also out of scope: the project's
+**SDK package** (`Sdk="Transpose.Build.Target/…"`). `tps` never reads it; building the same project
+*through MSBuild* still needs it, and only MSBuild resolves it.
+
+Covered by `PackageRestoreTests`, which builds real `.nupkg` files into a temp folder source, so the
+whole restore path is exercised with no feed to reach.
 
 ### Diagnostics are in MSBuild's canonical format
 
@@ -566,6 +630,22 @@ The short version:
   does: C# resolves `someArray.SequenceEqual(other)` to *it* rather than to `Enumerable.SequenceEqual`
   (the array-to-span conversion beats array-to-`IEnumerable`), so that very common LINQ call would
   otherwise throw "getItem is not a function".
+- **An `async void` body reports its fault (`TransposeR.fireAndForget`).** Every other async body
+  returns a tps.js Task through `TransposeR.fromPromise`, but an `async void` method, an `async void`
+  local function, and an async lambda converted to a **void-returning delegate**
+  (`window.setTimeout(async _ => …)`, a DOM event handler) produce a Task nobody can reach — the
+  delegate's caller has no return value to await. Handing one back lost the failure *in silence*, and
+  more completely than plain JavaScript would: `fromPromise` attaches a rejection handler, so the
+  engine's unhandled-rejection report never fired either, and nothing in the runtime reports an
+  unobserved faulted Task. Those bodies therefore emit through `TransposeR.fireAndForget`, which
+  returns nothing and reports the fault — `console.error` by default, or the handler an application
+  installs with `Transpose.Script.SetUnhandledExceptionHandler`. That is the browser's analogue of
+  .NET rethrowing an async void fault on the SynchronizationContext, and like .NET it reports *every*
+  exception, cancellation included. Deciding it by the **converted delegate's** return type is what
+  keeps it narrow: a lambda with a natural function type (`var f = async () => …`) and
+  `Task.Run(async () => …)` both infer a Task-returning delegate, so their Task is still returned.
+  See `EmitMaybeAsyncBody` (`Emitter.Members.cs`), `ConvertsToVoidDelegate`
+  (`Emitter.Expressions2.cs`) and `AsyncVoidFaultTests`.
 - **A boxed numeric loses its exact type.** Every JS number is a double, so `(object)1 is double` is
   true and `objects.OfType<double>()` also matches the boxed `int`s. `long`/`ulong`/`decimal` are
   real runtime objects and are unaffected, as are reference types and structs.
