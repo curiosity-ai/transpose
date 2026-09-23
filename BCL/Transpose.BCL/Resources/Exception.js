@@ -101,16 +101,30 @@
                 if (error instanceof TypeError) {
                     ex = new System.NullReferenceException.$ctor1(error.message);
                 } else if (error instanceof RangeError) {
-                    ex = new System.ArgumentOutOfRangeException.$ctor1(error.message);
+                    // (paramName, message): $ctor1 is the paramName-only overload, which dropped the
+                    // error's text in favour of the generic "out of the range" message.
+                    ex = new System.ArgumentOutOfRangeException.$ctor4(null, error.message);
                 } else if (error instanceof Error) {
-                    return new System.SystemException.$ctor1(error);
+                    ex = new System.SystemException.$ctor1(error.message);
                 } else if (error && error.error && error.error.stack) {
                     ex = new System.Exception(error.error.stack);
                 } else {
-                    ex = new System.Exception(error ? error.message ? error.message : error.toString() : null);
+                    // Anything else JavaScript can throw: an object literal with a message, a string, a
+                    // number, a boolean. `throw 0` and `throw ''` are values too — only null/undefined
+                    // carry nothing, and they take the default message.
+                    var text = null;
+                    if (error !== null && error !== undefined) {
+                        text = (error.message !== null && error.message !== undefined) ? String(error.message) : String(error);
+                    }
+                    ex = new System.Exception(text);
                 }
 
-                ex.errorStack = error;
+                // The original value is the stack source (Exception.StackTrace). A thrown null or
+                // undefined has none, and keeps the Error the constructor captured instead —
+                // assigning it would make StackTrace (and ToString, which reads it) throw.
+                if (error !== null && error !== undefined) {
+                    ex.errorStack = error;
+                }
 
                 return ex;
             }

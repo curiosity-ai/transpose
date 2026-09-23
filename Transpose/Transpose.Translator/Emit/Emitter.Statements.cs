@@ -679,6 +679,14 @@ public sealed partial class Emitter
             _w.WriteLine("catch ($ex) {");
             _w.Indent();
 
+            // A value thrown by JavaScript (a TypeError from dereferencing null, a RangeError, a
+            // rejected promise, a bare string) is not a System.Exception, so without this no typed
+            // clause could match it: `catch (NullReferenceException)` missed a null dereference and
+            // `catch (Exception e)` handed the body a raw JS error. Exception.create maps it onto the
+            // .NET exception it corresponds to (keeping the original as the wrapper's stack source)
+            // and returns a real System.Exception unchanged, so C#-thrown exceptions are unaffected.
+            _w.WriteLine("$ex = System.Exception.create($ex);");
+
             // Bind each catch variable to $ex up front so it is in scope for exception
             // filters (`when (...)`), which are evaluated in the guard before the body.
             var boundNames = new System.Collections.Generic.HashSet<string>(System.StringComparer.Ordinal);
