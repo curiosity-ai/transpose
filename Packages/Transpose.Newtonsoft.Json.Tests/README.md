@@ -62,7 +62,7 @@ Each is asserted by the test named beside it, so this list stays true.
 | reference cycle | throws | drops the back-reference | `SelfReferencingLoopIsDroppedInsteadOfThrowing` |
 | null into a non-nullable value member | throws | leaves the default | `NullIntoANonNullableValueTypeIsIgnoredInsteadOfThrowing` |
 | empty input for a value type | throws | returns the default | `EmptyInputForAValueTypeReturnsZeroInsteadOfThrowing` |
-| array where an object is expected (and vice versa) | throws | empty instance / empty collection | `ArrayIntoAnObjectTargetYieldsAnEmptyInstance`, `ObjectIntoACollectionTargetYieldsAnEmptyCollection` |
+| array where an object is expected (and vice versa) | throws | empty instance / empty collection | `ArrayIntoAnObjectTargetYieldsAnEmptyInstance`, `ObjectIntoACollectionTargetYieldsAnEmptyCollection`, `AnArrayDeserializedFromAJsonObjectIsStillTyped` |
 | private setter | not written unless `[JsonProperty]` | always written | `PrivateSetterIsPopulatedUnlikeJsonNet` |
 | deserializing to `object` | `JObject` (Linq-to-JSON) | the raw parsed JavaScript value | `DeserializingToObjectReturnsTheRawParsedValue` |
 | `Nullable<TEnum>` | prints the member name | prints the number (comparisons are fine) | `NullableEnumPrintsItsNumberInsteadOfItsName` |

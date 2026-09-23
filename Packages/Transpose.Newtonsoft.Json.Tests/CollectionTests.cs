@@ -38,6 +38,57 @@ public class App
         await RunAndCompare(code);
     }
 
+    /// <summary>
+    /// A deserialized array must carry its element type, or the caller's `is T[]` / `as T[]` on the
+    /// result answers false: an array with no element type is object[] (System.Array.is), and the
+    /// deserializer is what puts it on. The empty case goes down a separate early-out in
+    /// DeserializeObject and is pinned here for the same reason.
+    /// </summary>
+    [TestMethod]
+    public async Task DeserializedArraysCarryTheirElementType()
+    {
+        var code = Header + @"
+public class App
+{
+    public static void Main()
+    {
+        object items = JsonConvert.DeserializeObject<Item[]>(""[{},{}]"");
+        Console.WriteLine(items is Item[]);
+        Console.WriteLine(items is object[]);
+        Console.WriteLine(((Item[])items).Length);
+
+        object ints = JsonConvert.DeserializeObject<int[]>(""[1,2,3]"");
+        Console.WriteLine(ints is int[]);
+        Console.WriteLine(ints is string[]);
+
+        object empty = JsonConvert.DeserializeObject<Item[]>(""[]"");
+        Console.WriteLine(empty is Item[]);
+        Console.WriteLine((empty as Item[]).Length);
+    }
+}";
+        await RunAndCompare(code);
+    }
+
+    /// <summary>
+    /// Deserializing a JSON object into an array yields an empty array rather than throwing, which is a
+    /// documented divergence — but it is still a T[], not a bare JS array, so `is T[]` holds on it.
+    /// </summary>
+    [TestMethod]
+    public async Task AnArrayDeserializedFromAJsonObjectIsStillTyped()
+    {
+        var code = Header + @"
+public class App
+{
+    public static void Main()
+    {
+        object fromObject = JsonConvert.DeserializeObject<Item[]>(""{}"");
+        Console.WriteLine(fromObject is Item[]);
+        Console.WriteLine(((Item[])fromObject).Length);
+    }
+}";
+        await RunJs(code, "True\n0");
+    }
+
     [TestMethod]
     public async Task ArraysRoundTrip()
     {

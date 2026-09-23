@@ -242,6 +242,17 @@
             if (type.$elementType && type.$isArray) {
                 var et = Transpose.getType(obj).$elementType;
 
+                // A plain JS array carrying no element type - one JSON.parse produced, or a foreign-JS
+                // call returned - is object[] in C# terms: `is object[]` is true and `is string[]` is
+                // false. Answering `true` for every T[] (what falling through to `Array` below used to
+                // do) makes `o is string[]` succeed on an array of anything at all, and the cast the
+                // caller then writes reads a shape that is not there. Array.isArray is the deliberate
+                // test: a TYPED array (Uint8Array &c.) is also an array here, has no element type of its
+                // own, and is matched against byte[]/int[]/... by the typed-array tail below.
+                if (!et && Array.isArray(obj)) {
+                    et = System.Object;
+                }
+
                 if (et) {
 
                     if (Transpose.Reflection.isValueType(et) !== Transpose.Reflection.isValueType(type.$elementType)) {
@@ -1182,6 +1193,20 @@
             }
 
             return true;
+        },
+
+        // An explicit cast `(T[])x` is the one place an array's element type is written down, so the
+        // emitter routes it here instead of erasing it: a plain JS array otherwise answers `is object[]`
+        // forever, whatever the author cast it to. Only an untyped array is marked - an array that already
+        // carries a type keeps it, so an upcast never downgrades one and a deserialized array keeps what
+        // JsonConvert gave it. Anything that is not a plain JS array passes through, leaving the cast
+        // erased - a TYPED array (Uint8Array &c.) matches byte[]/int[]/... on its own, in System.Array.is.
+        markElementType: function (obj, t, rank) {
+            if (!Array.isArray(obj) || obj.$type) {
+                return obj;
+            }
+
+            return System.Array.type(t, rank || 1, obj);
         },
 
         type: function (t, rank, arr) {

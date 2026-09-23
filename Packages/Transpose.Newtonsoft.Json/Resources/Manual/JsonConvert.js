@@ -1713,7 +1713,9 @@
                             }
 
                             if (raw.length === undefined) {
-                                return [];
+                                // Tagged like the populated array below: an untagged [] is object[], so a
+                                // caller's `is T[]` on the empty result would answer false.
+                                return System.Array.type(type.$elementType, type.$rank || 1, []);
                             }
 
                             var arr = new Array();

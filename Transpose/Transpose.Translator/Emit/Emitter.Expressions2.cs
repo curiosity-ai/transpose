@@ -3403,11 +3403,12 @@ public sealed partial class Emitter
         // user-defined operators, dynamic, `null`, casts to a type parameter, and casts to an
         // external (native-JS) type stay erased — the same set H5's CastBlock skips.
         //
-        // Array and delegate targets are also erased: a native JS array carries no element-type
-        // metadata to verify (`(Emoji[])Enum.GetValues(...)` cannot be checked, and its runtime type
-        // token is the un-parameterised System.Array), and a delegate is a plain JS function whose
+        // Array and delegate targets are not checked: a native JS array may carry no element-type
+        // metadata to verify against (`(Emoji[])Enum.GetValues(...)`, and its runtime type token is
+        // then the un-parameterised System.Array), and a delegate is a plain JS function whose
         // generic type token (`ComponentEventHandler$2(T, MouseEvent)`) is not a constructible/callable
         // runtime type — emitting a checked cast for either throws where .NET/H5 would succeed.
+        // An array cast is not erased either, though: it MARKS instead (see below).
         if (targetType is not null && sourceType is not null
             && targetType.TypeKind is not (TypeKind.TypeParameter or TypeKind.Dynamic
                                             or TypeKind.Array or TypeKind.Delegate)
@@ -3424,6 +3425,30 @@ public sealed partial class Emitter
                 _w.Write($", {TypeRef(targetType)})");
                 return;
             }
+        }
+
+        // An explicit reference cast to a single-rank array records the element type on the value
+        // instead of discarding it. A plain JS array — one JSON.parse produced, or a foreign-JS call
+        // returned — carries none, so without this `(string[])x` leaves x answering `is object[]` for
+        // the rest of the program: the cast is the one place the element type is written down.
+        //
+        // Only a DOWNcast marks. Array covariance makes `(object[])aStringArray` an IMPLICIT reference
+        // conversion, so it never reaches here and cannot downgrade a known `string[]`;
+        // System.Array.markElementType additionally leaves any already-typed array alone, which is what
+        // keeps a JsonConvert-deserialized array on the type it was given.
+        //
+        // `as` and `is` are type TESTS and are deliberately left erased/unchanged — marking there would
+        // let the question answer itself. Rank > 1 is excluded because a multidimensional array's
+        // representation is its dimensions ($s), which a flat JS array does not have and this cannot
+        // invent; tagging one rank-2 would break getLength/getRank rather than inform them.
+        if (targetType is IArrayTypeSymbol { Rank: 1 } arrayTarget && sourceType is not null
+            && !expr.IsKind(SyntaxKind.NullLiteralExpression)
+            && _compilation.ClassifyConversion(sourceType, targetType) is { IsReference: true, IsExplicit: true })
+        {
+            _w.Write("System.Array.markElementType(");
+            EmitExpression(expr);
+            _w.Write($", {ArrayElementTypeRef(arrayTarget.ElementType)})");
+            return;
         }
 
         // char <-> int (chars are their code point), int → 64-bit float, widening, and safe
