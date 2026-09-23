@@ -571,6 +571,36 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
 
     private static readonly string[] TasksNamespaceSegments = { "System", "Threading", "Tasks" };
 
+    /// <summary>
+    /// The diagnostic message for a type named by its full metadata-style name (<c>System.IO.Path</c>)
+    /// that the browser BCL does not declare at all, or null when the name is not in a denied namespace
+    /// or is one of the allowed types. The same rule as <see cref="DeniedNamespaceMessage"/>, for a
+    /// name that never bound to a symbol — see <see cref="BrowserApiDiagnostics"/>.
+    /// </summary>
+    internal static string? DeniedApiMessage(string fullName)
+    {
+        var lastDot = fullName.LastIndexOf('.');
+        if (lastDot <= 0) return null;
+        var ns = fullName.Substring(0, lastDot).Split('.');
+        if (NamespaceSegmentsMatch(ns, TasksNamespaceSegments)) return null;
+        if (AllowedThreadingTypes.Contains(fullName)) return null;
+        foreach (var (segments, msg) in DeniedNamespaces)
+            if (NamespaceSegmentsMatch(ns, segments)) return string.Format(msg, fullName);
+        // `using System.Net.Sockets;` — the missing name is the denied namespace itself.
+        var asNamespace = fullName.Split('.');
+        foreach (var (segments, msg) in DeniedNamespaces)
+            if (NamespaceSegmentsMatch(asNamespace, segments)) return string.Format(msg, fullName);
+        return null;
+
+        static bool NamespaceSegmentsMatch(string[] ns, string[] prefix)
+        {
+            if (ns.Length < prefix.Length) return false;
+            for (var i = 0; i < prefix.Length; i++)
+                if (!string.Equals(ns[i], prefix[i], StringComparison.Ordinal)) return false;
+            return true;
+        }
+    }
+
     private readonly HashSet<Location> _reportedApiLocations = new();
 
     /// <summary>The diagnostic message template for a type in a denied namespace, or null when the

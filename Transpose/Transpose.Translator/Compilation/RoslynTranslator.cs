@@ -208,7 +208,7 @@ public sealed class RoslynTranslator
         }
 
         diagnostics.AddRange(unsupported);
-        diagnostics.AddRange(roslynErrors);
+        diagnostics.AddRange(BrowserApiDiagnostics.Rewrite(roslynErrors));
         if (diagnostics.Count > 0 && diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error))
             return new AssemblyBuildResult(null, null, null, diagnostics);
 
@@ -286,7 +286,7 @@ public sealed class RoslynTranslator
             {
                 // Real compile errors explain an emitter failure far better than the emitter's own
                 // "unsupported construct" would, so they are reported instead of it.
-                diagnostics.AddRange(bodyErrors);
+                diagnostics.AddRange(BrowserApiDiagnostics.Rewrite(bodyErrors));
                 return new AssemblyBuildResult(null, null, null, diagnostics);
             }
         }
