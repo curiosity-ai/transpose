@@ -621,6 +621,24 @@ The short version:
   does: C# resolves `someArray.SequenceEqual(other)` to *it* rather than to `Enumerable.SequenceEqual`
   (the array-to-span conversion beats array-to-`IEnumerable`), so that very common LINQ call would
   otherwise throw "getItem is not a function".
+- **A `ref` local or `ref` return is a cell (`Emitter.RefCells.cs`).** JavaScript has no by-reference
+  alias, and `ref expr` used to collapse to the value of `expr` — a ref local held a copy and every write
+  through it was lost, silently. A reference is now an object whose `v` reads and writes the location
+  (`TransposeR.ref`/`refElem`), the shape a `ref`/`out` parameter's holder already had, so one passes for
+  the other. The representation is decided **per member**, because a consumer compiled later must agree
+  with the assembly that emitted it: a ref-returning method, local function or delegate returns the cell
+  and its call is dereferenced except in a ref context; a ref-returning property or indexer keeps its
+  ordinary accessor shape (`P`, `getItem`/`setItem`) as a value view over a cell accessor
+  (`$ref$P`, `getItem$ref`), so every existing read/write path is untouched; and members of the runtime
+  packages (`Transpose`, `Transpose.*`) keep value semantics, because `Span<T>`'s indexer is a
+  ref-returning indexer the runtime and every published consumer read as a value. A call with `ref`
+  arguments to a ref-returning callee passes live cells rather than write-back holders, since the
+  callee may return one of them (`Pick(ref a, ref b) = 99`). `RefLocalAndReturnTests`.
+- **A caught JavaScript error is mapped onto its .NET exception.** Every emitted `catch` starts with
+  `$ex = System.Exception.create($ex)` — `TypeError` → `NullReferenceException`, `RangeError` →
+  `ArgumentOutOfRangeException`, any other `Error` → `SystemException`, anything else → `Exception` — and
+  a real `System.Exception` passes through unchanged. Before it, no typed clause could match a null
+  dereference, which is a `TypeError`. `JavaScriptErrorCatchTests`.
 - **An `async void` body reports its fault (`TransposeR.fireAndForget`).** Every other async body
   returns a tps.js Task through `TransposeR.fromPromise`, but an `async void` method, an `async void`
   local function, and an async lambda converted to a **void-returning delegate**
