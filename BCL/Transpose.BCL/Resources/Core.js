@@ -781,7 +781,32 @@
             return scope;
         },
 
+        // True inside a worker of any kind (dedicated, shared or service). WorkerGlobalScope is
+        // defined only there, and only there is `self` an instance of it, so this does not mistake a
+        // page for a worker or the other way round -- and it does not rely on `document` being
+        // absent, which is also true of a plain Node run.
+        isWorkerScope: (function () {
+            try {
+                return typeof WorkerGlobalScope !== "undefined"
+                    && typeof self !== "undefined"
+                    && self instanceof WorkerGlobalScope;
+            } catch (e) {
+                return false;
+            }
+        }()),
+
         ready: function (fn, scope) {
+            // [Ready] means "the page is ready", and a worker has no page. A worker that loads an
+            // application's bundle -- which is how a [SharedWorkerEntry] reaches its own code -- would
+            // otherwise run every one of that application's startup handlers the moment the bundle is
+            // imported, immediately, because the branch below treats a missing `document` as "already
+            // loaded". Every such handler builds UI, so the worker died on `document is not defined`
+            // before its entry point was ever called. Code that is meant to run in a worker is named
+            // by [SharedWorkerEntry], which the generated worker script calls directly.
+            if (Transpose.isWorkerScope) {
+                return;
+            }
+
             var delayfn = function () {
                 if (scope) {
                     fn.apply(scope);
@@ -790,16 +815,41 @@
                 }
             };
 
+            // A handler must not run while Transpose.assembly is still registering types.
+            //
+            // Transpose.assembly forces staticInitAllow to false for the whole of an assembly body,
+            // and $staticInit is a no-op while it is false -- and does not re-arm. tps emits its
+            // scripts with `defer`, and the HTML spec sets readyState to "interactive" BEFORE
+            // deferred scripts run, so the branch below used to treat the page as loaded and run the
+            // handler inside the body. Anything it touched whose static initializer had not run yet
+            // came back with its static fields at their declared defaults: a
+            // Dictionary<string, List<T>> built there got a null primes table out of HashHelpers and
+            // died on "Cannot read properties of null". A constructed generic is the worst case,
+            // since it has no global slot whose getter would offer the initializer again -- the same
+            // hazard Class.js documents for List$1(X)._emptyArray.
+            //
+            // Deferring to init() rather than to DOMContentLoaded is deliberate: it fixes the actual
+            // cause, and it leaves every existing DOM-timing case alone -- in particular a package
+            // fetched on demand long after load, where readyState is already "complete"/"interactive"
+            // and waiting on a DOMContentLoaded that has been and gone would never run at all.
+            var run = function () {
+                if (Transpose.Class && Transpose.Class.staticInitAllow === false) {
+                    Transpose.Class.$queueReady.push(delayfn);
+                } else {
+                    delayfn();
+                }
+            };
+
             if (typeof Transpose.global.jQuery !== "undefined") {
-                Transpose.global.jQuery(delayfn);
+                Transpose.global.jQuery(run);
             } else {
                 if (typeof Transpose.global.document === "undefined" ||
                     Transpose.global.document.readyState === "complete" ||
                     Transpose.global.document.readyState === "loaded" ||
                     Transpose.global.document.readyState === "interactive") {
-                    delayfn();
+                    run();
                 } else {
-                    Transpose.on("DOMContentLoaded", Transpose.global.document, delayfn);
+                    Transpose.on("DOMContentLoaded", Transpose.global.document, run);
                 }
             }
         },

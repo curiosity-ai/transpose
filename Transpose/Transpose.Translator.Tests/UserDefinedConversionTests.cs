@@ -234,7 +234,9 @@ public class Program
                 + string.Join("\n", result.Diagnostics.Select(d => d.GetMessage())));
 
             var js = result.Javascript!;
-            StringAssert.Contains(js, "Program.Show(wrapped != null ? wrapped.valueOf() : wrapped)",
+            // The template is a ternary, so its expansion is parenthesized wherever it lands (see
+            // TemplateIsNonPrimary) — harmless here, and required the moment it becomes an operand.
+            StringAssert.Contains(js, "Program.Show((wrapped != null ? wrapped.valueOf() : wrapped))",
                 "{this} in a conversion template is the operand\n" + js);
             Assert.IsFalse(js.Contains("this != null ? this.valueOf() : this"),
                 "the operand must not be replaced by the enclosing `this`\n" + js);

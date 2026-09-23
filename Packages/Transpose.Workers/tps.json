@@ -1,0 +1,20 @@
+{
+  "sourceMap": {
+    "enabled": false
+  },
+  "cleanOutputFolderBeforeBuildPattern": "*.*",
+  "loader": {
+    "type": "Global"
+  },
+  "rules": {
+    "anonymousType": "Plain",
+    "arrayIndex": "Managed",
+    "autoProperty": "Plain",
+    "boxing": "Managed",
+    "externalCast": "Plain",
+    "inlineComment": "Plain",
+    "integer": "Managed",
+    "lambda": "Plain",
+    "useShortForms": true
+  }
+}

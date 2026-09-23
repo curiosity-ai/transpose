@@ -33,5 +33,6 @@
     <Project Path="Packages/Transpose.System.Text.Json/Transpose.System.Text.Json.csproj" />
     <Project Path="Packages/Transpose.System.Text.Json.Tests/Transpose.System.Text.Json.Tests.csproj" />
     <Project Path="Packages/Transpose.WebGL2/Transpose.WebGL2.csproj" />
+    <Project Path="Packages/Transpose.Workers/Transpose.Workers.csproj" />
   </Folder>
 </Solution>

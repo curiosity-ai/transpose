@@ -454,7 +454,7 @@ internal static class ProjectBuild
 
             var outDir = SiteDirectory(options, config, project);
             var siteResult = PhaseTimings.Measure("write site (minify + resources + html)", () =>
-                OutputBuilder.Build(project, config, js, outDir, configuration, result.MetadataJavascript, options.LiveReloadScript, result.Modules));
+                OutputBuilder.Build(project, config, js, outDir, configuration, result.MetadataJavascript, options.LiveReloadScript, result.Modules, result.SharedWorkerEntries));
             // Every file in the site counts as an output: a rebuild must notice if any of them was
             // deleted or edited, otherwise "up to date" would leave a broken site in place.
             SaveCache(cache, plan, result, SiteOutputs(outDir, dllPath));
@@ -463,6 +463,8 @@ internal static class ProjectBuild
                 log.Info($"  modules:    {mods.Chunks.Count} chunk(s) — {mods.EagerChunkCount} loaded up front, " +
                          $"{mods.LazyChunkCount} on demand ({mods.LazyTypeCount} type(s) deferred){ChunkSizes(mods)}");
             log.Info($"  index.html: {(config.HtmlDisabled ? "disabled" : "generated")}");
+            if (result.SharedWorkerEntries.Count > 0)
+                log.Info($"  workers:    {string.Join(", ", result.SharedWorkerEntries.Select(w => w.Name + ".worker.js"))}");
             if (dllPath is not null) log.Info($"  dll:        {dllPath}");
             if (siteResult.UnscriptedReferences.Count > 0)
                 log.Info($"  not loaded: {string.Join(", ", siteResult.UnscriptedReferences)} " +

@@ -39,6 +39,14 @@ public sealed class AssemblyBuildResult
     public Emitter.ModuleOutput? Modules { get; init; }
 
     /// <summary>
+    /// The <c>[SharedWorkerEntry]</c> methods this assembly declares. A site build writes one worker
+    /// script per entry (see <c>OutputBuilder</c>); a build that declares none carries an empty list
+    /// and is unaffected. Independent of <see cref="Modules"/> — the entries are the same either way,
+    /// only the script that boots them differs.
+    /// </summary>
+    public IReadOnlyList<SharedWorkerEntry> SharedWorkerEntries { get; init; } = System.Array.Empty<SharedWorkerEntry>();
+
+    /// <summary>
     /// Whether <see cref="Javascript"/> is a classic single bundle (with <see cref="MetadataJavascript"/>
     /// beside it) rather than <see cref="Modules"/>' entry module. A package emits both — it cannot know
     /// which one its consumers will want — so the two are not mutually exclusive; false means this build

@@ -125,7 +125,7 @@ internal static class OutputBuilder
     /// </summary>
     public readonly record struct CssResource(string OutputRelativePath, IReadOnlyList<string> SourceFiles, bool Concatenated);
 
-    public static SiteBuildResult Build(ResolvedProject project, TransposeJson config, string javascript, string outputDir, string configuration, string? metadataJavascript = null, string? liveReloadScript = null, Translator.Emitter.ModuleOutput? modules = null)
+    public static SiteBuildResult Build(ResolvedProject project, TransposeJson config, string javascript, string outputDir, string configuration, string? metadataJavascript = null, string? liveReloadScript = null, Translator.Emitter.ModuleOutput? modules = null, IReadOnlyList<Translator.SharedWorkerEntry>? sharedWorkerEntries = null)
     {
         Directory.CreateDirectory(outputDir);
 
@@ -416,6 +416,14 @@ internal static class OutputBuilder
             var metaName = Path.GetFileNameWithoutExtension(config.FileName) + ".meta.js";
             EmitCompilerJs(metaName, metadataJavascript);
         }
+
+        // 3c. One worker script per [SharedWorkerEntry]. A shared worker is a separate script URL with
+        //      no document, so it cannot be served by index.html or by the bundle: it needs its own
+        //      file that brings up the runtime and then calls the entry. It loads exactly what
+        //      index.html loads, in the same order and in the same variant, so the worker runs against
+        //      the same code the page does.
+        if (sharedWorkerEntries is { Count: > 0 })
+            WriteSharedWorkerScripts(sharedWorkerEntries, outputDir, jsOuts, configuration, utf8, written);
 
         // 4. index.html — one per build, linking the variant this configuration produced.
         if (!config.HtmlDisabled)
@@ -1310,6 +1318,93 @@ internal static class OutputBuilder
     /// replaces same-named resources.</summary>
     private static string ResourceKey(string relativeDir, string fileName)
         => relativeDir.Length == 0 ? fileName : relativeDir + "/" + fileName;
+
+    /// <summary>
+    /// The scripts a worker has to load, in load order, for the variant this build produced — the
+    /// same list and the same choice <see cref="WriteHtml"/> makes, so a worker never runs against a
+    /// different build of the code than the page that talked to it.
+    ///
+    /// <para>
+    /// A module entry is deliberately skipped. A classic worker cannot <c>importScripts</c> an ES
+    /// module, and a chunked site's entry module is not the worker's entry anyway; a worker in a
+    /// chunked site therefore still loads the classic bundles this site placed (the runtime, the
+    /// shim, each library's) and reaches its own code through them.
+    /// </para>
+    /// </summary>
+    private static List<string> WorkerScriptUrls(List<JsOut> jsOuts, string configuration)
+    {
+        var debug = JsOutputProfiles.IsDebug(configuration);
+        var urls = new List<string>();
+        var seen = new HashSet<string>(PathComparer);
+
+        foreach (var o in jsOuts)
+        {
+            if (o.IsModule) continue;
+
+            string? path;
+
+            if (o.IsMinified)
+            {
+                // A standalone minified resource has no formatted sibling to fall back to, so it is
+                // the only spelling there is — in either configuration.
+                path = o.Path;
+            }
+            else if (debug)
+            {
+                path = o.IsEmpty ? o.MinifiedPath : o.Path;
+            }
+            else
+            {
+                path = o.MinifiedPath ?? (o.IsEmpty ? null : o.Path);
+            }
+
+            if (path is not null && seen.Add(path)) urls.Add(path);
+        }
+
+        return urls;
+    }
+
+    /// <summary>
+    /// Writes <c>&lt;name&gt;.worker.js</c> for each <c>[SharedWorkerEntry]</c>: the runtime and every
+    /// bundle this site scripts, then <c>Transpose.init()</c>, then the entry call.
+    ///
+    /// <para>
+    /// <c>Transpose.init()</c> before the entry is what registers the assemblies' types and runs the
+    /// <c>[Ready]</c> handlers, the same as a page does — the worker's own code is not reachable until
+    /// it has. The entry call is last because it is expected to install an <c>onconnect</c> handler and
+    /// return; a page that connects afterwards is an event, not a second call.
+    /// </para>
+    ///
+    /// <para>
+    /// The script is written from the site's own file list, not from a template with the names baked
+    /// in, so it stays correct as resources are added to or removed from the project.
+    /// </para>
+    /// </summary>
+    private static void WriteSharedWorkerScripts(
+        IReadOnlyList<Translator.SharedWorkerEntry> entries, string outputDir,
+        List<JsOut> jsOuts, string configuration, UTF8Encoding utf8, HashSet<string> written)
+    {
+        var urls = WorkerScriptUrls(jsOuts, configuration);
+        if (urls.Count == 0) return;
+
+        var imports = string.Join(", ", urls.Select(u => "\"./" + u.Replace("\\", "/") + "\""));
+
+        foreach (var entry in entries)
+        {
+            var js = new StringBuilder();
+            js.Append("// Generated by tps for [SharedWorkerEntry(\"").Append(entry.Name).Append("\")].\n");
+            js.Append("// The shared worker's own script: it brings up the Transpose runtime in worker\n");
+            js.Append("// scope and then starts the entry. Do not edit -- rebuild instead.\n");
+            js.Append("importScripts(").Append(imports).Append(");\n");
+            js.Append("Transpose.init();\n");
+            js.Append(entry.Call).Append(";\n");
+
+            var rel  = entry.Name + ".worker.js";
+            var dest = Path.Combine(outputDir, rel);
+            File.WriteAllText(dest, js.ToString(), utf8);
+            written.Add(Path.GetFullPath(dest));
+        }
+    }
 
     /// <summary>
     /// Writes index.html, linking the script variant this build produced — one file, because one build

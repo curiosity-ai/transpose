@@ -87,6 +87,7 @@ transpile Packages/Transpose.Howler/Transpose.Howler.csproj        Transpose.Cor
 transpile Packages/Transpose.WebGL2/Transpose.WebGL2.csproj        Transpose.Core
 transpile Packages/Transpose.P2/Transpose.P2.csproj                Transpose.Core
 transpile Packages/Transpose.HttpClient/Transpose.HttpClient.csproj Transpose.Core
+transpile Packages/Transpose.Workers/Transpose.Workers.csproj      Transpose.Core
 
 echo "==> Done. JS outputs in $OUT"
 ls -la "$OUT"/*.js 2>/dev/null || true
