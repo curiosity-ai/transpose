@@ -11,9 +11,11 @@ namespace Transpose.Translator.Tests
     /// unconditionally, so it came back null for every raw error while a C#-thrown exception worked.
     ///
     /// The read now goes through <c>TransposeR.stackTrace</c>, which takes whichever shape arrived.
-    /// The alternative — normalising every caught value into a wrapper the way h5 does — was rejected:
-    /// it allocates on entry to every catch clause and makes <c>throw;</c> rethrow the wrapper rather
-    /// than the original error, losing its identity and native stack for any outer JS handler.
+    /// Since then every <c>catch</c> also maps a JavaScript error onto a .NET exception
+    /// (<c>JavaScriptErrorCatchTests</c>), keeping the original as <c>errorStack</c>; <c>throw;</c> and an
+    /// unmatched clause still rethrow the original error, so an outer JavaScript handler keeps its
+    /// identity and native stack. The helper stays for a raw error that reaches an
+    /// <c>Exception</c>-typed value without passing through a catch.
     /// </summary>
     [TestClass]
     public class ExceptionStackTraceTests : TranslatorTestBase

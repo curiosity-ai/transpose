@@ -1111,6 +1111,12 @@
                 return true;
             }
 
+            // An object with no prototype (Object.create(null), from hand-written JavaScript) has no
+            // constructor to ask; it is an instance of object and nothing else.
+            if (!ctor) {
+                return false;
+            }
+
             var hasObjKind = ctor.$kind || ctor.$$inherits,
                 hasTypeKind = type.$kind;
 

@@ -241,10 +241,28 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
         base.VisitFixedStatement(node);
     }
 
+    // `stackalloc` into a Span/ReadOnlySpan is safe code and is emitted as a span over an ordinary array
+    // (Emitter.Spans.cs); into a pointer it is unsafe code, which has no browser equivalent.
     public override void VisitStackAllocArrayCreationExpression(StackAllocArrayCreationExpressionSyntax node)
     {
-        Report(node, "stackalloc is not supported in the browser environment.");
+        if (!StackAllocTargetsSpan(node))
+            Report(node, "stackalloc into a pointer is not supported in the browser environment; allocate into a Span<T> instead.");
         base.VisitStackAllocArrayCreationExpression(node);
+    }
+
+    public override void VisitImplicitStackAllocArrayCreationExpression(ImplicitStackAllocArrayCreationExpressionSyntax node)
+    {
+        if (!StackAllocTargetsSpan(node))
+            Report(node, "stackalloc into a pointer is not supported in the browser environment; allocate into a Span<T> instead.");
+        base.VisitImplicitStackAllocArrayCreationExpression(node);
+    }
+
+    private bool StackAllocTargetsSpan(ExpressionSyntax node)
+    {
+        var info = _model.GetTypeInfo(node);
+        var type = info.ConvertedType ?? info.Type;
+        return type is INamedTypeSymbol { IsGenericType: true } named
+               && named.OriginalDefinition.ToDisplayString() is "System.Span<T>" or "System.ReadOnlySpan<T>";
     }
 
     private void CheckUnsafeModifier(SyntaxTokenList modifiers, SyntaxNode node)
@@ -467,22 +485,6 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
                 break;
             }
         base.VisitParenthesizedLambdaExpression(node);
-    }
-
-    // Span/ReadOnlySpan constant-string pattern matching (`span is "literal"`) is not modeled.
-    public override void VisitIsPatternExpression(IsPatternExpressionSyntax node)
-    {
-        // Only a *string-literal* constant pattern can be the span-pattern form (`span is "text"`),
-        // so screen on the literal before binding the operand — `x is null`, `x is 0` and every
-        // other constant pattern would otherwise pay for a semantic query that cannot match.
-        if (node.Pattern is ConstantPatternSyntax { Expression: LiteralExpressionSyntax literal }
-            && literal.Token.IsKind(SyntaxKind.StringLiteralToken)
-            && _model.GetTypeInfo(node.Expression).Type is INamedTypeSymbol t
-            && t.OriginalDefinition.ToDisplayString() is "System.ReadOnlySpan<T>" or "System.Span<T>")
-        {
-            Report(node, "Span pattern matching is not supported in the browser environment.");
-        }
-        base.VisitIsPatternExpression(node);
     }
 
     // An enum's members are emitted as plain JS numbers, so a 64-bit underlying type cannot be

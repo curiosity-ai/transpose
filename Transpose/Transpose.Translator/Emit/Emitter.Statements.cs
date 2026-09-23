@@ -528,7 +528,12 @@ public sealed partial class Emitter
             _loopDepth++;
             _w.Block(() =>
             {
-                _w.WriteLine($"let {iterVar} = {enumVar}.current;");
+                // `foreach (ref var x in …)`: x is a ref local, a cell over the current element
+                // (Emitter.RefCells.cs), which the enumerator publishes (TransposeR.refCurrent).
+                var iterLocal = _model.GetDeclaredSymbol(forEach);
+                _w.WriteLine(IsRefLocal(iterLocal)
+                    ? $"let {iterVar} = TransposeR.refCurrent({enumVar});"
+                    : $"let {iterVar} = {enumVar}.current;");
                 EmitForEachBody(forEach.Statement);
             });
             _loopDepth--;
@@ -685,7 +690,11 @@ public sealed partial class Emitter
             // `catch (Exception e)` handed the body a raw JS error. Exception.create maps it onto the
             // .NET exception it corresponds to (keeping the original as the wrapper's stack source)
             // and returns a real System.Exception unchanged, so C#-thrown exceptions are unaffected.
-            _w.WriteLine("$ex = System.Exception.create($ex);");
+            // The wrapper is a separate variable: `$ex` stays the value that was thrown, so an
+            // unmatched clause and a bare `throw;` rethrow the original JavaScript error (a browser
+            // console or a JS caller still sees the TypeError and its stack), and create() caches the
+            // wrapper on it, so an outer C# catch still sees the same exception object.
+            _w.WriteLine("let $e = System.Exception.create($ex);");
 
             // Bind each catch variable to $ex up front so it is in scope for exception
             // filters (`when (...)`), which are evaluated in the guard before the body.
@@ -696,7 +705,7 @@ public sealed partial class Emitter
                 if (id is { RawKind: not 0 } token && !string.IsNullOrEmpty(token.Text))
                 {
                     var jsName = NameMangler.JsIdentifier(token.Text);
-                    if (boundNames.Add(jsName)) _w.WriteLine($"let {jsName} = $ex;");
+                    if (boundNames.Add(jsName)) _w.WriteLine($"let {jsName} = $e;");
                 }
             }
 
@@ -709,7 +718,7 @@ public sealed partial class Emitter
                 var isCatchAll = exType is null || exType.SpecialType == SpecialType.System_Object
                     || exType.ToDisplayString() == "System.Exception";
 
-                var condition = isCatchAll ? null : $"TransposeR.is($ex, {ExceptionTypeRef(exType!)})";
+                var condition = isCatchAll ? null : $"TransposeR.is($e, {ExceptionTypeRef(exType!)})";
                 if (katch.Filter is not null)
                 {
                     // exception filter appended
@@ -840,7 +849,8 @@ public sealed partial class Emitter
         // The if/else chain compares by value.
         var governingType = _model.GetTypeInfo(switchStmt.Expression).Type;
 
-        if (hasPatterns || IsRuntimeObjectNumeric(governingType))
+        // So is a char span: `case "a":` compares its characters (Emitter.Patterns.cs), not identity.
+        if (hasPatterns || IsRuntimeObjectNumeric(governingType) || IsCharSpanType(governingType))
         {
             EmitPatternSwitch(switchStmt);
             return;

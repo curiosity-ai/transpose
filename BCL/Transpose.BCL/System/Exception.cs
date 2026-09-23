@@ -42,11 +42,11 @@ namespace System
         /// Gets a string representation of the immediate frames on the call stack.
         /// </summary>
         /// <remarks>
-        /// Read through a helper rather than the plain member: a value caught by
-        /// <c>catch (Exception)</c> is either a real <see cref="Exception"/> — which carries the
-        /// <c>errorStack</c> captured in its constructor — or a raw JavaScript error thrown by interop
-        /// or a rejected promise, which has a native <c>stack</c> and no <c>errorStack</c>. C# matches
-        /// both, so reading the member directly returned undefined for the raw-error case.
+        /// Read through a helper rather than the plain member. A <c>catch</c> maps a JavaScript error
+        /// onto a real <see cref="Exception"/> whose <c>errorStack</c> is the original error, but a raw
+        /// JavaScript error can still reach an <see cref="Exception"/>-typed value where no catch ran
+        /// (handed over by hand-written JavaScript); it has a native <c>stack</c> and no
+        /// <c>errorStack</c>, and reading the member directly returned undefined for it.
         /// </remarks>
         public virtual extern string StackTrace
         {

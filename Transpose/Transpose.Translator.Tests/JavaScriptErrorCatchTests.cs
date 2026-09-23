@@ -388,6 +388,7 @@ public class Program
 
         private const string Thrower = @"
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 using Transpose;
 
@@ -408,6 +409,12 @@ public class Js
     [Script(""return Promise.reject(new TypeError('rejected'));"")] public static extern Task Rejected();
     [Script(""return Promise.reject('rejected string');"")]      public static extern Task RejectedString();
     [Script(""fn();"")]                                          public static extern void Call(Action fn);
+    [Script(""throw Object.create(null);"")]                     public static extern void NullPrototype();
+    [Script(""throw { toString: function () { throw new Error('no text'); } };"")] public static extern void BadToString();
+    [Script(""throw Object.freeze(new TypeError('frozen boom'));"")] public static extern void Frozen();
+    // What a JavaScript caller of C# code sees when the C# code lets an error through.
+    [Script(""try { fn(); return 'nothing'; } catch (e) { return (e instanceof TypeError ? 'TypeError' : 'wrapper') + ' ' + e.message; }"")]
+    public static extern string CallFromJs(Action fn);
 }
 ";
 
@@ -558,8 +565,8 @@ public class Program
             StringAssert.Contains(js, "same object: True");
         }
 
-        /// <summary>A JavaScript error that no clause matches leaves the C# code as the mapped exception,
-        /// so an outer C# <c>try</c> in a caller two frames up still catches it by type.</summary>
+        /// <summary>A JavaScript error that no clause matches leaves the C# code as the original error,
+        /// and an outer C# <c>try</c> in a caller two frames up still catches it by its mapped type.</summary>
         [TestMethod]
         public async Task UnmatchedJavaScriptErrorPropagatesAsTheMappedException()
         {
@@ -583,8 +590,112 @@ public class Program
             Assert.IsFalse(js.Contains("wrong"), js);
         }
 
+        /// <summary>A JavaScript caller of C# code sees the error it would have seen without the C# in
+        /// between: an unmatched clause and a bare <c>throw;</c> both rethrow the original
+        /// <c>TypeError</c>, not the <c>NullReferenceException</c> the clauses were tested against.
+        /// <c>throw e;</c> throws the exception it names.</summary>
+        [TestMethod]
+        public async Task JavaScriptCallerReceivesTheOriginalError()
+        {
+            var js = await RunTest(Program(@"
+    public static void Main()
+    {
+        Console.WriteLine(""unmatched: "" + Js.CallFromJs(() =>
+        {
+            try { Js.TypeError(); }
+            catch (ArgumentException) { Console.WriteLine(""wrong""); }
+        }));
+        Console.WriteLine(""throw;: "" + Js.CallFromJs(() =>
+        {
+            try { Js.TypeError(); }
+            catch (NullReferenceException) { throw; }
+        }));
+        Console.WriteLine(""throw e;: "" + Js.CallFromJs(() =>
+        {
+            try { Js.TypeError(); }
+            catch (NullReferenceException e) { throw e; }
+        }));
+    }"), skipRoslyn: true);
+
+            StringAssert.Contains(js, "unmatched: TypeError type boom");
+            StringAssert.Contains(js, "throw;: TypeError type boom");
+            StringAssert.Contains(js, "throw e;: wrapper type boom");
+            Assert.IsFalse(js.Contains("wrong"), js);
+        }
+
+        /// <summary>The same JavaScript error is the same exception object in every C# catch it passes
+        /// through, including across <c>throw;</c> and a clause that did not match.</summary>
+        [TestMethod]
+        public async Task JavaScriptErrorIsTheSameExceptionInEveryCatch()
+        {
+            var js = await RunTest(Program(@"
+    public static void Main()
+    {
+        Exception first = null;
+        try
+        {
+            try
+            {
+                try { Js.TypeError(); }
+                catch (NullReferenceException e) { first = e; throw; }
+            }
+            catch (ArgumentException) { Console.WriteLine(""wrong""); }
+        }
+        catch (Exception e) { Console.WriteLine(""same object: "" + ReferenceEquals(first, e)); }
+    }"), skipRoslyn: true);
+
+            StringAssert.Contains(js, "same object: True");
+            Assert.IsFalse(js.Contains("wrong"), js);
+        }
+
+        /// <summary>Values that cannot be turned into text, and a frozen error the wrapper cannot be
+        /// cached on, are still caught — mapping a value must never make the catch itself throw.</summary>
+        [TestMethod]
+        public async Task UnprintableAndFrozenValuesAreStillCaught()
+        {
+            var js = await RunTest(Program(@"
+    public static void Main()
+    {
+        Show(""null prototype"", Js.NullPrototype);
+        Show(""bad toString"", Js.BadToString);
+        Show(""frozen"", Js.Frozen);
+        try
+        {
+            try { Js.Frozen(); }
+            catch (NullReferenceException) { throw; }
+        }
+        catch (NullReferenceException e) { Console.WriteLine(""frozen rethrown: "" + e.Message); }
+    }"), skipRoslyn: true);
+
+            StringAssert.Contains(js, "null prototype: System.Exception | Exception of type 'System.Exception' was thrown.");
+            StringAssert.Contains(js, "bad toString: System.Exception | Exception of type 'System.Exception' was thrown.");
+            StringAssert.Contains(js, "frozen: System.NullReferenceException | frozen boom");
+            StringAssert.Contains(js, "frozen rethrown: frozen boom");
+        }
+
+        /// <summary><c>CatchError</c> on a query hands its <c>Action&lt;Exception&gt;</c> a mapped exception,
+        /// as a C# catch would.</summary>
+        [TestMethod]
+        public async Task LinqCatchErrorReceivesTheMappedException()
+        {
+            var js = await RunTest(Program(@"
+    public static void Main()
+    {
+        string text = null;
+        var seen = Enumerable.Range(0, 3)
+            .Select(i => i == 1 ? text.Length : i)
+            .CatchError(e => Console.WriteLine(""handler: "" + e.GetType().FullName))
+            .ToArray();
+        Console.WriteLine(""kept: "" + string.Join("","", seen));
+    }"), skipRoslyn: true);
+
+            StringAssert.Contains(js, "handler: System.NullReferenceException");
+            StringAssert.Contains(js, "kept: 0");
+        }
+
         /// <summary>The emitted catch maps the value before any clause is tested — the shape the rest of
-        /// this suite relies on.</summary>
+        /// this suite relies on — into its own variable, leaving <c>$ex</c> as the value that was thrown
+        /// for the unmatched rethrow.</summary>
         [TestMethod]
         public void CatchMapsTheValueBeforeTheClauses()
         {
@@ -600,9 +711,10 @@ public class Program
 }");
             Assert.IsTrue(result.Success, string.Join("\n", result.Diagnostics));
             var js = result.Javascript!;
-            var map = js.IndexOf("$ex = System.Exception.create($ex);", System.StringComparison.Ordinal);
-            var test = js.IndexOf("TransposeR.is($ex, System.NullReferenceException)", System.StringComparison.Ordinal);
+            var map = js.IndexOf("let $e = System.Exception.create($ex);", System.StringComparison.Ordinal);
+            var test = js.IndexOf("TransposeR.is($e, System.NullReferenceException)", System.StringComparison.Ordinal);
             Assert.IsTrue(map >= 0 && test > map, js);
+            StringAssert.Contains(js, "else { throw $ex; }");
         }
     }
 }

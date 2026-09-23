@@ -125,8 +125,8 @@ public class Program
     }
 }
 """;
-            // Span constant-pattern matching is not supported in the browser environment.
-            await RunTestExpectingError(code, "Span pattern matching");
+            // A string constant tests a ReadOnlySpan<char> by its text (SpanTests covers the rest).
+            await RunTest(code);
         }
 
         [TestMethod]

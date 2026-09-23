@@ -1607,7 +1607,58 @@ public sealed partial class Emitter
             return;
         }
 
+        if (OperatorMutatesParameter(opMethod, 0)) left = $"TransposeR.clone({left})";
+        if (OperatorMutatesParameter(opMethod, 1)) right = $"TransposeR.clone({right})";
         _w.Write($"{TypeRef(opMethod.ContainingType)}.{TransposeNaming.MemberJsName(opMethod)}({left}, {right})");
+    }
+
+    private readonly Dictionary<(IMethodSymbol, int), bool> _operatorMutates = new();
+
+    /// <summary>
+    /// True when a source operator writes to its by-value struct parameter
+    /// <paramref name="index"/> — <c>operator ++(Counter c) { c.V++; return c; }</c>. An operator takes
+    /// its operands by value, so the write is to a copy in C#; operands are passed uncopied here (see
+    /// <see cref="EmitOperatorOperand"/>), so such an operator wrote through to the caller's variable
+    /// and <c>var old = c++</c> saw the new value. Only these operators get their operand cloned.
+    /// The test is syntactic and errs towards cloning: the parameter (or a field path off it) is
+    /// assigned, stepped, passed by <c>ref</c>/<c>out</c>, taken by <c>ref</c>, or has a method called
+    /// on it (which may mutate it).
+    /// </summary>
+    private bool OperatorMutatesParameter(IMethodSymbol op, int index)
+    {
+        if (index >= op.Parameters.Length) return false;
+        var key = (op, index);
+        if (_operatorMutates.TryGetValue(key, out var known)) return known;
+
+        var parameter = op.Parameters[index];
+        var result = parameter.RefKind == RefKind.None
+                     && IsSourceStruct(parameter.Type)
+                     && !parameter.Type.IsReadOnly
+                     && op.DeclaringSyntaxReferences.Any(r => BodyWritesTo(r.GetSyntax(), parameter.Name));
+        _operatorMutates[key] = result;
+        return result;
+    }
+
+    private static bool BodyWritesTo(SyntaxNode declaration, string name)
+    {
+        foreach (var id in declaration.DescendantNodes().OfType<IdentifierNameSyntax>())
+        {
+            if (id.Identifier.ValueText != name) continue;
+            // Climb the field path the parameter heads: `c`, `c.V`, `c.Inner.V`.
+            ExpressionSyntax top = id;
+            while (top.Parent is MemberAccessExpressionSyntax ma && ma.Expression == top) top = ma;
+            if (top != id && top.Parent is InvocationExpressionSyntax) return true;
+            switch (top.Parent)
+            {
+                case AssignmentExpressionSyntax a when a.Left == top:
+                case PrefixUnaryExpressionSyntax { RawKind: (int)SyntaxKind.PreIncrementExpression or (int)SyntaxKind.PreDecrementExpression }:
+                case PostfixUnaryExpressionSyntax { RawKind: (int)SyntaxKind.PostIncrementExpression or (int)SyntaxKind.PostDecrementExpression }:
+                case ArgumentSyntax arg when !arg.RefKindKeyword.IsKind(SyntaxKind.None) && !arg.RefKindKeyword.IsKind(SyntaxKind.InKeyword):
+                case RefExpressionSyntax:
+                    return true;
+            }
+        }
+        return false;
     }
 
     /// <summary>An operator C# lifts over <c>Nullable&lt;T&gt;</c> to a null-propagating (arithmetic)
@@ -2485,6 +2536,12 @@ public sealed partial class Emitter
         var leftType = _model.GetTypeInfo(assignment.Left).Type;
         var rightType = _model.GetTypeInfo(assignment.Right).Type;
 
+        if (IsDeconstruction(assignment))
+        {
+            EmitDeconstructionExpression(assignment);
+            return;
+        }
+
         if (op == "=")
         {
             // Ref reassignment (`r = ref other;`) rebinds the ref local to a new cell; it writes
@@ -3026,9 +3083,13 @@ public sealed partial class Emitter
             && opm.Locations.Any(l => l.IsInSource)
             && !prefix.IsKind(SyntaxKind.PreIncrementExpression) && !prefix.IsKind(SyntaxKind.PreDecrementExpression))
         {
-            _w.Write($"{TypeRef(opm.ContainingType)}.{TransposeNaming.MemberJsName(opm)}(");
-            EmitExpression(prefix.Operand);
-            _w.Write(")");
+            // Lifted over Nullable<T>: a null operand stays null rather than reaching the operator.
+            var operand = Capture(() => EmitExpression(prefix.Operand));
+            var arg = OperatorMutatesParameter(opm, 0) ? $"TransposeR.clone({operand})" : operand;
+            var call = $"{TypeRef(opm.ContainingType)}.{TransposeNaming.MemberJsName(opm)}({arg})";
+            _w.Write(IsNullableValueType(_model.GetTypeInfo(prefix.Operand).Type) && CanBeNullOperand(prefix.Operand)
+                ? $"({operand} == null ? null : {call})"
+                : call);
             return;
         }
 
@@ -3125,6 +3186,7 @@ public sealed partial class Emitter
             return;
         }
 
+        if (OperatorMutatesParameter(opMethod, 0)) operandJs = $"TransposeR.clone({operandJs})";
         _w.Write($"{TypeRef(opMethod.ContainingType)}.{TransposeNaming.MemberJsName(opMethod)}({operandJs})");
     }
 
@@ -3568,6 +3630,8 @@ public sealed partial class Emitter
 
     private void EmitElementAccess(ElementAccessExpressionSyntax element)
     {
+        if (TryEmitSpanRange(element)) return;
+
         var symbol = _model.GetSymbolInfo(element).Symbol;
 
         if (symbol is IPropertySymbol { IsIndexer: true } indexer)
@@ -3853,9 +3917,21 @@ public sealed partial class Emitter
             return;
         }
 
+        // A span target is a span over an element-typed array (Emitter.Spans.cs).
+        if (IsSpanType(target))
+        {
+            var elem = ((INamedTypeSymbol)target!).TypeArguments[0];
+            EmitSpanOver(target!, () =>
+            {
+                _w.Write("System.Array.init(");
+                emitArrayLiteral();
+                _w.Write($", {ArrayElementTypeRef(elem)})");
+            });
+            return;
+        }
+
         if (target is IArrayTypeSymbol
             || target is { TypeKind: TypeKind.Interface }
-            || target?.OriginalDefinition.ToDisplayString() is "System.Span<T>" or "System.ReadOnlySpan<T>"
             || target is null)
         {
             emitArrayLiteral();

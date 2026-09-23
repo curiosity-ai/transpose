@@ -156,9 +156,14 @@ public sealed partial class Emitter
     }
 
     /// <summary>
-    /// C# 11 list pattern `[p0, p1, .. rest, pk]` over an array. Emits a length check plus
-    /// per-element tests (pre-slice indexed from the start, post-slice from the end); a slice
-    /// designation binds the middle span via .slice(...).
+    /// C# 11 list pattern `[p0, p1, .. rest, pk]`. Emits a length check plus per-element tests
+    /// (pre-slice indexed from the start, post-slice from the end); a slice designation binds the
+    /// middle. How the subject's length, elements and slice are read depends on what the pattern bound
+    /// (<see cref="ListPatternAccess"/>): an array and a string natively, anything else — a span, a
+    /// <c>List&lt;T&gt;</c>, a type with a <c>Length</c>/<c>Count</c> and an <c>int</c> indexer — through
+    /// its own members. Indexing every subject with <c>[i]</c> only ever worked for arrays: a string's
+    /// <c>[i]</c> is a one-character string where the pattern's constant is a char code, and a span or a
+    /// list has no numeric keys at all.
     /// </summary>
     private void EmitListPattern(string subject, ListPatternSyntax list)
     {
@@ -170,33 +175,62 @@ public sealed partial class Emitter
         var preCount = hasSlice ? sliceIndex : patterns.Count;
         var postCount = hasSlice ? patterns.Count - sliceIndex - 1 : 0;
 
-        _w.Write($"({subject} != null && {subject}.length {(hasSlice ? ">=" : "===")} {preCount + postCount}");
+        var access = ListPatternAccess(list);
+        var length = access.Length(subject);
+
+        _w.Write($"({subject} != null && {length} {(hasSlice ? ">=" : "===")} {preCount + postCount}");
 
         for (var i = 0; i < preCount; i++)
         {
             _w.Write(" && ");
-            EmitPatternTest($"{subject}[{i}]", patterns[i]);
+            EmitPatternTest(access.Element(subject, i.ToString()), patterns[i]);
         }
         for (var j = 0; j < postCount; j++)
         {
             _w.Write(" && ");
-            EmitPatternTest($"{subject}[{subject}.length - {postCount - j}]", patterns[sliceIndex + 1 + j]);
+            EmitPatternTest(access.Element(subject, $"{length} - {postCount - j}"), patterns[sliceIndex + 1 + j]);
         }
 
-        // A `.. rest` slice designation binds the middle span.
+        // A `.. rest` slice pattern binds (or further tests) the middle.
         if (hasSlice && ((SlicePatternSyntax)patterns[sliceIndex]).Pattern is { } slicePat)
         {
-            var name = slicePat switch
+            var slice = access.Slice(subject, preCount.ToString(), $"{length} - {postCount}");
+            if (slice is not null)
             {
-                VarPatternSyntax { Designation: SingleVariableDesignationSyntax d } => d.Identifier.Text,
-                DeclarationPatternSyntax { Designation: SingleVariableDesignationSyntax d2 } => d2.Identifier.Text,
-                _ => null,
-            };
-            if (name is not null)
-                _w.Write($" && ({NameMangler.JsIdentifier(name)} = {subject}.slice({preCount}, {subject}.length - {postCount}), true)");
+                _w.Write(" && ");
+                EmitPatternTest(slice, slicePat);
+            }
         }
 
         _w.Write(")");
+    }
+
+    /// <summary>How a list pattern reads its subject: the length, an element at an index, and a slice
+    /// (null when the type has no slice, in which case C# only allows a bare <c>..</c>).</summary>
+    private sealed record ListAccess(
+        System.Func<string, string> Length,
+        System.Func<string, string, string> Element,
+        System.Func<string, string, string, string?> Slice);
+
+    private ListAccess ListPatternAccess(ListPatternSyntax list)
+    {
+        var op = _model.GetOperation(list) as Microsoft.CodeAnalysis.Operations.IListPatternOperation;
+        var input = op?.InputType;
+
+        if (input is IArrayTypeSymbol || input is null)
+            return new ListAccess(s => $"{s}.length", (s, i) => $"{s}[{i}]", (s, a, b) => $"{s}.slice({a}, {b})");
+
+        if (input.SpecialType == SpecialType.System_String)
+            return new ListAccess(s => $"{s}.length", (s, i) => $"{s}.charCodeAt({i})", (s, a, b) => $"{s}.substring({a}, {b})");
+
+        var lengthName = op?.LengthSymbol is IPropertySymbol lp ? TransposeNaming.MemberJsName(lp) : "length";
+        var getter = op?.IndexerSymbol is IPropertySymbol { IsIndexer: true } ip
+            ? TransposeNaming.IndexerAccessorName(ip, isGet: true)
+            : "getItem";
+        System.Func<string, string, string, string?> slice = IsSpanType(input)
+            ? (s, a, b) => $"TransposeR.spanRange({s}, () => {a}, () => {b})"
+            : (_, _, _) => null;
+        return new ListAccess(s => $"{s}.{lengthName}", (s, i) => $"{s}.{getter}({i})", slice);
     }
 
     private void EmitRecursivePattern(string subject, RecursivePatternSyntax recursive)
@@ -223,7 +257,33 @@ public sealed partial class Emitter
             }
         }
 
-        if (recursive.PositionalPatternClause is not null)
+        if (recursive.PositionalPatternClause is not null
+            && HandWrittenDeconstruct(recursive) is { } deconstruct)
+        {
+            // A hand-written Deconstruct (instance or extension) decides what the positions are, so it
+            // has to run: TransposeR.decon calls it with one out-holder per position and hands the
+            // values to the subpattern tests. The tests run inside an arrow, which is safe — a pattern
+            // holds constants only, never an await — and pattern variables they bind are the outer
+            // (predeclared) locals, which the arrow closes over.
+            var count = recursive.PositionalPatternClause.Subpatterns.Count;
+            var values = "$d" + _deconstructDepth;
+            _w.Write($" && TransposeR.decon({subject}, ($s, $h) => ");
+            _w.Write(DeconstructCall(deconstruct, "$s", count));
+            _w.Write($", {count}, ({values}) => ");
+            _deconstructDepth++;
+            try
+            {
+                for (var i = 0; i < count; i++)
+                {
+                    if (i > 0) _w.Write(" && ");
+                    EmitPatternTest($"{values}[{i}]", recursive.PositionalPatternClause.Subpatterns[i].Pattern);
+                }
+                if (count == 0) _w.Write("true");
+            }
+            finally { _deconstructDepth--; }
+            _w.Write(")");
+        }
+        else if (recursive.PositionalPatternClause is not null)
         {
             // A tuple's positions are Item1..ItemN. A record's are its positional members, which its
             // synthesized Deconstruct assigns in declaration order — reading `.Item1` off a record
@@ -247,6 +307,33 @@ public sealed partial class Emitter
 
         _ = wroteCondition;
         _w.Write(")");
+    }
+
+    private int _deconstructDepth;
+
+    /// <summary>The user-written <c>Deconstruct</c> a positional pattern binds, or null for a tuple, a
+    /// record's synthesized one (whose positions are its members, read directly), or none.</summary>
+    private IMethodSymbol? HandWrittenDeconstruct(RecursivePatternSyntax recursive)
+    {
+        if (_model.GetOperation(recursive) is not Microsoft.CodeAnalysis.Operations.IRecursivePatternOperation op) return null;
+        return op.DeconstructSymbol is IMethodSymbol { IsImplicitlyDeclared: false } m ? m : null;
+    }
+
+    /// <summary>A call of <paramref name="deconstruct"/> on <paramref name="receiver"/>, passing the
+    /// holders <c>$h[0]</c>…<c>$h[n-1]</c> as its out arguments.</summary>
+    private string DeconstructCall(IMethodSymbol deconstruct, string receiver, int count)
+    {
+        var holders = string.Join(", ", Enumerable.Range(0, count).Select(i => $"$h[{i}]"));
+        var method = deconstruct.ReducedFrom ?? deconstruct;
+        if (!method.IsStatic)
+            return $"{receiver}.{TransposeNaming.MemberJsName(method)}({holders})";
+
+        // An extension Deconstruct is a static call with the receiver first, after any threaded type
+        // arguments (a generic extension method takes them as leading arguments).
+        var typeArgs = ThreadsTypeArgs(method) && deconstruct.TypeArguments.Length > 0
+            ? string.Join(", ", deconstruct.TypeArguments.Select(TypeRef)) + ", "
+            : "";
+        return $"{TypeRef(method.ContainingType)}.{TransposeNaming.MemberJsName(method)}({typeArgs}{receiver}{(count > 0 ? ", " : "")}{holders})";
     }
 
     /// <summary>The JS members a positional pattern's positions read, when the matched type names them
@@ -316,7 +403,33 @@ public sealed partial class Emitter
     private void EmitConstantEqualityTest(string subject, ExpressionSyntax constant)
     {
         var info = _model.GetTypeInfo(constant);
+
+        // A char span tested against a string constant (`span is "yes"`, `case "yes":` over a span)
+        // compares the characters, as C# 11 specifies — the subject is a span object, never === a string.
+        if (info.Type?.SpecialType == SpecialType.System_String && IsCharSpanType(PatternInputType(constant)))
+        {
+            _w.Write($"TransposeR.spanEqualsString({subject}, ");
+            EmitExpression(constant);
+            _w.Write(")");
+            return;
+        }
+
         EmitConstantEqualityAgainst(subject, Capture(() => EmitExpression(constant)), info.ConvertedType ?? info.Type);
+    }
+
+    /// <summary>The type a constant pattern or constant case label is tested against — the input of
+    /// that pattern, which for a nested property pattern is the property's type, not the switch's.</summary>
+    private ITypeSymbol? PatternInputType(ExpressionSyntax constant)
+    {
+        switch (constant.Parent)
+        {
+            case ConstantPatternSyntax pattern:
+                return (_model.GetOperation(pattern) as Microsoft.CodeAnalysis.Operations.IPatternOperation)?.InputType;
+            case CaseSwitchLabelSyntax { Parent.Parent: SwitchStatementSyntax switchStmt }:
+                return _model.GetTypeInfo(switchStmt.Expression).Type;
+            default:
+                return null;
+        }
     }
 
     /// <summary>
@@ -439,7 +552,7 @@ public sealed partial class Emitter
            && (assign.Left is TupleExpressionSyntax
                || assign.Left is DeclarationExpressionSyntax { Designation: ParenthesizedVariableDesignationSyntax });
 
-    private void EmitDeconstruction(AssignmentExpressionSyntax assign)
+    private string EmitDeconstruction(AssignmentExpressionSyntax assign)
     {
         var targets = CollectDeconstructionTargets(assign.Left).ToList();
         var temp = NextTemp("$dc");
@@ -451,6 +564,22 @@ public sealed partial class Emitter
         var rhsType = _model.GetTypeInfo(assign.Right).Type;
         var isTuple = rhsType is { IsTupleType: true } || assign.Right is TupleExpressionSyntax;
         EmitDeconstructionBindings(targets, temp, isTuple, rhsType);
+        return temp;
+    }
+
+    /// <summary>
+    /// A deconstruction assignment in expression position — an expression-bodied member or a lambda
+    /// body (<c>void Set(out int a, out int b) =&gt; (a, b) = (1, 2);</c>). The bindings are
+    /// statements, so they run in an IIFE that yields the deconstructed value; emitting the
+    /// assignment as-is wrote a tuple constructor call as an assignment target, which is a
+    /// JavaScript syntax error that stopped the whole bundle from loading.
+    /// </summary>
+    private void EmitDeconstructionExpression(AssignmentExpressionSyntax assign)
+    {
+        var hasAwait = OpenIife(assign);
+        var temp = EmitDeconstruction(assign);
+        _w.Write($"return {temp}; ");
+        CloseIife(hasAwait);
     }
 
     /// <summary>

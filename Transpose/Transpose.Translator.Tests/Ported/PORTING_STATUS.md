@@ -43,7 +43,6 @@ not translate it. The user-facing list, with every message, is the documentation
 | `CSharp9Tests.NativeSizedIntegers` | `nint` / `nuint` |
 | `CSharp10Tests.GlobalUsings` | `global using` |
 | `CSharp10Tests.LambdaImprovements` | a lambda with a `ref` parameter (the rest of the test's lambda forms translate) |
-| `CSharp11Tests.PatternMatchSpanOnConstantString` | `span is "text"` |
 | `CSharp12Tests.InlineArrays` | `[InlineArray]` |
 | `CSharp13Tests.LockObject` | `System.Threading.Lock` (`lock` on an `object` works) |
 | `CSharp14Tests.ExtensionMembers` | C# 14 `extension` blocks |
@@ -52,8 +51,7 @@ not translate it. The user-facing list, with every message, is the documentation
 ## Known differences from .NET
 
 The behaviours that deliberately or knowingly differ — struct copy semantics outside the compilation, a
-boxed number losing its exact type, `dynamic` with no runtime overload resolver, `Span<T>` and the
-implicit array conversion, positional patterns against a hand-written `Deconstruct` — are listed, with
+boxed number losing its exact type, `dynamic` with no runtime overload resolver — are listed, with
 the reason for each, under **Known remaining work** in the repository's `CLAUDE.md`. They are not
 failures here: no test in this folder expects the .NET result for them.
 
@@ -73,7 +71,33 @@ Later fixes, each with its own suite outside this folder:
   passes the value through `System.Exception.create`: `TypeError` → `NullReferenceException`,
   `RangeError` → `ArgumentOutOfRangeException` (now with the error's own message), any other `Error` →
   `SystemException`, and any other value → `Exception` (a thrown `0` keeps its text; a thrown `null` no
-  longer makes `StackTrace` throw).
+  longer makes `StackTrace` throw; a value with no usable `toString`, such as `Object.create(null)`, is
+  still caught). The mapped exception is a separate variable: a clause that does not match, and a bare
+  `throw;`, rethrow the **original** JavaScript error, so a JavaScript caller still sees the `TypeError`,
+  while `create` caches the wrapper on it so every C# catch it passes through sees the same exception
+  object. `Enumerable.CatchError` hands its handler the mapped exception too.
+- **`Span<T>` and `ReadOnlySpan<T>` are real windows onto an array** (`SpanTests`, `Emitter.Spans.cs`).
+  C# 14's span conversions (array → span, span → read-only span, string → `ReadOnlySpan<char>`) used to
+  emit nothing, so a span was often the bare array and `s[0] = 1` threw "setItem is not a function". Now
+  supported: every conversion, a `params` span, a collection expression into a span, `stackalloc` into
+  a span, `"text"u8`, `span[a..b]`, `foreach (ref var x in span)`, `ref span[i]`, and a string constant
+  in a pattern or `switch` over a `ReadOnlySpan<char>` (`CSharp11Tests.PatternMatchSpanOnConstantString`,
+  which used to expect an error). `stackalloc` into a pointer is still rejected, as unsafe code.
+- **Implicit `Index` support** (`SpanTests.ImplicitIndexSupportOnEveryIndexer`): `list[^1]`,
+  `"hello"[^1]` and a hand-written indexer with a `Length`/`Count` read, write and step the right
+  element. They passed the `System.Index` object to the indexer, so `list[^1]` read nothing and
+  `"hello"[^1]` gave `'h'`.
+- **A positional pattern calls a hand-written `Deconstruct`** — instance or extension, generic or not
+  (`DeconstructAndListPatternTests`). It read `Item1`/`Item2`, so `o is Foo(1, "a")` never matched. **List
+  patterns** work over a string, a span and a list as well as an array; over a string they compared a
+  character against its code.
+- **A deconstruction assignment in expression position** — `void Set(out int a, out int b) => (a, b) = (1, 2);`,
+  a lambda body, a `for` incrementor — runs in an IIFE (`DeconstructAndListPatternTests`). It emitted a
+  tuple constructor as an assignment target, a JavaScript syntax error that stopped the bundle loading.
+- **A user-defined operator on a struct does not write through its operand** (`StructOperatorTests`). An
+  operator that assigns to its by-value parameter (`operator ++(C c) { c.V++; return c; }`) changed the
+  caller's variable, so `var old = c++` saw the new value; such operators now receive a copy. A user `++`
+  on an array element and a lifted user operator over a null `Nullable<T>` work too.
 - **`ref` locals and `ref` returns hold a reference, not a copy** (`RefLocalAndReturnTests`,
   `Emitter.RefCells.cs`), for ref-returning methods, local functions, properties and indexers. Members
   of the Transpose runtime packages (`Span<T>`'s indexer) keep value semantics.

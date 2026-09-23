@@ -40,8 +40,12 @@ public sealed partial class Emitter
             : null;
         if (_model.GetSymbolInfo(node).Symbol is IMethodSymbol { MethodKind: MethodKind.UserDefinedOperator } && userOp is null)
             return false;
+        // A user operator over a struct lifts over Nullable<T>: a null operand stays null rather than
+        // reaching the operator (`Money? m = null; m++` dereferenced the null).
         string Step(string value) => userOp is not null
-            ? Capture(() => WriteUnaryOperator(userOp, value))
+            ? IsNullableValueType(type)
+                ? $"({value} == null ? null : {Capture(() => WriteUnaryOperator(userOp, value))})"
+                : Capture(() => WriteUnaryOperator(userOp, value))
             : StepValue(type, value, op);
 
         // ---- an indexer element ----------------------------------------------------------------
@@ -70,7 +74,30 @@ public sealed partial class Emitter
             && ((INamedTypeSymbol)type!).TypeArguments[0] is var inner
             && (IsIntegerType(inner) || IsFloatingType(inner) || IsDecimalType(inner) || IsCharType(inner));
         if (userOp is null && !nullableNumber && WrapIntegerStep(type) is null) return false;
-        if (operand is not IdentifierNameSyntax
+
+        // ---- an array element stepped by a call (a user operator, a nullable number): `arr[0]++`
+        // was the raw JS `++` on the element object, which gave NaN.
+        if ((userOp is not null || nullableNumber)
+            && operand is ElementAccessExpressionSyntax arrayElement
+            && _model.GetTypeInfo(arrayElement.Expression).Type is IArrayTypeSymbol { Rank: 1 }
+            && arrayElement.ArgumentList.Arguments.Count == 1
+            && !arrayElement.ArgumentList.Arguments[0].Expression.IsKind(SyntaxKind.IndexExpression)
+            && arrayElement.ArgumentList.Arguments[0].Expression is not RangeExpressionSyntax
+            && !ContainsAwait(arrayElement))
+        {
+            if (HasSideEffects(arrayElement.Expression) || HasSideEffects(arrayElement.ArgumentList.Arguments[0].Expression))
+            {
+                // The array and the index are evaluated once. Postfix-as-a-value has no such helper.
+                if (!prefix && !IsVoidContext(node)) return false;
+                _w.Write("TransposeR.updElem(");
+                EmitExpression(arrayElement.Expression);
+                _w.Write(", ");
+                EmitExpression(arrayElement.ArgumentList.Arguments[0].Expression);
+                _w.Write($", ($x) => {Step("$x")})");
+                return true;
+            }
+        }
+        else if (operand is not IdentifierNameSyntax
             && operand is not MemberAccessExpressionSyntax { Expression: ThisExpressionSyntax or IdentifierNameSyntax })
             return false;
         // A ref local or ref parameter reads through `.v`, which EmitExpression already writes.

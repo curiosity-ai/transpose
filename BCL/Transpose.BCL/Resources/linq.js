@@ -2680,7 +2680,9 @@
                             ? this.yieldReturn(enumerator.Current)
                             : false;
                     } catch (e) {
-                        handler(e);
+                        // The handler is an Action<Exception>: a JavaScript error reaches it mapped, as
+                        // it would reach a C# catch.
+                        handler(System.Exception.create(e));
                         return false;
                     }
                 },

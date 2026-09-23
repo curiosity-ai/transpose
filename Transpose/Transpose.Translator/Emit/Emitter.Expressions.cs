@@ -101,6 +101,9 @@ public sealed partial class Emitter
             return;
         }
 
+        // `list[^1]`, `span[^i]`, `text[idx]`: an Index argument to an int indexer (Emitter.Spans.cs).
+        if (TryEmitImplicitIndexArgument(expr)) return;
+
         switch (expr)
         {
             case LiteralExpressionSyntax lit:
@@ -214,6 +217,12 @@ public sealed partial class Emitter
                 else
                     EmitTypedInitializerArray(initializer,
                         _model.GetTypeInfo(initializer).ConvertedType is IArrayTypeSymbol { Rank: 1 } sdInit ? sdInit.ElementType : null);
+                break;
+            case StackAllocArrayCreationExpressionSyntax stackAlloc:
+                EmitStackAlloc(stackAlloc, stackAlloc.Type, stackAlloc.Initializer);
+                break;
+            case ImplicitStackAllocArrayCreationExpressionSyntax implicitStackAlloc:
+                EmitStackAlloc(implicitStackAlloc, null, implicitStackAlloc.Initializer);
                 break;
             case CollectionExpressionSyntax collection:
                 EmitCollectionExpression(collection);
@@ -349,6 +358,9 @@ public sealed partial class Emitter
             EmitExpression(expr);
             return;
         }
+
+        // A span conversion (array/string/span -> Span<T>/ReadOnlySpan<T>) builds the span (Emitter.Spans.cs).
+        if (TryEmitSpanConversion(expr, targetType)) return;
 
         // Numeric narrowing to an integer type needs truncation.
         var sourceType = _model.GetTypeInfo(expr).Type;
@@ -692,6 +704,9 @@ public sealed partial class Emitter
                 break;
             case SyntaxKind.DefaultLiteralExpression:
                 _w.Write(DefaultValueLiteral(_model.GetTypeInfo(lit).ConvertedType!));
+                break;
+            case SyntaxKind.Utf8StringLiteralExpression:
+                EmitUtf8Literal(lit);
                 break;
             default:
                 Unsupported(lit, lit.Kind().ToString());

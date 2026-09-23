@@ -49,6 +49,10 @@ namespace System
         [Transpose.Template("System.String.fromCharArray({value}, {startIndex}, {length})")]
         public extern String(char[] value, int startIndex, int length);
 
+        /// <summary>Constructs a string from the characters of a span.</summary>
+        [Transpose.Template("TransposeR.spanToString({value})")]
+        public extern String(ReadOnlySpan<char> value);
+
         /// <summary>
         /// Indicates whether the specified string is null or an Empty string.
         /// </summary>
