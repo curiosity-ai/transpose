@@ -63,6 +63,43 @@
         if (e.errorStack && e.errorStack.stack !== null && e.errorStack.stack !== undefined) { return e.errorStack.stack; }
         return (e.stack !== null && e.stack !== undefined) ? e.stack : null;
     };
+    // Cells for `ref` locals and `ref` returns (Emitter.RefCells.cs): an object whose `v` reads and
+    // writes the referenced location itself, so a write through the reference lands where C# puts it.
+    // A ref/out parameter's holder has the same `{ v }` shape, which is what lets one pass for the other.
+    TransposeR.ref = function (get, set) {
+        return { get v() { return get(); }, set v(value) { set(value); } };
+    };
+    // An array element: the array and the index are fixed when the reference is taken.
+    TransposeR.refElem = function (array, index) {
+        if (array === null || array === undefined) { throw new System.NullReferenceException(); }
+        if (index < 0 || index >= array.length) { throw new System.IndexOutOfRangeException(); }
+        return { get v() { return array[index]; }, set v(value) { array[index] = value; } };
+    };
+    // A C# 14 instance compound-assignment/increment operator used as a value (Emitter.InstanceOperators.cs):
+    // run the mutating operator on the receiver, then yield the receiver, which is the expression's value.
+    TransposeR.opAssign = function (target, name, arg) {
+        if (arguments.length > 2) { target[name](arg); } else { target[name](); }
+        return target;
+    };
+    // `coll[i]++` / `--coll[i]` on an accessor indexer (Emitter.IncDec.cs): the receiver and the
+    // index arguments arrive evaluated once; `step` computes the new element value. Yields the new
+    // value for a prefix (or a discarded) form, the old one for a postfix.
+    TransposeR.incItem = function (target, getName, setName, args, step, yieldNew) {
+        var old = target[getName].apply(target, args);
+        var next = step(old);
+        target[setName].apply(target, args.concat([next]));
+        return yieldNew ? next : old;
+    };
+    // A postfix `x++` used as a value where x's step is a call (a static user-defined operator ++):
+    // run the write, yield the value x held before it.
+    TransposeR.postStep = function (old, write) { write(old); return old; };
+    // `arr[k++] op= v` where the index has a side effect (Emitter.IncDec.cs): the array and the index
+    // arrive evaluated once; `update` computes the new element from the old one. Yields the new value.
+    TransposeR.updElem = function (array, index, update) {
+        if (array === null || array === undefined) { throw new System.NullReferenceException(); }
+        if (index < 0 || index >= array.length) { throw new System.IndexOutOfRangeException(); }
+        return array[index] = update(array[index]);
+    };
     TransposeR.is = function (v, t) { return Transpose.is(v, t); };
     TransposeR.as = function (v, t) { return Transpose.as ? Transpose.as(v, t) : (Transpose.is(v, t) ? v : null); };
     TransposeR.equals = function (a, b) { return Transpose.equals ? Transpose.equals(a, b) : a === b; };

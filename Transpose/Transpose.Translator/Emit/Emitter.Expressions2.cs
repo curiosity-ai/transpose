@@ -71,6 +71,15 @@ public sealed partial class Emitter
         // Delegate invocation: d(...) or d.Invoke(...) — the delegate is a plain callable.
         if (symbol.MethodKind == MethodKind.DelegateInvoke)
         {
+            // A ref/out argument has to travel as the same { v: … } holder the target method was
+            // compiled to read (its parameter is emitted as `x.v`), then be written back — the path
+            // a direct call takes. Passing the bare value made the target write to a property of a
+            // number, which throws. EmitCallee knows how to name a delegate target.
+            if (condRecv is null && HasByRefArguments(invocation.ArgumentList, symbol))
+            {
+                EmitByRefInvocation(invocation, symbol);
+                return;
+            }
             // For d.Invoke(...) call the receiver directly, dropping the ".Invoke".
             if (condRecv is not null)
                 _w.Write(condRecv);
@@ -499,7 +508,15 @@ public sealed partial class Emitter
 
     private void EmitCallee(InvocationExpressionSyntax invocation, IMethodSymbol symbol)
     {
-        if (symbol.MethodKind == MethodKind.LocalFunction)
+        if (symbol.MethodKind == MethodKind.DelegateInvoke)
+        {
+            // The delegate is a plain JS function: call it directly (d.Invoke(...) drops the .Invoke).
+            if (invocation.Expression is MemberAccessExpressionSyntax { Name.Identifier.Text: "Invoke" } dm)
+                EmitExpression(dm.Expression);
+            else
+                EmitExpression(invocation.Expression);
+        }
+        else if (symbol.MethodKind == MethodKind.LocalFunction)
         {
             _w.Write(NameMangler.JsIdentifier(symbol.Name)); // local functions are called by bare name
         }
@@ -584,6 +601,13 @@ public sealed partial class Emitter
         // than in an argument, yet still lands inside the holder IIFE.
         var hasAwait = OpenIife(invocation);
 
+        // A callee that returns a reference may return one of its ref parameters, and the caller can
+        // write through that reference after the call — `Pick(ref a, ref b) = 99;`. A holder that is
+        // copied back once when the call returns would drop that write, so such a call passes a live
+        // cell over each `ref` argument instead, with nothing to write back (Emitter.RefCells.cs).
+        var liveCells = RefCellsEnabled && ProducesRefCell(symbol);
+        var liveCell = new bool[args.Count];
+
         for (var i = 0; i < args.Count; i++)
         {
             var arg = args[i];
@@ -593,6 +617,14 @@ public sealed partial class Emitter
 
             var holder = "$ref" + i;
             holders[i] = holder;
+            if (liveCells && isRef)
+            {
+                liveCell[i] = true;
+                _w.Write($"var {holder} = ");
+                EmitRefCell(arg.Expression);
+                _w.Write("; ");
+                continue;
+            }
             _w.Write($"var {holder} = {{ v: ");
             if (isOut)
             {
@@ -714,7 +746,7 @@ public sealed partial class Emitter
         // Write back out/ref values to their targets (skip discards: out _).
         for (var i = 0; i < args.Count; i++)
         {
-            if (holders[i] is null) continue;
+            if (holders[i] is null || liveCell[i]) continue;
             if (IsDiscardTarget(args[i].Expression)) continue;
             EmitByRefWriteBackTarget(args[i].Expression);
             _w.Write($" = {holders[i]}.v; ");
@@ -2455,12 +2487,28 @@ public sealed partial class Emitter
 
         if (op == "=")
         {
+            // Ref reassignment (`r = ref other;`) rebinds the ref local to a new cell; it writes
+            // nothing through the old one (Emitter.RefCells.cs).
+            if (assignment.Right is RefExpressionSyntax && assignment.Left is IdentifierNameSyntax refName
+                && IsRefLocal(_model.GetSymbolInfo(refName).Symbol))
+            {
+                _w.Write(NameMangler.JsIdentifier(refName.Identifier.Text) + " = ");
+                EmitExpression(assignment.Right);
+                return;
+            }
+
             // Writing into a foreign-JS 64-bit slot unwraps a managed Int64 (Emitter.Foreign64.cs).
             var foreignLeft = IsForeignJs64Lvalue(assignment.Left);
             EmitSimpleAssignmentTo(assignment.Left,
                 () => EmitExpressionConverted(assignment.Right, leftType, foreignLeft));
             return;
         }
+
+        // C# 14 instance compound operator (`public void operator +=(T x)`): a call on the left operand.
+        if (TryEmitInstanceOperator(assignment, assignment.Left, assignment.Right)) return;
+
+        // `a[k++] += v`: an element whose receiver or index has side effects is read and written once.
+        if (TryEmitSingleEvaluationCompound(assignment, op, leftType, rightType)) return;
 
         // Compound assignment to a collection indexer that stores via setItem: `coll[i] op= v` becomes
         // `coll.setItem(i, <coll[i] op v>)`. The generic compound branches below emit the write target
@@ -2954,6 +3002,15 @@ public sealed partial class Emitter
 
     private void EmitPrefixUnary(PrefixUnaryExpressionSyntax prefix)
     {
+        // C# 14 instance `operator ++()` / `operator --()`: a call that mutates the operand.
+        if (TryEmitInstanceOperator(prefix, prefix.Operand, null)) return;
+
+        // An indexer element or a wrapping integer (Emitter.IncDec.cs).
+        if ((prefix.IsKind(SyntaxKind.PreIncrementExpression) || prefix.IsKind(SyntaxKind.PreDecrementExpression))
+            && !IsForeignJs64Lvalue(prefix.Operand)
+            && TryEmitIncDec(prefix, prefix.Operand, prefix.IsKind(SyntaxKind.PreIncrementExpression), prefix: true))
+            return;
+
         // `^n` (from-end index) as a value → a System.Index. Array element access handles `^n`
         // inline (arr.length - n) before reaching here; this covers every other position — an
         // Index-typed argument, an `Index i = ^1;` initializer, etc.
@@ -3073,6 +3130,15 @@ public sealed partial class Emitter
 
     private void EmitPostfixUnary(PostfixUnaryExpressionSyntax postfix)
     {
+        // C# 14 instance `operator ++()` / `operator --()`: a call that mutates the operand.
+        if (TryEmitInstanceOperator(postfix, postfix.Operand, null)) return;
+
+        // An indexer element or a wrapping integer (Emitter.IncDec.cs).
+        if ((postfix.IsKind(SyntaxKind.PostIncrementExpression) || postfix.IsKind(SyntaxKind.PostDecrementExpression))
+            && !IsForeignJs64Lvalue(postfix.Operand)
+            && TryEmitIncDec(postfix, postfix.Operand, postfix.IsKind(SyntaxKind.PostIncrementExpression), prefix: false))
+            return;
+
         // ++ / -- on a 64-bit integer or decimal (see EmitPrefixUnary). Postfix must yield the OLD
         // value; in a void (statement / for-incrementor) context the result is discarded, so the
         // cheaper new-value form suffices.

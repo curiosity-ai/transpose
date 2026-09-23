@@ -93,6 +93,14 @@ public sealed partial class Emitter
 
     private void EmitExpression(ExpressionSyntax expr)
     {
+        // An expression already evaluated into a temporary (Emitter.IncDec.cs, compound assignment to
+        // an element whose index has side effects) is written as that temporary.
+        if (_exprOverride is { } over && ReferenceEquals(over.node, expr))
+        {
+            _w.Write(over.text);
+            return;
+        }
+
         switch (expr)
         {
             case LiteralExpressionSyntax lit:
@@ -116,7 +124,23 @@ public sealed partial class Emitter
                 EmitElementBinding(elemBinding);
                 break;
             case InvocationExpressionSyntax invocation:
-                EmitInvocation(invocation);
+                // A ref-returning method hands back a cell (Emitter.RefCells.cs); read its value unless
+                // this call is the operand of a ref context, which wants the cell itself.
+                if (ReferenceEquals(_cellRequest, invocation))
+                {
+                    _cellRequest = null;
+                    EmitInvocation(invocation);
+                }
+                else if (ProducesRefCell(_model.GetSymbolInfo(invocation).Symbol))
+                {
+                    _w.Write("(");
+                    EmitInvocation(invocation);
+                    _w.Write(").v");
+                }
+                else
+                {
+                    EmitInvocation(invocation);
+                }
                 break;
             case ObjectCreationExpressionSyntax creation:
                 EmitObjectCreation(creation);
@@ -237,11 +261,11 @@ public sealed partial class Emitter
                 EmitExpression(checkedExpr.Expression);
                 break;
             case RefExpressionSyntax refExpr:
-                // JavaScript has no by-ref aliases, so `ref <expr>` (e.g. a ref-returning indexer's
-                // `return ref _array[i]`) collapses to the referenced expression's value. This is
-                // correct for the ref structs the BCL defines (Span/ReadOnlySpan), which are
-                // represented as the underlying JS array — element access yields the value directly.
-                EmitExpression(refExpr.Expression);
+                // `ref <expr>` is a reference to a location, emitted as a cell over it (see
+                // Emitter.RefCells.cs). A runtime package keeps its historical value semantics:
+                // Span's `return ref _array[i]` is read by every consumer as the element's value.
+                if (RefCellsEnabled) EmitRefCell(refExpr.Expression);
+                else EmitExpression(refExpr.Expression);
                 break;
             case AwaitExpressionSyntax await:
                 // tps.js Tasks are not natively thenable; Transpose.toPromise adapts a Task (or an
@@ -319,6 +343,13 @@ public sealed partial class Emitter
     private void EmitExpressionConverted(ExpressionSyntax expr, ITypeSymbol? targetType,
         bool targetIsForeignJs = false, bool copyStructs = true)
     {
+        // A reference is not a value: no conversion, and above all no struct copy, applies to it.
+        if (expr is RefExpressionSyntax && RefCellsEnabled)
+        {
+            EmitExpression(expr);
+            return;
+        }
+
         // Numeric narrowing to an integer type needs truncation.
         var sourceType = _model.GetTypeInfo(expr).Type;
 
@@ -603,9 +634,12 @@ public sealed partial class Emitter
         or SpecialType.System_IntPtr or SpecialType.System_UIntPtr;
 
     /// <summary>An expression that references existing storage (so could alias).</summary>
-    private static bool IsReferencingExpression(ExpressionSyntax expr) => expr switch
+    private bool IsReferencingExpression(ExpressionSyntax expr) => expr switch
     {
         IdentifierNameSyntax => true,
+        // A ref-returning call reads the storage its reference points at (Emitter.RefCells.cs), so
+        // `Point p = FirstPoint();` is a copy of that element, not an alias of it.
+        InvocationExpressionSyntax inv => ProducesRefCell(_model.GetSymbolInfo(inv).Symbol),
         MemberAccessExpressionSyntax => true,
         ElementAccessExpressionSyntax => true,
         ThisExpressionSyntax => true,
@@ -745,6 +779,8 @@ public sealed partial class Emitter
         {
             case ILocalSymbol local:
                 _w.Write(NameMangler.JsIdentifier(local.Name));
+                // A ref local holds a cell over the location it refers to (Emitter.RefCells.cs).
+                if (IsRefLocal(local)) _w.Write(".v");
                 break;
             case IParameterSymbol param:
                 // A captured primary-constructor parameter referenced from an instance

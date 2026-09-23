@@ -579,6 +579,11 @@ public sealed partial class Emitter
         foreach (var indexer in type.GetMembers().OfType<IPropertySymbol>().Where(p => !p.IsStatic && p.IsIndexer && !p.IsAbstract))
         {
             var idx = indexer;
+            if (ProducesRefCell(idx) && idx.GetMethod is not null)
+            {
+                entries.Add(() => EmitRefCellIndexerEntries(idx));
+                continue;
+            }
             if (idx.GetMethod is not null) entries.Add(() => EmitAccessorEntry(TransposeNaming.IndexerAccessorName(idx, isGet: true), idx.GetMethod!, true));
             if (idx.SetMethod is not null) entries.Add(() => EmitAccessorEntry(TransposeNaming.IndexerAccessorName(idx, isGet: false), idx.SetMethod!, false));
         }
@@ -595,6 +600,29 @@ public sealed partial class Emitter
                 _w.WriteLine(i < entries.Count - 1 ? "," : "");
             }
         });
+    }
+
+    /// <summary>
+    /// A ref-returning indexer (Emitter.RefCells.cs): the getter body, which returns a cell, becomes
+    /// <c>getItem$ref</c>; <c>getItem</c>/<c>setItem</c> read and write through it, so indexing it and
+    /// assigning to an element (which C# allows through the reference even with no setter) keep the
+    /// ordinary accessor shape.
+    /// </summary>
+    private void EmitRefCellIndexerEntries(IPropertySymbol indexer)
+    {
+        var getter = indexer.GetMethod!;
+        var cell = RefCellIndexerName(indexer);
+        var ps = string.Join(", ", getter.Parameters.Select(p => NameMangler.JsIdentifier(p.Name)));
+        EmitAccessorEntry(cell, getter, true);
+        _w.WriteLine(",");
+        _w.Write($"{NameMangler.JsPropertyKey(TransposeNaming.IndexerAccessorName(indexer, isGet: true))}: function ({ps}) ");
+        _w.Write($"{{ return this.{cell}({ps}).v; }}");
+        if (indexer.RefKind == RefKind.Ref)
+        {
+            _w.WriteLine(",");
+            _w.Write($"{NameMangler.JsPropertyKey(TransposeNaming.IndexerAccessorName(indexer, isGet: false))}: function ({ps}{(ps.Length > 0 ? ", " : "")}value) ");
+            _w.Write($"{{ this.{cell}({ps}).v = value; }}");
+        }
     }
 
     private void EmitAccessorEntry(string name, IMethodSymbol accessor, bool getter)
@@ -878,6 +906,12 @@ public sealed partial class Emitter
             for (var i = 0; i < props.Count; i++)
             {
                 var p = props[i];
+                if (ProducesRefCell(p) && p.GetMethod is { } refGetter)
+                {
+                    EmitRefCellPropertyEntries(p, refGetter);
+                    _w.WriteLine(i < props.Count - 1 ? "," : "");
+                    continue;
+                }
                 _w.Write($"{NameMangler.JsPropertyKey(TransposeNaming.MemberJsName(p))}: ");
                 _w.Block(() =>
                 {
@@ -896,6 +930,36 @@ public sealed partial class Emitter
                 });
                 _w.WriteLine(i < props.Count - 1 ? "," : "");
             }
+        });
+    }
+
+    /// <summary>
+    /// A ref-returning property (Emitter.RefCells.cs): its getter body, which returns a cell, becomes
+    /// <c>$ref$P</c>, and <c>P</c> itself is a value view over that cell — a getter reading it and, for
+    /// a writable <c>ref</c> (not <c>ref readonly</c>), a setter writing through it — so every ordinary
+    /// read and assignment of the property keeps working unchanged.
+    /// </summary>
+    private void EmitRefCellPropertyEntries(IPropertySymbol p, IMethodSymbol getter)
+    {
+        var cell = RefCellPropertyName(p);
+        _w.Write($"{NameMangler.JsPropertyKey(cell)}: ");
+        _w.Block(() =>
+        {
+            _w.Write("get: function () ");
+            EmitAccessorBody(getter, isGetter: true);
+            _w.WriteLine();
+        });
+        _w.WriteLine(",");
+        _w.Write($"{NameMangler.JsPropertyKey(TransposeNaming.MemberJsName(p))}: ");
+        _w.Block(() =>
+        {
+            _w.Write($"get: function () {{ return this.{cell}.v; }}");
+            if (p.RefKind == RefKind.Ref)
+            {
+                _w.WriteLine(",");
+                _w.Write($"set: function (value) {{ this.{cell}.v = value; }}");
+            }
+            _w.WriteLine();
         });
     }
 

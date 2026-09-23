@@ -358,6 +358,9 @@ internal static class TransposeNaming
 
     /// <summary>An Transpose runtime/BCL package (Transpose.dll, Transpose.Core.dll, Transpose.Newtonsoft.Json.dll, …) whose
     /// types are provided pre-compiled by the runtime, as opposed to a user library.</summary>
+    /// <summary>True for a Transpose runtime/BCL package (<see cref="IsTransposeRuntimeAssembly"/>).</summary>
+    public static bool IsRuntimePackage(IAssemblySymbol? asm) => IsTransposeRuntimeAssembly(asm);
+
     private static bool IsTransposeRuntimeAssembly(IAssemblySymbol? asm)
     {
         var n = asm?.Name;
@@ -695,6 +698,39 @@ internal static class TransposeNaming
                 if (sourceIface)
                 {
                     if (isExplicit) continue;                    // already mangled
+
+                    // An indexer is not reached through a slot of its own name — `this[]` is not a JS
+                    // member — but through its accessors, so alias those: a call through the interface
+                    // is `x.IFace$getItem(i)` / `x.IFace$setItem(i, v)`, the implementer declares
+                    // `getItem`/`setItem`. Without this every indexer used through a source interface
+                    // threw "IFace$setItem is not a function".
+                    if (member is IPropertySymbol { IsIndexer: true } ifaceIndexer && impl is IPropertySymbol implIndexer)
+                    {
+                        void AddAccessor(string plainName, string mangledName)
+                        {
+                            if (plainName != mangledName && seen.Add(plainName + "\0" + mangledName))
+                                pairs.Add((plainName, mangledName));
+                        }
+                        var refCell = Emitter.ProducesRefCell(implIndexer);
+                        if (ifaceIndexer.GetMethod is not null)
+                            AddAccessor(IndexerAccessorName(implIndexer, isGet: true), IndexerAccessorName(ifaceIndexer, isGet: true));
+                        // A writable ref-returning indexer is assignable through the reference even with no
+                        // setter; its value view synthesizes one (Emitter.RefCells.cs).
+                        if (ifaceIndexer.SetMethod is not null || (refCell && ifaceIndexer.RefKind == RefKind.Ref))
+                            AddAccessor(IndexerAccessorName(implIndexer, isGet: false), IndexerAccessorName(ifaceIndexer, isGet: false));
+                        if (refCell)
+                            AddAccessor(Emitter.RefCellIndexerName(implIndexer), Emitter.RefCellIndexerName(ifaceIndexer));
+                        continue;
+                    }
+
+                    // A ref-returning property is reached as a value view (the property's own slot,
+                    // aliased below) and, in a ref context, through its cell accessor — alias that too.
+                    if (member is IPropertySymbol ifaceProp && impl is IPropertySymbol implProp && Emitter.ProducesRefCell(implProp))
+                    {
+                        var plainCell = Emitter.RefCellPropertyName(implProp);
+                        var mangledCell = "$ref$" + InterfaceMemberName(ifaceProp);
+                        if (seen.Add(plainCell + "\0" + mangledCell)) pairs.Add((plainCell, mangledCell));
+                    }
 
                     var plain = LeafJsName(impl);
                     var mangled = InterfaceMemberName(member);
