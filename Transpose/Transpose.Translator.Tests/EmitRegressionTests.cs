@@ -4107,5 +4107,75 @@ public class Program
     }
 }");
         }
+
+        /// <summary>
+        /// `Array.Resize` ALLOCATES. It takes its array by ref and assigns a NEW one, leaving the
+        /// original untouched — which is the whole reason the parameter is `ref T[]` rather than the
+        /// method returning void over the same storage.
+        ///
+        /// <para>
+        /// The runtime set `arr.v.length` instead, so it resized the caller's array in place and
+        /// handed the same object back: `var c = a; Array.Resize(ref c, 5);` left `a` five long too,
+        /// with the two aliased forever after. Nothing failed at the call — it surfaced later and
+        /// somewhere else, as an array that had grown behind the code reading it, which is exactly
+        /// how it was found (a probe whose every later assertion was corrupted by one earlier
+        /// Resize).
+        /// </para>
+        ///
+        /// <para>Run against native .NET, so every line here is .NET's answer, not a guess.</para>
+        /// </summary>
+        [TestMethod]
+        public Task ArrayResizeAllocatesAndLeavesTheSourceAloneAsync()
+        {
+            return RunTest(@"
+using System;
+using System.Collections.Generic;
+
+public class Program
+{
+    public static void Main()
+    {
+        // Growing: the source keeps its length and its identity.
+        int[] a = { 1, 2, 3 };
+        int[] c = a;
+        Array.Resize(ref c, 5);
+        Console.WriteLine(""grown:"" + string.Join("","", c) + "" source:"" + string.Join("","", a));
+        Console.WriteLine(""aliased:"" + ReferenceEquals(a, c));
+
+        // Shrinking: same again, and the kept elements are the leading ones.
+        int[] t = { 7, 8 };
+        int[] s = t;
+        Array.Resize(ref t, 1);
+        Console.WriteLine(""shrunk:"" + string.Join("","", t) + "" source:"" + string.Join("","", s));
+
+        // Resizing to the length it already has keeps the very same array.
+        int[] same = { 4, 5 };
+        int[] alias = same;
+        Array.Resize(ref same, 2);
+        Console.WriteLine(""nochange:"" + ReferenceEquals(same, alias));
+
+        // From null, to zero, and a reference element type (new slots are null, not undefined).
+        int[] n = null;
+        Array.Resize(ref n, 2);
+        Console.WriteLine(""fromnull:"" + n.Length + "":"" + string.Join("","", n));
+
+        int[] z = { 1, 2 };
+        Array.Resize(ref z, 0);
+        Console.WriteLine(""tozero:"" + z.Length);
+
+        string[] strs = { ""a"" };
+        Array.Resize(ref strs, 3);
+        Console.WriteLine(""strings:"" + strs.Length + "":"" + (strs[1] == null) + "":"" + strs[0]);
+
+        // The resized array is a real T[]: its element type survives, and everything that reads one
+        // still works on it. (These were reported as broken and are not — a Resize earlier in the
+        // same probe had grown the array they were reading.)
+        Console.WriteLine(""elem:"" + strs.GetType().GetElementType().Name);
+        Array.Reverse(c);
+        Console.WriteLine(""reversed:"" + string.Join("","", c));
+        Console.WriteLine(""list:"" + new List<int>(c).Count);
+    }
+}");
+        }
     }
 }

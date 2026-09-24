@@ -790,9 +790,12 @@
                 throw new System.ArgumentOutOfRangeException.$ctor3("newSize", newSize, "newSize cannot be less than 0.");
             }
 
-            var oldSize = 0,
-                isFn = Transpose.isFunction(val),
-                ref = arr.v;
+            var isFn = Transpose.isFunction(val),
+                old = arr.v,
+                oldSize = old ? old.length : 0,
+                kept = oldSize < newSize ? oldSize : newSize,
+                ref,
+                i;
 
             if (isFn) {
                 var v = val();
@@ -803,18 +806,30 @@
                 }
             }
 
-            if (!ref) {
-                ref = System.Array.init(new Array(newSize), T);
-            } else {
-                oldSize = ref.length;
-                ref.length = newSize;
+            /// Array.Resize ALLOCATES. It takes its array by ref and assigns a new one, leaving the
+            /// original untouched - which is the whole reason the parameter is `ref T[]` rather than
+            /// the method returning void over the same storage.
+            ///
+            /// Setting `arr.v.length` instead resized the caller's array in place and handed the same
+            /// object back, so every other reference to it silently changed length: `var c = a;
+            /// Array.Resize(ref c, 5);` left `a` five long too, with the two aliased forever after.
+            /// Nothing failed at the call - it surfaced later and somewhere else, as an array that had
+            /// grown behind the code reading it.
+            ///
+            /// Resizing to the size it already is keeps the same array, as .NET does.
+            if (old && oldSize === newSize) {
+                return;
             }
 
-            for (var i = oldSize; i < newSize; i++) {
+            ref = System.Array.init(new Array(newSize), (old && old.$type) ? old.$type.$elementType : T);
+
+            for (i = 0; i < kept; i++) {
+                ref[i] = old[i];
+            }
+
+            for (i = kept; i < newSize; i++) {
                 ref[i] = isFn ? val() : val;
             }
-
-            ref.$s = [ref.length];
 
             arr.v = ref;
         },
