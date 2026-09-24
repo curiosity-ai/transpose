@@ -223,6 +223,103 @@
             Uint32Array: System.UInt32
         },
 
+        /// Whether a raw JavaScript array can be read as `type` (a T[]), decided by looking at what it
+        /// actually holds, and - when it can - ADOPTING it as one.
+        ///
+        /// Only ever reached for an array with no $type: one that came out of JSON.parse, a binding, or
+        /// hand-written JavaScript. An array Transpose created answers from its $type and never gets
+        /// here, so this costs a normal program nothing.
+        ///
+        /// Each element is tested with the same Transpose.is a scalar would use, so the rules are the
+        /// ones already documented rather than a second set: every JS number is a double, so a fresh
+        /// [1,2,3] reads as int[] and as double[] alike, exactly as (object)1 is double is true. A
+        /// null element rules out a value-typed T, nullables excepted.
+        ///
+        /// Which of those it settles on is decided by whichever test runs first, because that test
+        /// adopts it: after `is int[]` the array IS an int[] and a later `is double[]` answers false,
+        /// the same as it would for an array Transpose built. That is the cost of giving it a type
+        /// identity at all, it is confined to the numeric types JavaScript cannot tell apart, and it
+        /// is the same ambiguity the boxed-numeric rule already documents.
+        ///
+        /// An EMPTY array matches any T[] - nothing in it contradicts the claim, and it is usable as
+        /// one - but it is deliberately NOT adopted: there was no element to read the type off, so
+        /// pinning it to whichever T happened to be asked about first would be a guess, and would make
+        /// a later `is string[]` on the very same array answer false.
+        matchesUntyped: function (obj, elementType) {
+            var type = elementType.$elementType ? elementType : null,
+                et = type ? type.$elementType : elementType,
+                rank = type ? type.$rank : 1,
+                i,
+                v;
+
+            if (System.Array.getRank(obj) !== rank) {
+                return false;
+            }
+
+            /// Transpose.Reflection.canAcceptNull does not special-case Nullable<T>, so isValueType
+            /// answers true for int? and a null element would rule out int?[] - which is the one
+            /// array type a null is most at home in. Ask Nullable directly rather than widen
+            /// canAcceptNull, whose blast radius is the whole runtime.
+            var acceptsNull = !Transpose.Reflection.isValueType(et) || System.Nullable.getUnderlyingType(et) !== null,
+                any = false;
+
+            for (i = 0; i < obj.length; i++) {
+                v = obj[i];
+
+                if (v === null || v === undefined) {
+                    if (!acceptsNull) {
+                        return false;
+                    }
+                    continue;
+                }
+
+                any = true;
+
+                if (!Transpose.is(v, et)) {
+                    return false;
+                }
+            }
+
+            if (any) {
+                System.Array.adopt(obj, et, rank);
+            }
+
+            return true;
+        },
+
+        /// Record an element type on a JavaScript array, so that from here on it IS a C# T[]: GetType,
+        /// ToString, GetElementType, Clone and the element-type check on a write all read $type, and
+        /// every one of them was answering for a bare "Array" before.
+        ///
+        /// The stamp is NON-ENUMERABLE, which is the whole difference between adopting a foreign array
+        /// and creating one. System.Array.type assigns $type plainly, and an own enumerable function
+        /// property makes structuredClone refuse the array outright (DataCloneError) and shows up in
+        /// Object.keys and for-in. Doing that to an array the application got from somewhere else -
+        /// and may well postMessage back - would be a side effect of merely TESTING it. Defined this
+        /// way it is invisible to Object.keys, for-in, JSON.stringify and spread, and the array stays
+        /// structured-cloneable.
+        ///
+        /// Best-effort: a frozen or sealed array cannot take the stamp, and that is not a reason to
+        /// fail a type test that is true on the elements - it just keeps the weaker type identity.
+        adopt: function (obj, elementType, rank) {
+            if (obj.$type) {
+                return obj;
+            }
+
+            try {
+                Object.defineProperty(obj, "$type", {
+                    value: System.Array.type(elementType, rank),
+                    configurable: true,
+                    writable: true,
+                    enumerable: false
+                });
+            } catch (e) {
+                // frozen/sealed, or a host object that refuses new properties - keep going untyped.
+            }
+
+            return obj;
+        },
+
         is: function (obj, type) {
             if (obj instanceof Transpose.ArrayEnumerator) {
                 if ((obj.constructor === type) || (obj instanceof type) ||
@@ -251,7 +348,14 @@
                     return System.Array.getRank(obj) === type.$rank && Transpose.Reflection.isAssignableFrom(type.$elementType, et);
                 }
 
-                type = Array;
+                /// A raw JavaScript array - JSON.parse'd, handed over by a binding, built by
+                /// hand-written JS - carries no $type, so there is no element type to compare against.
+                /// Answering "it is an array, close enough" made EVERY T[] test succeed: a [1,2,3]
+                /// from the wire matched string[], bool[] and DateTime[] alike, so the first arm of an
+                /// `is int[] / is string[]` chain always won and the bound variable then failed on its
+                /// first real use. The element type is not recorded anywhere, but it IS observable, so
+                /// read it off the elements.
+                return System.Array.matchesUntyped(obj, type);
             }
 
             if ((obj.constructor === type) || (obj instanceof type)) {
