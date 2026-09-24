@@ -2066,6 +2066,17 @@
                 return Transpose.fn.bind(obj, method, args, appendArgs, true);
             },
 
+            /// Bind an instance method group, reading the method off the receiver rather than taking it
+            /// as a second argument, so the CALLER only has to write the receiver once.
+            ///
+            /// That is the whole reason this exists next to cacheBind: the emitter used to produce
+            /// `(recv).M.bind(recv)`, which evaluates recv TWICE - `Get().OnClick` called Get() twice
+            /// and then bound the second object to a method read off the first - where C# evaluates the
+            /// receiver of a method group exactly once.
+            cacheBindMember: function (obj, name, args, appendArgs) {
+                return Transpose.fn.bind(obj, obj[name], args, appendArgs, true);
+            },
+
             bind: function (obj, method, args, appendArgs, cache) {
                 if (method && method.$method === method && method.$scope === obj) {
                     return method;
@@ -2073,7 +2084,11 @@
 
                 if (obj && cache && obj.$$bind) {
                     for (var i = 0; i < obj.$$bind.length; i++) {
-                        if (obj.$$bind[i].$method === method) {
+                        /// Keyed by the bound ARGUMENTS as well as the method. A generic method group
+                        /// threads its type arguments as leading bound parameters, so `Show<int>` and
+                        /// `Show<string>` are the same $method and different delegates - keying on the
+                        /// method alone handed the second one the first one's binding.
+                        if (obj.$$bind[i].$method === method && Transpose.fn.$sameBoundArgs(obj.$$bind[i].$boundArgs, args)) {
                             return obj.$$bind[i];
                         }
                     }
@@ -2129,15 +2144,50 @@
                 }
 
                 if (obj && cache) {
-                    obj.$$bind = obj.$$bind || [];
-                    obj.$$bind.push(fn);
+                    if (!obj.$$bind) {
+                        /// Non-enumerable: the cache hangs off whatever object the delegate targets,
+                        /// and that can be a plain JS object or an [ObjectLiteral] whose entire purpose
+                        /// is to be read by hand-written JavaScript and serialized. An own enumerable
+                        /// array property would show up in Object.keys and for-in and make
+                        /// structuredClone refuse it.
+                        try {
+                            Object.defineProperty(obj, "$$bind", { value: [], configurable: true, writable: true, enumerable: false });
+                        } catch (e) {
+                            obj.$$bind = [];
+                        }
+                    }
+
+                    if (obj.$$bind) {
+                        obj.$$bind.push(fn);
+                    }
                 }
 
                 fn.$method = method;
                 fn.$scope = obj;
+                fn.$boundArgs = args;
                 fn.equals = Transpose.fn.equals;
 
                 return fn;
+            },
+
+            /// Whether two bound-argument lists are the same binding. Both undefined is the common
+            /// case (a plain method group) and has to compare equal, or nothing would ever hit.
+            $sameBoundArgs: function (a, b) {
+                if (a === b) {
+                    return true;
+                }
+
+                if (!a || !b || a.length !== b.length) {
+                    return false;
+                }
+
+                for (var i = 0; i < a.length; i++) {
+                    if (a[i] !== b[i]) {
+                        return false;
+                    }
+                }
+
+                return true;
             },
 
             bindScope: function (obj, method) {

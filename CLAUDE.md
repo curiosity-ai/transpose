@@ -680,6 +680,60 @@ The short version:
   `Task.Run(async () => …)` both infer a Task-returning delegate, so their Task is still returned.
   See `EmitMaybeAsyncBody` (`Emitter.Members.cs`), `ConvertsToVoidDelegate`
   (`Emitter.Expressions2.cs`) and `AsyncVoidFaultTests`.
+- **An instance method group is converted through the delegate cache
+  (`Transpose.fn.cacheBindMember`).** `Function.prototype.bind` mints a fresh function on every call,
+  so emitting `(recv).M.bind(recv)` gave each conversion of one method group its own identity. The
+  shape that reports it is an event handler: `el.RemoveEventListener("click", OnClick)` hands the DOM
+  a different function than `el.AddEventListener("click", OnClick)` did, so the handler is never
+  removed and stays attached for the life of the page. The same cause made
+  `Action a = OnClick, b = OnClick; a == b` answer **false** where .NET answers true — a bound
+  function carries none of the target/method identity `Delegate.Equals` compares — and the receiver
+  was written into the emitted expression **twice**, so `Get().OnClick` called `Get()` twice and bound
+  the second object to a method read off the first, where C# evaluates a method group's receiver once.
+
+  All three are one fix, and the mechanism was already in the runtime: `fn.cacheBind` (inherited from
+  h5, defined and never called) returns the same delegate for a (target, method) pair, hanging the
+  cache off the target as `$$bind`. `cacheBindMember` is the same thing taking the method **name**
+  instead of the method, which is what lets the emitter write the receiver once. Two corrections came
+  with putting it to use: the cache is now keyed by the **bound arguments** as well as the method, or
+  a generic method group threaded with different type arguments (`Show<int>` vs `Show<string>` — they
+  are one `$method`) would hand the second one the first one's binding; and `$$bind` is defined
+  **non-enumerable**, because the target can be a plain JS object or an `[ObjectLiteral]` whose whole
+  purpose is to be read by hand-written JavaScript, and an own enumerable array would show up in
+  `Object.keys`/`for-in` and make `structuredClone` refuse it.
+
+  A **static** method group is untouched: it is already a stable reference, and it binds only to thread
+  type arguments. A **lambda** is untouched too — each one is its own delegate, exactly as in .NET, so
+  removing a handler written as a lambda still means keeping the reference. Covered by
+  `DelegateIdentityTests`.
+- **A JavaScript array is adopted by the first `is`/`as` that proves its element type
+  (`System.Array.matchesUntyped`/`adopt`).** An array off the wire — `JSON.parse`'d, handed over by a
+  binding, built by hand-written JS — is a real JS Array the runtime's helpers duck-type over happily
+  (indexing, `Length`, `foreach`, LINQ, `CopyTo`, `Sort` all work), but it carries no `$type`, and
+  that used to end the conversation: `System.Array.is` dropped the requested element type and answered
+  "it is an array", so a `[1,2,3]` matched `string[]`, `bool[]` and `DateTime[]` alike. The first arm
+  of an `is int[]` / `is string[]` chain therefore always won and the variable it bound failed on its
+  first real use, a page away from the test. The element type is recorded nowhere but it *is*
+  observable, so it is read off the elements — each one through the same `Transpose.is` a scalar
+  would use, so the rules are the existing ones rather than a second set.
+
+  Having proved it, the test **adopts** the array: `$type` is recorded and from there on it *is* a
+  C# `T[]`, which is the other half of the same report — `GetType()` said `Array` (not even a C# type
+  name), `GetElementType()` was null and `ToString()` said `System.Array`. Adoption keeps the array's
+  **identity** (it is not copied, so writes still cross both ways), and the stamp is **non-enumerable**,
+  which is the whole difference between adopting a foreign array and creating one: `System.Array.type`
+  assigns `$type` plainly, and an own *enumerable* function property makes `structuredClone` refuse the
+  array outright — so merely **testing** a value would have broken a later `postMessage` of it. It is
+  also best-effort: a frozen array keeps the weaker identity rather than failing a test that is true.
+
+  Two edges are deliberate. An **empty** array matches any `T[]` and is *not* adopted — there was no
+  element to read a type off, so pinning it would be a guess that made the next question about the same
+  array answer false. And because every JS number is a double, a fresh `[1,2,3]` answers true to both
+  `int[]` and `double[]`: **whichever asks first settles it**, and the other then answers false exactly
+  as it would for an array Transpose built. That is the cost of having a type identity at all, confined
+  to the numeric types JavaScript cannot tell apart, and it is the ambiguity the next bullet already
+  carries. A real C# array never reaches any of this — it answers from its own `$type` — so this costs
+  a normal program nothing. Covered by `JsArrayTypeIdentityTests`.
 - **A boxed numeric loses its exact type.** Every JS number is a double, so `(object)1 is double` is
   true and `objects.OfType<double>()` also matches the boxed `int`s. `long`/`ulong`/`decimal` are
   real runtime objects and are unaffected, as are reference types and structs.
