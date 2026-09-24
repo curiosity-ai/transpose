@@ -336,6 +336,9 @@ public sealed partial class Emitter
             EmitExpressionConverted(receiver, slot, IsForeignJsSlot(reduced));
             return;
         }
+        // `array.AsSpan()`-shaped calls take the array; `array.SequenceEqual(other)` or
+        // `array.IndexOf(x)` bind to a span extension, whose receiver is converted to the span first.
+        if (TryEmitSpanConversion(receiver, slot)) return;
         EmitExpression(receiver);
     }
 

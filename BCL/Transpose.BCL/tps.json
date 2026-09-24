@@ -274,7 +274,9 @@
             "Resources/.generated/System/Index.js",
             "Resources/.generated/System/Range.js",
             "Resources/.generated/System/Span.js",
+            "Resources/.generated/System/Span/Enumerator.js",
             "Resources/.generated/System/ReadOnlySpan.js",
+            "Resources/.generated/System/ReadOnlySpan/Enumerator.js",
             "Resources/.generated/System/MemoryExtensions.js",
 
             "Resources/.generated/System/ITupleInternal.js",

@@ -54,14 +54,62 @@
         var fn = TransposeR.toStrFn(t);
         return fn ? fn(v) : TransposeR.toStr(v);
     };
-    // Exception.StackTrace. A value caught by `catch (Exception)` is either a real System.Exception,
-    // which captured an Error into `errorStack` when it was constructed, or a raw JS error thrown by
-    // interop / a rejected promise, which has a native `stack` and no `errorStack`. C# matches both,
-    // so read whichever shape arrived instead of assuming errorStack (a raw error gave undefined).
+    // Exception.StackTrace. A real System.Exception carries an Error in `errorStack` — the one its
+    // constructor captured, or, for a JavaScript error a catch mapped through Exception.create, the
+    // original error itself. A raw JS error can still arrive where no catch mapped it (an
+    // Exception-typed value handed over by hand-written JavaScript); it has a native `stack` and no
+    // `errorStack`, so read whichever shape arrived.
     TransposeR.stackTrace = function (e) {
         if (e === null || e === undefined) { return null; }
         if (e.errorStack && e.errorStack.stack !== null && e.errorStack.stack !== undefined) { return e.errorStack.stack; }
         return (e.stack !== null && e.stack !== undefined) ? e.stack : null;
+    };
+    // Cells for `ref` locals and `ref` returns (Emitter.RefCells.cs): an object whose `v` reads and
+    // writes the referenced location itself, so a write through the reference lands where C# puts it.
+    // A ref/out parameter's holder has the same `{ v }` shape, which is what lets one pass for the other.
+    TransposeR.ref = function (get, set) {
+        return { get v() { return get(); }, set v(value) { set(value); } };
+    };
+    // An array element: the array and the index are fixed when the reference is taken.
+    TransposeR.refElem = function (array, index) {
+        if (array === null || array === undefined) { throw new System.NullReferenceException(); }
+        if (index < 0 || index >= array.length) { throw new System.IndexOutOfRangeException(); }
+        return { get v() { return array[index]; }, set v(value) { array[index] = value; } };
+    };
+    // A C# 14 instance compound-assignment/increment operator used as a value (Emitter.InstanceOperators.cs):
+    // run the mutating operator on the receiver, then yield the receiver, which is the expression's value.
+    TransposeR.opAssign = function (target, name, arg) {
+        if (arguments.length > 2) { target[name](arg); } else { target[name](); }
+        return target;
+    };
+    // `coll[i]++` / `--coll[i]` on an accessor indexer (Emitter.IncDec.cs): the receiver and the
+    // index arguments arrive evaluated once; `step` computes the new element value. Yields the new
+    // value for a prefix (or a discarded) form, the old one for a postfix.
+    TransposeR.incItem = function (target, getName, setName, args, step, yieldNew) {
+        var old = target[getName].apply(target, args);
+        var next = step(old);
+        target[setName].apply(target, args.concat([next]));
+        return yieldNew ? next : old;
+    };
+    // A postfix `x++` used as a value where x's step is a call (a static user-defined operator ++):
+    // run the write, yield the value x held before it.
+    TransposeR.postStep = function (old, write) { write(old); return old; };
+    // `arr[k++] op= v` where the index has a side effect (Emitter.IncDec.cs): the array and the index
+    // arrive evaluated once; `update` computes the new element from the old one. Yields the new value.
+    TransposeR.updElem = function (array, index, update) {
+        if (array === null || array === undefined) { throw new System.NullReferenceException(); }
+        if (index < 0 || index >= array.length) { throw new System.IndexOutOfRangeException(); }
+        return array[index] = update(array[index]);
+    };
+    // A positional pattern over a type with a hand-written Deconstruct (Emitter.Patterns.cs): run it
+    // with one out-holder per position, then test the values it produced.
+    TransposeR.decon = function (s, call, n, test) {
+        var h = [];
+        for (var i = 0; i < n; i++) { h.push({ v: null }); }
+        call(s, h);
+        var values = [];
+        for (var j = 0; j < n; j++) { values.push(h[j].v); }
+        return test(values);
     };
     TransposeR.is = function (v, t) { return Transpose.is(v, t); };
     TransposeR.as = function (v, t) { return Transpose.as ? Transpose.as(v, t) : (Transpose.is(v, t) ? v : null); };
@@ -121,7 +169,42 @@
     // helper therefore has to normalise first.
     TransposeR.spanArray = function (s) {
         if (s == null) { return []; }
-        return typeof s.toArray === 'function' ? s.toArray() : s;
+        if (s._array !== undefined) {
+            // A span object: its window of the backing array (null for default(Span<T>)).
+            return s._array == null ? [] : (s._offset === 0 && s._length === s._array.length ? s._array : s._array.slice(s._offset, s._offset + s._length));
+        }
+        if (typeof s === 'string') { return System.String.toCharArray(s); }
+        return s;
+    };
+    // Every span conversion (array, span, string -> Span<T>/ReadOnlySpan<T>), and every collection
+    // expression, params argument, stackalloc or u8 literal whose target is a span, builds its span
+    // here. `spanType` is the constructed target (System.Span$1(T) / System.ReadOnlySpan$1(T)).
+    TransposeR.toSpan = function (v, spanType) {
+        if (v == null) { return spanType.$fromArray(null, 0, 0); }
+        if (typeof v === 'string') { var chars = System.String.toCharArray(v); return spanType.$fromArray(chars, 0, chars.length); }
+        if (v._array !== undefined) { return spanType.$fromArray(v._array, v._offset, v._length); }
+        return spanType.$fromArray(v, 0, v.length);
+    };
+    // `span[a..b]` (Emitter.Spans.cs): a slice sharing the span's array, checked like Span.Slice.
+    TransposeR.spanRange = function (s, start, end) {
+        var a = start(s), b = end(s);
+        if (a < 0 || b > s._length || a > b) { throw new System.ArgumentOutOfRangeException(); }
+        return s.constructor.$fromArray(s._array, s._offset + a, b - a);
+    };
+    // `new string(span)` and string-constant patterns over a char span.
+    TransposeR.spanToString = function (s) {
+        var a = TransposeR.spanArray(s);
+        return a.length === 0 ? "" : System.String.fromCharArray(a, 0, a.length);
+    };
+    TransposeR.spanEqualsString = function (s, text) {
+        return text !== null && TransposeR.spanToString(s) === text;
+    };
+    // `foreach (ref var x in collection)`: the cell the enumerator publishes for its current element
+    // (Span/ReadOnlySpan's `$ref$Current`, or a source enumerator's ref-returning Current).
+    TransposeR.refCurrent = function (e) {
+        var cell = e.$ref;
+        if (cell !== undefined && cell !== null) { return cell; }
+        return TransposeR.ref(function () { return e.current; }, function () { throw new System.NotSupportedException(); });
     };
     TransposeR.spanSequenceEqual = function (a, b) {
         a = TransposeR.spanArray(a);
@@ -166,6 +249,8 @@
             return {
                 moveNext: function () { return e.moveNext ? e.moveNext() : e.MoveNext(); },
                 get current() { return e.Current !== undefined ? e.Current : e.current; },
+                // The current element's cell, for `foreach (ref var x in …)` (TransposeR.refCurrent).
+                get $ref() { return e.$ref$Current; },
                 // Forward disposal to the underlying enumerator so a foreach ending early still runs
                 // an iterator's finally / IDisposable cleanup (no-op when the source isn't disposable).
                 dispose: function () { if (e.dispose) { e.dispose(); } else if (e.Dispose) { e.Dispose(); } }
@@ -239,6 +324,7 @@
     TransposeR.spread = function (x) {
         if (x == null) { return []; }
         if (Array.isArray(x)) { return x; }
+        if (x._array !== undefined) { return TransposeR.spanArray(x); }
         var out = [], e = TransposeR.getEnumerator(x);
         while (e.moveNext()) { out.push(e.current); }
         return out;

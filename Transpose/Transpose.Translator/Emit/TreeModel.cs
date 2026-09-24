@@ -46,6 +46,7 @@ internal sealed class TreeModel
     /// <summary>The conversion C# applies to an expression at its usage site — notably whether it is
     /// a boxing conversion, which <see cref="GetTypeInfo"/> only reports as "converted to object".</summary>
     public Conversion GetConversion(ExpressionSyntax node) => For(node).GetConversion(node);
+    public IOperation? GetOperation(SyntaxNode node) => For(node).GetOperation(node);
 
     public ForEachStatementInfo GetForEachStatementInfo(CommonForEachStatementSyntax node)
         => For(node).GetForEachStatementInfo(node);

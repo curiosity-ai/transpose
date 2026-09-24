@@ -622,14 +622,48 @@ The short version:
   A struct from a referenced library, a BCL struct and a **ValueTuple** are copied by reference, so
   `var b = a; b.Inner.V = 9;` still writes through `a` for those. Widening it would make every
   `DateTime`/tuple assignment allocate, so it is a deliberate trade-off rather than an oversight.
-- **`Span<T>` does not accept the implicit array conversion** — `Span<int> s = new int[3];` emits
-  the bare array, so `s[0] = 1` throws "setItem is not a function". Unrelated to `stackalloc`;
-  the conversion itself is simply not modelled. A span therefore reaches JS in one of two shapes —
-  a real span object (built by a span constructor, e.g. through `string.AsSpan`) or the bare array —
-  so a span helper has to normalise first (`TransposeR.spanArray`). `MemoryExtensions.SequenceEqual`
-  does: C# resolves `someArray.SequenceEqual(other)` to *it* rather than to `Enumerable.SequenceEqual`
-  (the array-to-span conversion beats array-to-`IEnumerable`), so that very common LINQ call would
-  otherwise throw "getItem is not a function".
+- **A span is a real window onto an array (`Emitter.Spans.cs`).** `Span<T>`/`ReadOnlySpan<T>` are
+  transpiled C# structs (`BCL/Transpose.BCL/System/Span.cs`) over `_array`/`_offset`/`_length`, and every
+  place C# makes one goes through `TransposeR.toSpan(value, SpanType)` → the static `$fromArray`. C# 14's
+  first-class span conversions (array → span, span → read-only span, string → `ReadOnlySpan<char>`) are
+  language conversions, not `op_Implicit` calls, so before this nothing built the span at all and
+  `s[0] = 1` on a bare array threw "setItem is not a function". Covered: those conversions (including an
+  extension receiver, `EmitExtensionReceiver`), a collection expression or `params` argument into a span,
+  `stackalloc` into a span (a pointer target is still rejected), `"text"u8` (encoded at compile time),
+  `span[a..b]` (`TransposeR.spanRange`), `foreach (ref var x in span)` (the enumerators' `$ref$Current`),
+  `ref span[i]` (`getItem$ref`), and a string constant pattern or `switch` over `ReadOnlySpan<char>`
+  (`TransposeR.spanEqualsString`). The fixed-name members (`$fromArray`, `length`, `setItem`,
+  `getItem$ref`, `$ref$Current`) are the contract the runtime helpers and the emitter share. Roslyn only
+  accepts the `Span<T>` → `ReadOnlySpan<T>` conversion operator when it is declared **on `Span<T>`**.
+  `MemoryExtensions` deliberately has no `Reverse`/`Sort`: C# 14 would rebind every existing
+  `array.Reverse()` LINQ call to an in-place `void` span method. `SpanTests`.
+- **Implicit `Index` support is rewritten at the argument (`TryEmitImplicitIndexArgument`).** A type with
+  an `int` indexer and an `int` `Length`/`Count` accepts `x[^n]`; the argument becomes `len - n` (or
+  `idx.GetOffset(len)`), so every indexer shape and every use (read, write, compound, `++`) is covered at
+  once. A receiver with side effects is rejected, since it is read twice.
+- **A `ref` local or `ref` return is a cell (`Emitter.RefCells.cs`).** JavaScript has no by-reference
+  alias, and `ref expr` used to collapse to the value of `expr` — a ref local held a copy and every write
+  through it was lost, silently. A reference is now an object whose `v` reads and writes the location
+  (`TransposeR.ref`/`refElem`), the shape a `ref`/`out` parameter's holder already had, so one passes for
+  the other. The representation is decided **per member**, because a consumer compiled later must agree
+  with the assembly that emitted it: a ref-returning method, local function or delegate returns the cell
+  and its call is dereferenced except in a ref context; a ref-returning property or indexer keeps its
+  ordinary accessor shape (`P`, `getItem`/`setItem`) as a value view over a cell accessor
+  (`$ref$P`, `getItem$ref`), so every existing read/write path is untouched; and members of the runtime
+  packages (`Transpose`, `Transpose.*`) keep value semantics, because `Span<T>`'s indexer is a
+  ref-returning indexer the runtime and every published consumer read as a value. A call with `ref`
+  arguments to a ref-returning callee passes live cells rather than write-back holders, since the
+  callee may return one of them (`Pick(ref a, ref b) = 99`). `RefLocalAndReturnTests`.
+- **A caught JavaScript error is mapped onto its .NET exception.** Every emitted `catch` starts with
+  `let $e = System.Exception.create($ex)` — `TypeError` → `NullReferenceException`, `RangeError` →
+  `ArgumentOutOfRangeException`, any other `Error` → `SystemException`, anything else → `Exception` — and
+  a real `System.Exception` passes through unchanged. Before it, no typed clause could match a null
+  dereference, which is a `TypeError`. The clauses and catch variables see `$e`; `$ex` stays the thrown
+  value, so an unmatched clause and a bare `throw;` rethrow the **original** error (a JavaScript caller
+  or the browser console still sees the `TypeError`), and `create` caches the wrapper on the error
+  (`$tpsException`) so every C# catch it passes through gets the same object. One consequence:
+  `Script.InstanceOf(e, TypeError)` on a catch variable is false — `e` is the wrapper; its original is
+  `errorStack`. `JavaScriptErrorCatchTests`.
 - **An `async void` body reports its fault (`TransposeR.fireAndForget`).** Every other async body
   returns a tps.js Task through `TransposeR.fromPromise`, but an `async void` method, an `async void`
   local function, and an async lambda converted to a **void-returning delegate**
@@ -713,10 +747,17 @@ The short version:
   documented difference: it answers true only for a real collection, where .NET also answers true for lazy
   operators whose count it can work out cheaply — false is a permitted answer, but it is not always the
   *same* answer.
-- **A positional pattern only resolves members for tuples and records** — `x is Foo(1, 2)` against a
-  type with a hand-written `Deconstruct(out …)` still reads `Item1`/`Item2` (see
-  `PositionalPatternMemberNames`), because a pattern test is emitted as a single JS expression and
-  cannot call `Deconstruct` with out-holders.
+- **A positional pattern over a hand-written `Deconstruct` calls it (`TransposeR.decon`).** The method
+  comes from Roslyn's `IRecursivePatternOperation.DeconstructSymbol` — instance, extension, generic — and
+  is run with one out-holder per position before the sub-patterns test the values; tuples and records
+  still read their members directly. List patterns take their length/indexer/slice from
+  `IListPatternOperation`, so they work over a string (`charCodeAt`), a span and a list as well as an
+  array. `DeconstructAndListPatternTests`.
+- **A struct operator that writes to its parameter gets a copy (`OperatorMutatesParameter`).** Operator
+  operands are passed uncopied (`EmitOperatorOperand`), which is only sound while the operator does not
+  write to its by-value parameter; one that does (assigns, steps, `ref`-passes it, or calls a method on
+  it — a syntactic test that errs towards cloning) now receives `TransposeR.clone(operand)`, so
+  `var old = c++` keeps the old value. `StructOperatorTests`.
 - **Reference resolution beyond the NuGet cache** — `<Reference HintPath>` and `tps.json`
   `references`/`referencesPath` (partially covered by `--reference`).
 - **MSBuild evaluation** stays deliberately shallow: `<Import>` is followed (see above) but
