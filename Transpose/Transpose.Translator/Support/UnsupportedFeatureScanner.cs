@@ -326,29 +326,31 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
     public override void VisitClassDeclaration(ClassDeclarationSyntax node)
     {
         CheckUnsafeModifier(node.Modifiers, node);
-        CheckDuplicateJsNames(node);
+        CheckTypeDeclaration(node);
         base.VisitClassDeclaration(node);
     }
 
     public override void VisitRecordDeclaration(RecordDeclarationSyntax node)
     {
-        CheckDuplicateJsNames(node);
+        CheckTypeDeclaration(node);
         base.VisitRecordDeclaration(node);
     }
 
     public override void VisitInterfaceDeclaration(InterfaceDeclarationSyntax node)
     {
         // Reached for a default interface implementation, which has a body and so is emitted.
-        CheckDuplicateJsNames(node);
+        CheckTypeDeclaration(node);
         base.VisitInterfaceDeclaration(node);
     }
 
     /// <summary>
-    /// Reports members of this type that would be emitted under the same JavaScript name. Runs off the
-    /// walk the scanner is already doing, reusing its semantic model, so it costs one
-    /// <c>GetDeclaredSymbol</c> per type declaration rather than a second pass over the trees.
+    /// The checks that are properties of a whole type rather than of a syntax node: members that
+    /// would collide on one JavaScript name, and an <c>[ObjectLiteral]</c> slot with no plain JS
+    /// representation. Runs off the walk the scanner is already doing, reusing its semantic model, so
+    /// it costs one <c>GetDeclaredSymbol</c> per type declaration rather than a second pass over the
+    /// trees.
     /// </summary>
-    private void CheckDuplicateJsNames(TypeDeclarationSyntax node)
+    private void CheckTypeDeclaration(TypeDeclarationSyntax node)
     {
         if (_model.GetDeclaredSymbol(node) is not INamedTypeSymbol type) return;
 
@@ -358,6 +360,67 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
         }
 
         DuplicateJsNameScanner.Report(type, _diagnostics);
+        ObjectLiteralMemberScanner.Report(type, _diagnostics);
+    }
+
+    // ---- [ObjectLiteral] type tests ---------------------------------------
+    //
+    // See ObjectLiteralTypeTestScanner for why a type test against a literal cannot be answered at
+    // run time. These four visitors are every syntactic way of asking one: `is`/`as`, a declaration
+    // pattern (`is Lit l`), a bare type pattern (`is Lit`, `is not Lit`, a `switch` arm), and a
+    // recursive pattern (`is Lit { X: 1 }`, `is Lit(var a, var b)`). A cast is deliberately absent:
+    // it asserts rather than asks, and is the fix this reports.
+
+    public override void VisitBinaryExpression(BinaryExpressionSyntax node)
+    {
+        if (node.IsKind(SyntaxKind.IsExpression) || node.IsKind(SyntaxKind.AsExpression))
+        {
+            var form = node.IsKind(SyntaxKind.IsExpression)
+                ? "an 'is' test against it answers true for any object"
+                : "an 'as' conversion to it succeeds for any object";
+            ReportTypeTest(node.Right as TypeSyntax, _model.GetTypeInfo(node.Left).Type, form);
+        }
+
+        base.VisitBinaryExpression(node);
+    }
+
+    public override void VisitDeclarationPattern(DeclarationPatternSyntax node)
+    {
+        CheckPatternType(node, node.Type);
+        base.VisitDeclarationPattern(node);
+    }
+
+    public override void VisitTypePattern(TypePatternSyntax node)
+    {
+        CheckPatternType(node, node.Type);
+        base.VisitTypePattern(node);
+    }
+
+    // `is not Lit`, `switch { Lit => … }` — a bare name in pattern position parses as a CONSTANT
+    // pattern and only the binder decides it names a type, so the syntax kind alone does not say
+    // which of the two it is. TypePatternSyntax covers the spellings the parser can already tell
+    // apart (`is not int`); this covers the rest.
+    public override void VisitConstantPattern(ConstantPatternSyntax node)
+    {
+        if (node.Expression is TypeSyntax name && _model.GetSymbolInfo(name).Symbol is ITypeSymbol)
+            CheckPatternType(node, name);
+        base.VisitConstantPattern(node);
+    }
+
+    public override void VisitRecursivePattern(RecursivePatternSyntax node)
+    {
+        CheckPatternType(node, node.Type);
+        base.VisitRecursivePattern(node);
+    }
+
+    private void CheckPatternType(PatternSyntax pattern, TypeSyntax? type)
+        => ReportTypeTest(type, ObjectLiteralTypeTestScanner.PatternInputType(_model, pattern),
+            "a type pattern for it matches any object");
+
+    private void ReportTypeTest(TypeSyntax? type, ITypeSymbol? inputType, string form)
+    {
+        if (ObjectLiteralTypeTestScanner.Check(_model, type, inputType, form) is { } diagnostic)
+            _diagnostics.Add(diagnostic);
     }
 
     public override void VisitFieldDeclaration(FieldDeclarationSyntax node)
@@ -515,7 +578,7 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
         {
             Report(node, "Inline arrays are not supported in the browser environment.");
         }
-        CheckDuplicateJsNames(node);
+        CheckTypeDeclaration(node);
         base.VisitStructDeclaration(node);
     }
 

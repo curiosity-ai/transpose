@@ -1,4 +1,4 @@
-<Project Sdk="Transpose.Build.Target/26.8.4125">
+<Project Sdk="Transpose.Build.Target/26.9.4870">
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
     <AssemblyName>Transpose.Core</AssemblyName>
@@ -14,7 +14,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Transpose.BCL" Version="26.8.4619" />
+    <PackageReference Include="Transpose.BCL" Version="26.9.4872" />
   </ItemGroup>
 
   <ItemGroup>
@@ -27,7 +27,6 @@
     <IncludeSymbols>false</IncludeSymbols>
     <PackageIcon>transpose.png</PackageIcon>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <LangVersion>7.2</LangVersion>
     <PackageId>Transpose.Core</PackageId>
     <Authors>Curiosity GmbH, Object.NET, Inc.</Authors>
     <Company>Curiosity GmbH, Object.NET, Inc.</Company>

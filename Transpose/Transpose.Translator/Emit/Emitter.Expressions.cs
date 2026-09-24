@@ -1099,16 +1099,33 @@ public sealed partial class Emitter
 
         if (method.IsStatic)
         {
+            // A static method group is already a stable reference — the same function object every
+            // time, which is what delegate identity needs — so it binds only to thread type arguments.
             _w.Write(StaticMemberAccess(method));
             if (boundTypeArgs.Length > 0) _w.Write($".bind(null{boundTypeArgs})");
         }
         else
         {
-            _w.Write("(");
+            // An instance method group goes through the runtime's delegate cache, which returns the
+            // SAME function for the same (receiver, method, bound arguments) triple.
+            //
+            // `(recv).M.bind(recv)` was wrong three ways. Function.prototype.bind mints a fresh
+            // function on every conversion, so `el.removeEventListener("click", OnClick)` could never
+            // remove what `el.addEventListener("click", OnClick)` added — the handler stayed attached
+            // for the life of the page, which is the shape this was reported as. For the same reason
+            // `Action a = OnClick, b = OnClick; a == b` was false where .NET says true, since a bound
+            // function carries none of the target/method identity Delegate.Equals compares. And it
+            // wrote the receiver expression TWICE, so `Get().OnClick` called Get() twice and bound the
+            // second object to a method read off the first, where C# evaluates it exactly once.
+            //
+            // cacheBindMember takes the receiver once and reads the method off it, which is what keeps
+            // the evaluation single; the cache (hung off the target, keyed by method and by the bound
+            // type arguments) is what keeps the identity.
+            _w.Write("Transpose.fn.cacheBindMember(");
             EmitReceiverExpr(thisTarget);
-            _w.Write($").{TransposeNaming.MemberJsName(method)}.bind(");
-            EmitReceiverExpr(thisTarget);
-            _w.Write($"{boundTypeArgs})");
+            _w.Write($", {JsString(TransposeNaming.MemberJsName(method))}");
+            if (boundTypeArgs.Length > 0) _w.Write($", [{string.Join(", ", method.TypeArguments.Select(TypeRef))}], 0");
+            _w.Write(")");
         }
     }
 

@@ -1863,10 +1863,14 @@ namespace Transpose.Core
                     private extern internal_error();
                 }
 
+                // `required` became a modifier keyword in C# 11, and a TYPE may not be named one
+                // (CS9029) however it is spelled in the DOM's string-literal union this stands in
+                // for. The verbatim `@` is purely lexical: the type's name is still `required`, so
+                // the emitted [Name] and every `.required` in a consumer are unchanged.
                 [Name("System.String")]
-                public class required : LiteralType<string>
+                public class @required : LiteralType<string>
                 {
-                    private extern required();
+                    private extern @required();
                 }
 
                 [Name("System.String")]
