@@ -56,6 +56,16 @@ internal static class Diagnostics
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true);
 
+    public static readonly DiagnosticDescriptor ObjectLiteralTypeTest = new(
+        id: "TransposeR0005",
+        title: "Undecidable [ObjectLiteral] type test",
+        messageFormat: "'{0}' cannot be tested at run time: '{2}' is an [ObjectLiteral] type, so its instances are plain "
+                     + "JavaScript objects carrying no type identity, and {1}, whatever it really is. "
+                     + "Cast instead - '({0})value', 'Script.Write<{0}>' and '.As<{0}>()' assert a type rather than asking about one.",
+        category: "Transpose.Translator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
     public static Diagnostic Create(DiagnosticDescriptor descriptor, Location? location, params object[] args) =>
         Diagnostic.Create(descriptor, location ?? Location.None, args);
 }

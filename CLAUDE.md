@@ -781,6 +781,24 @@ The short version:
   materialises: an `[External]`/`[Scope]`-projected literal (Howler's option bags, the DOM's dictionary
   types) describes an object that already exists in JavaScript, and its author decides what its slots
   hold. Covered by `ObjectLiteralMemberTypeTests`.
+- **An `[ObjectLiteral]` type cannot be tested at run time (`ObjectLiteralTypeTestScanner`).** A
+  literal IS a plain JavaScript object, so nothing at run time can tell one literal type from
+  another, or from an object that was never a literal at all: `o is Other` is **true** for a `Lit`,
+  `o as Other` hands back a non-null value, and `o is Derived` is true for a plain `Lit` — each of
+  them the opposite of what .NET answers, in code that reads as if it were right. Every syntactic way
+  of asking is therefore rejected with **TransposeR0005**: `is`, `as`, a declaration pattern
+  (`is Lit l`), a type pattern (`is not Lit`, a `switch` arm — which parses as a *constant* pattern,
+  so the syntax kind alone does not say which it is), a recursive pattern (`is Lit { X: 1 }`), and
+  `is Lit[]` (testing an array tests every element with the same question). No structural rule would
+  fix it — a `{}` deserialized into a literal whose only member is a `bool Flag` is a legitimate
+  instance with `Flag == false` — and neither would tracking where the value came from: the examples
+  above start from a literal Transpose itself built. **A cast is not a test and is not reported:**
+  `(Lit)value`, `Script.Write<Lit>` and `.As<Lit>()` *assert* a type rather than asking about one,
+  which is the right thing to say about a value whose shape you know and the runtime cannot check —
+  reading a literal back out of JSON, or off a binding. That is the fix at every site this reports.
+  The one sound test is kept: when the value's static type already converts to the target
+  (`Lit x; x is Lit`, or a literal derived from it) the test can only be asking whether the value is
+  null, and `Transpose.is(null, …)` answers false. Covered by `ObjectLiteralTypeTestTests`.
 - **`dynamic` has no runtime overload resolver.** A generic call with a `dynamic` argument works when
   the method has one candidate (`Enumerable.Count(dyn)`); with numeric overloads to choose between
   (`Enumerable.Sum(dyn)`) there is no single binding and the emitted call does not exist.
