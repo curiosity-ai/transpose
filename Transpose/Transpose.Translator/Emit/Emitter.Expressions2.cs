@@ -327,9 +327,48 @@ public sealed partial class Emitter
             }).ToList();
         // With no substitution arguments the code is injected verbatim — {…} sequences are
         // literal JS (e.g. regex quantifiers in "/^(.{8})(.{4})…$/"), not {0}/{1} placeholders.
-        _w.Write(argJs.Count == 0 ? rawJs : SubstituteTemplate(rawJs, null, new(), argJs));
+        var js = argJs.Count == 0 ? rawJs : SubstituteTemplate(rawJs, null, new(), argJs);
+        // The template is opaque text, so as an operand it must be bracketed: unbracketed,
+        // `!Script.Write<bool>("typeof {0} === 'object'", v)` emits `!typeof v === 'object'`, which
+        // negates the typeof string and is always false. Statement and argument positions keep the
+        // text verbatim, since a template there may be a statement (`var r = …;`, `debugger`).
+        _w.Write(IsScriptWriteOperand(invocation) && !IsAtomicJs(js) ? $"({js})" : js);
         return true;
     }
+
+    /// <summary>
+    /// True when a <c>Script.Write</c> call sits where an operator binds to its emitted text: under a
+    /// unary/binary/conditional operator, as the receiver of a member access, element access or call,
+    /// as an <c>await</c>/<c>is</c>/<c>as</c> operand. Casts, <c>!</c> (null-forgiving) and
+    /// <c>checked</c> are looked through, since they emit nothing of their own around it.
+    /// </summary>
+    private static bool IsScriptWriteOperand(ExpressionSyntax node)
+    {
+        var parent = node.Parent;
+        while (parent is CastExpressionSyntax or CheckedExpressionSyntax
+               or PostfixUnaryExpressionSyntax { RawKind: (int)SyntaxKind.SuppressNullableWarningExpression })
+        {
+            node = (ExpressionSyntax)parent;
+            parent = node.Parent;
+        }
+
+        return parent switch
+        {
+            PrefixUnaryExpressionSyntax or PostfixUnaryExpressionSyntax or BinaryExpressionSyntax
+                or ConditionalExpressionSyntax or AwaitExpressionSyntax or IsPatternExpressionSyntax
+                or SwitchExpressionSyntax or RangeExpressionSyntax => true,
+            MemberAccessExpressionSyntax ma => ma.Expression == node,
+            ConditionalAccessExpressionSyntax ca => ca.Expression == node,
+            ElementAccessExpressionSyntax ea => ea.Expression == node,
+            InvocationExpressionSyntax inv => inv.Expression == node,
+            _ => false,
+        };
+    }
+
+    /// <summary>A plain identifier, dotted path or numeric literal: needs no brackets anywhere.</summary>
+    private static bool IsAtomicJs(string js)
+        => System.Text.RegularExpressions.Regex.IsMatch(js,
+            @"^\s*(?:[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*|\d+(?:\.\d+)?)\s*$");
 
     /// <summary>
     /// Emits a <c>??</c> operand, parenthesized unless it is trivially atomic. JavaScript refuses
