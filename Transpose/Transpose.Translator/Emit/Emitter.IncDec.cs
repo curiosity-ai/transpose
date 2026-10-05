@@ -68,6 +68,39 @@ public sealed partial class Emitter
             return true;
         }
 
+        // ---- a property whose accessors are [Template]s: `sb.Length--` -------------------------
+        // The plain-lvalue paths below would write the *getter* template (`sb.getLength()`) as the
+        // assignment target ("Invalid left-hand side in assignment"), so the step is routed through
+        // the setter template exactly as a compound assignment is: `recv.setLength(step(recv.getLength()))`.
+        if (_model.GetSymbolInfo(operand).Symbol is IPropertySymbol { IsIndexer: false } tplProp
+            && tplProp.GetMethod is { } tplGet && tplProp.SetMethod is { } tplSet
+            && TransposeNaming.GetTemplate(tplGet.OriginalDefinition) is { } getTemplate
+            && TransposeNaming.GetTemplate(tplSet.OriginalDefinition) is { } setTemplate
+            && !ContainsAwait(operand))
+        {
+            var receiver = operand as MemberAccessExpressionSyntax;
+            string RecvJs(string? bound) => tplProp.IsStatic ? TypeRef(tplProp.ContainingType)
+                : bound ?? (receiver is not null ? Capture(() => EmitExpression(receiver.Expression)) : "this");
+            string Get(string? r) => Capture(() => WriteTemplate(getTemplate, tplProp.IsStatic, isExtension: false, RecvJs(r), new(), new()));
+            string Set(string? r, string v) => Capture(() => WriteTemplate(setTemplate, tplProp.IsStatic, isExtension: false, RecvJs(r),
+                new() { ["value"] = v }, new() { v }));
+
+            var simpleReceiver = tplProp.IsStatic || receiver is null
+                || receiver.Expression is ThisExpressionSyntax or IdentifierNameSyntax;
+            if (IsVoidContext(node) && simpleReceiver)
+            {
+                _w.Write(Set(null, Step(Get(null))));
+                return true;
+            }
+
+            // A value is wanted (or the receiver has side effects): evaluate the receiver once, in an
+            // arrow so `this` still resolves to the enclosing instance.
+            var recvArg = tplProp.IsStatic || receiver is null ? "" : Capture(() => EmitExpression(receiver.Expression));
+            var recvParam = tplProp.IsStatic || receiver is null ? null : "$r";
+            _w.Write($"(({(recvParam ?? "")}) => {{ const $o = {Get(recvParam)}; const $n = {Step("$o")}; {Set(recvParam, "$n")}; return {(prefix ? "$n" : "$o")}; }})({recvArg})");
+            return true;
+        }
+
         // ---- a plain variable or field: a wrapping integer, a nullable number, or a static user operator
         // A null `int?` stays null under ++ in C#; JavaScript's `null++` made it 1.
         var nullableNumber = IsNullableValueType(type)

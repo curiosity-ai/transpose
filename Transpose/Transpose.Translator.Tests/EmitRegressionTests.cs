@@ -20,6 +20,37 @@ namespace Transpose.Translator.Tests
     [TestClass]
     public class EmitRegressionTests : TranslatorTestBase
     {
+        // ---- ++/-- on a property with [Template] accessors ---------------------
+
+        [TestMethod]
+        public async Task IncDecOnTemplatePropertyStepsThroughTheSetter()
+        {
+            await RunTest(@"
+using System;
+using System.Text;
+public class Program
+{
+    static StringBuilder Make() { Console.WriteLine(""make""); return new StringBuilder(""abcdef""); }
+    public static void Main()
+    {
+        var sb = new StringBuilder(""abc,"");
+        sb.Length--;
+        Console.WriteLine(sb.ToString());
+        sb.Length -= 1;
+        Console.WriteLine(sb.ToString());
+        sb.Length++;
+        Console.WriteLine(sb.Length);
+        var x = sb.Length--;
+        Console.WriteLine(x + "" "" + sb.Length);
+        var y = --sb.Length;
+        Console.WriteLine(y + "" "" + sb.Length);
+        Make().Length--;
+        var z = Make().Length--;
+        Console.WriteLine(z);
+    }
+}");
+        }
+
         // ---- await inside an out/ref call --------------------------------------
 
         [TestMethod]
