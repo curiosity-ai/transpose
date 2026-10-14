@@ -36,12 +36,27 @@ These are the attributes an application (or any library) author will use.
 
 ### `[External]` — ✅ Implemented
 Marks a type/member (or, via `[assembly: External]`, an entire assembly) as defined in native
-JavaScript. No body is emitted; the member is named by its runtime binding (camelCase for the BCL,
-native names for DOM/`Packages`), is excluded from reflection metadata and interface registration,
-and a plain indexer becomes native bracket access.
-*Handled in:* `TransposeNaming.HasExternalAttribute/IsExternal/IsExternalType`, consumed throughout
-the emitter. Assembly-level form is synthesized from the csproj `<AssemblyAttribute>` items in
-`ProjectResolver`.
+JavaScript. No body is emitted; the member is named by its runtime binding, is excluded from
+reflection metadata and interface registration, and a plain indexer becomes native bracket access.
+
+**The default naming of that binding is per member kind, and it is not uniform.** A **property,
+field or event** of an external type is camelCased — `Host.Alt` emits `.alt` — which is what lets a
+PascalCase C# declaration bind to the camelCase slot the JavaScript actually has. A **method is
+not**: it keeps its C# name verbatim (`Host.DoThing()` → `Host.DoThing()`) unless something says
+otherwise, namely a `[Convention]` on the method or on its containing type covering methods (this is
+why `Task.Delay` emits `delay`), or an interface member it implements that already carries a JS name
+of its own through `[Name]`, `[Template]` or `[Convention]` (`IEnumerator.MoveNext` → `moveNext`,
+while `IDisposable.Dispose` stays `Dispose`). Enum members are a third case: their casing comes from
+the `[Enum(Emit.…)]` mode. `[Name]` and `[Template]` always win over any convention.
+
+The practical consequence for a binding onto a **PascalCase** JavaScript API is that the type needs
+`[Convention(Notation.None)]`: it is *required* for properties, fields and events, which are
+otherwise camelCased silently, and explicit-but-redundant for methods, which already default to
+`None`.
+*Handled in:* `TransposeNaming.HasExternalAttribute/IsExternal/IsExternalType` (external-ness),
+`TransposeNaming.RawMemberName` (the property/field/event default) and
+`TransposeNaming.MethodNotation` (the method rule), consumed throughout the emitter. Assembly-level
+form is synthesized from the csproj `<AssemblyAttribute>` items in `ProjectResolver`.
 
 ### `[Name("jsName")]` — ✅ Implemented
 Overrides the emitted JS name of a type or member (used verbatim, never overload-suffixed). A dotted
@@ -193,8 +208,13 @@ bracket access.
 *Handled in:* `TransposeNaming.IsNativeIndexer`.
 
 ### `[Convention(Notation, …)]` — ✅ Implemented
-Sets the JS name casing (None/lower/upper/camel/Pascal) for members of an external/BCL type, with
-per-member-kind and priority/specificity resolution.
+Sets the JS name casing (None/lower/upper/camel/Pascal) for members of an external/BCL type. It is
+resolved in this order, first match winning: the `[Convention]` on the **member** itself, then the
+one on its **containing type** (a convention naming this member kind through `Member` beats a
+catch-all one at equal `Priority`; a higher `Priority` beats both), then the per-kind **default**
+described under `[External]` above — camelCase for a property, field or event, and *no change* for a
+method. `[Convention(Notation.None)]` is therefore how an external type binding onto a PascalCase JS
+API opts out of the camelCasing its properties, fields and events would otherwise get.
 *Handled in:* `TransposeNaming.MemberConventionNotation/ResolveNotation`.
 
 ### `[Unbox(false)]` — ➖ Equivalent by design
