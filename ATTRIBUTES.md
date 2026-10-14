@@ -118,6 +118,26 @@ Notes:
   (the `Transpose.define` key and every `E.Member` reference), so it also governs
   `ToString()`/`GetName`. `Name` (1) and `NamePreserveCase` (7) are equivalent (both preserve).
 - An explicit `[Name("…")]` on a member overrides the mode's casing for that member.
+- **An `[External]` enum under a Name mode emits a *path*, not a value — and nothing checks that the
+  path exists.** A reference compiles to `T.member`, and an external type has no emitted
+  `Transpose.define`, so the JS object at `T`'s emitted path must already exist. When it does not,
+  the call site dies with `ReferenceError: <root> is not defined`, or silently reads `undefined` off
+  a namespace object that happens to exist. (An enum declared *in the compilation* is never at risk:
+  the emitter writes its define, whatever the mode, so `Ns.Sev.Warning` evaluates to the ordinal and
+  the number is what crosses into JavaScript.) An external enum should therefore pick one of three
+  things deliberately:
+  - **`[Enum(Emit.Value)]`** — the member inlines as its ordinal and no path is emitted at all. Right
+    whenever the C# constants are the JavaScript library's numbers; the BCL's `ExpressionType`,
+    `RegexOptions` and `MidpointRounding` all do this.
+  - **`[Name("monaco.MarkerSeverity")]`** (a type-level `[Name]` supplies the whole qualified JS name)
+    or `[Namespace("monaco")]` — point the path at the real JS enum object.
+  - **a hand-written `Transpose.define` at the inferred path** — how `System.Threading.Tasks.TaskStatus`
+    (`Resources/Task.js`) and `System.Diagnostics.Contracts.ContractFailureKind` (`Resources/Contract.js`)
+    satisfy it. `HasRuntimeEnumObject` (`Emitter.Expressions2.cs`) *assumes* this holds for every
+    external enum in a Name mode.
+
+  A `StringName*` mode is **not** a fix for a numeric JS enum: it makes the member cross as its name
+  (`"warning"`), which is right only when the receiving library takes names rather than numbers.
 
 *Handled in:* `TransposeNaming.EnumEmitMode` (mode, default 7), `EnumStringName` (string-value casing,
 modes 3–6), `RawMemberName` (member-name casing, modes 8/9); `Emitter.EmitEnum` (definition + `$utype`),

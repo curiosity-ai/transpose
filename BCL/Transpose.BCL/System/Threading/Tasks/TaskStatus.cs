@@ -1,5 +1,7 @@
 namespace System.Threading.Tasks
 {
+    // A Name mode emits every reference as System.Threading.Tasks.TaskStatus.<member>, so that
+    // object has to exist: its Transpose.define is hand-written in Resources/Task.js.
     [Transpose.External]
     [Transpose.Enum(Transpose.Emit.Name)]
     public enum TaskStatus
