@@ -413,11 +413,9 @@
                                 break;
                             case "h":
                             case "hh":
-                                part = hour % 12;
+                                part = (hour % 12 || 12).toString();
 
-                                if (!part) {
-                                    part = "12";
-                                } else if (match === "hh" && part.length === 1) {
+                                if (match === "hh" && part.length === 1) {
                                     part = "0" + part;
                                 }
 
@@ -511,13 +509,24 @@
 
                                 break;
                             case "z":
-                                part = timezoneOffset / 60;
-                                part = ((part >= 0) ? "-" : "+") + Math.floor(Math.abs(part));
+                            case "zz":
+                            case "zzz":
+                                // .NET always prints an offset here, whatever the kind: zero for a Utc
+                                // value, the local offset otherwise, and "+" for zero. Only "K" says
+                                // "Z" / nothing.
+                                var offsetMinutes = kind === 1 ? 0 : -timezoneOffset,
+                                    absOffset = Math.abs(offsetMinutes),
+                                    offsetHours = Math.floor(absOffset / 60).toString();
+
+                                part = (offsetMinutes >= 0 ? "+" : "-") +
+                                    (match === "z" ? offsetHours : System.String.alignString(offsetHours, 2, "0", 2));
+
+                                if (match === "zzz") {
+                                    part += ":" + System.String.alignString((absOffset % 60).toString(), 2, "0", 2);
+                                }
 
                                 break;
                             case "K":
-                            case "zz":
-                            case "zzz":
                                 if (kind === 0) {
                                     part = "";
                                 } else if (kind === 1) {
@@ -1258,12 +1267,15 @@
 
             // Optimized as per: https://jsperf.com/get-day-of-year
             getDayOfYear: function (d) {
+                // getDate truncates a Utc value in UTC, so its parts must be read in UTC too: the
+                // local getters put a late-evening Utc date on the next (or previous) calendar day.
                 var dt = this.getDate(d),
-                    mn = dt.getMonth(),
-                    dn = dt.getDate(),
+                    utc = dt.kind === 1,
+                    mn = utc ? dt.getUTCMonth() : dt.getMonth(),
+                    dn = utc ? dt.getUTCDate() : dt.getDate(),
                     dayOfYear = this.YearDaysByMonth[mn] + dn;
 
-                if (mn > 1 && this.getIsLeapYear(dt.getFullYear())) {
+                if (mn > 1 && this.getIsLeapYear(utc ? dt.getUTCFullYear() : dt.getFullYear())) {
                     dayOfYear++;
                 }
 
@@ -1293,7 +1305,7 @@
             },
 
             getDayOfWeek: function (d) {
-                return d.getDay();
+                return d.kind === 1 ? d.getUTCDay() : d.getDay();
             },
 
             getYear: function (d) {
