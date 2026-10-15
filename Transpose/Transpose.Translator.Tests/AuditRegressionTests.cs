@@ -123,5 +123,57 @@ public class Program {
   }
 }", waitForOutput: "<<DONE>>");
         }
+
+        // ---- a side-effecting receiver or index of a compound / ++ / ref target runs once ----
+
+        [TestMethod]
+        public async Task SideEffectingTargetIsEvaluatedOnce()
+        {
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+public struct P { public int X; }
+public class Box
+{
+    public int X; public string S = ""a""; public long L; public decimal M; public int? N; public Action A;
+    public List<string> List = new List<string> { null, null };
+    public P[] Ps = new P[2];
+    public int this[int i] { get { Program.Log += ""get"" + i + "";""; return i; } set { Program.Log += ""set"" + i + ""="" + value + "";""; } }
+}
+public class Program
+{
+    public static string Log = """";
+    static int calls; static Box bx = new Box();
+    static Box Get() { calls++; return bx; }
+    static int k; static int Next() => k++;
+    static async Task<Box> GetAsync() { await Task.Yield(); calls++; return bx; }
+    static void Inc(ref int v) { v += 10; }
+    static void Set(out long v) { v = 7; }
+    public static async Task Main()
+    {
+        Get().X += 5; Get().S += ""b""; Get().L += 5; Get().M *= 3; Get().N += 1; Get().A += () => { };
+        Console.WriteLine(""compound calls="" + calls + "" "" + bx.X + bx.S + bx.L + bx.M + (bx.N == null)); calls = 0;
+        var v = (Get().X -= 2); Console.WriteLine(""value "" + v + "" calls="" + calls); calls = 0;
+        Get().L++; ++Get().L; var post = Get().L--; var pre = --Get().M;
+        Console.WriteLine(""incdec calls="" + calls + "" "" + bx.L + "" "" + post + "" "" + pre); calls = 0;
+        long[] la = new long[3]; int i = 0; la[i++]++; la[i++] += 4; ++la[i++];
+        Console.WriteLine(""long[] i="" + i + "" "" + string.Join("","", la));
+        decimal[] da = new decimal[2]; i = 0; da[i++]++; da[i++] -= 2.5m;
+        Console.WriteLine(""decimal[] i="" + i + "" "" + string.Join("","", da));
+        bx.List[Next()] ??= ""v""; Get().List[1] ??= ""w"";
+        Console.WriteLine(""??= k="" + k + "" calls="" + calls + "" "" + bx.List[0] + "","" + bx.List[1]); calls = 0;
+        bx[Next()] += 5; Console.WriteLine(""indexer "" + Log); Log = """";
+        bx.Ps[Next() - 2].X += 3; Console.WriteLine(""struct elem k="" + k + "" "" + bx.Ps[0].X + "","" + bx.Ps[1].X); calls = 0;
+        (await GetAsync()).L += 2; Console.WriteLine(""await recv calls="" + calls + "" "" + bx.L); calls = 0;
+        Get().L += await Task.FromResult(3L); Console.WriteLine(""await rhs calls="" + calls + "" "" + bx.L); calls = 0;
+        int[] arr = new int[3]; i = 0;
+        Inc(ref arr[i++]); Console.WriteLine(""ref i="" + i + "" "" + string.Join("","", arr));
+        Inc(ref Get().X); Console.WriteLine(""ref calls="" + calls + "" "" + bx.X); calls = 0;
+        i = 0; Set(out la[i++]); Console.WriteLine(""out i="" + i + "" "" + string.Join("","", la));
+      Console.WriteLine(""<<DONE>>"");
+  }
+}", waitForOutput: "<<DONE>>");
+        }
     }
 }

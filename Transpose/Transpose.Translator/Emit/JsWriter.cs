@@ -62,6 +62,27 @@ public sealed class JsWriter
 
     internal JsWriter(int indent) => _indent = indent;
 
+    /// <summary>A capture buffer that continues this writer's line exactly: same depth, same
+    /// line-start state, so its text can be spliced back with <see cref="Splice"/> unchanged.</summary>
+    internal JsWriter Continuation() => new(_indent) { _atLineStart = _atLineStart };
+
+    /// <summary>Writes the pending indentation of a fresh line, so a <see cref="Continuation"/> taken
+    /// next starts mid-line.</summary>
+    internal JsWriter EnsureIndent()
+    {
+        WriteIndentIfNeeded();
+        return this;
+    }
+
+    /// <summary>Appends text captured by a <see cref="Continuation"/> (possibly edited without
+    /// adding or removing line breaks) and takes over the line-start state it ended in.</summary>
+    internal JsWriter Splice(string text, JsWriter capturedBy)
+    {
+        _sb.Append(text);
+        _atLineStart = capturedBy._atLineStart;
+        return this;
+    }
+
 
     public JsWriter Write(string text)
     {

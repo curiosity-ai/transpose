@@ -274,4 +274,131 @@ public sealed partial class Emitter
         }
         return false;
     }
+
+    /// <summary>Expressions already evaluated into a temporary, keyed by node (see
+    /// <see cref="TryEmitEvaluatingOnce"/>); <see cref="EmitExpression"/> writes the text instead.</summary>
+    private System.Collections.Generic.Dictionary<ExpressionSyntax, string>? _exprOverrides;
+
+    private int _onceMarker;
+    private readonly System.Collections.Generic.HashSet<SyntaxNode> _onceActive = new();
+
+    /// <summary>
+    /// The parts of an assignable location that C# evaluates once, before the location is read or
+    /// written — the receiver of an instance member access, the receiver and the arguments of an
+    /// element access — when at least one of them has a side effect. Empty otherwise, and for the
+    /// shapes whose operands are not plain values (a <c>base</c> receiver, a named / ref argument, an
+    /// <c>Index</c> or <c>Range</c> argument, which the indexer path rewrites around the receiver).
+    /// </summary>
+    private System.Collections.Generic.List<ExpressionSyntax> SideEffectingLocationParts(ExpressionSyntax target)
+    {
+        var parts = new System.Collections.Generic.List<ExpressionSyntax>();
+        switch (target)
+        {
+            case MemberAccessExpressionSyntax ma
+                when ma.IsKind(SyntaxKind.SimpleMemberAccessExpression)
+                     && ma.Expression is not BaseExpressionSyntax
+                     && _model.GetSymbolInfo(ma).Symbol is IFieldSymbol { IsStatic: false } or IPropertySymbol { IsStatic: false } or IEventSymbol { IsStatic: false }
+                     && HasSideEffects(ma.Expression):
+                parts.Add(ma.Expression);
+                break;
+
+            case ElementAccessExpressionSyntax ea when ea.Expression is not BaseExpressionSyntax:
+                var args = ea.ArgumentList.Arguments;
+                if (args.Any(a => a.NameColon is not null || !a.RefKindKeyword.IsKind(SyntaxKind.None)
+                                  || a.Expression.IsKind(SyntaxKind.IndexExpression) || a.Expression is RangeExpressionSyntax
+                                  || _model.GetTypeInfo(a.Expression).Type?.ToDisplayString() is "System.Index" or "System.Range"))
+                    break;
+                if (!HasSideEffects(ea.Expression) && !args.Any(a => HasSideEffects(a.Expression))) break;
+                parts.Add(ea.Expression);
+                parts.AddRange(args.Select(a => a.Expression));
+                break;
+        }
+        return parts;
+    }
+
+    /// <summary>
+    /// Emits <paramref name="emit"/> — the whole of a compound assignment or an increment whose target
+    /// is <paramref name="target"/> — with the target's side-effecting parts evaluated exactly once.
+    /// Most of those emit paths write the target twice (<c>lhs = lhs op rhs</c>, a 64-bit
+    /// <c>x = x.add(1)</c>, a setItem/getItem pair), which ran <c>Get()</c> in <c>Get().X += 5</c>
+    /// twice and stepped <c>i</c> twice in <c>la[i++]++</c>.
+    /// <para>
+    /// Each part is emitted once, then the target is emitted with the part replaced by a marker. A path
+    /// that writes every marker exactly once already evaluates the part once (the JS compound operator,
+    /// TransposeR.incItem/updElem): the part's text goes back where the marker was, so its output is
+    /// byte-identical to before. Otherwise the parts are bound to temporaries, in source order, inside
+    /// an <see cref="OpenIife"/> wrapper.
+    /// </para>
+    /// </summary>
+    private bool TryEmitEvaluatingOnce(SyntaxNode node, ExpressionSyntax target, System.Action emit)
+    {
+        if (_onceActive.Contains(node)) return false;
+        var parts = SideEffectingLocationParts(target);
+        if (parts.Count == 0) return false;
+        if (_exprOverrides is not null && parts.Any(p => _exprOverrides.ContainsKey(p))) return false;
+
+        // Captures continue the current line; starting it first keeps its indentation out of them.
+        _w.EnsureIndent();
+        var bound = new System.Collections.Generic.List<(ExpressionSyntax part, string marker, string js)>();
+        foreach (var part in parts)
+            bound.Add((part, "\u0001" + _onceMarker++ + "\u0001", CaptureContinuing(() => EmitExpression(part)).text));
+
+        _exprOverrides ??= new System.Collections.Generic.Dictionary<ExpressionSyntax, string>();
+        foreach (var b in bound) _exprOverrides[b.part] = b.marker;
+        _onceActive.Add(node);
+        string body;
+        JsWriter bodyWriter;
+        try { (body, bodyWriter) = CaptureContinuing(emit); }
+        finally
+        {
+            _onceActive.Remove(node);
+            foreach (var b in bound) _exprOverrides.Remove(b.part);
+        }
+
+        if (bound.All(b => CountOccurrences(body, b.marker) == 1))
+        {
+            foreach (var b in bound) body = body.Replace(b.marker, b.js);
+            _w.Splice(body, bodyWriter);
+            return true;
+        }
+
+        var hasAwait = OpenIife(node);
+        foreach (var b in bound)
+        {
+            var temp = NextTemp("$once");
+            _w.Write($"let {temp} = {b.js}; ");
+            body = body.Replace(b.marker, temp);
+        }
+        _w.Write("return ");
+        _w.Write(body);
+        _w.Write("; ");
+        CloseIife(hasAwait);
+        return true;
+    }
+
+    /// <summary>Runs <paramref name="emit"/> against a writer continuing the current line (same
+    /// depth, same line-start state), returning its text and the writer it ended in.</summary>
+    private (string text, JsWriter writer) CaptureContinuing(System.Action emit)
+    {
+        var saved = _w;
+        _w = saved.Continuation();
+        try
+        {
+            emit();
+            return (_w.ToString(), _w);
+        }
+        finally
+        {
+            _w = saved;
+        }
+    }
+
+    private static int CountOccurrences(string text, string marker)
+    {
+        var n = 0;
+        for (var i = text.IndexOf(marker, System.StringComparison.Ordinal); i >= 0;
+             i = text.IndexOf(marker, i + marker.Length, System.StringComparison.Ordinal))
+            n++;
+        return n;
+    }
 }

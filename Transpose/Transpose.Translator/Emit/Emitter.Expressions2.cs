@@ -647,6 +647,26 @@ public sealed partial class Emitter
         var liveCells = RefCellsEnabled && ProducesRefCell(symbol);
         var liveCell = new bool[args.Count];
 
+        // A ref/out target is read (the seed) and written (the write-back) — `Inc(ref arr[i++])`
+        // stepped i twice and wrote the wrong element. Its side-effecting receiver and index run once,
+        // into temporaries the seed and the write-back share.
+        var boundParts = new List<ExpressionSyntax>();
+        for (var i = 0; i < args.Count; i++)
+        {
+            if (!args[i].RefKindKeyword.IsKind(SyntaxKind.OutKeyword) && !args[i].RefKindKeyword.IsKind(SyntaxKind.RefKeyword)) continue;
+            if (liveCells && args[i].RefKindKeyword.IsKind(SyntaxKind.RefKeyword)) continue;
+            foreach (var part in SideEffectingLocationParts(args[i].Expression))
+            {
+                if (_exprOverrides?.ContainsKey(part) == true) continue;
+                var temp = NextTemp("$once");
+                _w.Write($"var {temp} = ");
+                EmitExpression(part);
+                _w.Write("; ");
+                (_exprOverrides ??= new Dictionary<ExpressionSyntax, string>())[part] = temp;
+                boundParts.Add(part);
+            }
+        }
+
         for (var i = 0; i < args.Count; i++)
         {
             var arg = args[i];
@@ -793,6 +813,7 @@ public sealed partial class Emitter
 
         _w.Write("return $ret; ");
         CloseIife(hasAwait);
+        foreach (var part in boundParts) _exprOverrides!.Remove(part);
     }
 
     /// <summary>True if the expression contains an <c>await</c> in its own async context — i.e. not
@@ -2601,6 +2622,9 @@ public sealed partial class Emitter
             return;
         }
 
+        // `Get().X += 5`, `list[Next()] ??= v`: a side-effecting receiver or index runs once.
+        if (TryEmitEvaluatingOnce(assignment, assignment.Left, () => EmitAssignment(assignment))) return;
+
         // C# 14 instance compound operator (`public void operator +=(T x)`): a call on the left operand.
         if (TryEmitInstanceOperator(assignment, assignment.Left, assignment.Right)) return;
 
@@ -3184,6 +3208,11 @@ public sealed partial class Emitter
 
     private void EmitPrefixUnary(PrefixUnaryExpressionSyntax prefix)
     {
+        // `++Get().L`, `++la[i++]`: a side-effecting receiver or index runs once.
+        if ((prefix.IsKind(SyntaxKind.PreIncrementExpression) || prefix.IsKind(SyntaxKind.PreDecrementExpression))
+            && TryEmitEvaluatingOnce(prefix, prefix.Operand, () => EmitPrefixUnary(prefix)))
+            return;
+
         // C# 14 instance `operator ++()` / `operator --()`: a call that mutates the operand.
         if (TryEmitInstanceOperator(prefix, prefix.Operand, null)) return;
 
@@ -3317,6 +3346,11 @@ public sealed partial class Emitter
 
     private void EmitPostfixUnary(PostfixUnaryExpressionSyntax postfix)
     {
+        // `Get().L++`, `la[i++]++`: a side-effecting receiver or index runs once.
+        if ((postfix.IsKind(SyntaxKind.PostIncrementExpression) || postfix.IsKind(SyntaxKind.PostDecrementExpression))
+            && TryEmitEvaluatingOnce(postfix, postfix.Operand, () => EmitPostfixUnary(postfix)))
+            return;
+
         // C# 14 instance `operator ++()` / `operator --()`: a call that mutates the operand.
         if (TryEmitInstanceOperator(postfix, postfix.Operand, null)) return;
 

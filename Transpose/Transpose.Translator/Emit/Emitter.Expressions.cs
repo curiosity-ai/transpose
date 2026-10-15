@@ -100,6 +100,11 @@ public sealed partial class Emitter
             _w.Write(over.text);
             return;
         }
+        if (_exprOverrides is not null && _exprOverrides.TryGetValue(expr, out var overText))
+        {
+            _w.Write(overText);
+            return;
+        }
 
         // `list[^1]`, `span[^i]`, `text[idx]`: an Index argument to an int indexer (Emitter.Spans.cs).
         if (TryEmitImplicitIndexArgument(expr)) return;
