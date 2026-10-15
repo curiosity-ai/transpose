@@ -993,7 +993,15 @@ public sealed partial class Emitter
                         // to predeclare them otherwise (matches EmitMethodBody / EmitAccessorBody).
                         PredeclareInlineVars(localFn.ExpressionBody.Expression);
                         if (symbol?.ReturnsVoid == true) EmitExpressionStatement(localFn.ExpressionBody.Expression);
-                        else { _w.Write("return "); EmitExpression(localFn.ExpressionBody.Expression); _w.WriteLine(";"); }
+                        else
+                        {
+                            // Converted to the return type like a method's expression body (the
+                            // ConvertedType is already the T of an async Task<T> local function).
+                            var expr = localFn.ExpressionBody.Expression;
+                            _w.Write("return ");
+                            EmitExpressionConverted(expr, _model.GetTypeInfo(expr).ConvertedType);
+                            _w.WriteLine(";");
+                        }
                     }
                 }, asyncVoid: isAsync && symbol?.ReturnsVoid == true);
             }

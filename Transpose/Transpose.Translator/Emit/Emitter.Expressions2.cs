@@ -4065,9 +4065,16 @@ public sealed partial class Emitter
                     // Hoist out-var / is-pattern variables the body introduces (e.g.
                     // `p => dict.TryGetValue(p, out var i) ? i : 0`) before returning it.
                     PredeclareInlineVars(exprBody);
-                    // If the lambda's body has a value, return it.
+                    // If the lambda's body has a value, return it — converted to the delegate's
+                    // return type exactly as a method's expression body is (an enum or char boxed
+                    // to object, an int widened to long/decimal, an in-source struct copied). The
+                    // body's ConvertedType is that return type, already unwrapped from Task<T> for
+                    // an async lambda. A void delegate's body is a statement; its value is unused.
                     _w.Write("return ");
-                    EmitExpression(exprBody);
+                    if (body.Parent is ExpressionSyntax lambdaExpr && ConvertsToVoidDelegate(lambdaExpr))
+                        EmitExpression(exprBody);
+                    else
+                        EmitExpressionConverted(exprBody, _model.GetTypeInfo(exprBody).ConvertedType);
                     _w.WriteLine(";");
                 }
             }, asyncVoid: asyncVoid);
