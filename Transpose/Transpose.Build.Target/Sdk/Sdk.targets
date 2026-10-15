@@ -515,9 +515,29 @@
     <_TransposeConfigFile Include="$(ProjectDir)tps.chunks.json"               Condition="Exists('$(ProjectDir)tps.chunks.json')" />
   </ItemGroup>
 
+  <!-- The files tps.json `resources` groups copy or embed are inputs too. MSBuild cannot read tps.json,
+       so tps writes the groups' patterns to obj/<Configuration>/tps.resource-globs.txt on every build and
+       they are expanded here (CreateItem, because a wildcard held in a property is not expanded by an
+       ItemGroup inside a target). Without it an edited stylesheet left the project up to date. A
+       project never built before has no list yet, and needs none: its output does not exist. -->
+  <Target Name="_TransposeResourceInputs">
+    <PropertyGroup>
+      <_TransposeResourceGlobFile>$(BaseIntermediateOutputPath)$(Configuration)/tps.resource-globs.txt</_TransposeResourceGlobFile>
+    </PropertyGroup>
+    <ReadLinesFromFile File="$(_TransposeResourceGlobFile)" Condition="Exists('$(_TransposeResourceGlobFile)')">
+      <Output TaskParameter="Lines" ItemName="_TransposeResourceGlob" />
+    </ReadLinesFromFile>
+    <PropertyGroup>
+      <_TransposeResourceGlobs>@(_TransposeResourceGlob->'$(MSBuildProjectDirectory)/%(Identity)')</_TransposeResourceGlobs>
+    </PropertyGroup>
+    <CreateItem Include="$(_TransposeResourceGlobs)" Condition="'$(_TransposeResourceGlobs)' != ''">
+      <Output TaskParameter="Include" ItemName="_TransposeResourceInput" />
+    </CreateItem>
+  </Target>
+
   <Target Name="_TransposeBuild"
-      DependsOnTargets="SourceFilesProjectOutputGroup;GenerateBuildDependencyFile;GenerateBuildRuntimeConfigurationFiles;_ComputeReferenceAssemblies;_ComputeUserRuntimeAssemblies;_CopyReferenceOnlyAssembliesForBuild"
-      Inputs="@(UserRuntimeAssembly);@(_ReferenceAssemblies);@(SourceFilesProjectOutputGroupOutput);$(MSBuildAllProjects);$(ProjectDepsFilePath);@(_TransposeConfigFile)"
+      DependsOnTargets="SourceFilesProjectOutputGroup;GenerateBuildDependencyFile;GenerateBuildRuntimeConfigurationFiles;_ComputeReferenceAssemblies;_ComputeUserRuntimeAssemblies;_CopyReferenceOnlyAssembliesForBuild;_TransposeResourceInputs"
+      Inputs="@(UserRuntimeAssembly);@(_ReferenceAssemblies);@(SourceFilesProjectOutputGroupOutput);$(MSBuildAllProjects);$(ProjectDepsFilePath);@(_TransposeConfigFile);@(_TransposeResourceInput)"
       Outputs="$(ProjectDir)$(OutputPath)$(TargetName)$(TargetExt)">
 
     <Message Importance="high" Text="Deleting previous assembly: $(ProjectDir)$(OutputPath)$(TargetName)$(TargetExt)"/>
@@ -537,15 +557,17 @@
          `file(line,col): error CS….` / `tps : warning TPS….` form in MsBuildDiagnostic buys — but the
          progress lines, the "OK — built …" summary and the per-phase timing table cannot be surfaced
          by any means available to this file. Rather than leave the build's own account of itself
-         unrecoverable, the captured output always goes to obj/tps.log, and the failure error says so. -->
+         unrecoverable, the captured output always goes to obj/tps.log, and the failure error says so.
+         That is also why the Exec neither stops the target nor fails on the exit code: the log has to
+         be written and TPS1002 raised on exactly the build that failed. -->
     <Message Importance="high" Text="Transpose compilation begins now... " />
 
-    <Exec Command="tps $(_TransposeArgs)" ConsoleToMsBuild="True" WorkingDirectory="$(ProjectDir)" ContinueOnError="ErrorAndStop" IgnoreExitCode="false" Condition="!$(UseLocalTranspose)">
+    <Exec Command="tps $(_TransposeArgs)" ConsoleToMsBuild="True" WorkingDirectory="$(ProjectDir)" ContinueOnError="ErrorAndContinue" IgnoreExitCode="true" Condition="!$(UseLocalTranspose)">
       <Output TaskParameter="ExitCode" PropertyName="ExitCode" />
       <Output TaskParameter="ConsoleOutput" ItemName="_TransposeConsoleOutput" />
     </Exec>
 
-    <Exec Command="dotnet tool run tps $(_TransposeArgs)" ConsoleToMsBuild="True" WorkingDirectory="$(ProjectDir)" ContinueOnError="ErrorAndStop" IgnoreExitCode="false" Condition="$(UseLocalTranspose)">
+    <Exec Command="dotnet tool run tps $(_TransposeArgs)" ConsoleToMsBuild="True" WorkingDirectory="$(ProjectDir)" ContinueOnError="ErrorAndContinue" IgnoreExitCode="true" Condition="$(UseLocalTranspose)">
       <Output TaskParameter="ExitCode" PropertyName="ExitCode" />
       <Output TaskParameter="ConsoleOutput" ItemName="_TransposeConsoleOutput" />
     </Exec>

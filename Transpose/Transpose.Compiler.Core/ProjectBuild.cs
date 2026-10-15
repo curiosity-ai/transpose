@@ -244,6 +244,7 @@ internal static class ProjectBuild
         // The project's tps.json drives runtime-package detection and reflection settings. A
         // tps.<Configuration>.json overlay (e.g. tps.Release.json) is merged on top when present.
         var tpscfg = TransposeJson.TryLoad(project.ProjectDir, configuration);
+        WriteResourceGlobs(project, tpscfg, configuration);
 
         // Base runtime package build: compile Transpose.BCL self-contained, transpile it with
         // outputBy: ClassPath, stitch the per-class files with the hand-written Resources primitives
@@ -516,6 +517,26 @@ internal static class ProjectBuild
         SaveCache(cache, plan, result, new[] { Path.GetFullPath(outPath) });
         log.Info($"\nOK — wrote {js.Length:N0} bytes to {outPath} in {sw.ElapsedMilliseconds} ms.");
         return BuildOutcome.NoSite(0, result.Diagnostics);
+    }
+
+    /// <summary>
+    /// Writes the project's tps.json resource patterns to <c>obj/&lt;Configuration&gt;/tps.resource-globs.txt</c>,
+    /// which the SDK's <c>_TransposeBuild</c> target expands into its up-to-date inputs. MSBuild cannot
+    /// read tps.json, so without it an edited stylesheet left the project "up to date" and the site
+    /// (and the package) kept the old file. Best effort: the build does not depend on it.
+    /// </summary>
+    private static void WriteResourceGlobs(ResolvedProject project, TransposeJson? config, string configuration)
+    {
+        try
+        {
+            var path = Path.Combine(project.ProjectDir, "obj", configuration, "tps.resource-globs.txt");
+            var patterns = config?.Resources.SelectMany(g => g.Files).Distinct(StringComparer.Ordinal).ToList() ?? new List<string>();
+            var text = string.Concat(patterns.Select(p => p.Replace('\\', '/') + "\n"));
+            if (File.Exists(path) && File.ReadAllText(path) == text) return;
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, text);
+        }
+        catch { /* an unwritable obj/ only costs the MSBuild up-to-date check this input */ }
     }
 
     /// <summary>The coalescing floor for this build: the project's <c>modules.minChunkSize</c>, or 0
@@ -839,6 +860,7 @@ internal static class ProjectBuild
         if (!CompilerIsNewEnough(project.ReferencePaths, log)) return false;
 
         var tpscfg = TransposeJson.TryLoad(project.ProjectDir, configuration);
+        WriteResourceGlobs(project, tpscfg, configuration);
         var (reflectionEnabled, metadataTarget) = ReflectionSettings(tpscfg);
         var assemblyVersion = ProjectResolver.ReadAssemblyVersion(csproj);
         // Each dependency reads its own csproj property, but a command-line override applies to the
