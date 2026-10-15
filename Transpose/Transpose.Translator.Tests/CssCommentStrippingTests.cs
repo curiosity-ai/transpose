@@ -57,11 +57,20 @@ public sealed class CssCommentStrippingTests
     }
 
     [TestMethod]
-    public void ACommentBetweenTwoTokensBecomesASpace()
+    public void ACommentBetweenTwoNamesBecomesASpace()
     {
         // `a/**/b` must not collapse into the single type selector `ab`.
         Assert.AreEqual("a b { }", CssProcessor.StripComments("a/**/b { }"));
-        Assert.AreEqual("color: red ;", CssProcessor.StripComments("color: red/* why */;"));
+    }
+
+    [TestMethod]
+    public void ACommentNextToPunctuationLeavesNothing()
+    {
+        // A comment is no token: `div/**/.cls` is the compound selector `div.cls`, and a space would
+        // make it a descendant selector.
+        Assert.AreEqual("div.cls { }", CssProcessor.StripComments("div/**/.cls { }"));
+        Assert.AreEqual("a:hover { }", CssProcessor.StripComments("a/**/:hover { }"));
+        Assert.AreEqual("color: red;", CssProcessor.StripComments("color: red/* why */;"));
     }
 
     [TestMethod]

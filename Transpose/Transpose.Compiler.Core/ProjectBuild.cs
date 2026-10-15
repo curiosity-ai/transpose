@@ -627,10 +627,11 @@ internal static class ProjectBuild
         yield return "bcl=" + BuildCache.ReferenceFingerprint(TransposeAssemblies.TransposeDllPath);
 
         // Resources the site/package build reads straight from disk (tps.json `resources`): tps.json's
-        // own hash covers *which* files are listed, but not what is in them.
+        // own hash covers *which* patterns are listed, but not which files they match today or what is
+        // in them. Expanded the way the build expands them, and hashed as bytes (an image is not text).
         if (tpscfg is not null)
-            foreach (var file in tpscfg.Resources.SelectMany(g => g.Files).OrderBy(n => n, StringComparer.Ordinal))
-                yield return "res=" + file + "=" + BuildCache.FileContentFingerprint(Path.Combine(project.ProjectDir, file));
+            foreach (var file in OutputBuilder.ResourceFiles(project.ProjectDir, tpscfg))
+                yield return "res=" + Path.GetRelativePath(project.ProjectDir, file).Replace('\\', '/') + "=" + BuildCache.FileBytesFingerprint(file);
     }
 
     /// <summary>The chunk size distribution, so a `modules.minChunkSize` setting can be judged from
@@ -975,7 +976,9 @@ internal static class ProjectBuild
     internal static string ResolveOutputDir(TransposeJson config, string projectDir, string configuration)
     {
         var raw = (config.Output ?? "$(OutDir)/tps/").Replace("$(OutDir)", ResolveBinDir(projectDir, configuration)).Replace('\\', '/');
-        return Path.GetFullPath(raw);
+        // Relative to the project, like every other path in tps.json, not to whatever directory the
+        // process happens to run in (a library host, or tps run from elsewhere).
+        return Path.GetFullPath(raw, projectDir);
     }
 
     /// <summary>The project's build output directory (bin/&lt;config&gt;/netstandard2.0), where the

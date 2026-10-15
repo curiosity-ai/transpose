@@ -161,7 +161,7 @@ internal static class OutputBuilder
 
         void WriteText(string rel, string content)
         {
-            var dest = Path.Combine(outputDir, rel.Replace('/', Path.DirectorySeparatorChar));
+            var dest = SitePath(outputDir, rel);
             Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
             File.WriteAllText(dest, content, utf8);
             written.Add(Path.GetFullPath(dest));
@@ -398,7 +398,7 @@ internal static class OutputBuilder
             foreach (var file in linker.LinkAssembly(modules.TypeToChunk, own))
             {
                 if (!file.IsChunk) { javascript = file.Text; continue; }   // the entry, written below
-                var dest = Path.Combine(outputDir, file.Rel.Replace('/', Path.DirectorySeparatorChar));
+                var dest = SitePath(outputDir, file.Rel);
                 Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
                 File.WriteAllText(dest, MinifyModule(file.Text, file.Rel), utf8);
                 written.Add(Path.GetFullPath(dest));
@@ -432,7 +432,7 @@ internal static class OutputBuilder
         //     failure mode is a 404 on whichever screen first needs the chunk and nothing at build
         //     time, so it is worth one line of check.
         var dangling = new List<string>();
-        foreach (var (rel, js) in modulesWritten)
+        foreach (var (rel, js) in modulesWritten.TakeWhile(_ => dangling.Count < 50))
             foreach (var import in ModuleSpecifier.ReadLeading(js))
             {
                 if (dangling.Count >= 50) break;
@@ -445,7 +445,8 @@ internal static class OutputBuilder
 
         var manifestPath = ManifestPath(outputDir, project.AssemblyName);
         var removed = config.CleanOutputFolder
-            ? PruneStaleFiles(outputDir, written, ReadManifest(manifestPath, outputDir), config.CleanOutputFolderExclude)
+            ? PruneStaleFiles(outputDir, WrittenOrClaimedByOthers(outputDir, manifestPath, written),
+                              ReadManifest(manifestPath, outputDir), config.CleanOutputFolderExclude)
             : Array.Empty<string>();
 
         WriteManifest(manifestPath, outputDir, written, utf8);
@@ -768,7 +769,7 @@ internal static class OutputBuilder
     private static void ExtractResourceFile(
         AssemblyResources asm, string resourceName, string outputDir, string rel, HashSet<string> written)
     {
-        var dest = Path.Combine(outputDir, rel.Replace('/', Path.DirectorySeparatorChar));
+        var dest = SitePath(outputDir, rel);
         Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
 
         using (var s = asm.Open(resourceName))
@@ -1032,7 +1033,10 @@ internal static class OutputBuilder
     private static void WriteResource(
         string outputDir, string rel, IReadOnlyList<string> sources, bool concatenate, HashSet<string>? written)
     {
-        var dest = Path.Combine(outputDir, rel.Replace('/', Path.DirectorySeparatorChar));
+        var dest = Path.GetFullPath(Path.Combine(outputDir, rel.Replace('/', Path.DirectorySeparatorChar)));
+        // A site directory that overlaps the sources ("output": "./") would otherwise rewrite the
+        // authored file in place (comments stripped), and a binary copy onto itself throws.
+        if (sources.Any(src => string.Equals(Path.GetFullPath(src), dest, PathComparison))) return;
         Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
         var css = IsCss(rel);
         if (concatenate)
@@ -1252,6 +1256,12 @@ internal static class OutputBuilder
     /// pattern (<c>a/**/b/*.js</c> is not a shape any tps.json uses and matches nothing). Results are
     /// ordered ordinally by path so a build does not inherit the file system's enumeration order.
     /// </summary>
+    /// <summary>Every file the project's resource groups match today, in a stable order — what the
+    /// incremental cache fingerprints, so an edited or added stylesheet is never "up to date".</summary>
+    internal static IEnumerable<string> ResourceFiles(string projectDir, TransposeJson config)
+        => config.Resources.SelectMany(g => g.Files).SelectMany(p => ExpandGlob(projectDir, p))
+                 .Select(m => m.FullPath).Distinct(PathComparer).OrderBy(f => f, StringComparer.Ordinal);
+
     private static IEnumerable<GlobMatch> ExpandGlob(string baseDir, string pattern)
     {
         pattern = pattern.Replace('\\', '/');
@@ -1400,6 +1410,44 @@ internal static class OutputBuilder
     internal static readonly StringComparer PathComparer =
         OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
 
+    private static readonly StringComparison PathComparison =
+        OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
+    private static bool IsUnder(string root, string fullPath)
+        => fullPath.StartsWith(root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, PathComparison);
+
+    /// <summary>
+    /// The full path of <paramref name="rel"/> inside the site. A package's manifest is untrusted
+    /// input: a resource path of <c>../x</c> or an absolute one would otherwise write a file anywhere,
+    /// and a later build's prune would delete it.
+    /// </summary>
+    private static string SitePath(string outputDir, string rel)
+    {
+        var root = Path.GetFullPath(outputDir);
+        var full = Path.GetFullPath(Path.Combine(root, rel.Replace('/', Path.DirectorySeparatorChar)));
+        if (!IsUnder(root, full))
+            throw new InvalidDataException($"The output path '{rel}' resolves outside the site directory '{root}'.");
+        return full;
+    }
+
+    /// <summary>
+    /// The files this build wrote, plus every file another project's manifest in the same folder still
+    /// lists. Several apps can build into one site directory and share a library's files: one of them
+    /// dropping the library must not delete what the others still load.
+    /// </summary>
+    private static HashSet<string> WrittenOrClaimedByOthers(string outputDir, string ownManifest, HashSet<string> written)
+    {
+        var keep = new HashSet<string>(written, PathComparer);
+        var fullOut = Path.GetFullPath(outputDir);
+        if (!Directory.Exists(fullOut)) return keep;
+
+        foreach (var manifest in Directory.EnumerateFiles(fullOut, ".tps-manifest.*.json"))
+            if (!PathComparer.Equals(Path.GetFullPath(manifest), Path.GetFullPath(ownManifest)))
+                keep.UnionWith(ReadManifest(manifest, fullOut));
+
+        return keep;
+    }
+
     /// <summary>
     /// The "clean output folder" step: prunes files THIS project authored in an <em>earlier</em> build
     /// (recorded in <paramref name="previouslyWritten"/>, read from its own manifest) that the current
@@ -1446,7 +1494,7 @@ internal static class OutputBuilder
             catch { /* a locked/read-only file must not fail the build; leave it in place */ }
         }
 
-        RemoveEmptyDirectories(fullOut);
+        RemoveEmptiedDirectories(fullOut, removed);
         return removed;
     }
 
@@ -1482,7 +1530,9 @@ internal static class OutputBuilder
             {
                 var rel = e.GetString();
                 if (string.IsNullOrEmpty(rel)) continue;
-                result.Add(Path.GetFullPath(Path.Combine(fullOut, rel.Replace('/', Path.DirectorySeparatorChar))));
+                // An entry outside the site (written by a compiler that did not check) is never pruned.
+                var full = Path.GetFullPath(Path.Combine(fullOut, rel.Replace('/', Path.DirectorySeparatorChar)));
+                if (IsUnder(fullOut, full)) result.Add(full);
             }
         }
         catch { /* a corrupt/unreadable manifest simply means "prune nothing this run" */ }
@@ -1507,17 +1557,22 @@ internal static class OutputBuilder
         catch { /* non-fatal: without a manifest the next build prunes nothing, which is safe */ }
     }
 
-    /// <summary>Removes directories left empty by the prune, deepest first, keeping the output root.</summary>
-    private static void RemoveEmptyDirectories(string root)
+    /// <summary>Removes the directories the prune emptied, walking up from each deleted file and
+    /// stopping at the output root. An empty directory the build did not empty (an upload folder a
+    /// server expects in its wwwroot) is left alone.</summary>
+    private static void RemoveEmptiedDirectories(string root, IEnumerable<string> deletedFiles)
     {
-        foreach (var dir in Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories)
-                                     .OrderByDescending(d => d.Length))   // longest path first ⇒ children before parents
+        foreach (var file in deletedFiles)
         {
-            try
+            for (var dir = Path.GetDirectoryName(file); dir is not null && IsUnder(root, dir); dir = Path.GetDirectoryName(dir))
             {
-                if (!Directory.EnumerateFileSystemEntries(dir).Any()) Directory.Delete(dir);
+                try
+                {
+                    if (Directory.Exists(dir) && !Directory.EnumerateFileSystemEntries(dir).Any()) Directory.Delete(dir);
+                    else break;
+                }
+                catch { break; /* a concurrently-recreated or locked directory is not fatal */ }
             }
-            catch { /* ignore: a concurrently-recreated or locked directory is not fatal */ }
         }
     }
 

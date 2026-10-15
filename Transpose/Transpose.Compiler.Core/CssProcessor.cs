@@ -15,8 +15,8 @@ namespace Transpose.Compiler;
 /// <list type="bullet">
 /// <item>A <c>/*</c> inside a string (<c>content: "/* not a comment */"</c>) or inside an unquoted
 /// <c>url(…)</c> token is not a comment and is copied through.</item>
-/// <item>A comment between two non-whitespace tokens becomes a single space, so <c>a/**/b</c> cannot
-/// collapse into <c>ab</c>.</item>
+/// <item>A comment between two names becomes a single space, so <c>a/**/b</c> cannot collapse into
+/// <c>ab</c>. Anywhere else it simply goes: <c>div/**/.cls</c> is <c>div.cls</c>.</item>
 /// <item>A comment that ends its line takes the whitespace around it with it — and the whole line when
 /// nothing else was on it — rather than leaving a blank line or a trailing space behind.</item>
 /// </list>
@@ -143,7 +143,7 @@ internal static class CssProcessor
 
     /// <summary>Consumes the comment starting at <paramref name="i"/>, appending whatever must take its
     /// place: nothing at all when it stood on its own line (the line goes with it), a single space when
-    /// it separated two tokens, nothing otherwise.</summary>
+    /// it separated two names, nothing otherwise.</summary>
     private static int SkipComment(string css, int i, StringBuilder sb)
     {
         var end = css.IndexOf("*/", i + 2, StringComparison.Ordinal);
@@ -164,9 +164,13 @@ internal static class CssProcessor
             return j;
         }
 
-        // Otherwise keep the tokens on either side apart: `a/**/b` must not become `ab`.
-        if (sb.Length > 0 && !char.IsWhiteSpace(sb[sb.Length - 1]) && after < css.Length && !char.IsWhiteSpace(css[after]))
+        // Otherwise keep two names on either side apart: `a/**/b` must not become `ab`. Anything else
+        // joins as it is: a comment is no token, so `div/**/.cls` means `div.cls`, and a space there
+        // would turn it into a descendant selector.
+        if (sb.Length > 0 && IsNameChar(sb[sb.Length - 1]) && after < css.Length && IsNameChar(css[after]))
             sb.Append(' ');
         return after;
     }
+
+    private static bool IsNameChar(char c) => char.IsLetterOrDigit(c) || c is '-' or '_' or '\\' || c > 0x7F;
 }

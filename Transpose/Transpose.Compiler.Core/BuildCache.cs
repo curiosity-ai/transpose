@@ -263,6 +263,10 @@ internal sealed class BuildCache
         {
             System.IO.Directory.CreateDirectory(_dir);
 
+            // The payloads below are overwritten in place, so the old manifest goes first: a crash
+            // part-way through must leave no manifest that vouches for a half-written bundle.
+            File.Delete(Path.Combine(_dir, ManifestFile));
+
             WriteTypes(plan);
 
             // The finished bundle, so a later build whose own inputs are all unchanged can skip the
@@ -312,13 +316,6 @@ internal sealed class BuildCache
             MsBuildDiagnostic.WriteWarning(MsBuildDiagnostic.CodeCacheNotWritten,
                 $"could not write the incremental build cache in '{_dir}': {ex.Message}");
         }
-    }
-
-    /// <summary>Deletes the cache — used when a build fails, so a broken state is never reused.</summary>
-    public void Invalidate()
-    {
-        try { if (System.IO.Directory.Exists(_dir)) System.IO.Directory.Delete(_dir, recursive: true); }
-        catch { /* best effort */ }
     }
 
     /// <summary>The output files the previous build recorded, so a caller can report them.</summary>
@@ -495,6 +492,12 @@ internal sealed class BuildCache
     }
 
     /// <summary>Fingerprint of a file's contents, or a marker when it does not exist.</summary>
+    public static string FileBytesFingerprint(string path)
+    {
+        try { return Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))); }
+        catch { return "unreadable"; }
+    }
+
     public static string FileContentFingerprint(string path)
     {
         try { return File.Exists(path) ? HashString(File.ReadAllText(path)) : "absent"; }
