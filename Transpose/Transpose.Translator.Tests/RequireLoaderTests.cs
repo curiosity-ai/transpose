@@ -265,5 +265,36 @@ public class Program
                 + "and nothing else about the loader notices — one fetch, and IsLoaded still answers "
                 + "for the URL as it was asked for");
         }
+
+        [TestMethod]
+        public async Task AFallbackLoadIsSharedWithALaterRequestForTheCounterpartAsync()
+        {
+            var output = await RunTest(Preamble + @"
+public class Program
+{
+    public static async Task Main()
+    {
+        Dom.Install();
+        Dom.Missing(""https://site.test/app/assets/js/lib.min.js?b1"");
+
+        // The minified name is missing, so this loads lib.js instead...
+        await Require.RequireAsync(""assets/js/lib.min.js"");
+        // ...and asking for lib.js by name afterwards must not fetch and run it a second time.
+        await Require.RequireAsync(""assets/js/lib.js"");
+        await Require.RequireAsync(""./assets/js/lib.js"");
+        Console.WriteLine(""loaded: "" + Require.IsLoaded(""assets/js/lib.js""));
+
+        Console.WriteLine(Dom.Requested);
+    }
+}", skipRoslyn: true);
+
+            Assert.AreEqual(
+                "loaded: True\n"
+                + "script https://site.test/app/assets/js/lib.min.js?b1\n"
+                + "script https://site.test/app/assets/js/lib.js?b1",
+                output,
+                "the counterpart a fallback loaded is recorded under its own name, so requesting it "
+                + "directly afterwards is answered from that load");
+        }
     }
 }

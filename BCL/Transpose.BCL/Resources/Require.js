@@ -84,6 +84,10 @@
             var resolved = require.$resolve(url);
             if (require.$pending[resolved]) return require.$pending[resolved];
 
+            // Loaded already, possibly as the counterpart of a variant that was missing: the element
+            // that serves it carries the cache-busting query, so $find below would not match it.
+            if (require.$loaded[resolved]) return Promise.resolve(true);
+
             var effective = require.$kindOf(resolved, kind);
 
             // Already on the page: index.html scripted it, or a host loaded it its own way. Wait for
@@ -99,7 +103,10 @@
                     var counterpart = require.$counterpart(resolved);
                     if (counterpart == null) throw error;
                     return require.$inject(counterpart, require.$kindOf(counterpart, kind)).then(function () {
+                        // Record it under its own name too, so a later request for the counterpart
+                        // shares this load instead of fetching and running the file a second time.
                         require.$loaded[counterpart] = true;
+                        require.$pending[counterpart] = Promise.resolve(true);
                         return true;
                     }, function () {
                         throw error;
