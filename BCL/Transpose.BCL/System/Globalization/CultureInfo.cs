@@ -112,6 +112,9 @@ namespace System.Globalization
         /// <summary>
         /// Gets the TextInfo that defines the writing system associated with the culture.
         /// </summary>
+        // The runtime (and every culture definition) stores it as "TextInfo"; the class convention
+        // would otherwise camel-case the read to "textInfo", which nothing sets.
+        [Transpose.Name("TextInfo")]
         public virtual TextInfo TextInfo { get; }
     }
 }

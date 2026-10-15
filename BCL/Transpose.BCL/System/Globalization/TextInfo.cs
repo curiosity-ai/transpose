@@ -12,7 +12,7 @@ namespace System.Globalization
         /// <summary>
         /// Gets the American National Standards Institute (ANSI) code page used by the writing system represented by the current TextInfo.
         /// </summary>
-        public virtual int ANSICodePage { get; }
+        public virtual int ANSICodePage { get; private set; }
 
         /// <summary>
         /// Gets the name of the culture associated with the current TextInfo object.
@@ -23,7 +23,7 @@ namespace System.Globalization
         /// <summary>
         /// Gets the Extended Binary Coded Decimal Interchange Code (EBCDIC) code page used by the writing system represented by the current TextInfo.
         /// </summary>
-        public virtual int EBCDICCodePage { get; }
+        public virtual int EBCDICCodePage { get; private set; }
 
         /// <summary>
         /// Gets a value indicating whether the current TextInfo object is read-only.
@@ -64,12 +64,12 @@ namespace System.Globalization
         /// <summary>
         /// Gets the Macintosh code page used by the writing system represented by the current TextInfo.
         /// </summary>
-        public virtual int MacCodePage { get; }
+        public virtual int MacCodePage { get; private set; }
 
         /// <summary>
         /// Gets the original equipment manufacturer (OEM) code page used by the writing system represented by the current TextInfo.
         /// </summary>
-        public virtual int OEMCodePage { get; }
+        public virtual int OEMCodePage { get; private set; }
 
         /// <summary>
         /// Creates a new object that is a copy of the current TextInfo object.
