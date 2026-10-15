@@ -50,22 +50,13 @@
             delay: function (delay, state) {
                 var tcs = new System.Threading.Tasks.TaskCompletionSource(),
                     token,
-                    cancelCallback = false;
+                    done = false,
+                    clear = null,
+                    registration = null;
 
                 if (Transpose.is(state, System.Threading.CancellationToken)) {
                     token = state;
                     state = undefined;
-                }
-
-                if (token) {
-                    token.cancelWasRequested = function () {
-                        if (!cancelCallback) {
-                            cancelCallback = true;
-                            clearTimeout(clear);
-
-                            tcs.setCanceled();
-                        }
-                    };
                 }
 
                 var ms = delay;
@@ -73,15 +64,40 @@
                     ms = delay.getTotalMilliseconds();
                 }
 
-                var clear = setTimeout(function () {
-                    if (!cancelCallback) {
-                        cancelCallback = true;
-                        tcs.setResult(state);
-                    }
-                }, ms);
+                // .NET: -1 (Timeout.Infinite / InfiniteTimeSpan) waits forever and anything below it
+                // is rejected. setTimeout(-1) would have fired at once instead.
+                if (ms < -1) {
+                    throw new System.ArgumentOutOfRangeException.$ctor1(Transpose.is(delay, System.TimeSpan) ? "delay" : "millisecondsDelay");
+                }
 
-                if (token && token.getIsCancellationRequested()) {
-                    Transpose.setImmediate(token.cancelWasRequested);
+                // Each Delay registers its own callback on the token. The token used to carry a single
+                // `cancelWasRequested` slot, so cancelling it cancelled only the last Delay to set it.
+                if (token) {
+                    registration = token.register(function () {
+                        if (!done) {
+                            done = true;
+
+                            if (clear !== null) {
+                                clearTimeout(clear);
+                            }
+
+                            tcs.setCanceled();
+                        }
+                    });
+                }
+
+                if (!done && ms !== -1) {
+                    clear = setTimeout(function () {
+                        if (!done) {
+                            done = true;
+
+                            if (registration) {
+                                registration.dispose();
+                            }
+
+                            tcs.setResult(state);
+                        }
+                    }, ms);
                 }
 
                 return tcs.task;
@@ -305,31 +321,57 @@
         waitt: function (timeout, token) {
             var ms = timeout,
                 tcs = new System.Threading.Tasks.TaskCompletionSource(),
-                cancelCallback = false;
-
-            if (token) {
-                token.cancelWasRequested = function () {
-                    if (!cancelCallback) {
-                        cancelCallback = true;
-                        clearTimeout(clear);
-                        tcs.setException(new System.OperationCanceledException.$ctor1(token));
-                    }
-                };
-            }
+                cancelCallback = false,
+                clear = null,
+                registration = null;
 
             if (Transpose.is(timeout, System.TimeSpan)) {
                 ms = timeout.getTotalMilliseconds();
             }
 
-            var clear = setTimeout(function () {
-                cancelCallback = true;
-                tcs.setResult(false);
-            }, ms);
+            // A registration per wait (not the token's single `cancelWasRequested` slot, which the
+            // last waiter overwrote), released once the wait completes.
+            if (token) {
+                registration = token.register(function () {
+                    if (!cancelCallback) {
+                        cancelCallback = true;
+
+                        if (clear !== null) {
+                            clearTimeout(clear);
+                        }
+
+                        tcs.setException(new System.OperationCanceledException.$ctor1(token));
+                    }
+                });
+            }
+
+            // -1 is an infinite timeout: no timer at all.
+            if (!cancelCallback && ms !== -1) {
+                clear = setTimeout(function () {
+                    if (!cancelCallback) {
+                        cancelCallback = true;
+
+                        if (registration) {
+                            registration.dispose();
+                        }
+
+                        tcs.setResult(false);
+                    }
+                }, ms);
+            }
 
             this.continueWith(function () {
-                clearTimeout(clear);
+                if (clear !== null) {
+                    clearTimeout(clear);
+                }
+
                 if (!cancelCallback) {
                     cancelCallback = true;
+
+                    if (registration) {
+                        registration.dispose();
+                    }
+
                     tcs.setResult(true);
                 }
             })
@@ -340,20 +382,26 @@
         wait: function (token) {
             var me = this,
                 tcs = new System.Threading.Tasks.TaskCompletionSource(),
-                complete = false;
+                complete = false,
+                registration = null;
 
             if (token) {
-                token.cancelWasRequested = function () {
+                registration = token.register(function () {
                     if (!complete) {
                         complete = true;
                         tcs.setException(new System.OperationCanceledException.$ctor1(token));
                     }
-                };
+                });
             }
 
             this.continueWith(function () {
                 if (!complete) {
                     complete = true;
+
+                    if (registration) {
+                        registration.dispose();
+                    }
+
                     if (me.isFaulted() || me.isCanceled()) {
                         tcs.setException(me.exception);
                     } else {
