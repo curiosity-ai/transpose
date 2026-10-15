@@ -1299,6 +1299,14 @@
 
                 if (from) {
                     for (key in from) {
+                        // `from` is typically JSON.parse output, i.e. attacker-controlled: an own
+                        // "__proto__" key would otherwise be merged into (or assigned as) the target's
+                        // prototype — Object.prototype for a plain {} — polluting every object on the page.
+                        if (key === "__proto__" || key === "constructor" || key === "prototype" ||
+                            !Object.prototype.hasOwnProperty.call(from, key)) {
+                            continue;
+                        }
+
                         value = from[key];
 
                         var descriptor = null;
