@@ -58,7 +58,10 @@ public static class Program
         var restoreSources = new List<string>();
         string? packagesFolder = null;
 
-        for (var i = 0; i < args.Length; i++)
+        var i = 0;
+        try
+        {
+        for (; i < args.Length; i++)
         {
             switch (args[i])
             {
@@ -113,6 +116,11 @@ public static class Program
                     break;
             }
         }
+        }
+        catch (Exception ex) when (ex is IndexOutOfRangeException or FormatException or OverflowException)
+        {
+            return BadOptionValue(args, i);
+        }
         // assemblyVersion (from --assembly-version) is emitted into the bundle via Transpose.assemblyVersion(...).
 
         var csproj = LocateProject(projectArg);
@@ -166,6 +174,11 @@ public static class Program
 
             if (restored != 0) return restored;
         }
+
+        // The build reads packages back from NUGET_PACKAGES first, so a folder the restore was pointed
+        // at has to be the one the build reads, or it compiles against nothing.
+        if (packagesFolder is not null)
+            Environment.SetEnvironmentVariable("NUGET_PACKAGES", Path.GetFullPath(packagesFolder));
 
         var sw = Stopwatch.StartNew();
         if (watch)
@@ -325,6 +338,17 @@ public static class Program
         return sb.Append('"').ToString();
     }
 
+    /// <summary>An option whose value is missing (<c>-o</c> last) or not a number
+    /// (<c>--watch-port abc</c>), reported as a command-line error rather than a crash.</summary>
+    private static int BadOptionValue(string[] args, int i)
+    {
+        var option = args[Math.Min(i, args.Length) - 1];
+        MsBuildDiagnostic.WriteError(MsBuildDiagnostic.CodeInvalidCommandLine, i < args.Length
+            ? $"Option '{option}' expects a number, got '{args[i]}'."
+            : $"Option '{option}' needs a value.");
+        return 1;
+    }
+
     private static string? LocateProject(string? arg)
     {
         if (string.IsNullOrWhiteSpace(arg)) arg = Directory.GetCurrentDirectory();
@@ -357,7 +381,10 @@ public static class Program
         var force = false;
         var quiet = false;
 
-        for (var i = 0; i < args.Length; i++)
+        var i = 0;
+        try
+        {
+        for (; i < args.Length; i++)
         {
             switch (args[i])
             {
@@ -376,6 +403,11 @@ public static class Program
                     }
                     break;
             }
+        }
+        }
+        catch (IndexOutOfRangeException)
+        {
+            return BadOptionValue(args, i);
         }
 
         var csproj = LocateProject(projectArg);
