@@ -13,7 +13,7 @@ public sealed class ProjectBuildResult
 {
     private readonly IReadOnlyList<OutputBuilder.CssResource> _cssResources;
 
-    internal ProjectBuildResult(BuildOutcome outcome, IReadOnlyList<string> output)
+    internal ProjectBuildResult(BuildOutcome outcome, IReadOnlyList<string> output, IReadOnlyList<string> errorLines)
     {
         ExitCode = outcome.ExitCode;
         SiteDirectory = outcome.OutDir;
@@ -21,7 +21,10 @@ public sealed class ProjectBuildResult
         Diagnostics = outcome.Diagnostics;
         _cssResources = outcome.CssResources;
         Output = output;
-        Errors = outcome.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).Select(MsBuildDiagnostic.Format).ToList();
+        // The compiler's own errors (a failed resolve, a dependency that did not build, a crash) carry
+        // no Roslyn diagnostic, so the lines written as errors are added: a failed build always says why.
+        Errors = outcome.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).Select(MsBuildDiagnostic.Format)
+            .Concat(errorLines).Distinct().ToList();
         Warnings = outcome.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Warning).Select(MsBuildDiagnostic.Format).ToList();
     }
 

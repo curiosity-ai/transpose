@@ -172,7 +172,14 @@ internal sealed class WatchSession : IDisposable
         var nextVersion = Interlocked.Increment(ref _version);
         var outcome = _build(LiveReloadScript(nextVersion));
 
-        if (outcome.Success)
+        if (outcome.Success && outcome.UpToDate)
+        {
+            // Nothing was written, so index.html still embeds the previous version: advancing the hub
+            // would tell every page it is behind, and the reload would land on the same page, forever.
+            Interlocked.Decrement(ref _version);
+            _log.Info("tps: nothing changed — browser left as it is");
+        }
+        else if (outcome.Success)
         {
             if (outcome.OutDir is not null) Remember(outcome);
             _log.Info("tps: rebuilt — reloading browser");

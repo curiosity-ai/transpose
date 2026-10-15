@@ -108,14 +108,16 @@ internal sealed record BuildOptions
 /// which is what makes it the test for "this build produced something servable" that watch mode needs;
 /// a failure, or a package/bundle/runtime build, leaves it null. <see cref="CssResources"/> lists the
 /// stylesheets that site assembled from files on disk, so a watcher can rewrite one without recompiling
-/// (see <see cref="OutputBuilder.CssResource"/>).
+/// (see <see cref="OutputBuilder.CssResource"/>). <see cref="UpToDate"/> says the incremental cache
+/// found nothing to do and wrote nothing.
 /// </summary>
 internal readonly record struct BuildOutcome(
     int ExitCode,
     string? OutDir,
     bool HtmlDisabled,
     IReadOnlyList<Diagnostic> Diagnostics,
-    IReadOnlyList<OutputBuilder.CssResource> CssResources)
+    IReadOnlyList<OutputBuilder.CssResource> CssResources,
+    bool UpToDate = false)
 {
     public bool Success => ExitCode == 0;
 
@@ -323,7 +325,7 @@ internal static class ProjectBuild
                 // "nothing to serve".
                 return isSiteBuild
                     ? new BuildOutcome(0, SiteDirectory(options, tpscfg!, project), tpscfg!.HtmlDisabled,
-                        Array.Empty<Diagnostic>(), OutputBuilder.CssResources(project, tpscfg, configuration))
+                        Array.Empty<Diagnostic>(), OutputBuilder.CssResources(project, tpscfg, configuration), UpToDate: true)
                     : BuildOutcome.NoSite(0);
             }
             log.Info(verdict == BuildCache.Verdict.BodyOnlyChange
@@ -453,8 +455,17 @@ internal static class ProjectBuild
             }
 
             var outDir = SiteDirectory(options, config, project);
-            var siteResult = PhaseTimings.Measure("write site (minify + resources + html)", () =>
-                OutputBuilder.Build(project, config, js, outDir, configuration, result.MetadataJavascript, options.LiveReloadScript, result.Modules));
+            OutputBuilder.SiteBuildResult siteResult;
+            try
+            {
+                siteResult = PhaseTimings.Measure("write site (minify + resources + html)", () =>
+                    OutputBuilder.Build(project, config, js, outDir, configuration, result.MetadataJavascript, options.LiveReloadScript, result.Modules));
+            }
+            catch (Exception ex)
+            {
+                ReportCrash($"Writing the site to '{outDir}'", ex, log);
+                return BuildOutcome.NoSite(2, result.Diagnostics);
+            }
             // Every file in the site counts as an output: a rebuild must notice if any of them was
             // deleted or edited, otherwise "up to date" would leave a broken site in place.
             SaveCache(cache, plan, result, SiteOutputs(outDir, dllPath));
@@ -492,8 +503,16 @@ internal static class ProjectBuild
 
         if (options.WithRuntime) js = RoslynTranslator.LoadRuntime() + "\n" + js;
         var outPath = options.OutPath ?? Path.Combine(project.ProjectDir, "bin", project.AssemblyName + ".js");
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outPath))!);
-        File.WriteAllText(outPath, js);
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outPath))!);
+            File.WriteAllText(outPath, js);
+        }
+        catch (Exception ex)
+        {
+            ReportCrash($"Writing '{outPath}'", ex, log);
+            return BuildOutcome.NoSite(2, result.Diagnostics);
+        }
         SaveCache(cache, plan, result, new[] { Path.GetFullPath(outPath) });
         log.Info($"\nOK — wrote {js.Length:N0} bytes to {outPath} in {sw.ElapsedMilliseconds} ms.");
         return BuildOutcome.NoSite(0, result.Diagnostics);

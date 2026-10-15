@@ -44,6 +44,7 @@ public sealed class TransposeWatcher : IDisposable
     /// <summary>The output of the most recent build, kept so <see cref="Start"/> (and the update callback)
     /// can report it — the watch engine itself only deals in outcomes.</summary>
     private IReadOnlyList<string> _lastOutput = Array.Empty<string>();
+    private IReadOnlyList<string> _lastErrors = Array.Empty<string>();
 
     /// <param name="request">How to build the project on every change. Its
     /// <see cref="ProjectBuildRequest.InjectedHtmlScript"/> is set by the watcher and must not be set by
@@ -71,7 +72,7 @@ public sealed class TransposeWatcher : IDisposable
             reloadPath: reloadEndpointPath,
             afterUpdate: onUpdated is null
                 ? null
-                : (outcome, cssOnly) => onUpdated(new ProjectBuildResult(outcome, _lastOutput), cssOnly));
+                : (outcome, cssOnly) => onUpdated(new ProjectBuildResult(outcome, _lastOutput, _lastErrors), cssOnly));
     }
 
     /// <summary>The resolved <c>.csproj</c> being watched.</summary>
@@ -79,8 +80,9 @@ public sealed class TransposeWatcher : IDisposable
 
     private BuildOutcome Build(string liveReloadScript)
     {
-        var (outcome, output) = TransposeCompilerLibrary.RunProjectBuild(_request, liveReloadScript);
+        var (outcome, output, errors) = TransposeCompilerLibrary.RunProjectBuild(_request, liveReloadScript);
         _lastOutput = output;
+        _lastErrors = errors;
         return outcome;
     }
 
@@ -92,7 +94,11 @@ public sealed class TransposeWatcher : IDisposable
     /// a result with no site directory (a failed build, or a project whose shape is a package rather than a
     /// site) means there is nothing to watch and the host should report the errors and stop.
     /// </summary>
-    public ProjectBuildResult Start() => new(_session.Start(), _lastOutput);
+    public ProjectBuildResult Start()
+    {
+        var outcome = _session.Start();
+        return new(outcome, _lastOutput, _lastErrors);
+    }
 
     /// <summary>Starts watching for changes. Call once the host is serving the initial build, so a rebuild
     /// can never broadcast to a server that is not up yet. Throws if <see cref="Start"/> did not produce a

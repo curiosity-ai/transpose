@@ -58,11 +58,8 @@ public static class TransposeCompilerLibrary
     public static ProjectBuildResult BuildProject(ProjectBuildRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
-        lock (Gate)
-        {
-            var (outcome, output) = RunProjectBuild(request, request.InjectedHtmlScript);
-            return new ProjectBuildResult(outcome, output);
-        }
+        var (outcome, output, errorLines) = RunProjectBuild(request, request.InjectedHtmlScript);
+        return new ProjectBuildResult(outcome, output, errorLines);
     }
 
     /// <summary>Runs <paramref name="request"/> on a thread-pool thread, still serialized against any other
@@ -78,15 +75,16 @@ public static class TransposeCompilerLibrary
     /// request into the CLI's own <see cref="BuildOptions"/>, redirects the build's console output into
     /// <paramref name="output"/> (and the request's progress callback), and runs it.
     ///
-    /// Not locked here — <see cref="BuildProject"/> takes the gate, and the watcher's builds are already
-    /// serialized by its own single-threaded update loop — but it does install process-wide sinks
-    /// (<see cref="MsBuildDiagnostic.Sink"/>, <c>CompileProgress.Sink</c>) for the duration of the build,
-    /// which is why nothing else may be compiling at the same time.
+    /// Takes the gate itself, so a watcher's rebuilds queue behind a <see cref="BuildProject"/> (and
+    /// each other) like every other compilation: two builds whose closures share a library would
+    /// otherwise write the same DLL at once, and <c>CompileProgress.Sink</c>/<c>PhaseTimings</c> are
+    /// process-wide.
     /// </summary>
-    internal static (BuildOutcome Outcome, IReadOnlyList<string> Output) RunProjectBuild(
+    internal static (BuildOutcome Outcome, IReadOnlyList<string> Output, IReadOnlyList<string> ErrorLines) RunProjectBuild(
         ProjectBuildRequest request, string? injectedHtmlScript)
     {
         var lines = new List<string>();
+        var errorLines = new List<string>();
         var log = new CollectingLog(lines, request.OnProgress);
 
         var options = ProjectBuild.ResolveOutputMode(new BuildOptions
@@ -104,15 +102,26 @@ public static class TransposeCompilerLibrary
             LiveReloadScript = injectedHtmlScript,
         });
 
-        var previousSink = MsBuildDiagnostic.Sink;
-        try
+        lock (Gate)
         {
-            MsBuildDiagnostic.Sink = (line, _) => log.Info(line);
-            return (ProjectBuild.Run(options, log), lines);
-        }
-        finally
-        {
-            MsBuildDiagnostic.Sink = previousSink;
+            var previousSink     = MsBuildDiagnostic.Sink;
+            var previousProgress = CompileProgress.Sink;
+            try
+            {
+                MsBuildDiagnostic.Sink = (line, isError) =>
+                {
+                    if (isError) lock (errorLines) errorLines.Add(line);
+                    log.Info(line);
+                };
+                return (ProjectBuild.Run(options, log), lines, errorLines);
+            }
+            finally
+            {
+                // ProjectBuild.Run installs a progress sink bound to this request's log; left in place,
+                // the next Compile() would report into this request's callback.
+                MsBuildDiagnostic.Sink = previousSink;
+                CompileProgress.Sink   = previousProgress;
+            }
         }
     }
 
@@ -124,8 +133,8 @@ public static class TransposeCompilerLibrary
     /// </summary>
     /// <remarks>
     /// Not serialized against compilation: a restore installs files and touches none of the
-    /// process-wide translator state <see cref="Compile"/> takes the gate for. It is safe to run while
-    /// another project compiles — and pointless to run while <i>this</i> project compiles, since the
+    /// process-wide translator state <see cref="Compile"/> takes the gate for, and its diagnostic sink
+    /// is per async flow. It is safe to run while another project compiles — and pointless to run while <i>this</i> project compiles, since the
     /// build reads the folder this fills.
     /// </remarks>
     public static async Task<RestoreResult> RestoreAsync(RestoreRequest request, CancellationToken cancellationToken = default)

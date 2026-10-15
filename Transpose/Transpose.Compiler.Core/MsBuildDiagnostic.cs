@@ -106,10 +106,16 @@ internal static class MsBuildDiagnostic
     /// means the console, which is what <c>tps</c> wants (errors on stderr, warnings on stdout; MSBuild
     /// parses both streams alike). <c>Transpose.Compiler.Library</c> redirects this for the duration of
     /// one build so a hosting application can collect the diagnostics instead of finding them on its own
-    /// console. Process-wide mutable state, exactly like <c>Transpose.Translator.CompileProgress.Sink</c>
-    /// — which is why the library serializes its builds.
+    /// console. Held per async flow rather than per process, so a restore the library runs while a
+    /// build is in progress keeps each one's diagnostics on its own result.
     /// </summary>
-    public static Action<string, bool>? Sink;
+    public static Action<string, bool>? Sink
+    {
+        get => SinkValue.Value;
+        set => SinkValue.Value = value;
+    }
+
+    private static readonly AsyncLocal<Action<string, bool>?> SinkValue = new();
 
     /// <summary>Writes an error for a failure that is not tied to a source file.</summary>
     public static void WriteError(string code, string text)
