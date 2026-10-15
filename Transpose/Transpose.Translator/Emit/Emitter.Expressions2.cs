@@ -2716,6 +2716,15 @@ public sealed partial class Emitter
             return;
         }
 
+        // Compound arithmetic on a Nullable<numeric>: lifted like the binary operator.
+        if (NullableCompoundValueJs(assignment, op, leftType, rightType) is { } liftedCompound)
+        {
+            EmitExpression(assignment.Left);
+            _w.Write(" = ");
+            _w.Write(liftedCompound);
+            return;
+        }
+
         // Compound assignment to a foreign-JS 64-bit slot (`blob.size += n`, an [ObjectLiteral]
         // field): the slot holds a plain number, so the JS operator is right — except `/=`, which
         // C# truncates and JS does not (Emitter.Foreign64.cs).
@@ -2957,6 +2966,75 @@ public sealed partial class Emitter
     }
 
     /// <summary>
+    /// The new value of a compound arithmetic/bitwise assignment to a <c>Nullable&lt;T&gt;</c> of a
+    /// numeric T, lifted the way the binary operator is: null when either operand is null, otherwise
+    /// T's own operation — wrapped to a ≤32-bit integer's width, or a method call on a long/ulong/
+    /// decimal instance. The plain JS compound operator gave <c>null + 1 == 1</c> for a null
+    /// <c>int?</c> and never wrapped (<c>int.MaxValue + 1</c> stayed 2147483648). Null when the
+    /// target is not such a nullable, so the caller carries on. A user-defined operator or a
+    /// DateTime/TimeSpan helper is <see cref="CompoundOperatorValueJs"/>'s, which runs first.
+    /// </summary>
+    private string? NullableCompoundValueJs(AssignmentExpressionSyntax assignment, string op,
+        ITypeSymbol? leftType, ITypeSymbol? rightType)
+    {
+        if (op is not ("+=" or "-=" or "*=" or "/=" or "%=" or "&=" or "|=" or "^=" or "<<=" or ">>=")) return null;
+        if (!IsNullableValueType(leftType)) return null;
+        var t = UnwrapNullable(leftType);
+        if (!(IsNarrowIntegerTarget(t) || Is64BitInteger(t) || IsDecimalType(t) || IsFloatingType(t))) return null;
+        if (IsForeignJs64Lvalue(assignment.Left)) return null;
+
+        var binOp = op[..^1];
+        var left = Capture(() => EmitExpression(assignment.Left));
+        // The right operand converts to the left's type — a shift count stays an int.
+        var rightTarget = binOp is "<<" or ">>" ? rightType : leftType;
+        var rightValue = Capture(() => EmitExpressionConverted(assignment.Right, rightTarget));
+
+        // A right operand that can be null is read twice (the test and the operation); one with side
+        // effects is bound once by an arrow parameter (an await cannot sit in that arrow, so such an
+        // operand keeps the double read).
+        var rightNullable = IsNullableValueType(rightType) && CanBeNullOperand(assignment.Right);
+        var bindRight = rightNullable && HasSideEffects(assignment.Right) && !ContainsAwait(assignment.Right);
+        var right = bindRight ? "$r" : rightValue;
+
+        string inner;
+        if (Is64BitInteger(t) || IsDecimalType(t))
+        {
+            var method = Long64OrDecimalCompoundMethod(op, t);
+            if (method is null) return null;
+            var arg = IsDecimalType(t) && !IsDecimalType(UnwrapNullable(_model.GetTypeInfo(assignment.Right).Type))
+                ? $"System.Decimal({right})"
+                : right;
+            inner = $"{left}.{method}({arg})";
+        }
+        else if (IsNarrowIntegerTarget(t))
+        {
+            var st = t!.SpecialType;
+            var sub = IsSubWordIntegerTarget(t);
+            if (binOp == "*" && !sub)
+            {
+                inner = $"{(st == SpecialType.System_UInt32 ? "Transpose.Int.umul(" : "Transpose.Int.mul(")}{left}, {right})";
+            }
+            else
+            {
+                var innerOp = binOp == ">>" && st == SpecialType.System_UInt32 ? ">>>" : binOp;
+                var clip = sub ? (binOp == "%" ? null : NarrowIntegerClip(st))
+                    : st == SpecialType.System_UInt32 ? (binOp is "%" or ">>" ? null : "Transpose.Int.clipu32")
+                    : (binOp is "+" or "-" or "/" ? "Transpose.Int.clip32" : null);
+                var raw = binOp == "/" ? $"TransposeR.idiv({left}, {right})" : $"({left}) {innerOp} ({right})";
+                inner = clip is not null ? $"{clip}({raw})" : raw;
+            }
+        }
+        else
+        {
+            inner = $"({left}) {binOp} ({right})";
+        }
+
+        var nullTest = rightNullable ? $"{left} == null || {right} == null" : $"{left} == null";
+        var value = $"({nullTest} ? null : {inner})";
+        return bindRight ? $"(($r) => {value})({rightValue})" : value;
+    }
+
+    /// <summary>
     /// Emits the NEW element value for a compound assignment to a collection indexer — the second
     /// argument of <c>coll.setItem(i, …)</c>. Mirrors the value computation of the plain-lvalue
     /// compound-assignment branches (delegate combine, string concat, narrow-integer clip, or a plain
@@ -2970,6 +3048,13 @@ public sealed partial class Emitter
         if (CompoundOperatorValueJs(assignment, op, leftType, rightType) is { } compound)
         {
             _w.Write(compound);
+            return;
+        }
+
+        // A Nullable<numeric> element — see NullableCompoundValueJs.
+        if (NullableCompoundValueJs(assignment, op, leftType, rightType) is { } liftedCompound)
+        {
+            _w.Write(liftedCompound);
             return;
         }
 

@@ -83,5 +83,45 @@ public class Program
     }
 }", waitForOutput: "<<DONE>>");
         }
+
+        // ---- compound assignment on a Nullable<numeric> is lifted and wraps ----
+
+        [TestMethod]
+        public async Task NullableCompoundAssignmentIsLifted()
+        {
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+public class Box { public int? N; public long? L; }
+public class Program {
+  static string S(object o) => o == null ? ""null"" : o.ToString();
+  static int? Maybe(bool b) { Console.WriteLine(""maybe""); return b ? 2 : null; }
+  public static void Main() {
+    int? n = null; n += 1; Console.WriteLine(""int+= "" + S(n));
+    int? m = null; m *= 3; Console.WriteLine(""int*= "" + S(m));
+    int? k = null; k <<= 3; Console.WriteLine(""int<<= "" + S(k));
+    double? dd = null; dd += 1.5; Console.WriteLine(""double+= "" + S(dd));
+    double? de = 2; de += 1.5; Console.WriteLine(""double+= v "" + S(de));
+    int? big = int.MaxValue; big += 1; Console.WriteLine(""int overflow "" + S(big));
+    int? mul = 100000; mul *= 100000; Console.WriteLine(""int mul "" + S(mul));
+    int? dv = 7; dv /= 2; Console.WriteLine(""int div "" + S(dv));
+    uint? u = 0; u -= 1; Console.WriteLine(""uint wrap "" + S(u));
+    byte? b = 250; b += 10; Console.WriteLine(""byte wrap "" + S(b));
+    long? l = null; l += 1; Console.WriteLine(""long null "" + S(l));
+    long? l2 = 5; l2 *= 3000000000L; Console.WriteLine(""long "" + S(l2));
+    decimal? dc = null; dc += 1; Console.WriteLine(""dec null "" + S(dc));
+    decimal? dc2 = 7; dc2 /= 2; Console.WriteLine(""dec "" + S(dc2));
+    int? a = 5; int? nn = null; a += nn; Console.WriteLine(""rhs null "" + S(a));
+    int? c = 5; c += Maybe(true); Console.WriteLine(""rhs call "" + S(c));
+    int? c2 = 5; c2 += Maybe(false); Console.WriteLine(""rhs call null "" + S(c2));
+    var box = new Box(); box.N += 4; box.L -= 2; Console.WriteLine(""field "" + S(box.N) + "" "" + S(box.L));
+    box.N = 1; box.N += 4; Console.WriteLine(""field v "" + S(box.N));
+    var list = new List<int?> { null, 3 }; list[0] += 1; list[1] += 1; Console.WriteLine(""list "" + S(list[0]) + "" "" + S(list[1]));
+    int?[] arr = { null, int.MaxValue }; arr[0] += 1; arr[1] += 1; Console.WriteLine(""arr "" + S(arr[0]) + "" "" + S(arr[1]));
+    int? r = 3; var res = (r += 2); Console.WriteLine(""value "" + S(res));
+    Console.WriteLine(""<<DONE>>"");
+  }
+}", waitForOutput: "<<DONE>>");
+        }
     }
 }
