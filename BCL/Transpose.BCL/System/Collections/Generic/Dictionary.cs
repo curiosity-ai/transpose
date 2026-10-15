@@ -155,6 +155,17 @@ namespace System.Collections.Generic
         [Transpose.External]
         public static extern void SetBucket(object obj, TKey key, int value);
 
+        // The simple-key buckets are a JS object keyed by the key itself, so they must not inherit
+        // anything: on a plain {} the key "__proto__" hits the prototype accessor (never stored, and
+        // never found), and a stored "hasOwnProperty" shadows the method every lookup called.
+        [Transpose.Template("Object.create(null)")]
+        [Transpose.External]
+        private static extern object NewBuckets();
+
+        [Transpose.Template("Object.prototype.hasOwnProperty.call({obj}, {key})")]
+        [Transpose.External]
+        private static extern bool HasBucket(object obj, TKey key);
+
         public void Add(TKey key, TValue value)
         {
             Insert(key, value, true);
@@ -193,7 +204,7 @@ namespace System.Collections.Generic
                 for (int i = 0; i < buckets.Length; i++) buckets[i] = -1;
                 if (this.isSimpleKey)
                 {
-                    this.simpleBuckets = new object();
+                    this.simpleBuckets = NewBuckets();
                 }
                 Array.Clear(entries, 0, count);
                 freeList = -1;
@@ -275,7 +286,7 @@ namespace System.Collections.Generic
 
             if (this.isSimpleKey)
             {
-                if (this.simpleBuckets != null && this.simpleBuckets.HasOwnProperty(key))
+                if (this.simpleBuckets != null && HasBucket(this.simpleBuckets, key))
                 {
                     return GetBucket(this.simpleBuckets, key);
                 }
@@ -298,7 +309,7 @@ namespace System.Collections.Generic
             for (int i = 0; i < buckets.Length; i++) buckets[i] = -1;
             entries = new Entry[size];
             freeList = -1;
-            this.simpleBuckets = new object();
+            this.simpleBuckets = NewBuckets();
         }
 
         private void Insert(TKey key, TValue value, bool add)
@@ -313,7 +324,7 @@ namespace System.Collections.Generic
 
             if(this.isSimpleKey)
             {
-                if(this.simpleBuckets.HasOwnProperty(key))
+                if(HasBucket(this.simpleBuckets, key))
                 {
                     if (add)
                     {
@@ -410,7 +421,7 @@ namespace System.Collections.Generic
             for (int i = 0; i < newBuckets.Length; i++) newBuckets[i] = -1;
             if(this.isSimpleKey)
             {
-                this.simpleBuckets = new object();
+                this.simpleBuckets = NewBuckets();
             }
             Entry[] newEntries = new Entry[newSize];
             Array.Copy(entries, 0, newEntries, 0, count);
@@ -456,7 +467,7 @@ namespace System.Collections.Generic
             {
                 if(this.simpleBuckets != null)
                 {
-                    if(this.simpleBuckets.HasOwnProperty(key))
+                    if(HasBucket(this.simpleBuckets, key))
                     {
                         var i = GetBucket(this.simpleBuckets, key);
                         Script.Delete(GetBucket(this.simpleBuckets, key));
