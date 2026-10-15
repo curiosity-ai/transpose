@@ -440,6 +440,108 @@ public sealed class PackageRestoreTests
         Assert.IsNull(NuGetVersions.LowestSatisfying(null));
     }
 
+    /// <summary>A nuspec is untrusted input: a dependency id that is a path must not install (or be
+    /// read back) outside the packages folder.</summary>
+    [TestMethod]
+    public async Task ADependencyIdCannotEscapeThePackagesFolderAsync()
+    {
+        Package("Alpha", "1.0.0", (".NETStandard2.0", new[] { ("../outside", "1.0.0") }));
+        Package("Payload", "1.0.0");
+        // Where a flat folder lookup of "../outside" would find a package.
+        File.Copy(Path.Combine(_source, "Payload.1.0.0.nupkg"), Path.Combine(_root, "outside.1.0.0.nupkg"));
+
+        var outcome = await RestoreAsync(Csproj(Reference("Alpha", "1.0.0")));
+
+        Assert.IsTrue(outcome.Success, string.Join("; ", outcome.Errors));
+        Assert.IsFalse(Directory.Exists(Path.Combine(_root, "outside")));
+    }
+
+    /// <summary>A folder holding only a nuspec is what a killed <c>dotnet restore</c> leaves behind;
+    /// it is reinstalled, not taken as complete.</summary>
+    [TestMethod]
+    public async Task AHalfInstalledFolderIsReinstalledAsync()
+    {
+        Package("Bravo", "1.0.0");
+        Directory.CreateDirectory(Installed("Bravo", "1.0.0"));
+        File.WriteAllText(Path.Combine(Installed("Bravo", "1.0.0"), "bravo.nuspec"), "<package />");
+
+        var outcome = await RestoreAsync(Csproj(Reference("Bravo", "1.0.0")));
+
+        Assert.IsTrue(outcome.Success, string.Join("; ", outcome.Errors));
+        Assert.IsTrue(File.Exists(Path.Combine(Installed("Bravo", "1.0.0"), "lib", "netstandard2.0", "Bravo.dll")));
+        Assert.IsTrue(File.Exists(Path.Combine(Installed("Bravo", "1.0.0"), ".nupkg.metadata")));
+    }
+
+    [TestMethod]
+    public async Task ForceReplacesAnInstalledPackageAsync()
+    {
+        Package("Bravo", "1.0.0");
+        var csproj = Csproj(Reference("Bravo", "1.0.0"));
+        await RestoreAsync(csproj);
+
+        var dll = Path.Combine(Installed("Bravo", "1.0.0"), "lib", "netstandard2.0", "Bravo.dll");
+        File.Delete(dll);
+
+        var outcome = await PackageRestore.RunAsync(new RestoreOptions
+        {
+            CsprojPath = csproj, PackagesFolder = _packages, Sources = new[] { _source },
+            IgnoreConfiguredSources = true, Force = true,
+        }, BuildLog.Silent);
+
+        Assert.IsTrue(outcome.Success, string.Join("; ", outcome.Errors));
+        Assert.IsTrue(File.Exists(dll));
+    }
+
+    /// <summary>The lower-cased <c>id/version/id.version.nupkg</c> layout <c>nuget add</c> writes,
+    /// found on a case-sensitive file system.</summary>
+    [TestMethod]
+    public async Task ReadsALowerCasedHierarchicalSourceAsync()
+    {
+        Package("Charlie", "1.0.0");
+        var nested = Path.Combine(_source, "charlie", "1.0.0");
+        Directory.CreateDirectory(nested);
+        File.Move(Path.Combine(_source, "Charlie.1.0.0.nupkg"), Path.Combine(nested, "charlie.1.0.0.nupkg"));
+
+        var outcome = await RestoreAsync(Csproj(Reference("Charlie", "1.0.0")));
+
+        Assert.IsTrue(outcome.Success, string.Join("; ", outcome.Errors));
+        Assert.IsTrue(Directory.Exists(Installed("Charlie", "1.0.0")));
+    }
+
+    /// <summary>An exact pin (<c>[1.2.3]</c>) is restored and bound, as <c>dotnet restore</c> does.</summary>
+    [TestMethod]
+    public async Task ADeclaredExactRangeIsRestoredAndResolvedAsync()
+    {
+        Package("Delta", "1.2.3");
+        var csproj = Csproj(Reference("Delta", "[1.2.3]"));
+
+        var outcome = await RestoreAsync(csproj);
+
+        Assert.IsTrue(outcome.Success, string.Join("; ", outcome.Errors));
+        Assert.IsTrue(ResolveWithCache(csproj).ReferencePaths.Any(p => Path.GetFileName(p) == "Delta.dll"));
+    }
+
+    /// <summary>The build follows the one dependency group restore installed, not every group: a
+    /// version another project left in the cache must not change what this one binds.</summary>
+    [TestMethod]
+    public async Task TheResolverFollowsTheGroupRestoreInstalledAsync()
+    {
+        Package("Alpha", "1.0.0",
+            (".NETStandard2.0", new[] { ("ForNetStandard", "1.0.0") }),
+            ("net8.0",          new[] { ("ForNet8", "1.0.0") }));
+        Package("ForNetStandard", "1.0.0");
+        Package("ForNet8",        "1.0.0");
+
+        await RestoreAsync(CsprojAt("other", "other.csproj", Reference("ForNet8", "1.0.0")));
+        var csproj = Csproj(Reference("Alpha", "1.0.0"));
+        await RestoreAsync(csproj);
+
+        var references = ResolveWithCache(csproj).ReferencePaths.Select(Path.GetFileName).ToList();
+
+        CollectionAssert.Contains(references, "ForNetStandard.dll");
+        CollectionAssert.DoesNotContain(references, "ForNet8.dll");
+    }
+
     private ResolvedProject ResolveWithCache(string csproj)
     {
         var previous = Environment.GetEnvironmentVariable("NUGET_PACKAGES");

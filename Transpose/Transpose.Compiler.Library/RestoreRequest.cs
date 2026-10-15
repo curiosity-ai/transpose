@@ -34,7 +34,8 @@ public sealed class RestoreRequest
 
     /// <summary>Where packages are installed. Null takes <c>NUGET_PACKAGES</c>, then the configured
     /// <c>globalPackagesFolder</c>, then <c>~/.nuget/packages</c> — NuGet's own order, and the same one
-    /// the build's reference resolution reads.</summary>
+    /// the build's reference resolution reads. An explicit folder is not one the build reads: set
+    /// <c>NUGET_PACKAGES</c> to it for the build as well.</summary>
     public string? PackagesFolder { get; set; }
 
     /// <summary>

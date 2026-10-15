@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace Transpose.Compiler;
 
 /// <summary>
@@ -73,4 +75,37 @@ internal static class NuGetVersions
     /// writes down — so a restore says so rather than installing something the build will not find.
     /// </summary>
     public static bool IsFloating(string version) => version.Contains('*');
+
+    /// <summary>Compares two versions by their numeric segments, ignoring any prerelease or build
+    /// suffix — enough to pick between two versions of one package (a full NuGet.Versioning
+    /// dependency would buy nothing here).</summary>
+    public static int Compare(string a, string b)
+    {
+        var left  = Segments(a);
+        var right = Segments(b);
+
+        for (var i = 0; i < Math.Max(left.Length, right.Length); i++)
+        {
+            var x = i < left.Length ? left[i] : 0;
+            var y = i < right.Length ? right[i] : 0;
+            if (x != y) return x.CompareTo(y);
+        }
+
+        return 0;
+
+        static int[] Segments(string v) => v.Trim().Split('-', '+')[0].Split('.')
+            .Select(s => int.TryParse(s, out var n) ? n : 0)
+            .ToArray();
+    }
+
+    private static readonly Regex IdPattern      = new(@"^\w+([.-]\w+)*$", RegexOptions.CultureInvariant);
+    private static readonly Regex VersionPattern = new(@"^\d+(\.\d+){0,3}(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$", RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// True when an id and version are ones NuGet itself would accept. Both become path segments in
+    /// the packages folder, and a nuspec is untrusted input: a dependency written as
+    /// <c>id="../../x"</c> would otherwise be installed (and read back) outside it.
+    /// </summary>
+    public static bool IsValidIdentity(string id, string version)
+        => id.Length <= 100 && IdPattern.IsMatch(id) && VersionPattern.IsMatch(version);
 }

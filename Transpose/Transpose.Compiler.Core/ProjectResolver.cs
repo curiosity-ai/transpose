@@ -1,4 +1,3 @@
-using System.Xml.Linq;
 using Microsoft.CodeAnalysis.CSharp;
 
 namespace Transpose.Compiler;
@@ -152,7 +151,7 @@ internal static class ProjectResolver
         var visitedProjects = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var projectDirs = new List<string>();
         var projectDlls = new List<string>();
-        var roots = NuGetRoots().Where(Directory.Exists).ToList();
+        var roots = NuGetSettings.PackageRoots(projectDir).ToList();
         CollectProject(csprojPath, sources, references, visitedProjects, projectDirs, roots,
             separateAssemblies, projectDlls, configuration, isRoot: true);
 
@@ -322,7 +321,7 @@ internal static class ProjectResolver
     private static void MergePackageReference(
         Dictionary<string, (string path, string version)> references, string name, string path, string version)
     {
-        if (!references.TryGetValue(name, out var current) || CompareVersions(version, current.version) > 0)
+        if (!references.TryGetValue(name, out var current) || NuGetVersions.Compare(version, current.version) > 0)
             references[name] = (path, version);
     }
 
@@ -581,19 +580,31 @@ internal static class ProjectResolver
     /// csproj.
     /// </summary>
     private static IEnumerable<(string name, string path, string version)> ResolvePackageReferenceDlls(ProjectXml doc, List<string> roots)
+        => ResolveDeclaredPackages(DeclaredPackages(doc), roots, EffectiveTargetFramework(doc));
+
+    /// <summary>
+    /// The packages a project declares itself, highest version per id. A declared range
+    /// (<c>[1.2.3]</c>) takes its lowest satisfying version, as a dependency's range does. Shared with
+    /// <see cref="PackageRestore"/>, which installs exactly this set.
+    /// </summary>
+    internal static Dictionary<string, string> DeclaredPackages(ProjectXml doc, Action<string>? noVersion = null)
     {
-        // pkgId → the version the project declares (highest, if it declares one id twice).
         var declared = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var (pr, _) in doc.Elements("PackageReference"))
         {
             var id = pr.Attribute("Include")?.Value ?? pr.Attribute("Update")?.Value;
-            var version = pr.Attribute("Version")?.Value ?? pr.Element(pr.Name.Namespace + "Version")?.Value;
-            if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(version)) continue;
-            if (!declared.TryGetValue(id!, out var already) || CompareVersions(version!, already) > 0)
-                declared[id!] = version!;
+            var written = pr.Attribute("Version")?.Value ?? pr.Element(pr.Name.Namespace + "Version")?.Value;
+            if (string.IsNullOrWhiteSpace(id)) continue;
+            if (NuGetVersions.LowestSatisfying(written) is not { } version)
+            {
+                noVersion?.Invoke(id!);
+                continue;
+            }
+            if (!declared.TryGetValue(id!, out var already) || NuGetVersions.Compare(version, already) > 0)
+                declared[id!] = version;
         }
 
-        return ResolveDeclaredPackages(declared, roots);
+        return declared;
     }
 
     /// <summary>
@@ -604,9 +615,9 @@ internal static class ProjectResolver
     /// </summary>
     public static IEnumerable<(string name, string path, string version)> ResolvePackage(string packageId, string version)
     {
-        var roots = NuGetRoots().Where(Directory.Exists).ToList();
+        var roots = NuGetSettings.PackageRoots(Directory.GetCurrentDirectory()).ToList();
         var declared = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [packageId] = version };
-        return ResolveDeclaredPackages(declared, roots);
+        return ResolveDeclaredPackages(declared, roots, "netstandard2.0");
     }
 
     /// <summary>
@@ -617,7 +628,7 @@ internal static class ProjectResolver
     /// transitively, and between two transitive candidates the higher version wins.
     /// </summary>
     private static IEnumerable<(string name, string path, string version)> ResolveDeclaredPackages(
-        Dictionary<string, string> declared, List<string> roots)
+        Dictionary<string, string> declared, List<string> roots, string targetFramework)
     {
         var resolved = new Dictionary<string, (string path, string version, bool declared)>(StringComparer.OrdinalIgnoreCase);
         var visited  = new HashSet<string>(StringComparer.OrdinalIgnoreCase);                     // pkgId@version
@@ -635,6 +646,7 @@ internal static class ProjectResolver
             // the declared version supersedes it, so its cache folder is never even read.
             if (!isDeclared && declared.ContainsKey(id)) continue;
             if (!visited.Add(id + "@" + version)) continue;
+            if (!NuGetVersions.IsValidIdentity(id, NuGetVersions.Normalize(version))) continue;
 
             // A cache folder is named by the version as NuGet normalizes it, which is not always the
             // spelling the project wrote (`1.0` installs as `1.0.0`), so both are tried — the written
@@ -658,23 +670,9 @@ internal static class ProjectResolver
                 }
             }
 
-            // Follow the package's declared dependencies so transitive BCL/interop types resolve.
-            var nuspec = Path.Combine(pkgDir, id.ToLowerInvariant() + ".nuspec");
-            if (!File.Exists(nuspec))
-                nuspec = Directory.EnumerateFiles(pkgDir, "*.nuspec", SearchOption.TopDirectoryOnly).FirstOrDefault() ?? "";
-            if (nuspec.Length == 0 || !File.Exists(nuspec)) continue;
-            try
-            {
-                var ndoc = XDocument.Load(nuspec);
-                foreach (var dep in ndoc.Descendants().Where(e => e.Name.LocalName == "dependency"))
-                {
-                    var depId = dep.Attribute("id")?.Value;
-                    var depVer = dep.Attribute("version")?.Value?.Trim('[', ']', '(', ')').Split(',')[0];
-                    if (!string.IsNullOrWhiteSpace(depId) && !string.IsNullOrWhiteSpace(depVer))
-                        queue.Enqueue((depId!, depVer!, false));
-                }
-            }
-            catch { /* best-effort transitive resolution */ }
+            // Follow the package's dependencies — the one group restore installed, read the same way.
+            foreach (var (depId, depVersion) in PackageRestore.Dependencies(pkgDir, id, targetFramework))
+                queue.Enqueue((depId, depVersion, false));
         }
 
         return resolved.Select(kv => (kv.Key, kv.Value.path, kv.Value.version));
@@ -683,29 +681,8 @@ internal static class ProjectResolver
         {
             if (!resolved.TryGetValue(name, out var current)) return true;
             if (current.declared) return false;                        // a declared version is never displaced
-            return isDeclared || CompareVersions(version, current.version) > 0;
+            return isDeclared || NuGetVersions.Compare(version, current.version) > 0;
         }
-    }
-
-    /// <summary>Compares two NuGet version strings by their numeric segments, ignoring any
-    /// prerelease/metadata suffix — enough to pick between two versions of one package in the cache
-    /// (a full NuGet.Versioning dependency would buy nothing here).</summary>
-    private static int CompareVersions(string a, string b)
-    {
-        var left  = Segments(a);
-        var right = Segments(b);
-
-        for (var i = 0; i < Math.Max(left.Length, right.Length); i++)
-        {
-            var x = i < left.Length ? left[i] : 0;
-            var y = i < right.Length ? right[i] : 0;
-            if (x != y) return x.CompareTo(y);
-        }
-        return 0;
-
-        static int[] Segments(string v) => v.Trim().Split('-', '+')[0].Split('.')
-            .Select(s => int.TryParse(s, out var n) ? n : 0)
-            .ToArray();
     }
 
     private static string? BestLibDir(string pkgDir)
@@ -717,15 +694,6 @@ internal static class ProjectResolver
         return tfms.FirstOrDefault(d => Path.GetFileName(d).Equals("netstandard2.0", StringComparison.OrdinalIgnoreCase))
             ?? tfms.FirstOrDefault(d => Path.GetFileName(d).StartsWith("netstandard", StringComparison.OrdinalIgnoreCase))
             ?? tfms.FirstOrDefault();
-    }
-
-    private static IEnumerable<string> NuGetRoots()
-    {
-        var env = Environment.GetEnvironmentVariable("NUGET_PACKAGES");
-        if (!string.IsNullOrEmpty(env)) yield return env;
-        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        yield return Path.Combine(home, ".nuget", "packages");
-        yield return "/root/.nuget/packages";
     }
 
     /// <summary>The project's <c>&lt;AssemblyVersion&gt;</c> (falling back to <c>&lt;Version&gt;</c>),
@@ -747,7 +715,7 @@ internal static class ProjectResolver
     /// <c>netstandard2.0</c>. Honour that here, otherwise tps writes the DLL under the declared tfm
     /// and <c>dotnet pack</c> fails with NU5026 (<c>&lt;Assembly&gt;.dll</c> not found).
     /// </summary>
-    private static string EffectiveTargetFramework(ProjectXml doc)
+    internal static string EffectiveTargetFramework(ProjectXml doc)
     {
         var sdk = doc.SdkName ?? "";
         if (sdk.StartsWith("Transpose.Build.Target", StringComparison.OrdinalIgnoreCase))

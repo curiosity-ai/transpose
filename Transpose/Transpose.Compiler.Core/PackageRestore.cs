@@ -94,7 +94,7 @@ internal static class PackageRestore
         var projectDir = Path.GetDirectoryName(csproj)!;
 
         var settings = options.IgnoreConfiguredSources ? null : NuGetSettings.Load(projectDir);
-        var packages = PackagesFolder(options, settings);
+        var packages = NuGetSettings.PackagesFolder(options.PackagesFolder, settings);
 
         outcome.PackagesFolder = packages;
         Directory.CreateDirectory(packages);
@@ -125,8 +125,12 @@ internal static class PackageRestore
 
             if (ProjectXml.TryLoad(project) is not { } doc) continue;
 
-            var declared        = DeclaredPackages(doc, outcome, project);
-            var targetFramework = TargetFrameworkOf(doc);
+            var declared = ProjectResolver.DeclaredPackages(doc, id =>
+                // Central package management puts the version in Directory.Packages.props, which this
+                // resolver does not evaluate — and the reference resolver cannot bind it either, so it
+                // is said here rather than surfacing as a missing type.
+                outcome.Warnings.Add($"{Path.GetFileName(project)}: PackageReference '{id}' declares no Version, so it cannot be restored."));
+            var targetFramework = ProjectResolver.EffectiveTargetFramework(doc);
 
             await installer.WalkAsync(declared, targetFramework, cancellationToken).ConfigureAwait(false);
         }
@@ -232,6 +236,12 @@ internal static class PackageRestore
                 return null;
             }
 
+            if (!NuGetVersions.IsValidIdentity(id, normalized))
+            {
+                Report(declared, $"{id} {requested}: not a valid package id and version, so it is not installed.");
+                return null;
+            }
+
             var folder = Path.Combine(_packages, id.ToLowerInvariant(), normalized);
 
             if (!_options.Force && IsInstalled(folder))
@@ -259,7 +269,7 @@ internal static class PackageRestore
 
             try
             {
-                Extract(bytes, id, normalized, folder, source);
+                Extract(bytes, id, normalized, folder, source, _options.Force);
             }
             catch (Exception ex)
             {
@@ -312,7 +322,9 @@ internal static class PackageRestore
                 {
                     // One unreachable source must not fail a restore the next one can serve — which is
                     // the offline case exactly: nuget.org times out, the shipped folder answers.
-                    lock (_outcome) _outcome.Warnings.Add($"{source}: {ex.Message}");
+                    var warning = $"{source}: {ex.Message}";
+                    lock (_outcome)
+                        if (!_outcome.Warnings.Contains(warning)) _outcome.Warnings.Add(warning);
                 }
             }
 
@@ -335,6 +347,11 @@ internal static class PackageRestore
 
                 var nested = Path.Combine(source.Value, id, version, $"{id}.{version}.nupkg");
                 if (File.Exists(nested)) return File.ReadAllBytes(nested);
+
+                // The lower-cased layout `nuget add` writes.
+                var lower = id.ToLowerInvariant();
+                var nestedLower = Path.Combine(source.Value, lower, version.ToLowerInvariant(), $"{lower}.{version.ToLowerInvariant()}.nupkg");
+                if (File.Exists(nestedLower)) return File.ReadAllBytes(nestedLower);
             }
 
             // A file system that tells case apart (every Linux container this runs in) will have missed
@@ -384,11 +401,24 @@ internal static class PackageRestore
             await _feedGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                if (_feeds.TryGetValue(source.Value, out var cached)) return cached;
+                if (!_feeds.TryGetValue(source.Value, out var cached))
+                {
+                    // A failure is remembered as well: an unreachable feed costs one timeout per
+                    // restore, not one per package.
+                    try
+                    {
+                        cached = new PackageBaseAddress(await ReadServiceIndexAsync(source, cancellationToken).ConfigureAwait(false), null);
+                    }
+                    catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+                    {
+                        cached = new PackageBaseAddress(null, ex);
+                    }
 
-                var resolved = new PackageBaseAddress(await ReadServiceIndexAsync(source, cancellationToken).ConfigureAwait(false));
-                _feeds[source.Value] = resolved;
-                return resolved;
+                    _feeds[source.Value] = cached;
+                }
+
+                if (cached.Error is not null) throw new InvalidOperationException(cached.Error.Message, cached.Error);
+                return cached;
             }
             finally
             {
@@ -422,14 +452,17 @@ internal static class PackageRestore
             return null;
         }
 
-        private readonly record struct PackageBaseAddress(string? Url);
+        private readonly record struct PackageBaseAddress(string? Url, Exception? Error);
     }
 
     // ---- installing ---------------------------------------------------------
 
+    /// <summary>NuGet's own test: the marker, or the hash file an older client wrote last. A folder
+    /// holding only a nuspec is what a killed <c>dotnet restore</c> leaves behind (it extracts in
+    /// place), so it does not count.</summary>
     private static bool IsInstalled(string folder)
         => Directory.Exists(folder)
-        && (File.Exists(Path.Combine(folder, InstalledMarker)) || Directory.EnumerateFiles(folder, "*.nuspec").Any());
+        && (File.Exists(Path.Combine(folder, InstalledMarker)) || Directory.EnumerateFiles(folder, "*.nupkg.sha512").Any());
 
     /// <summary>
     /// Lays a package out the way NuGet lays it out: the contents extracted, the nuspec and the
@@ -446,7 +479,7 @@ internal static class PackageRestore
     /// toolchain writes; computing it would mean implementing package-signature verification for a
     /// field no restore here consults.
     /// </remarks>
-    private static void Extract(byte[] nupkg, string id, string version, string folder, string? source)
+    private static void Extract(byte[] nupkg, string id, string version, string folder, string? source, bool replace)
     {
         var lower = id.ToLowerInvariant();
         var hash  = Convert.ToBase64String(SHA512.HashData(nupkg));
@@ -489,11 +522,21 @@ internal static class PackageRestore
 
             Directory.CreateDirectory(Path.GetDirectoryName(folder)!);
 
+            // A half-installed folder, or one --force replaces, is moved aside first: a move onto an
+            // existing directory fails, and keeping the old folder would report an install that
+            // never happened.
+            if (Directory.Exists(folder) && (replace || !IsInstalled(folder)))
+            {
+                var aside = staging + ".old";
+                Directory.Move(folder, aside);
+                TryDelete(aside);
+            }
+
             try
             {
                 Directory.Move(staging, folder);
             }
-            catch (IOException) when (Directory.Exists(folder))
+            catch (IOException) when (IsInstalled(folder))
             {
                 // Something else installed it while this was extracting. Its copy is as good as this one.
             }
@@ -561,54 +604,11 @@ internal static class PackageRestore
     }
 
     /// <summary>
-    /// The packages a project declares itself, highest version per id — the same reading
-    /// <see cref="ProjectResolver"/> gives a project's <c>&lt;PackageReference&gt;</c> items.
-    /// </summary>
-    private static Dictionary<string, string> DeclaredPackages(ProjectXml doc, RestoreOutcome outcome, string project)
-    {
-        var declared = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var (element, _) in doc.Elements("PackageReference"))
-        {
-            var id      = element.Attribute("Include")?.Value ?? element.Attribute("Update")?.Value;
-            var version = element.Attribute("Version")?.Value ?? element.Element(element.Name.Namespace + "Version")?.Value;
-
-            if (string.IsNullOrWhiteSpace(id)) continue;
-
-            if (string.IsNullOrWhiteSpace(version))
-            {
-                // Central package management puts the version in Directory.Packages.props, which this
-                // resolver does not evaluate — and the reference resolver cannot bind it either, so it
-                // is said here rather than surfacing as a missing type.
-                outcome.Warnings.Add($"{Path.GetFileName(project)}: PackageReference '{id}' declares no Version, so it cannot be restored.");
-                continue;
-            }
-
-            if (!declared.TryGetValue(id!, out var already) || CompareVersions(version!, already) > 0)
-                declared[id!] = version!.Trim();
-        }
-
-        return declared;
-    }
-
-    private static string TargetFrameworkOf(ProjectXml doc)
-    {
-        // The Transpose SDK overrides a project's own TargetFramework to netstandard2.0, so that is
-        // what the build really binds against whatever the csproj says.
-        var sdk = doc.SdkName ?? "";
-        if (sdk.StartsWith("Transpose.Build.Target", StringComparison.OrdinalIgnoreCase)) return "netstandard2.0";
-
-        return doc.Property("TargetFramework")
-            ?? doc.Property("TargetFrameworks")?.Split(';', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim()
-            ?? "netstandard2.0";
-    }
-
-    /// <summary>
     /// The dependencies an installed package declares for <paramref name="targetFramework"/>: the one
     /// <c>&lt;group&gt;</c> NuGet would pick, or the ungrouped list of a nuspec old enough not to have
     /// groups.
     /// </summary>
-    private static IEnumerable<(string id, string version)> Dependencies(string folder, string id, string targetFramework)
+    internal static IEnumerable<(string id, string version)> Dependencies(string folder, string id, string targetFramework)
     {
         var nuspec = Path.Combine(folder, id.ToLowerInvariant() + ".nuspec");
 
@@ -635,7 +635,8 @@ internal static class PackageRestore
             var depId      = dependency.Attribute("id")?.Value?.Trim();
             var depVersion = NuGetVersions.LowestSatisfying(dependency.Attribute("version")?.Value);
 
-            if (!string.IsNullOrWhiteSpace(depId) && depVersion is not null) yield return (depId!, depVersion);
+            if (!string.IsNullOrWhiteSpace(depId) && depVersion is not null && NuGetVersions.IsValidIdentity(depId!, depVersion))
+                yield return (depId!, depVersion);
         }
     }
 
@@ -650,19 +651,6 @@ internal static class PackageRestore
     }
 
     // ---- configuration ------------------------------------------------------
-
-    /// <summary>NuGet's own precedence for where packages are installed.</summary>
-    private static string PackagesFolder(RestoreOptions options, NuGetSettings? settings)
-    {
-        if (!string.IsNullOrWhiteSpace(options.PackagesFolder)) return Path.GetFullPath(options.PackagesFolder!);
-
-        var env = Environment.GetEnvironmentVariable("NUGET_PACKAGES");
-        if (!string.IsNullOrEmpty(env)) return Path.GetFullPath(env!);
-
-        if (settings?.GlobalPackagesFolder is { Length: > 0 } configured) return configured;
-
-        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nuget", "packages");
-    }
 
     /// <summary>
     /// The sources to consult, in order: the ones the caller passed first, then the configured ones.
@@ -706,32 +694,13 @@ internal static class PackageRestore
         {
             AutomaticDecompression = System.Net.DecompressionMethods.All,
             MaxConnectionsPerServer = Math.Max(1, options.MaxParallelDownloads),
+            // Without one, a feed behind a dropped VPN waits out the whole download timeout.
+            ConnectTimeout = TimeSpan.FromSeconds(Math.Min(30, options.HttpTimeout.TotalSeconds)),
         };
 
         var http = new HttpClient(handler) { Timeout = options.HttpTimeout };
         http.DefaultRequestHeaders.UserAgent.ParseAdd("tps/" + CompilerVersion.Text);
 
         return http;
-    }
-
-    /// <summary>Compares two NuGet versions by their numeric segments — the same comparison
-    /// <see cref="ProjectResolver"/> uses to pick between two versions of one package.</summary>
-    private static int CompareVersions(string a, string b)
-    {
-        var left  = Segments(a);
-        var right = Segments(b);
-
-        for (var i = 0; i < Math.Max(left.Length, right.Length); i++)
-        {
-            var x = i < left.Length ? left[i] : 0;
-            var y = i < right.Length ? right[i] : 0;
-            if (x != y) return x.CompareTo(y);
-        }
-
-        return 0;
-
-        static int[] Segments(string v) => v.Trim().Split('-', '+')[0].Split('.')
-            .Select(s => int.TryParse(s, out var n) ? n : 0)
-            .ToArray();
     }
 }

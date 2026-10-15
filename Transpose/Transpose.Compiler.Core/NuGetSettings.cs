@@ -32,11 +32,10 @@ internal sealed record PackageSource(string Name, string Value)
 /// </summary>
 internal sealed class NuGetSettings
 {
-    private NuGetSettings(List<PackageSource> sources, string? globalPackagesFolder, List<string> files, bool declaresSources)
+    private NuGetSettings(List<PackageSource> sources, string? globalPackagesFolder, bool declaresSources)
     {
         Sources              = sources;
         GlobalPackagesFolder = globalPackagesFolder;
-        Files                = files;
         DeclaresSources      = declaresSources;
     }
 
@@ -45,10 +44,6 @@ internal sealed class NuGetSettings
 
     /// <summary>The <c>globalPackagesFolder</c> the configuration names, or null when none does.</summary>
     public string? GlobalPackagesFolder { get; }
-
-    /// <summary>The config files that were actually read, nearest last — reported so a restore that
-    /// fetched from an unexpected place can be traced back to the file that said so.</summary>
-    public IReadOnlyList<string> Files { get; }
 
     /// <summary>
     /// Whether any config said anything at all about sources. It is what tells "nobody has configured
@@ -66,7 +61,6 @@ internal sealed class NuGetSettings
     {
         var sources  = new List<PackageSource>();
         var disabled = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var files    = new List<string>();
         var declared = false;
 
         string? globalPackages = null;
@@ -76,8 +70,6 @@ internal sealed class NuGetSettings
             XDocument doc;
             try { doc = XDocument.Load(file); }
             catch { continue; } // a malformed config is not this tool's to report; NuGet's own reader owns that message
-
-            files.Add(file);
 
             var dir  = Path.GetDirectoryName(Path.GetFullPath(file))!;
             var root = doc.Root;
@@ -135,7 +127,7 @@ internal sealed class NuGetSettings
 
         sources.RemoveAll(s => disabled.Contains(s.Name));
 
-        return new NuGetSettings(sources, globalPackages, files, declared);
+        return new NuGetSettings(sources, globalPackages, declared);
 
         // A source written as a relative path means "relative to the config that declared it" — which
         // is the whole point of declaring one in a config beside a checkout rather than inside it.
@@ -146,6 +138,37 @@ internal sealed class NuGetSettings
 
             return Path.IsPathRooted(value) ? value : Path.GetFullPath(Path.Combine(configDir, value));
         }
+    }
+
+    /// <summary>
+    /// Where packages are installed, in NuGet's own precedence: an explicit folder (<c>--packages</c>),
+    /// then <c>NUGET_PACKAGES</c>, then the configured <c>globalPackagesFolder</c>, then
+    /// <c>~/.nuget/packages</c>.
+    /// </summary>
+    public static string PackagesFolder(string? explicitFolder, NuGetSettings? settings)
+    {
+        if (!string.IsNullOrWhiteSpace(explicitFolder)) return Path.GetFullPath(explicitFolder!);
+
+        var env = Environment.GetEnvironmentVariable("NUGET_PACKAGES");
+        if (!string.IsNullOrEmpty(env)) return Path.GetFullPath(env!);
+
+        if (settings?.GlobalPackagesFolder is { Length: > 0 } configured) return configured;
+
+        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nuget", "packages");
+    }
+
+    /// <summary>
+    /// The folders the build reads packages back from: the one a restore of this project installs into
+    /// (<see cref="PackagesFolder"/>), then the default cache and <c>/root/.nuget/packages</c>, which a
+    /// cache filled by an earlier client may still hold.
+    /// </summary>
+    public static IEnumerable<string> PackageRoots(string projectDirectory)
+    {
+        var roots = new List<string> { PackagesFolder(null, Load(projectDirectory)) };
+        roots.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nuget", "packages"));
+        roots.Add("/root/.nuget/packages");
+
+        return roots.Distinct(StringComparer.Ordinal).Where(Directory.Exists);
     }
 
     /// <summary>
