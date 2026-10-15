@@ -402,18 +402,35 @@
         return this.value.toNumber();
     };
 
+    /// The canonical decimal spelling of an integer string under NumberStyles.Integer (surrounding
+    /// white space, an optional sign), or null when it is not one. Leading zeros, a "+" and the sign
+    /// of "-0" are dropped, so the result is exactly what the parsed value prints back unless it
+    /// overflowed. Comparing against the raw input instead called "-05" an overflow and " 42 " a
+    /// format error.
+    System.Int64.$canonical = function (str) {
+        var m = /^[\t\n\v\f\r ]*([+-]?)0*([0-9]+)[\t\n\v\f\r ]*$/.exec(str);
+
+        if (m == null) {
+            return null;
+        }
+
+        return m[1] === "-" && m[2] !== "0" ? "-" + m[2] : m[2];
+    };
+
     System.Int64.parse = function (str) {
         if (str == null) {
             throw new System.ArgumentNullException.$ctor1("str");
         }
 
-        if (!/^[+-]?[0-9]+$/.test(str)) {
+        var canonical = System.Int64.$canonical(str);
+
+        if (canonical == null) {
             throw new System.FormatException.$ctor1("Input string was not in a correct format.");
         }
 
-        var result = new System.Int64(str);
+        var result = new System.Int64(canonical);
 
-        if (System.String.trimStartZeros(str) !== result.toString()) {
+        if (canonical !== result.toString()) {
             throw new System.OverflowException();
         }
 
@@ -422,14 +439,16 @@
 
     System.Int64.tryParse = function (str, v) {
         try {
-            if (str == null || !/^[+-]?[0-9]+$/.test(str)) {
+            var canonical = str == null ? null : System.Int64.$canonical(str);
+
+            if (canonical == null) {
                 v.v = System.Int64(Transpose.$Long.ZERO);
                 return false;
             }
 
-            v.v = new System.Int64(str);
+            v.v = new System.Int64(canonical);
 
-            if (System.String.trimStartZeros(str) !== v.v.toString()) {
+            if (canonical !== v.v.toString()) {
                 v.v = System.Int64(Transpose.$Long.ZERO);
                 return false;
             }
@@ -747,17 +766,19 @@
             throw new System.ArgumentNullException.$ctor1("str");
         }
 
-        if (!/^[+-]?[0-9]+$/.test(str)) {
+        var canonical = System.Int64.$canonical(str);
+
+        if (canonical == null) {
             throw new System.FormatException.$ctor1("Input string was not in a correct format.");
         }
 
-        var result = new System.UInt64(str);
+        var result = new System.UInt64(canonical);
 
         if (result.value.isNegative()) {
             throw new System.OverflowException();
         }
 
-        if (System.String.trimStartZeros(str) !== result.toString()) {
+        if (canonical !== result.toString()) {
             throw new System.OverflowException();
         }
 
@@ -766,19 +787,21 @@
 
     System.UInt64.tryParse = function (str, v) {
         try {
-            if (str == null || !/^[+-]?[0-9]+$/.test(str)) {
+            var canonical = str == null ? null : System.Int64.$canonical(str);
+
+            if (canonical == null) {
                 v.v = System.UInt64(Transpose.$Long.UZERO);
                 return false;
             }
 
-            v.v = new System.UInt64(str);
+            v.v = new System.UInt64(canonical);
 
             if (v.v.isNegative()) {
                 v.v = System.UInt64(Transpose.$Long.UZERO);
                 return false;
             }
 
-            if (System.String.trimStartZeros(str) !== v.v.toString()) {
+            if (canonical !== v.v.toString()) {
                 v.v = System.UInt64(Transpose.$Long.UZERO);
                 return false;
             }

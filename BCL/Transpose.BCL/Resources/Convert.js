@@ -1289,26 +1289,28 @@
                             value = Transpose.Int.parseFloat(value, formatProvider);
                         }
                     } else {
-                        if (!/^[+-]?[0-9]+$/.test(value)) {
+                        // Surrounding white space, a sign, leading zeros and "-0" are all accepted, as
+                        // Parse does under NumberStyles.Integer; overflow is judged on the canonical form.
+                        var str = System.Int64.$canonical(value);
+
+                        if (str == null) {
                             throw new System.FormatException.$ctor1("Input string was not in a correct format.");
                         }
 
-                        var str = value;
-
                         if (typeCode === typeCodes.Int64) {
-                            value = new System.Int64(value);
+                            value = new System.Int64(str);
 
-                            if (System.String.trimStartZeros(str) !== value.toString()) {
+                            if (str !== value.toString()) {
                                 this.throwOverflow(scope.internal.getTypeCodeName(typeCode));
                             }
                         } else if (typeCode === typeCodes.UInt64) {
-                            value = new System.UInt64(value);
+                            value = new System.UInt64(str);
 
-                            if (System.String.trimStartZeros(str) !== value.toString()) {
+                            if (str !== value.toString()) {
                                 this.throwOverflow(scope.internal.getTypeCodeName(typeCode));
                             }
                         } else {
-                            value = parseInt(value, 10);
+                            value = parseInt(str, 10);
                         }
                     }
 
