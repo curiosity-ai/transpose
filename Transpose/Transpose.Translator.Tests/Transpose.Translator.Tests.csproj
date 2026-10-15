@@ -28,6 +28,8 @@
     <!-- ProjectResolver/TransposeJson/OutputBuilder/BuildCache/ResourceEmbedder/JsMinifier/… now live
          here (see Transpose.Compiler.Core), shared with Transpose.Compiler.Library. -->
     <ProjectReference Include="..\Transpose.Compiler.Core\Transpose.Compiler.Core.csproj" />
+    <!-- The in-process library's public surface (LibraryBuildIsolationTests). -->
+    <ProjectReference Include="..\Transpose.Compiler.Library\Transpose.Compiler.Library.csproj" />
   </ItemGroup>
 
 </Project>
