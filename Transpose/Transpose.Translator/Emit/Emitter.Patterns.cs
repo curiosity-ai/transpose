@@ -414,7 +414,8 @@ public sealed partial class Emitter
             return;
         }
 
-        EmitConstantEqualityAgainst(subject, Capture(() => EmitExpression(constant)), info.ConvertedType ?? info.Type);
+        EmitConstantEqualityAgainst(subject, Capture(() => EmitExpression(constant)), info.ConvertedType ?? info.Type,
+            PatternInputType(constant), _model.GetConstantValue(constant) is { HasValue: true } cv ? cv.Value : null);
     }
 
     /// <summary>The type a constant pattern or constant case label is tested against — the input of
@@ -437,8 +438,28 @@ public sealed partial class Emitter
     /// right-hand side is not an emittable expression node — see the is-expression path, where an enum
     /// member arrives as type-name syntax).
     /// </summary>
-    private void EmitConstantEqualityAgainst(string subject, string constantJs, ITypeSymbol? constantType)
+    private void EmitConstantEqualityAgainst(string subject, string constantJs, ITypeSymbol? constantType,
+        ITypeSymbol? subjectType = null, object? constantValue = null)
     {
+        // NaN is the one value === never matches, itself included; C# compares a NaN constant
+        // pattern with double.IsNaN, so `d is double.NaN` / `case double.NaN:` must too.
+        if (constantValue is double dv && double.IsNaN(dv) || constantValue is float fv && float.IsNaN(fv))
+        {
+            _w.Write($"Number.isNaN({subject})");
+            return;
+        }
+
+        // An enum constant tested against a subject that can hold a BOXED enum (object, an
+        // interface, System.Enum, an unconstrained type parameter): the boxed form is a
+        // Transpose.box object, never === the constant's ordinal, so `o is E.B` and `case E.B:`
+        // over an object never matched. Test the type, then compare the unboxed value.
+        if (constantType is { TypeKind: TypeKind.Enum } && HasRuntimeEnumObject(constantType)
+            && subjectType is { IsValueType: false })
+        {
+            _w.Write($"(Transpose.is({subject}, {TypeRef(constantType)}) && Transpose.unbox({subject}, true) === {constantJs})");
+            return;
+        }
+
         if (IsRuntimeObjectNumeric(constantType))
         {
             // The null guard matters when the subject is a Nullable: `((long?)null) is 2L` is false in
@@ -530,8 +551,29 @@ public sealed partial class Emitter
     {
         if (designation is SingleVariableDesignationSyntax single)
         {
-            _w.Write($" && ({NameMangler.JsIdentifier(single.Identifier.Text)} = {subject}, true)");
+            _w.Write($" && ({NameMangler.JsIdentifier(single.Identifier.Text)} = {DesignationValue(subject, single)}, true)");
         }
+    }
+
+    /// <summary>
+    /// The value a declaration / recursive pattern binds to its variable, converted the way the
+    /// equivalent cast would be: an enum read out of a reference-typed subject (object, an
+    /// interface, a type parameter) is unboxed — a Transpose.box object compares unequal to every
+    /// member and prints nothing for <c>(int)e</c> — and an in-source struct is copied, because the
+    /// variable is a new value in C# and writing through it must not reach the matched one.
+    /// </summary>
+    private string DesignationValue(string subject, SingleVariableDesignationSyntax single)
+    {
+        if (_model.GetDeclaredSymbol(single) is not ILocalSymbol { Type: var type }) return subject;
+
+        if (IsSourceStruct(type)) return $"TransposeR.clone({subject})";
+
+        if (type is { TypeKind: TypeKind.Enum } && HasRuntimeEnumObject(type)
+            && single.Parent is PatternSyntax pattern
+            && (_model.GetOperation(pattern) as Microsoft.CodeAnalysis.Operations.IPatternOperation)?.InputType is { IsValueType: false })
+            return $"Transpose.cast({subject}, {TypeRef(type)})";
+
+        return subject;
     }
 
     private void EmitDesignationBindingBare(string subject, VariableDesignationSyntax designation)

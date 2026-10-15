@@ -850,7 +850,12 @@ public sealed partial class Emitter
         var governingType = _model.GetTypeInfo(switchStmt.Expression).Type;
 
         // So is a char span: `case "a":` compares its characters (Emitter.Patterns.cs), not identity.
-        if (hasPatterns || IsRuntimeObjectNumeric(governingType) || IsCharSpanType(governingType))
+        // And so is a case `===` cannot match: a NaN constant, or an enum constant over a subject
+        // that holds the enum boxed (an object / interface / type parameter) — see
+        // EmitConstantEqualityAgainst.
+        if (hasPatterns || IsRuntimeObjectNumeric(governingType) || IsCharSpanType(governingType)
+            || switchStmt.Sections.SelectMany(s => s.Labels).OfType<CaseSwitchLabelSyntax>()
+                .Any(l => CaseNeedsValueTest(l.Value, governingType)))
         {
             EmitPatternSwitch(switchStmt);
             return;
@@ -887,6 +892,15 @@ public sealed partial class Emitter
         _breakTargets.Pop();
         _w.Outdent();
         _w.WriteLine("}");
+    }
+
+    private bool CaseNeedsValueTest(ExpressionSyntax value, ITypeSymbol? governingType)
+    {
+        var constant = _model.GetConstantValue(value);
+        if (constant is { HasValue: true, Value: double d } && double.IsNaN(d)) return true;
+        if (constant is { HasValue: true, Value: float f } && float.IsNaN(f)) return true;
+        var type = _model.GetTypeInfo(value).Type;
+        return type is { TypeKind: TypeKind.Enum } && HasRuntimeEnumObject(type) && governingType is { IsValueType: false };
     }
 
     private void EmitPatternSwitch(SwitchStatementSyntax switchStmt)

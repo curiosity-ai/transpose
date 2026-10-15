@@ -1861,7 +1861,8 @@ public sealed partial class Emitter
                     // The subject is repeated by the value-equality test, so bind it once.
                     var subject = NextTemp("$is");
                     _w.Write($"(function ({subject}) {{ return ");
-                    EmitConstantEqualityAgainst(subject, constantJs, constantField.Type);
+                    EmitConstantEqualityAgainst(subject, constantJs, constantField.Type,
+                        _model.GetTypeInfo(binary.Left).Type, constantField.HasConstantValue ? constantField.ConstantValue : null);
                     _w.Write("; })(");
                     EmitExpression(binary.Left);
                     _w.Write(")");
