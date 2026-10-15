@@ -105,8 +105,12 @@
                     message.bytes = [];
 
                     if (typeof (data) === "string") {
-                        for (i = 0; i < data.length; ++i) {
-                            message.bytes.push(data.charCodeAt(i));
+                        // A text frame is UTF-8 on the wire, and that is what ReceiveAsync hands back;
+                        // char codes are UTF-16 units and mangle anything outside ASCII.
+                        var encoded = new TextEncoder().encode(data);
+
+                        for (i = 0; i < encoded.length; ++i) {
+                            message.bytes.push(encoded[i]);
                         }
 
                         message.messageType = "text";
@@ -164,7 +168,9 @@
                     }
 
                     if (messageType === "text") {
-                        data = String.fromCharCode.apply(null, data);
+                        // The buffer holds UTF-8 (Encoding.UTF8.GetBytes); decode it rather than
+                        // treating each byte as a char code.
+                        data = new TextDecoder().decode(data);
                     }
 
                     this.socket.send(data);
@@ -193,6 +199,15 @@
                         }
 
                         if (self.messageBuffer.length === 0) {
+                            // Nothing buffered and nothing more coming: report the close, as .NET
+                            // does, instead of polling a closed socket forever.
+                            if (self.state === "closed") {
+                                tcs.setResult(new System.Net.WebSockets.WebSocketReceiveResult(
+                                    0, "close", true, self.closeStatus, self.closeStatusDescription));
+
+                                return;
+                            }
+
                             task = System.Threading.Tasks.Task.delay(0);
                             task.continueWith(asyncBody);
 
@@ -298,7 +313,7 @@
             this.disposed = true;
             this.messageBuffer = [];
 
-            if (state === "open") {
+            if (this.state === "open") {
                 this.state = "closesent";
                 this.socket.close();
             }
