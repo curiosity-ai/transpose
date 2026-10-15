@@ -19,6 +19,25 @@ public static class TransposeAssemblies
     private static string? _tpsDllPath;
     private static string? _runtimeJs;
     private static HashSet<int>? _noBodyTokens;
+    private static (string Path, long Length, DateTime Written) _readFrom;
+
+    /// <summary>
+    /// Drops what was read out of Transpose.dll when the file is no longer the one it was read from.
+    /// A long-running host (watch mode, the compiler library) outlives a rebuilt runtime, and
+    /// <c>CompilationBuilder.ReadReference</c> already re-reads the reference itself on the same
+    /// (path, length, write time) test — binding the new metadata while numbering overloads from the
+    /// old extern-method set would be a silently wrong bundle.
+    /// </summary>
+    private static void DropIfChanged()
+    {
+        var path = TransposeDllPath;
+        var info = new FileInfo(path);
+        var stamp = (path, info.Exists ? info.Length : -1, info.Exists ? info.LastWriteTimeUtc : default);
+        if (stamp == _readFrom) return;
+        _runtimeJs = null;
+        _noBodyTokens = null;
+        _readFrom = stamp;
+    }
 
     /// <summary>Path to Transpose.dll, discovered from the NuGet global-packages cache (overridable).</summary>
     public static string TransposeDllPath
@@ -141,6 +160,7 @@ public static class TransposeAssemblies
     {
         get
         {
+            DropIfChanged();
             if (_noBodyTokens is not null) return _noBodyTokens;
             var set = new HashSet<int>();
             using (var fs = File.OpenRead(TransposeDllPath))
@@ -178,20 +198,32 @@ public static class TransposeAssemblies
         catch (IOException) { return null; }
     }
 
-    /// <summary>The embedded Transpose JavaScript runtime (tps.js), read once from Transpose.dll.</summary>
+    /// <summary>The embedded Transpose JavaScript runtime (tps.js), read from Transpose.dll through its
+    /// metadata rather than by loading it, which would keep the file loaded for the process.</summary>
     public static string RuntimeJs
     {
         get
         {
+            DropIfChanged();
             if (_runtimeJs is not null) return _runtimeJs;
-            var asm = Assembly.LoadFrom(TransposeDllPath);
-            var name = asm.GetManifestResourceNames().FirstOrDefault(n => n.Equals("tps.js", StringComparison.OrdinalIgnoreCase))
-                ?? asm.GetManifestResourceNames().FirstOrDefault(n => n.EndsWith("tps.js", StringComparison.OrdinalIgnoreCase))
-                ?? throw new InvalidOperationException("tps.js resource not found in Transpose.dll.");
-            using var stream = asm.GetManifestResourceStream(name)!;
-            using var reader = new StreamReader(stream);
-            _runtimeJs = reader.ReadToEnd();
-            return _runtimeJs;
+
+            using var fs = File.OpenRead(TransposeDllPath);
+            using var pe = new PEReader(fs);
+            var md = pe.GetMetadataReader();
+            var resources = md.ManifestResources.Select(md.GetManifestResource).Where(r => r.Implementation.IsNil).ToList();
+            var resource = resources.FirstOrDefault(r => md.GetString(r.Name).Equals("tps.js", StringComparison.OrdinalIgnoreCase));
+            if (resource.Name.IsNil)
+                resource = resources.FirstOrDefault(r => md.GetString(r.Name).EndsWith("tps.js", StringComparison.OrdinalIgnoreCase));
+            if (resource.Name.IsNil || pe.PEHeaders.CorHeader is not { } cor)
+                throw new InvalidOperationException("tps.js resource not found in Transpose.dll.");
+
+            // An embedded resource sits at its offset into the resources directory, length-prefixed.
+            var block = pe.GetSectionData(cor.ResourcesDirectory.RelativeVirtualAddress);
+            var reader = block.GetReader((int)resource.Offset, block.Length - (int)resource.Offset);
+            var size = reader.ReadInt32();
+            using var stream = new MemoryStream(reader.ReadBytes(size));
+            using var text = new StreamReader(stream);
+            return _runtimeJs = text.ReadToEnd();
         }
     }
 }
