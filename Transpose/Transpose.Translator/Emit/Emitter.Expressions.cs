@@ -326,11 +326,14 @@ public sealed partial class Emitter
             case WithExpressionSyntax with:
                 // Arrow so a `this`-qualified initializer value (record `with { X = this.Y }`)
                 // keeps the enclosing instance rather than rebinding `this` to undefined.
-                _w.Write("(($w) => { var $c = TransposeR.clone($w); ");
+                // An `await` in an initializer value needs the async form, awaited: a bare await in
+                // a plain arrow is a syntax error that stops the whole bundle from parsing.
+                var withAwait = ContainsAwait(with.Initializer);
+                _w.Write(withAwait ? "(await (async ($w) => { var $c = TransposeR.clone($w); " : "(($w) => { var $c = TransposeR.clone($w); ");
                 EmitInitializer("$c", with.Initializer);
                 _w.Write("return $c; })(");
                 EmitExpression(with.Expression);
-                _w.Write(")");
+                _w.Write(withAwait ? "))" : ")");
                 break;
             case PredefinedTypeSyntax predefined:
                 _w.Write(_model.GetTypeInfo(predefined).Type?.Name ?? "Object");
@@ -1493,13 +1496,17 @@ public sealed partial class Emitter
         // static call (a?.Concat(x) → Enumerable.from($r).concat(x)).
         var temp = NextTemp("$nc");
         var recv = Capture(() => EmitExpression(condAccess.Expression));
-        // Arrow (not `function`) so `this` inside the continuation is captured lexically.
-        _w.Write($"(({temp}) => {temp} == null ? null : ");
+        // Arrow (not `function`) so `this` inside the continuation is captured lexically. An `await`
+        // in the continuation (`x?.Load(await Key())`) needs the async form, awaited: a bare await in
+        // a plain arrow is a syntax error that stops the whole bundle from parsing. (The receiver is
+        // the call's argument, outside the arrow, so an await there needs nothing.)
+        var hasAwait = ContainsAwait(condAccess.WhenNotNull);
+        _w.Write(hasAwait ? $"(await (async ({temp}) => {temp} == null ? null : " : $"(({temp}) => {temp} == null ? null : ");
         var saved = _condReceiver;
         _condReceiver = temp;
         EmitExpression(condAccess.WhenNotNull);
         _condReceiver = saved;
-        _w.Write($")({recv})");
+        _w.Write(hasAwait ? $")({recv}))" : $")({recv})");
     }
 
     private void EmitElementBinding(ElementBindingExpressionSyntax elemBind)

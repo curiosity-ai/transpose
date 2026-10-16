@@ -260,7 +260,8 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 public sealed class Bag { public string Name; public int Count; public Bag(string s) { Name = s; } }
-public sealed class Box { public List<string> Nodes = new List<string>(); }
+public sealed class Box { public List<string> Nodes = new List<string>(); public string Get(int i) => Nodes[i]; }
+public record Rec(int X, string Y);
 public static class Ext
 {
     public static bool TryGetFirst<T>(this IEnumerable<T> src, out T value)
@@ -286,20 +287,29 @@ public class Program
         Console.WriteLine(Sum(await NumAsync(), 3));
         string missing = null;
         Console.WriteLine(missing ?? throw new InvalidOperationException(await TextAsync()));
+        Box maybe = await BoxAsync();
+        Console.WriteLine(maybe?.Get(await NumAsync()));
+        Console.WriteLine(new Rec(1, ""a"") with { X = await NumAsync(), Y = await TextAsync() });
     }
     public static void Main() { }
 }";
             var result = new RoslynTranslator().Translate(code);
             Assert.IsTrue(result.Success, "translation should succeed");
 
+            // Every wrapper shape: a parameterless IIFE, and the parameter-binding ones a null-conditional
+            // continuation (`(($nc0) => …)(recv)`) and a `with` expression (`(($w) => {…})(src)`) use.
+            var plainArrow = new System.Text.RegularExpressions.Regex(@"(?<!async )\((\(\)|\(\$\w+\)) => ");
             foreach (var line in result.Javascript!.Split('\n'))
             {
-                var at = line.IndexOf("(() => {", System.StringComparison.Ordinal);
-                if (at < 0) continue;
-                Assert.IsFalse(line[at..].Contains("await", System.StringComparison.Ordinal),
-                    "a plain (non-async) arrow IIFE must never wrap an await — that is a JavaScript "
-                    + "syntax error that breaks the whole bundle:\n" + line.Trim());
+                foreach (System.Text.RegularExpressions.Match m in plainArrow.Matches(line))
+                    Assert.IsFalse(line[m.Index..].Contains("await", System.StringComparison.Ordinal),
+                        "a plain (non-async) arrow IIFE must never wrap an await — that is a JavaScript "
+                        + "syntax error that breaks the whole bundle:\n" + line.Trim());
             }
+            Assert.IsTrue(result.Javascript.Contains("(await (async ($nc", System.StringComparison.Ordinal),
+                "the null-conditional continuation with an await should use the async form");
+            Assert.IsTrue(result.Javascript.Contains("(await (async ($w) =>", System.StringComparison.Ordinal),
+                "the with-expression with an await should use the async form");
         }
 
         // ---- generic method threading + anonymous type -------------------------
