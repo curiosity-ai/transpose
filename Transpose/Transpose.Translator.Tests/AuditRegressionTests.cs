@@ -268,5 +268,34 @@ public class Program
                 System.Globalization.CultureInfo.CurrentCulture = saved;
             }
         }
+
+        // ---- the symbol-keyed naming caches do not outlive a build ----
+
+        [TestMethod]
+        public void NamingCachesAreReleasedWhenABuildEnds()
+        {
+            // A symbol roots its whole Compilation; static caches keyed by symbol kept every
+            // compilation a long-running host ever made alive (~7 MB a build).
+            const string code = @"
+public interface IShape { double Area(); }
+public class Sq : IShape { public double S; public double Area() => S * S; public double Area(int k) => k * S; }
+public class Program { public static void Main() { System.Console.WriteLine(new Sq { S = 2 }.Area() + new Sq { S = 2 }.Area(3)); } }";
+            var first = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(first.Success, "translation should succeed");
+
+            var naming = typeof(RoslynTranslator).Assembly.GetType("Transpose.Translator.TransposeNaming", throwOnError: true)!;
+            foreach (var name in new[] { "_memberCache", "_methodCache", "_baseNameCache", "_implementedIfaceCache" })
+            {
+                var cache = (System.Collections.ICollection)naming
+                    .GetField(name, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
+                    .GetValue(null)!;
+                Assert.AreEqual(0, cache.Count, name + " should be empty once the build has ended");
+            }
+
+            // A cold cache answers exactly as a warm one did.
+            var second = new RoslynTranslator().Translate(code);
+            static string WithoutCacheBust(string js) => string.Join("\n", js.Split('\n').Where(l => !l.Contains("cacheBust")));
+            Assert.AreEqual(WithoutCacheBust(first.Javascript!), WithoutCacheBust(second.Javascript!));
+        }
     }
 }

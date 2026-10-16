@@ -94,6 +94,44 @@ public sealed class RoslynTranslator
         bool alsoEmitBundle = false,
         ChunkOracle? chunkOracle = null)
     {
+        // The naming caches are keyed by symbol, and a symbol roots its compilation: release them
+        // with the build so a long-running host does not keep every compilation it ever made.
+        try
+        {
+            return BuildAssemblyCore(sources, assemblyName, extraReferencePaths, preprocessorSymbols,
+                languageVersion, reflectionEnabled, metadataTarget, emitAssembly, assemblyVersion,
+                emitDebugInformation, metadataOnlyAssembly, incremental, emitModules, chunkDirectory,
+                packageModules, externalSkipClusterDeps, minChunkBytes, maxChunkBytes, alsoEmitBundle,
+                chunkOracle);
+        }
+        finally
+        {
+            TransposeNaming.ClearCaches();
+        }
+    }
+
+    private AssemblyBuildResult BuildAssemblyCore(
+        IEnumerable<(string path, string text)> sources,
+        string assemblyName,
+        IEnumerable<string>? extraReferencePaths,
+        IEnumerable<string>? preprocessorSymbols,
+        LanguageVersion languageVersion,
+        bool reflectionEnabled,
+        MetadataTarget metadataTarget,
+        bool emitAssembly,
+        string? assemblyVersion,
+        bool emitDebugInformation,
+        bool metadataOnlyAssembly,
+        IncrementalPlan? incremental,
+        bool emitModules,
+        string chunkDirectory,
+        bool packageModules,
+        IReadOnlyDictionary<string, List<string>>? externalSkipClusterDeps,
+        int minChunkBytes,
+        int maxChunkBytes,
+        bool alsoEmitBundle,
+        ChunkOracle? chunkOracle)
+    {
         CompileProgress.Report("parsing sources + resolving references");
         var compilation = PhaseTimings.Measure("build compilation (parse + references)", () =>
             CompilationBuilder.Build(
@@ -318,6 +356,18 @@ public sealed class RoslynTranslator
         IEnumerable<string>? preprocessorSymbols = null,
         LanguageVersion languageVersion = LanguageVersion.Latest,
         bool reflectionEnabled = true)
+    {
+        // As BuildAssembly: the naming caches go with the build.
+        try { return BuildRuntimePackageCore(sources, assemblyName, preprocessorSymbols, languageVersion, reflectionEnabled); }
+        finally { TransposeNaming.ClearCaches(); }
+    }
+
+    private RuntimePackageResult BuildRuntimePackageCore(
+        IEnumerable<(string path, string text)> sources,
+        string assemblyName,
+        IEnumerable<string>? preprocessorSymbols,
+        LanguageVersion languageVersion,
+        bool reflectionEnabled)
     {
         CompileProgress.Report("parsing the base library");
         var compilation = PhaseTimings.Measure("build compilation (parse, self-contained BCL)", () =>

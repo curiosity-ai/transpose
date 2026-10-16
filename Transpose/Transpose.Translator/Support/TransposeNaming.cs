@@ -453,6 +453,23 @@ internal static class TransposeNaming
     /// </summary>
     private static readonly ConcurrentDictionary<ISymbol, string> _memberCache = new(SymbolEqualityComparer.Default);
 
+    /// <summary>
+    /// Drops every name cached against a symbol (<c>_memberCache</c>, <c>_methodCache</c>,
+    /// <c>_baseNameCache</c>, <c>_implementedIfaceCache</c>). A symbol roots its whole
+    /// <see cref="Compilation"/>, so caches that outlive a build hold every compilation a long-running
+    /// host (Transpose.Compiler.Library, watch mode) ever made — about 7 MB a build. Each answer is a
+    /// pure function of its symbol, so a dropped one is recomputed identically; a later build gains
+    /// nothing from them anyway, since its source symbols are new objects.
+    /// <see cref="RoslynTranslator"/> calls this when a build ends.
+    /// </summary>
+    internal static void ClearCaches()
+    {
+        _memberCache.Clear();
+        _methodCache.Clear();
+        _baseNameCache.Clear();
+        _implementedIfaceCache.Clear();
+    }
+
     private static string MemberJsNameCore(ISymbol symbol)
     {
         // An explicit interface implementation is named by the interface-qualified mangled
