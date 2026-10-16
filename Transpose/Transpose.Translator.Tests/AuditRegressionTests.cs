@@ -175,5 +175,43 @@ public class Program
   }
 }", waitForOutput: "<<DONE>>");
         }
+
+        // ---- a captured for-loop variable is one binding per execution of the loop ----
+
+        [TestMethod]
+        public async Task ForLoopVariableIsOneBindingPerLoopExecution()
+        {
+            await RunTest(@"
+using System;
+using System.Collections.Generic;
+public class Program
+{
+    public static void Main()
+    {
+        var fs = new List<Func<int>>();
+        for (int o = 0; o < 2; o++)
+            for (int i = 0; i < o + 1; i++) fs.Add(() => i);
+        Console.WriteLine(""nested "" + string.Join("","", fs.ConvertAll(f => f())));
+
+        var gs = new List<Func<int>>();
+        for (int i = 0; i < 2; i++) gs.Add(() => i);
+        for (int i = 10; i < 12; i++) { }
+        for (int i = 20; i < 21; i++) gs.Add(() => i * 2);
+        Console.WriteLine(""sequential "" + string.Join("","", gs.ConvertAll(f => f())));
+
+        var shared = new List<Func<int>>();
+        for (int i = 0, j = 5; i < 3; i++, j--) shared.Add(() => i + j);
+        Console.WriteLine(""shared "" + string.Join("","", shared.ConvertAll(f => f())));
+
+        int Local() { int s = 0; for (int i = 0; i < 4; i++) { if (i == 2) continue; s += i; } return s; }
+        Console.WriteLine(""plain "" + Local());
+
+        var hs = new List<Func<int>>();
+        for (int i = 0; i < 5; i++) { if (i == 3) break; int c = i; hs.Add(() => c * 100 + i); }
+        Console.WriteLine(""break "" + string.Join("","", hs.ConvertAll(f => f())));
+      Console.WriteLine(""<<DONE>>"");
+  }
+}", waitForOutput: "<<DONE>>");
+        }
     }
 }

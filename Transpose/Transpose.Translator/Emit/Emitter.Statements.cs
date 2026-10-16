@@ -469,6 +469,27 @@ public sealed partial class Emitter
 
     private void EmitFor(ForStatementSyntax forStmt)
     {
+        // A C# for-loop variable is ONE binding per execution of the loop, shared by its iterations.
+        // `var` gets the sharing right but is function-scoped, so a closure that captured it saw a
+        // later execution's value: an inner loop re-run by an outer one, or the next loop declaring
+        // the same name, overwrote what earlier closures read (`for (o…) for (int i…) fs.Add(() => i)`
+        // printed 2,2,2 where C# prints 1,2,2). A captured loop variable is therefore declared with
+        // `let` in a block of its own, ahead of a header-less `for` — a `let` in the header would be
+        // per-iteration, which is wrong the other way. Uncaptured, `var` is indistinguishable.
+        if (forStmt.Declaration is not null && LoopVariableIsCaptured(forStmt))
+        {
+            _w.Block(() =>
+            {
+                _w.Write("let ");
+                EmitForDeclarators(forStmt.Declaration);
+                _w.WriteLine(";");
+                _w.Write("for (");
+                EmitForTail(forStmt);
+            });
+            _w.WriteLine();
+            return;
+        }
+
         _w.Write("for (");
         if (forStmt.Declaration is not null)
         {
@@ -476,14 +497,7 @@ public sealed partial class Emitter
             // so a closure capturing it sees the final value. ES6 `let` in a for-header creates a
             // fresh per-iteration binding (closures would capture distinct values) — wrong for C#.
             _w.Write("var ");
-            var first = true;
-            foreach (var v in forStmt.Declaration.Variables)
-            {
-                if (!first) _w.Write(", ");
-                first = false;
-                _w.Write(NameMangler.JsIdentifier(v.Identifier.Text));
-                if (v.Initializer is not null) { _w.Write(" = "); EmitExpression(v.Initializer.Value); }
-            }
+            EmitForDeclarators(forStmt.Declaration);
         }
         else
         {
@@ -495,6 +509,35 @@ public sealed partial class Emitter
                 EmitExpression(init);
             }
         }
+        EmitForTail(forStmt);
+    }
+
+    /// <summary>True if a lambda or local function captures a variable the for statement declares.</summary>
+    private bool LoopVariableIsCaptured(ForStatementSyntax forStmt)
+    {
+        if (!forStmt.DescendantNodes().Any(n => n is AnonymousFunctionExpressionSyntax or LocalFunctionStatementSyntax))
+            return false;
+        var declared = forStmt.Declaration!.Variables.Select(v => _model.GetDeclaredSymbol(v)).ToList();
+        var flow = _model.SemanticModelFor(forStmt.SyntaxTree).AnalyzeDataFlow(forStmt);
+        return flow is { Succeeded: true }
+            && flow.Captured.Any(c => declared.Any(d => SymbolEqualityComparer.Default.Equals(c, d)));
+    }
+
+    private void EmitForDeclarators(VariableDeclarationSyntax declaration)
+    {
+        var first = true;
+        foreach (var v in declaration.Variables)
+        {
+            if (!first) _w.Write(", ");
+            first = false;
+            _w.Write(NameMangler.JsIdentifier(v.Identifier.Text));
+            if (v.Initializer is not null) { _w.Write(" = "); EmitExpression(v.Initializer.Value); }
+        }
+    }
+
+    /// <summary>A for statement from just after its initializer: `; cond; incs) body`.</summary>
+    private void EmitForTail(ForStatementSyntax forStmt)
+    {
         _w.Write("; ");
         if (forStmt.Condition is not null) EmitExpression(forStmt.Condition);
         _w.Write("; ");
