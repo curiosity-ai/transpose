@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -212,6 +213,60 @@ public class Program
       Console.WriteLine(""<<DONE>>"");
   }
 }", waitForOutput: "<<DONE>>");
+        }
+
+        // ---- overload numbering does not depend on the host culture ----
+
+        [TestMethod]
+        public void OverloadSuffixesAreTheSameUnderEveryCulture()
+        {
+            // `aa.A` sorts before `Bb.B` linguistically and after it ordinally, so a culture-sensitive
+            // overload order numbered these overloads differently in an ICU host than in `tps`
+            // (invariant globalization).
+            const string code = @"
+namespace aa { public class A { } }
+namespace Bb { public class B { } }
+public class C
+{
+    public string M(aa.A x) => ""A"";
+    public string M(Bb.B x) => ""B"";
+    public string M(string s, aa.A x) => ""sA"";
+    public string M(string s, Bb.B x) => ""sB"";
+}
+public class Program
+{
+    public static void Main()
+    {
+        var c = new C();
+        System.Console.WriteLine(c.M(new aa.A()) + c.M(new Bb.B()) + c.M("""", new aa.A()) + c.M("""", new Bb.B()));
+    }
+}";
+            static string Members(string js) => string.Join("\n", js.Split('\n')
+                .Where(l => l.Contains("M") && (l.Contains(": function") || l.Contains("c.M"))));
+
+            // The contract: ordinal order, so `Bb.B` (66) sorts before `aa.A` (97) and the one-argument
+            // `M(Bb.B)` is the unsuffixed overload, whatever the culture.
+            var ordinal = new RoslynTranslator().Translate(code);
+            Assert.IsTrue(ordinal.Success, "translation should succeed");
+            StringAssert.Contains(ordinal.Javascript, "c.M(new Bb.B())");
+
+            // Under a linguistic culture the answer must not move. This test host runs with invariant
+            // globalization (as `tps` does), where no such culture exists; a host with ICU checks it.
+            System.Globalization.CultureInfo english;
+            try { english = new System.Globalization.CultureInfo("en-US"); }
+            catch (System.Globalization.CultureNotFoundException) { return; }
+            var saved = System.Globalization.CultureInfo.CurrentCulture;
+            try
+            {
+                System.Globalization.CultureInfo.CurrentCulture = english;
+                var linguistic = new RoslynTranslator().Translate(code);
+                Assert.IsTrue(linguistic.Success, "translation should succeed");
+                Assert.AreEqual(Members(ordinal.Javascript!), Members(linguistic.Javascript!));
+            }
+            finally
+            {
+                System.Globalization.CultureInfo.CurrentCulture = saved;
+            }
         }
     }
 }

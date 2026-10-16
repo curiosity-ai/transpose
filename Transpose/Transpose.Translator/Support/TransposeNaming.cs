@@ -1110,13 +1110,17 @@ internal static class TransposeNaming
         if (c1 && !c2) return -1;
         if (c2 && !c1) return 1;
         // Two constructors compare by signature directly (Transpose returns here, before accessibility).
-        if (c1 && c2) return string.Compare(MethodToString(m1), MethodToString(m2), System.StringComparison.CurrentCulture);
+        // Ordinal, never culture-sensitive: the overload order decides every `$N` suffix, so it must
+        // not depend on the host. `tps` runs with invariant globalization (where a culture compare is
+        // ordinal anyway) but a host of Transpose.Compiler.Library with ICU would sort `M(aa.A)` and
+        // `M(Bb.B)` the other way round and number the overloads differently.
+        if (c1 && c2) return string.Compare(MethodToString(m1), MethodToString(m2), System.StringComparison.Ordinal);
 
         var a1 = AccessibilityWeight(m1.DeclaredAccessibility);
         var a2 = AccessibilityWeight(m2.DeclaredAccessibility);
         if (a1 != a2) return a1.CompareTo(a2);
 
-        return string.Compare(MethodToString(m1), MethodToString(m2), System.StringComparison.CurrentCulture);
+        return string.Compare(MethodToString(m1), MethodToString(m2), System.StringComparison.Ordinal);
     }
 
     private static bool IsDerivedFrom(ITypeSymbol? derived, ITypeSymbol? base_)
