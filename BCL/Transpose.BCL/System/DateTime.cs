@@ -197,6 +197,10 @@ namespace System
         [Transpose.Template("System.DateTime.format({this}, {0}, {1})")]
         public extern string ToString(string format, IFormatProvider provider);
 
+        // DateTimeOffset's formatting: this clock time, with offset in place of the host's zone.
+        [Transpose.Template("System.DateTime.format({this}, {0}, {1}, {2})")]
+        internal extern string ToString(string format, IFormatProvider provider, TimeSpan offset);
+
         [Transpose.Template("System.DateTime.parse({0})")]
         public static extern DateTime Parse(string s);
 
