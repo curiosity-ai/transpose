@@ -24,8 +24,15 @@ public static class NodeJsRunner
     /// </summary>
     private static readonly Encoding NodeOutputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
 
-    public static async Task<string> RunAsync(string jsCode)
+    /// <param name="jsCode">The JavaScript to run.</param>
+    /// <param name="timeZone">An IANA zone to run Node in (its <c>TZ</c>); null inherits the host's.</param>
+    /// <param name="clock">Where the JS clock starts (<c>new Date()</c>, <c>Date.now()</c>); it then
+    /// runs at real speed. Null keeps the host's clock.</param>
+    public static async Task<string> RunAsync(string jsCode, string? timeZone = null, DateTimeOffset? clock = null)
     {
+        if (clock != null)
+            jsCode = FakeClockPrelude(clock.Value) + jsCode;
+
         var tempFile = Path.Combine(Path.GetTempPath(), "tps_" + Guid.NewGuid().ToString("N") + ".js");
         await File.WriteAllTextAsync(tempFile, jsCode);
 
@@ -42,6 +49,8 @@ public static class NodeJsRunner
                 UseShellExecute = false,
                 CreateNoWindow = true,
             };
+            if (timeZone != null)
+                psi.Environment["TZ"] = timeZone;
 
             using var process = Process.Start(psi)
                 ?? throw new InvalidOperationException("Failed to start node.");
@@ -62,6 +71,25 @@ public static class NodeJsRunner
         {
             try { File.Delete(tempFile); } catch { /* ignore */ }
         }
+    }
+
+    /// <summary>
+    /// Replaces the global <c>Date</c> with a subclass whose argument-less forms start at
+    /// <paramref name="clock"/>. Every other form (and <c>instanceof Date</c>) is unchanged, so the
+    /// runtime cannot tell, and only "now" moves. There is no portable way to move a process's real
+    /// clock, and this is the only part of it the runtime reads.
+    /// </summary>
+    private static string FakeClockPrelude(DateTimeOffset clock)
+    {
+        var start = clock.ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return "(function () {\n" +
+               "    var RealDate = Date, shift = " + start + " - RealDate.now();\n" +
+               "    class FakeDate extends RealDate {\n" +
+               "        constructor(...a) { if (a.length === 0) super(RealDate.now() + shift); else super(...a); }\n" +
+               "        static now() { return RealDate.now() + shift; }\n" +
+               "    }\n" +
+               "    globalThis.Date = FakeDate;\n" +
+               "})();\n";
     }
 
     private static string ResolveNode()

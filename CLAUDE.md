@@ -742,6 +742,14 @@ The short version:
   to the numeric types JavaScript cannot tell apart, and it is the ambiguity the next bullet already
   carries. A real C# array never reaches any of this — it answers from its own `$type` — so this costs
   a normal program nothing. Covered by `JsArrayTypeIdentityTests`.
+- **A `DateTime`'s ticks are its value, whatever its kind (`Date.js`).** A DateTime is a JS `Date`
+  carrying `kind` and `ticks`, and `SpecifyKind` keeps the ticks: it used to copy the `Date`'s instant
+  instead, and a Utc date reads its clock time from the UTC fields where a Local/Unspecified one reads the
+  local ones, so every `DateTimeOffset.UtcDateTime` was wrong by the host's offset. None of that shows on
+  a UTC host, which is what CI runs on, so `DateTimeOperatorTests` runs the JS side in several zones under
+  a moved clock (`RunTest(timeZone:, clock:)`). `new DateTimeOffset(local)` and `DateTimeOffset.Now` take
+  the offset of the date's own instant, read back through `ToUniversalTime`, since `TimeZoneInfo` is not
+  supported.
 - **A boxed numeric loses its exact type.** Every JS number is a double, so `(object)1 is double` is
   true and `objects.OfType<double>()` also matches the boxed `int`s. `long`/`ulong`/`decimal` are
   real runtime objects and are unaffected, as are reference types and structs.

@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -301,5 +302,91 @@ public class P { public static bool M(S a, S b) { return a == b; } }");
 
         StringAssert.Contains(js, "TransposeR.dtAddTs(",
             $"`d += t` is `d = d + t`, not the JavaScript `+=`:\n{js}");
+    }
+
+    /// <summary>
+    /// <c>DateTime.SpecifyKind</c> kept the JS Date's instant instead of its ticks. A Utc date reads its
+    /// clock time from the Date's UTC fields and a Local/Unspecified one from its local fields, so
+    /// re-kinding an Unspecified date to Utc (which <c>DateTimeOffset.UtcDateTime</c> does) moved the
+    /// clock time by the host's offset on that date. Invisible on a UTC host, which is what CI runs
+    /// on, so the JS side runs in zones with an offset, under a clock moved to each season: the host's
+    /// offset *today* and its offset *on the date being handled* then differ in half the rows.
+    /// <list type="bullet">
+    /// <item>Berlin and the US zones (New York, Los Angeles) switch DST on different dates, Sydney
+    /// switches the opposite way round, Tokyo is a whole-hour offset ahead of UTC with no DST, and
+    /// Kolkata is a half-hour offset with no DST.</item>
+    /// <item>Only the JS side moves. Every value printed is the same in .NET whatever the zone and
+    /// clock (a local-time fact is printed as a comparison between two local readings), so native
+    /// stays the oracle.</item>
+    /// </list>
+    /// </summary>
+    [TestMethod]
+    [DataRow("Europe/Berlin",       "2026-12-15T12:00:00Z")]
+    [DataRow("Europe/Berlin",       "2026-04-15T12:00:00Z")]
+    [DataRow("Europe/Berlin",       "2026-06-15T12:00:00Z")]
+    [DataRow("Europe/Berlin",       "2026-10-15T12:00:00Z")]
+    [DataRow("America/New_York",    "2026-12-15T12:00:00Z")]
+    [DataRow("America/New_York",    "2026-04-15T12:00:00Z")]
+    [DataRow("America/New_York",    "2026-06-15T12:00:00Z")]
+    [DataRow("America/New_York",    "2026-10-15T12:00:00Z")]
+    [DataRow("America/Los_Angeles", "2026-12-15T12:00:00Z")]
+    [DataRow("America/Los_Angeles", "2026-04-15T12:00:00Z")]
+    [DataRow("America/Los_Angeles", "2026-06-15T12:00:00Z")]
+    [DataRow("America/Los_Angeles", "2026-10-15T12:00:00Z")]
+    [DataRow("Asia/Tokyo",          "2026-12-15T12:00:00Z")]
+    [DataRow("Asia/Tokyo",          "2026-04-15T12:00:00Z")]
+    [DataRow("Asia/Tokyo",          "2026-06-15T12:00:00Z")]
+    [DataRow("Asia/Tokyo",          "2026-10-15T12:00:00Z")]
+    [DataRow("Australia/Sydney",    "2026-12-15T12:00:00Z")]
+    [DataRow("Australia/Sydney",    "2026-04-15T12:00:00Z")]
+    [DataRow("Australia/Sydney",    "2026-06-15T12:00:00Z")]
+    [DataRow("Australia/Sydney",    "2026-10-15T12:00:00Z")]
+    [DataRow("Asia/Kolkata",        "2026-12-15T12:00:00Z")]
+    [DataRow("Asia/Kolkata",        "2026-06-15T12:00:00Z")]
+    public async Task DateTimeOffsetIsIndependentOfTheHostTimeZoneAndClock(string timeZone, string clock)
+    {
+        await RunTest(Program(@"
+        var winter = new DateTime(2020, 1, 15, 10, 0, 0);
+        var summer = new DateTime(2020, 7, 15, 10, 0, 0);
+        P(""SpecifyKind winter"", DateTime.SpecifyKind(winter, DateTimeKind.Utc).ToString(""O""));
+        P(""SpecifyKind summer"", DateTime.SpecifyKind(summer, DateTimeKind.Utc).ToString(""O""));
+        P(""SpecifyKind back"",   DateTime.SpecifyKind(DateTime.SpecifyKind(summer, DateTimeKind.Utc), DateTimeKind.Unspecified).ToString(""O""));
+        P(""DTO"",                U(DTO));
+        P(""DTO + TS"",           U(DTO + TS));
+        P(""assign"",             U(DT));
+        P(""summer +02"",         U(new DateTimeOffset(2023, 10, 5, 14, 30, 0, TimeSpan.FromHours(2))));
+        P(""winter -05"",         U(new DateTimeOffset(winter, TimeSpan.FromHours(-5))));
+        P(""parse Z"",            U(DateTimeOffset.Parse(""2023-10-05T12:30:00Z"", System.Globalization.CultureInfo.InvariantCulture)));
+
+        // The offset a local DateTime converts with is the one on ITS date, not today's.
+        foreach (var local in new[] { winter, summer })
+        {
+            var dto = new DateTimeOffset(local);
+            P(""local "" + local.Month + "" utc"",    dto.UtcDateTime == local.ToUniversalTime());
+            P(""local "" + local.Month + "" offset"", dto.Offset == local - local.ToUniversalTime());
+            P(""local "" + local.Month + "" clock"",  dto.DateTime == local);
+        }
+
+        // ... and Now's is today's.
+        var nowOffset = DateTimeOffset.Now;
+        P(""Now utc"",    Math.Abs((nowOffset.UtcDateTime - DateTime.UtcNow).TotalMinutes) < 1);
+        P(""Now offset"", Math.Abs((nowOffset.Offset - (DateTime.Now - DateTime.UtcNow)).TotalMinutes) < 1);
+        P(""UtcNow"",     DateTimeOffset.UtcNow.Offset == TimeSpan.Zero);
+"), waitForOutput: "<<DONE>>", timeZone: timeZone, clock: DateTimeOffset.Parse(clock, System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>The fake clock the matrix above runs under has to be what the runtime reads, or every
+    /// row of it tests the real date. Asserted once here rather than in each row.</summary>
+    [TestMethod]
+    [DataRow("2026-12-15T12:00:00Z")]
+    [DataRow("2026-06-15T12:00:00Z")]
+    public async Task TheFakeClockIsWhatTheRuntimeReads(string clock)
+    {
+        var now = DateTimeOffset.Parse(clock, System.Globalization.CultureInfo.InvariantCulture);
+        var seen = await RunTest(@"
+using System;
+public class Program { public static void Main() { Console.WriteLine(DateTime.UtcNow.ToString(""yyyy-MM-dd"")); } }",
+            skipRoslyn: true, timeZone: "Europe/Berlin", clock: now);
+        Assert.AreEqual(now.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture), seen.Trim());
     }
 }

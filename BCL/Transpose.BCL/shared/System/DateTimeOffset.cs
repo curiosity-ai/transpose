@@ -69,16 +69,16 @@ namespace System {
         // extracts the local offset. For UTC, creates a UTC instance with a zero offset.
         public DateTimeOffset(DateTime dateTime) {
             TimeSpan offset;
-            //if (dateTime.Kind != DateTimeKind.Utc) {
-            //    // Local and Unspecified are both treated as Local
-            //    offset = DateTime.Now - DateTime.UtcNow;
-
-            //    // TODO: Revised [TimeZoneInfo not supported]
-            //    //offset = TimeZoneInfo.GetLocalUtcOffset(dateTime, TimeZoneInfoOptions.NoThrowOnInvalidTime);
-            //}
-            //else {
+            if (dateTime.Kind != DateTimeKind.Utc) {
+                // Local and Unspecified are both treated as Local, at the offset in effect on
+                // dateTime's own date (not today's). TimeZoneInfo is not supported, so it is read
+                // back from the runtime's local-to-UTC conversion, in whole minutes as an offset
+                // must be (a zone's early local mean time is not).
+                offset = TimeSpan.FromMinutes(Math.Round((double)(dateTime.Ticks - dateTime.ToUniversalTime().Ticks) / TimeSpan.TicksPerMinute));
+            }
+            else {
                 offset = new TimeSpan(0);
-            //}
+            }
             m_offsetMinutes = ValidateOffset(offset);
             m_dateTime = ValidateDate(dateTime, offset);
         }
