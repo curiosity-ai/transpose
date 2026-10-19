@@ -380,7 +380,7 @@ public class P { public static bool M(S a, S b) { return a == b; } }");
         foreach (var o in new[] { TimeSpan.Zero, TimeSpan.FromHours(5.5), TimeSpan.FromHours(-3) })
         {
             var d = new DateTimeOffset(2024, 3, 17, 14, 5, 6, 7, o);
-            foreach (var f in new[] { ""G"", ""O"", ""u"", ""r"", ""s"", ""%K"", ""zz"", ""zzz"", ""yyyy-MM-ddTHH:mm:ss.FFFFFFFK"" })
+            foreach (var f in new[] { null, ""G"", ""O"", ""u"", ""r"", ""s"", ""%K"", ""%z"", ""zz"", ""zzz"", ""yyyy-MM-ddTHH:mm:ss.FFFFFFFK"" })
                 P(""format "" + f, d.ToString(f, System.Globalization.CultureInfo.InvariantCulture));
         }
 
