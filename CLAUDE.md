@@ -307,6 +307,13 @@ tps --project <proj.csproj> --configuration <cfg> --assembly-version <v>
 The SDK passes `--incremental` by default; a project turns it off with
 `<TransposeIncremental>false</TransposeIncremental>`.
 
+The SDK also sets `TRANSPOSE_NO_BUILD_REFERENCES=1` (the `--no-build-references` flag, as an environment
+variable so an older `tps` ignores it rather than rejecting it): MSBuild has already built every
+`ProjectReference` with its own `tps` run, so `tps` binds against their DLLs as they are on disk instead
+of building them again. It used to rebuild them, and several dependents of one library (Tesserae's three
+themes) wrote its DLL from several processes at once (`TPS0004`, file in use). A bare `tps --project`
+still builds the whole reference chain itself, one project after another.
+
 `tps` reads the csproj directly (no MSBuild evaluation), globs `**/*.cs`, resolves
 `PackageReference`s from the NuGet cache (which it can now fill itself — see **Restoring packages**
 below), synthesizes `[assembly: ...]` from `<AssemblyAttribute>` items, transpiles, and writes the
@@ -372,7 +379,8 @@ first; also `TRANSPOSE_TYPE_SIZES=1`/`=20` and `TRANSPOSE_TYPE_SIZES_JSON=<file>
 MSBuild-driven build),
 `--metadata-only-assembly` / `--no-metadata-only-assembly`,
 `--max-errors <n>` (a cap; by default **every** error is reported, ordered by file and line),
-`--restore` (install the project's packages before building; `--source`/`--packages` go with it — see
+`--no-build-references` (bind against referenced projects' DLLs as they are, instead of building them;
+the SDK sets it), `--restore` (install the project's packages before building; `--source`/`--packages` go with it — see
 **Restoring packages** below),
 `--watch` / `--watch-port <n>` (rebuild a site on every source change — root project and every
 referenced project — and serve it over Kestrel on localhost; the served index.html carries an

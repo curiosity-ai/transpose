@@ -161,6 +161,13 @@
   </PropertyGroup>
 
   <PropertyGroup>
+    <!-- MSBuild builds every ProjectReference with its own tps run before this one starts (or skips
+         them under -no-dependencies, which means "use the DLLs on disk"), so tps must not build them
+         again: several dependents rebuilding one shared library in parallel wrote its DLL from several
+         processes at once (TPS0004, file in use). An environment variable rather than tps's
+         no-build-references flag, because an older tps rejects a flag it does not know and simply
+         ignores the variable. -->
+    <_TransposeEnvironment>TRANSPOSE_NO_BUILD_REFERENCES=1</_TransposeEnvironment>
     <!-- The tps command line, shared by the global-tool and local-tool invocations below so the two
          cannot drift apart. -->
     <_TransposeArgs>--project "$(ProjectPath)" --configuration "$(Configuration)" --assembly-version "$(AssemblyVersion)"</_TransposeArgs>
@@ -540,12 +547,12 @@
          unrecoverable, the captured output always goes to obj/tps.log, and the failure error says so. -->
     <Message Importance="high" Text="Transpose compilation begins now... " />
 
-    <Exec Command="tps $(_TransposeArgs)" ConsoleToMsBuild="True" WorkingDirectory="$(ProjectDir)" ContinueOnError="ErrorAndStop" IgnoreExitCode="false" Condition="!$(UseLocalTranspose)">
+    <Exec Command="tps $(_TransposeArgs)" EnvironmentVariables="$(_TransposeEnvironment)" ConsoleToMsBuild="True" WorkingDirectory="$(ProjectDir)" ContinueOnError="ErrorAndStop" IgnoreExitCode="false" Condition="!$(UseLocalTranspose)">
       <Output TaskParameter="ExitCode" PropertyName="ExitCode" />
       <Output TaskParameter="ConsoleOutput" ItemName="_TransposeConsoleOutput" />
     </Exec>
 
-    <Exec Command="dotnet tool run tps $(_TransposeArgs)" ConsoleToMsBuild="True" WorkingDirectory="$(ProjectDir)" ContinueOnError="ErrorAndStop" IgnoreExitCode="false" Condition="$(UseLocalTranspose)">
+    <Exec Command="dotnet tool run tps $(_TransposeArgs)" EnvironmentVariables="$(_TransposeEnvironment)" ConsoleToMsBuild="True" WorkingDirectory="$(ProjectDir)" ContinueOnError="ErrorAndStop" IgnoreExitCode="false" Condition="$(UseLocalTranspose)">
       <Output TaskParameter="ExitCode" PropertyName="ExitCode" />
       <Output TaskParameter="ConsoleOutput" ItemName="_TransposeConsoleOutput" />
     </Exec>

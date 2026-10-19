@@ -97,6 +97,14 @@ internal sealed record BuildOptions
     /// <summary>Where the incremental cache lives; null means the project's <c>obj/</c>.</summary>
     public string? CacheDir { get; init; }
 
+    /// <summary>
+    /// Bind against the referenced projects' DLLs as they are on disk instead of building them first
+    /// (<c>--no-build-references</c>). The SDK passes it: under MSBuild every ProjectReference has
+    /// already been built by its own <c>tps</c> run, and rebuilding a shared library from each of its
+    /// dependents, which MSBuild runs in parallel, wrote one DLL from several processes at once.
+    /// </summary>
+    public bool SkipReferenceBuilds { get; init; }
+
     /// <summary>A script inlined into the generated index.html right before <c>&lt;/body&gt;</c>. Watch
     /// mode passes its live-reload script here; every other build passes null, leaving the output
     /// untouched.</summary>
@@ -279,7 +287,8 @@ internal static class ProjectBuild
         // separate-assembly / package mode this project binds against its dependencies' built DLLs
         // and extracts their embedded JS, so each must be compiled — in dependency order — before
         // this one. Up-to-date packages are skipped.
-        if (options.SeparateAssemblies && !EnsureReferencedProjectsBuilt(csproj, options, log))
+        if (options.SeparateAssemblies && !options.SkipReferenceBuilds
+            && !EnsureReferencedProjectsBuilt(csproj, options, log))
         {
             log.Error("\nFAILED building referenced projects.");
             return BuildOutcome.NoSite(1);
@@ -301,13 +310,10 @@ internal static class ProjectBuild
         {
             cache = BuildCache.Open(project, configuration,
                 OutputMode(options.EmitPackage, isSiteBuild),
-                // "watch={..}" so switching --watch on/off across builds sharing a cache dir invalidates
-                // it — the injected live-reload script changes the written index.html even when nothing
-                // else about the build did, and an "up to date" verdict skips writing it altogether.
                 BuildSettingsFingerprint(project, configuration, tpscfg, reflectionEnabled, metadataTarget,
                     metadataOnly, options.EmitPackage, isSiteBuild, options.SeparateAssemblies, options.WithRuntime,
-                    options.OutPath, options.SiteDir, options.AssemblyVersion, options.NoChunkCoalescing)
-                    .Append($"watch={options.LiveReloadScript is not null}"),
+                    options.OutPath, options.SiteDir, options.AssemblyVersion, options.NoChunkCoalescing,
+                    liveReload: options.LiveReloadScript is not null),
                 BuildContentFingerprint(project),
                 options.CacheDir);
             (verdict, changedSources, var reason) = cache.Decide();
@@ -570,7 +576,7 @@ internal static class ProjectBuild
         ResolvedProject project, string configuration, TransposeJson? tpscfg, bool reflectionEnabled,
         MetadataTarget metadataTarget, bool metadataOnly, bool emitPackage, bool isSiteBuild,
         bool separateAssemblies, bool withRuntime, string? outPath, string? siteDir, string? assemblyVersion,
-        bool noChunkCoalescing)
+        bool noChunkCoalescing, bool liveReload)
     {
         yield return $"configuration={configuration}";
         yield return $"assembly={project.AssemblyName}";
@@ -586,6 +592,11 @@ internal static class ProjectBuild
         yield return $"chunkCoalescing={!noChunkCoalescing}";
         yield return $"separate={separateAssemblies};runtime={withRuntime}";
         yield return $"out={outPath};siteDir={siteDir}";
+        // Switching --watch on or off invalidates a site: the injected live-reload script changes the
+        // written index.html even when nothing else about the build did, and an "up to date" verdict
+        // skips writing it altogether. Only a site carries the script, so only a site counts it, which
+        // keeps a package's key the same as the one BuildPackage computes for it as a dependency.
+        if (isSiteBuild) yield return $"watch={liveReload}";
         yield return $"tpsjson={tpscfg is null}";
         yield return "tps.chunks.json=" + BuildCache.FileContentFingerprint(Path.Combine(project.ProjectDir, ChunkOracle.FileName));
 
@@ -840,7 +851,7 @@ internal static class ProjectBuild
                 BuildSettingsFingerprint(project, configuration, tpscfg, reflectionEnabled, metadataTarget,
                     metadataOnly, emitPackage: true, isSiteBuild: false, separateAssemblies: true,
                     withRuntime: false, outPath: null, siteDir: null, assemblyVersion: assemblyVersion,
-                    noChunkCoalescing: options.NoChunkCoalescing),
+                    noChunkCoalescing: options.NoChunkCoalescing, liveReload: false),
                 BuildContentFingerprint(project),
                 options.CacheDir);
             (verdict, changedSources, var reason) = cache.Decide();

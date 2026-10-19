@@ -55,6 +55,9 @@ public static class Program
         var watch = false;
         var watchPort = 4300;
         var restoreFirst = false;
+        // TRANSPOSE_NO_BUILD_REFERENCES=1 is how the Transpose SDK asks for it: an older tps ignores an
+        // unknown variable where it would reject an unknown flag.
+        var skipReferenceBuilds = Environment.GetEnvironmentVariable("TRANSPOSE_NO_BUILD_REFERENCES") is "1" or "true";
         var restoreSources = new List<string>();
         string? packagesFolder = null;
 
@@ -94,6 +97,7 @@ public static class Program
                 case "--no-incremental": incremental = false; break;
                 case "--cache-dir": cacheDir = args[++i]; incremental = true; break;
                 case "--restore": restoreFirst = true; break;
+                case "--no-build-references": skipReferenceBuilds = true; break;
                 case "--source": restoreSources.Add(args[++i]); break;
                 case "--packages": packagesFolder = args[++i]; break;
                 case "--watch": watch = true; break;
@@ -142,6 +146,7 @@ public static class Program
             Incremental = incremental,
             NoChunkCoalescing = noChunkCoalescing,
             CacheDir = cacheDir,
+            SkipReferenceBuilds = skipReferenceBuilds,
         });
 
         // --watch rebuilds this same project over and over as its sources change, serving the result
@@ -482,6 +487,14 @@ public static class Program
                                     declaration, a new or deleted file, a different reference or
                                     setting) is a full build. Emitted output is byte-identical either
                                     way; the cache lives in the project's obj/tps-cache/.
+              --no-build-references Bind against the referenced projects' DLLs as they are on disk
+                                    instead of building them first (also
+                                    TRANSPOSE_NO_BUILD_REFERENCES=1, which is how the Transpose SDK
+                                    asks for it). Under MSBuild every ProjectReference has already
+                                    been built by its own tps run (or deliberately not, with
+                                    --no-dependencies); building a shared library again from each of
+                                    its dependents, in parallel, wrote one DLL from several processes
+                                    at once.
               --cache-dir <dir>     Put the incremental cache under <dir> instead of the project's
                                     obj/ (implies --incremental). A temp directory is fine — losing
                                     the cache only costs a full build.
