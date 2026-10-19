@@ -340,6 +340,11 @@
                     timezoneOffset = offset ? -offset.getTotalMinutes() : d.getTimezoneOffset(),
                     formats;
 
+                if (!f && offset) {
+                    formats = df.getAllDateTimePatterns("G", true);
+                    f = (formats ? formats[0] : "G") + " zzz";
+                }
+
                 f = f || "G";
 
                 if (f.length === 1) {
@@ -513,7 +518,7 @@
                                 break;
                             case "z":
                                 part = timezoneOffset / 60;
-                                part = ((part >= 0) ? "-" : "+") + Math.floor(Math.abs(part));
+                                part = ((part > 0) ? "-" : "+") + Math.floor(Math.abs(part));
 
                                 break;
                             case "K":
