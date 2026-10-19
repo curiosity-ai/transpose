@@ -174,6 +174,22 @@
                 return d.ticks;
             },
 
+            // The clock time of d, as a Date whose UTC fields hold it. A Local/Unspecified DateTime
+            // keeps a real instant (what JavaScript interop reads) but, as in .NET, its value is its
+            // ticks: reading the instant's local fields instead moves a clock time the zone skips or
+            // repeats around a DST switch, and every field of a date before the zone's first
+            // whole-minute offset.
+            $clock: function (d) {
+                return new Date(this.getTicks(d).div(10000).toNumber() - 62135596800000);
+            },
+
+            // DateTime.AddUnits: a whole and a fractional part, each truncated to ticks.
+            $addUnits: function (d, value, ticksPerUnit) {
+                var whole = value < 0 ? Math.ceil(value) : Math.floor(value);
+
+                return this.addTicks(d, System.Int64(whole).mul(ticksPerUnit).add(System.Int64(Math.trunc((value - whole) * ticksPerUnit))));
+            },
+
             create: function (year, month, day, hour, minute, second, millisecond, kind) {
                 year = (year !== undefined) ? year : new Date().getFullYear();
                 month = (month !== undefined) ? month : new Date().getMonth() + 1;
@@ -186,16 +202,20 @@
 
                 var d;
 
+                // The ticks come from the clock fields, never from the local instant: a clock time
+                // the zone skips (a DST gap) has no local instant of its own to read them back from.
+                var clock = new Date(Date.UTC(year, month - 1, day, hour, minute, second, millisecond));
+                clock.setUTCFullYear(year);
+
                 if (kind === 1) {
-                    d = new Date(Date.UTC(year, month - 1, day, hour, minute, second, millisecond));
-                    d.setUTCFullYear(year);
+                    d = clock;
                 } else {
                     d = new Date(year, month - 1, day, hour, minute, second, millisecond);
                     d.setFullYear(year);
                 }
 
                 d.kind = kind;
-                d.ticks = this.getTicks(d);
+                d.ticks = System.Int64(clock.getTime()).mul(10000).add(this.$getMinOffset());
 
                 return d;
             },
@@ -251,9 +271,7 @@
             },
 
             getTimeOfDay: function (d) {
-                var dt = this.getDate(d);
-
-                return new System.TimeSpan((d - dt) * 10000);
+                return new System.TimeSpan(this.getTicks(d).mod(this.TicksPerDay));
             },
 
             getKind: function (d) {
@@ -327,16 +345,16 @@
             format: function (d, f, p, offset) {
                 var me = this,
                     kind = offset ? 2 : (d.kind || 0),
-                    isUtc = (kind === 1 || ["u", "r", "R"].indexOf(f) > -1),
+                    clock = me.$clock(d),
                     df = (p || System.Globalization.CultureInfo.getCurrentCulture()).getFormat(System.Globalization.DateTimeFormatInfo),
-                    year = isUtc ? d.getUTCFullYear() : d.getFullYear(),
-                    month = isUtc ? d.getUTCMonth() : d.getMonth(),
-                    dayOfMonth = isUtc ? d.getUTCDate() : d.getDate(),
-                    dayOfWeek = isUtc ? d.getUTCDay() : d.getDay(),
-                    hour = isUtc ? d.getUTCHours() : d.getHours(),
-                    minute = isUtc ? d.getUTCMinutes() : d.getMinutes(),
-                    second = isUtc ? d.getUTCSeconds() : d.getSeconds(),
-                    millisecond = isUtc ? d.getUTCMilliseconds() : d.getMilliseconds(),
+                    year = clock.getUTCFullYear(),
+                    month = clock.getUTCMonth(),
+                    dayOfMonth = clock.getUTCDate(),
+                    dayOfWeek = clock.getUTCDay(),
+                    hour = clock.getUTCHours(),
+                    minute = clock.getUTCMinutes(),
+                    second = clock.getUTCSeconds(),
+                    millisecond = clock.getUTCMilliseconds(),
                     timezoneOffset = offset ? -offset.getTotalMinutes() : d.getTimezoneOffset(),
                     formats;
 
@@ -1122,13 +1140,7 @@
             },
 
             dateAddSubTimeSpan: function (d, t, direction) {
-                var ticks = t.getTicks().mul(direction),
-                    dt = new Date(d.getTime() + ticks.div(10000).toNumber());
-
-                dt.kind = d.kind;
-                dt.ticks = this.getTicks(dt);
-
-                return dt;
+                return this.addTicks(d, t.getTicks().mul(direction));
             },
 
             subdt: function (d, t) {
@@ -1158,75 +1170,44 @@
                 return this.addMonths(d, v * 12);
             },
 
+            // Arithmetic is on the ticks, whatever the kind, as in .NET. Adding to the instant of a
+            // Local/Unspecified date instead gained or lost the hour of any DST switch in between.
             addMonths: function (d, v) {
-                var dt = new Date(d.getTime()),
-                    day = d.getDate();
+                var ticks = this.getTicks(d),
+                    dt = this.$clock(d),
+                    day = dt.getUTCDate();
 
-                dt.setDate(1);
-                dt.setMonth(dt.getMonth() + v);
-                dt.setDate(Math.min(day, this.getDaysInMonth(dt.getFullYear(), dt.getMonth() + 1)));
-                dt.kind = (d.kind !== undefined) ? d.kind : 0;
-                dt.ticks = this.getTicks(dt);
+                dt.setUTCDate(1);
+                dt.setUTCMonth(dt.getUTCMonth() + v);
+                dt.setUTCDate(Math.min(day, this.getDaysInMonth(dt.getUTCFullYear(), dt.getUTCMonth() + 1)));
 
-                return dt;
+                return this.create$2(System.Int64(dt.getTime() + 62135596800000).mul(10000).add(ticks.mod(10000)), (d.kind !== undefined) ? d.kind : 0);
             },
 
             addDays: function (d, v) {
-                var kind = (d.kind !== undefined) ? d.kind : 0,
-                    dt = new Date(d.getTime());
-
-                if (kind === 1) {
-                    dt.setUTCDate(dt.getUTCDate() + (Math.floor(v) * 1));
-
-                    if (v % 1 !== 0) {
-                        dt.setUTCMilliseconds(dt.getUTCMilliseconds() + Math.round((v % 1) * 864e5));
-                    }
-                } else {
-                    dt.setDate(dt.getDate() + (Math.floor(v) * 1));
-
-                    if (v % 1 !== 0) {
-                        dt.setMilliseconds(dt.getMilliseconds() + Math.round((v % 1) * 864e5));
-                    }
-                }
-
-                dt.kind = kind;
-                dt.ticks = this.getTicks(dt);
-
-                return dt;
+                return this.$addUnits(d, v, 864e9);
             },
 
             addHours: function (d, v) {
-                return this.addMilliseconds(d, v * 36e5);
+                return this.$addUnits(d, v, 36e9);
             },
 
             addMinutes: function (d, v) {
-                return this.addMilliseconds(d, v * 6e4);
+                return this.$addUnits(d, v, 6e8);
             },
 
             addSeconds: function (d, v) {
-                return this.addMilliseconds(d, v * 1e3);
+                return this.$addUnits(d, v, 1e7);
             },
 
             addMilliseconds: function (d, v) {
-                var dt = new Date(d.getTime());
-                dt.setMilliseconds(dt.getMilliseconds() + v)
-                dt.kind = (d.kind !== undefined) ? d.kind : 0;
-                dt.ticks = this.getTicks(dt);
-
-                return dt;
+                return this.$addUnits(d, v, 1e4);
             },
 
             addTicks: function (d, v) {
                 v = System.Int64.is64Bit(v) ? v : System.Int64(v);
 
-                var dt = new Date(d.getTime()),
-                    ticks = this.getTicks(d).add(v);
-
-                dt.setMilliseconds(dt.getMilliseconds() + v.div(10000).toNumber())
-                dt.ticks = ticks;
-                dt.kind = (d.kind !== undefined) ? d.kind : 0;
-
-                return dt;
+                return this.create$2(this.getTicks(d).add(v), (d.kind !== undefined) ? d.kind : 0);
             },
 
             add: function (d, value) {
@@ -1253,12 +1234,12 @@
 
             // Optimized as per: https://jsperf.com/get-day-of-year
             getDayOfYear: function (d) {
-                var dt = this.getDate(d),
-                    mn = dt.getMonth(),
-                    dn = dt.getDate(),
+                var dt = this.$clock(d),
+                    mn = dt.getUTCMonth(),
+                    dn = dt.getUTCDate(),
                     dayOfYear = this.YearDaysByMonth[mn] + dn;
 
-                if (mn > 1 && this.getIsLeapYear(dt.getFullYear())) {
+                if (mn > 1 && this.getIsLeapYear(dt.getUTCFullYear())) {
                     dayOfYear++;
                 }
 
@@ -1266,82 +1247,41 @@
             },
 
             getDate: function (d) {
-                var kind = (d.kind !== undefined) ? d.kind : 0,
-                    dt = new Date(d.getTime());
+                var ticks = this.getTicks(d);
 
-                if (kind === 1) {
-                    dt.setUTCHours(0);
-                    dt.setUTCMinutes(0);
-                    dt.setUTCSeconds(0);
-                    dt.setUTCMilliseconds(0);
-                } else {
-                    dt.setHours(0);
-                    dt.setMinutes(0);
-                    dt.setSeconds(0);
-                    dt.setMilliseconds(0);
-                }
-
-                dt.ticks = this.getTicks(dt);
-                dt.kind = kind;
-
-                return dt;
+                return this.create$2(ticks.sub(ticks.mod(this.TicksPerDay)), (d.kind !== undefined) ? d.kind : 0);
             },
 
             getDayOfWeek: function (d) {
-                return d.getDay();
+                return this.$clock(d).getUTCDay();
             },
 
             getYear: function (d) {
-                var kind = (d.kind !== undefined) ? d.kind : 0,
-                    ticks = this.getTicks(d);
-
-                if (ticks.lt(this.TicksPerDay)) {
-                    return 1;
-                }
-
-                return kind === 1 ? d.getUTCFullYear() : d.getFullYear();
+                return this.$clock(d).getUTCFullYear();
             },
 
             getMonth: function (d) {
-                var kind = (d.kind !== undefined) ? d.kind : 0,
-                    ticks = this.getTicks(d);
-
-                if (ticks.lt(this.TicksPerDay)) {
-                    return 1;
-                }
-
-                return kind === 1 ? d.getUTCMonth() + 1 : d.getMonth() + 1;
+                return this.$clock(d).getUTCMonth() + 1;
             },
 
             getDay: function (d) {
-                var kind = (d.kind !== undefined) ? d.kind : 0,
-                    ticks = this.getTicks(d);
-
-                if (ticks.lt(this.TicksPerDay)) {
-                    return 1;
-                }
-
-                return kind === 1 ? d.getUTCDate() : d.getDate();
+                return this.$clock(d).getUTCDate();
             },
 
             getHour: function (d) {
-                var kind = (d.kind !== undefined) ? d.kind : 0;
-
-                return kind === 1 ? d.getUTCHours() : d.getHours();
+                return this.$clock(d).getUTCHours();
             },
 
             getMinute: function (d) {
-                var kind = (d.kind !== undefined) ? d.kind : 0;
-
-                return kind === 1 ? d.getUTCMinutes() : d.getMinutes();
+                return this.$clock(d).getUTCMinutes();
             },
 
             getSecond: function (d) {
-                return d.getSeconds();
+                return this.$clock(d).getUTCSeconds();
             },
 
             getMillisecond: function (d) {
-                return d.getMilliseconds();
+                return this.$clock(d).getUTCMilliseconds();
             },
 
             gt: function (a, b) {

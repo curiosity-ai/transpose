@@ -318,6 +318,8 @@ public class P { public static bool M(S a, S b) { return a == b; } }");
     /// <item>A DateTimeOffset's <c>ToString</c> printed the host's offset for <c>K</c>/<c>zzz</c>, which
     /// is what the JSON packages write, and parsing text with a <c>+00:00</c> offset read it as local
     /// time, which is how they read it back, so a round trip through either one moved the value.</item>
+    /// <item>The gap/overlap dates are clock times that do not exist, or exist twice, in one of those
+    /// zones.</item>
     /// <item>Only the JS side moves. Every value printed is the same in .NET whatever the zone and
     /// clock (a local-time fact is printed as a comparison between two local readings), so native
     /// stays the oracle.</item>
@@ -389,6 +391,20 @@ public class P { public static bool M(S a, S b) { return a == b; } }");
         {
             P(""parse dt "" + text,  DateTime.Parse(text, System.Globalization.CultureInfo.InvariantCulture).ToUniversalTime().ToString(""O""));
             P(""parse dto "" + text, DateTimeOffset.Parse(text, System.Globalization.CultureInfo.InvariantCulture).ToString(""O""));
+        }
+
+        // Clock times in a DST gap or overlap in Berlin, New York or Sydney, which carry no zone of
+        // their own and so must come through untouched.
+        foreach (var t in new[] {
+            new DateTime(2020, 3, 29, 2, 30, 0),  new DateTime(2020, 10, 25, 2, 30, 0),
+            new DateTime(2020, 3, 8, 2, 30, 0),   new DateTime(2020, 11, 1, 1, 30, 0),
+            new DateTime(2020, 10, 4, 2, 30, 0),  new DateTime(2020, 4, 5, 2, 30, 0) })
+        {
+            P(""edge"",        t.ToString(""O""));
+            P(""edge +1h"",    t.AddHours(1).ToString(""O""));
+            P(""edge utc"",    DateTime.SpecifyKind(t, DateTimeKind.Utc).ToString(""O""));
+            P(""edge dto"",    U(new DateTimeOffset(t, TimeSpan.FromHours(1))));
+            P(""edge dto+ts"", U(new DateTimeOffset(t, TimeSpan.FromHours(1)) + TS2));
         }
 "), waitForOutput: "<<DONE>>", timeZone: timeZone, clock: DateTimeOffset.Parse(clock, System.Globalization.CultureInfo.InvariantCulture));
     }

@@ -743,9 +743,11 @@ The short version:
   carries. A real C# array never reaches any of this — it answers from its own `$type` — so this costs
   a normal program nothing. Covered by `JsArrayTypeIdentityTests`.
 - **A `DateTime`'s value is its ticks, whatever its kind (`Date.js`).** A DateTime is a JS `Date` carrying
-  `kind` and `ticks`. `SpecifyKind` keeps the ticks: it used to copy the `Date`'s instant instead, and a Utc date reads its
-  clock time from the UTC fields where a Local/Unspecified one reads the local ones, so every
-  `DateTimeOffset.UtcDateTime` was wrong by the host's offset. None of that shows on a UTC host, which is what CI runs on, so
+  `kind` and `ticks`. The `Date`'s instant is kept real (it is what JavaScript interop reads), but every field read,
+  `ToString` and every `Add*` goes through the ticks (`$clock`, `$addUnits`), as in .NET. Going through a
+  Local/Unspecified date's *local* fields instead moved any clock time a zone skips or repeats around a DST
+  switch, gained or lost that hour in arithmetic across it, and made `SpecifyKind(Utc)`, and so every
+  `DateTimeOffset.UtcDateTime`, wrong by the host's offset. None of that shows on a UTC host, which is what CI runs on, so
   `DateTimeOperatorTests` runs the JS side in several zones under a moved clock
   (`RunTest(timeZone:, clock:)`). `new DateTimeOffset(local)` and `DateTimeOffset.Now` take the offset of the
   date's own instant, read back through `ToUniversalTime`, since `TimeZoneInfo` is not supported. A
