@@ -322,9 +322,11 @@
                 return false;
             },
 
-            format: function (d, f, p) {
+            // offset (a TimeSpan) is DateTimeOffset's: the clock time is formatted with it in place of
+            // the host's zone, so "K" and "z" print the value's own offset rather than the browser's.
+            format: function (d, f, p, offset) {
                 var me = this,
-                    kind = d.kind || 0,
+                    kind = offset ? 2 : (d.kind || 0),
                     isUtc = (kind === 1 || ["u", "r", "R"].indexOf(f) > -1),
                     df = (p || System.Globalization.CultureInfo.getCurrentCulture()).getFormat(System.Globalization.DateTimeFormatInfo),
                     year = isUtc ? d.getUTCFullYear() : d.getFullYear(),
@@ -335,7 +337,7 @@
                     minute = isUtc ? d.getUTCMinutes() : d.getMinutes(),
                     second = isUtc ? d.getUTCSeconds() : d.getSeconds(),
                     millisecond = isUtc ? d.getUTCMilliseconds() : d.getMilliseconds(),
-                    timezoneOffset = d.getTimezoneOffset(),
+                    timezoneOffset = offset ? -offset.getTotalMinutes() : d.getTimezoneOffset(),
                     formats;
 
                 f = f || "G";
@@ -636,7 +638,6 @@
                     tokenMatched,
                     formats,
                     kind = 0,
-                    adjust = false,
                     offset = 0;
 
                 if (str == null) {
@@ -898,7 +899,6 @@
                         } else if (token === "zzz" || token === "K") {
                             if (str.substring(idx, idx + 1) === "Z") {
                                 kind = 2;
-                                adjust = true;
                                 idx += 1;
 
                                 break;
@@ -1043,15 +1043,11 @@
 
                 var d = this.create(year, month, date, hh, mm, ss, ff, kind);
 
+                // Kind 2 here means the text carried an offset ("Z" is offset 0): the clock time read is
+                // at that offset, and the result is the same instant in this zone. Testing for a
+                // non-zero offset instead read "+00:00" as local time.
                 if (kind === 2) {
-                    if (adjust === true) {
-                        d = new Date(d.getTime() - d.getTimezoneOffset() * 60 * 1000);
-                    } else if (offset !== 0) {
-                        d = new Date(d.getTime() - d.getTimezoneOffset() * 60 * 1000);
-                        d = this.addMilliseconds(d, -offset);
-                    }
-
-                    d.kind = kind;
+                    d = this.toLocalTime(this.create$2(this.getTicks(d).sub(System.Int64(offset).mul(10000)), 1));
                 }
 
                 return d;

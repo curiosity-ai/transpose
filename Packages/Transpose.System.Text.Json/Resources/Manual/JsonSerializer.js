@@ -1179,7 +1179,19 @@
                     if (type === System.TimeSpan)                  return System.TimeSpan.parse(raw);
                     if (type === System.Array.type(System.Byte, 1)) return System.Convert.fromBase64String(raw);
 
-                    if (type === System.DateTime || type === System.DateTimeOffset) {
+                    // Parsed as a DateTimeOffset, so the value keeps the offset the text carries, as in
+                    // System.Text.Json. Going through a DateTime gave it the host's.
+                    if (type === System.DateTimeOffset) {
+                        var dto = { v: null };
+
+                        if (!System.DateTimeOffset.TryParse$1(raw, System.Globalization.CultureInfo.invariantCulture, 0, dto)) {
+                            System.Text.Json.JsonSerializer.fail("The JSON value could not be converted to " + Transpose.getTypeName(type) + ".");
+                        }
+
+                        return dto.v;
+                    }
+
+                    if (type === System.DateTime) {
                         var isUtc  = System.String.endsWith(raw, "Z"),
                             format = "yyyy'-'MM'-'dd'T'HH':'mm':'ss.FFFFFFF" + (isUtc ? "'Z'" : "K"),
                             d      = System.DateTime.parseExact(raw, format, null, true, true);
@@ -1194,7 +1206,7 @@
                             d = System.DateTime.specifyKind(d, 1);
                         }
 
-                        return type === System.DateTime ? d : new System.DateTimeOffset.$ctor1(d);
+                        return d;
                     }
 
                     // 64-bit integers and decimals are written as JSON strings by this package (see

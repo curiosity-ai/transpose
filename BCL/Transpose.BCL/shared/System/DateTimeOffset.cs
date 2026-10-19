@@ -675,34 +675,29 @@ namespace System {
         [Transpose.Convention(Notation = Transpose.Notation.CamelCase)]
         public override string ToString()
         {
-            return DateTime.SpecifyKind(ClockDateTime, DateTimeKind.Local).ToString();
-
-            // TODO: NotSupported [DateTimeFormatInfo]
-            //return DateTimeFormat.Format(ClockDateTime, null, null, Offset);
+            return ToString(null, null);
         }
 
         public string ToString(string format)
         {
-            return DateTime.SpecifyKind(ClockDateTime, DateTimeKind.Local).ToString(format);
-
-            // TODO: NotSupported [DateTimeFormatInfo]
-            //return DateTimeFormat.Format(ClockDateTime, format, null, Offset);
+            return ToString(format, null);
         }
 
         public string ToString(IFormatProvider formatProvider)
         {
-            return DateTime.SpecifyKind(ClockDateTime, DateTimeKind.Local).ToString(null, formatProvider);
-
-            // TODO: NotSupported [DateTimeFormatInfo]
-            //return DateTimeFormat.Format(ClockDateTime, null, formatProvider, Offset);
+            return ToString(null, formatProvider);
         }
 
+        // DateTimeFormat.Format(ClockDateTime, format, formatProvider, Offset): the clock time with this
+        // value's offset, never the host's. "u", "r" and "R" are UTC formats, so they convert first.
         public string ToString(string format, IFormatProvider formatProvider)
         {
-            return DateTime.SpecifyKind(ClockDateTime, DateTimeKind.Local).ToString(format, formatProvider);
+            if (format == "u" || format == "r" || format == "R")
+            {
+                return UtcDateTime.ToString(format, formatProvider);
+            }
 
-            // TODO: NotSupported [DateTimeFormatInfo]
-            //return DateTimeFormat.Format(ClockDateTime, format, formatProvider, Offset);
+            return ClockDateTime.ToString(format, formatProvider, Offset);
         }
 
         public DateTimeOffset ToUniversalTime() {

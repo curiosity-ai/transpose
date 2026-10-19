@@ -315,6 +315,9 @@ public class P { public static bool M(S a, S b) { return a == b; } }");
     /// <item>Berlin and the US zones (New York, Los Angeles) switch DST on different dates, Sydney
     /// switches the opposite way round, Tokyo is a whole-hour offset ahead of UTC with no DST, and
     /// Kolkata is a half-hour offset with no DST.</item>
+    /// <item>A DateTimeOffset's <c>ToString</c> printed the host's offset for <c>K</c>/<c>zzz</c>, which
+    /// is what the JSON packages write, and parsing text with a <c>+00:00</c> offset read it as local
+    /// time, which is how they read it back, so a round trip through either one moved the value.</item>
     /// <item>Only the JS side moves. Every value printed is the same in .NET whatever the zone and
     /// clock (a local-time fact is printed as a comparison between two local readings), so native
     /// stays the oracle.</item>
@@ -372,6 +375,21 @@ public class P { public static bool M(S a, S b) { return a == b; } }");
         P(""Now utc"",    Math.Abs((nowOffset.UtcDateTime - DateTime.UtcNow).TotalMinutes) < 1);
         P(""Now offset"", Math.Abs((nowOffset.Offset - (DateTime.Now - DateTime.UtcNow)).TotalMinutes) < 1);
         P(""UtcNow"",     DateTimeOffset.UtcNow.Offset == TimeSpan.Zero);
+
+        // A DateTimeOffset formats with its own offset, never the host's (u and r convert to UTC).
+        foreach (var o in new[] { TimeSpan.Zero, TimeSpan.FromHours(5.5), TimeSpan.FromHours(-3) })
+        {
+            var d = new DateTimeOffset(2024, 3, 17, 14, 5, 6, 7, o);
+            foreach (var f in new[] { ""G"", ""O"", ""u"", ""r"", ""s"", ""%K"", ""zz"", ""zzz"", ""yyyy-MM-ddTHH:mm:ss.FFFFFFFK"" })
+                P(""format "" + f, d.ToString(f, System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        // Text with an offset parses to that instant, +00:00 included (it used to read as local time).
+        foreach (var text in new[] { ""2024-03-17T14:05:06+00:00"", ""2024-03-17T14:05:06+02:00"", ""2024-07-17T14:05:06-05:30"", ""2024-03-17T14:05:06Z"" })
+        {
+            P(""parse dt "" + text,  DateTime.Parse(text, System.Globalization.CultureInfo.InvariantCulture).ToUniversalTime().ToString(""O""));
+            P(""parse dto "" + text, DateTimeOffset.Parse(text, System.Globalization.CultureInfo.InvariantCulture).ToString(""O""));
+        }
 "), waitForOutput: "<<DONE>>", timeZone: timeZone, clock: DateTimeOffset.Parse(clock, System.Globalization.CultureInfo.InvariantCulture));
     }
 

@@ -1670,18 +1670,9 @@
 
                             return d;
                         } else if (type === System.DateTimeOffset) {
-                            var isUtc = System.String.endsWith(raw, "Z");
-                            var format = "yyyy'-'MM'-'dd'T'HH':'mm':'ss.FFFFFFF" + (isUtc ? "'Z'" : "K");
-
-                            var d = System.DateTime.parseExact(raw, format, null, true, true);
-
-                            d = d != null ? d : System.DateTime.parse(raw, undefined, true);
-
-                            if (isUtc && d.kind !== 1) {
-                                d = System.DateTime.specifyKind(d, 1);
-                            }
-
-                            return new System.DateTimeOffset.$ctor1(d);
+                            // Parsed as a DateTimeOffset, so the value keeps the offset the text carries,
+                            // as in Json.NET. Going through a DateTime gave it the host's.
+                            return System.DateTimeOffset.Parse$1(raw, System.Globalization.CultureInfo.invariantCulture);
                         } else if (Transpose.Reflection.isEnum(type)) {
                             return Transpose.unbox(System.Enum.parse(type, raw));
                         } else if (type === System.Array.type(System.Byte, 1)) {
