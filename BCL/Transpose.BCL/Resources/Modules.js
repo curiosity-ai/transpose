@@ -22,6 +22,9 @@
         // module url -> the in-flight (or settled) load, so concurrent loads share one fetch
         $pending: {},
         $loader: null,
+        // The URL of the <script> this runtime was loaded by, read while it runs (it is null from
+        // then on). A module url is resolved against it before import(): see $resolve.
+        $base: typeof document !== "undefined" && document.currentScript && document.currentScript.src || null,
 
         /// Replaces how a module url is fetched. The default uses a dynamic import(); a host that
         /// serves its chunks another way (a test, a bundler runtime, a non-ESM page) sets its own.
@@ -265,7 +268,23 @@
                     };
                 }
             }
-            return modules.$import(url);
+            return modules.$import(modules.$resolve(url));
+        },
+
+        /// The absolute URL a module url names. A relative specifier in a dynamic import() resolves
+        /// against the script that *compiled* the call, and a browser reuses a compiled script across
+        /// same-site navigations when its text is identical: two sites serving the same tps.js
+        /// (/a/tps.js and /b/tps.js, or a.host/tps.js and b.host/tps.js) left the second page
+        /// importing the first one's chunks - defining every type twice, or failing on CORS. Resolving
+        /// it here, against the page that is actually running, takes the script's URL out of it.
+        $resolve: function (url) {
+            var base = modules.$base || (typeof document !== "undefined" && document.baseURI) || null;
+            if (!base || typeof URL === "undefined") return url;
+            try {
+                return new URL(url, base).href;
+            } catch (e) {
+                return url;
+            }
         },
 
         /// Retires the stub occupying <c>name</c> so the real Transpose.define can take the slot.

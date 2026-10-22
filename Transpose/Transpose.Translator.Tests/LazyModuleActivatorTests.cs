@@ -249,6 +249,51 @@ public class Program
             StringAssert.Contains(output, "<<DONE>>");
         }
 
+        /// <summary>
+        /// The default loader hands import() an absolute URL, resolved against the page that is running
+        /// rather than left to the script that compiled the call. A browser reuses a compiled tps.js across
+        /// same-site navigations when its text is identical, URL and all, so a relative specifier made a
+        /// second site served from the same build (/a/ then /b/ in one tab) import the first one's chunks.
+        /// </summary>
+        [TestMethod]
+        public async Task TheDefaultLoaderImportsAnAbsoluteUrlAsync()
+        {
+            var output = await RunTest(@"
+using System;
+using System.Threading.Tasks;
+using Transpose;
+
+public class Program
+{
+    public static async Task Main()
+    {
+        Script.Write(@""
+            globalThis.__imported = [];
+            Transpose.Modules.$import = function (u) { __imported.push(u); return Promise.resolve(); };
+            globalThis.document = { baseURI: 'https://site.test/b/' };
+            Transpose.Modules.$base = null;
+        "");
+        Script.Write(""Transpose.Modules.$defaultLoader('./chunks/c1.mjs')"");
+
+        // The URL of the script tps.js was loaded by wins over the page's base.
+        Script.Write(""Transpose.Modules.$base = 'https://other.test/b/tps.min.js?x'"");
+        Script.Write(""Transpose.Modules.$defaultLoader('./chunks/c2.mjs')"");
+
+        // Already absolute, and with no document at all (Node): passed through untouched.
+        Script.Write(""Transpose.Modules.$defaultLoader('https://cdn.test/c3.mjs')"");
+        Script.Write(""Transpose.Modules.$base = null; delete globalThis.document;"");
+        Script.Write(""Transpose.Modules.$defaultLoader('./chunks/c4.mjs')"");
+
+        Console.WriteLine(Script.Write<string>(""__imported.join('|')""));
+    }
+}
+", skipRoslyn: true);
+
+            Assert.AreEqual(
+                "https://site.test/b/chunks/c1.mjs|https://other.test/b/chunks/c2.mjs|https://cdn.test/c3.mjs|./chunks/c4.mjs",
+                output.Trim());
+        }
+
         [TestMethod]
         public async Task AFailedLoadRestoresTheStubAndCanBeRetriedAsync()
         {

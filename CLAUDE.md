@@ -1092,6 +1092,10 @@ The short version:
   working while the code is absent. `Modules.LoadAsync(type)` fetches it (default loader: a dynamic `import()`,
   built via `new Function` so `tps.js` stays parseable where one cannot be compiled;
   `Modules.SetLoader` substitutes another), and `Activator.CreateInstanceAsync` loads-then-constructs.
+  The default loader hands `import()` an **absolute** URL (`Modules.$resolve`: against the `<script>`
+  that loaded tps.js, else `document.baseURI`): a relative specifier resolves against the script that
+  compiled the call, and Chromium reuses a compiled tps.js across same-site navigations when its text is
+  identical, so a second site served by the same build in one tab imported the first site's chunks.
   **Using a deferred type synchronously cannot work** — fetching a module is asynchronous and C#
   construction is not — so `Transpose.createInstance` carries a stub guard that throws naming the
   module rather than failing obscurely. Covered by `LazyModuleActivatorTests`.
