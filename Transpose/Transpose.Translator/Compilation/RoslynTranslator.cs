@@ -251,6 +251,9 @@ public sealed class RoslynTranslator
             {
                 CompileProgress.Report("emitting JavaScript");
                 var bundleEmitter = emitModules ? NewEmitter() : emitter;
+                // The module pass already produced every type's JavaScript; the bundle is the same
+                // text assembled differently, so it need not walk the types a second time.
+                if (emitModules) bundleEmitter.ReusableTypeBodies = emitter.EmittedTypeBodies;
                 js = PhaseTimings.Measure("emit JavaScript", () => bundleEmitter.Emit());
                 metadataJs = bundleEmitter.MetadataScript;
             }

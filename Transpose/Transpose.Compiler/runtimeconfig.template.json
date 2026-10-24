@@ -1,5 +1,6 @@
 {
   "configProperties": {
-    "System.Runtime.TieredCompilation.CallCountingDelayMs": 0
+    "System.Runtime.TieredCompilation.CallCountingDelayMs": 0,
+    "System.Runtime.TieredCompilation.CallCountThreshold": 4096
   }
 }

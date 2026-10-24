@@ -182,9 +182,16 @@ public static class Program
                 liveReloadScript => ProjectBuild.Run(options with { LiveReloadScript = liveReloadScript }));
         }
 
+#if TRANSPOSE_INTROSPECT
+        var introspection = Introspection.StartFromEnvironment();
+        sw.Restart(); // the capture's start-up wait is not part of the build
+#endif
         var outcome = ProjectBuild.Run(options);
         PrintTypeSizes();
         PrintTimings(sw.ElapsedMilliseconds);
+#if TRANSPOSE_INTROSPECT
+        introspection?.Finish();
+#endif
         return outcome.ExitCode;
     }
 
@@ -270,17 +277,23 @@ public static class Program
             sum += p.ms; sumBytes += p.bytes;
         }
         var denom = sum == 0 ? 1 : sum;
-        Console.WriteLine("\n  timing breakdown:");
+        var cpu = PhaseTimings.SnapshotCpu();
+        Console.WriteLine("\n  timing breakdown (Nx = average cores kept busy):");
         foreach (var (phase, ms, bytes, count) in phases)
         {
             var share = ms * 100.0 / denom;
             var times = count > 1 ? $" ×{count}" : "";
-            Console.WriteLine($"    {ms,7:N0} ms  {share,5:F1}%  {Mb(bytes),9} alloc  {phase}{times}");
+            var cores = cpu.TryGetValue(phase, out var cpuMs) && cpuMs > 0 && ms > 0 ? $"{cpuMs / (double)ms,4:F1}x" : "    ";
+            Console.WriteLine($"    {ms,7:N0} ms  {share,5:F1}%  {Mb(bytes),9} alloc  {cores}  {phase}{times}");
         }
         Console.WriteLine($"    {sum,7:N0} ms          {Mb(sumBytes),9} alloc  measured phases (wall clock {wallClockMs:N0} ms)");
         Console.WriteLine($"    total allocated {Mb(GC.GetTotalAllocatedBytes(precise: true))}, "
             + $"peak working set {Mb(Process.GetCurrentProcess().PeakWorkingSet64)}, "
             + $"GC {GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)} (gen0/1/2)");
+        // Where the wall clock goes that no phase owns: threads stopped for a collection, and methods
+        // the runtime had to compile because ReadyToRun did not carry them.
+        Console.WriteLine($"    GC paused threads for {GC.GetTotalPauseDuration().TotalMilliseconds:N0} ms, "
+            + $"JIT compiled {System.Runtime.JitInfo.GetCompiledMethodCount():N0} methods in {System.Runtime.JitInfo.GetCompilationTime().TotalMilliseconds:N0} ms (summed over threads)");
 
         if (_timingJsonPath is not null) WriteTimingJson(_timingJsonPath, wallClockMs, phases);
     }

@@ -395,12 +395,21 @@ internal static class OutputBuilder
             foreach (var (rel, chunkJs) in modules.Chunks) own.Add(new ModuleFile(rel, chunkJs, IsChunk: true));
             own.Add(new ModuleFile(config.FileName, javascript, IsChunk: false));
 
-            foreach (var file in linker.LinkAssembly(modules.TypeToChunk, own))
+            // Linking is sequential (each file may import what the previous ones define); minifying the
+            // linked chunks is not, and is the expensive part, so it fans out and the writes stay in order.
+            var linked = linker.LinkAssembly(modules.TypeToChunk, own).ToList();
+            var minified = new string?[linked.Count];
+            Parallel.For(0, linked.Count, i =>
             {
+                if (linked[i].IsChunk) minified[i] = MinifyModule(linked[i].Text, linked[i].Rel);
+            });
+            for (var i = 0; i < linked.Count; i++)
+            {
+                var file = linked[i];
                 if (!file.IsChunk) { javascript = file.Text; continue; }   // the entry, written below
                 var dest = Path.Combine(outputDir, file.Rel.Replace('/', Path.DirectorySeparatorChar));
                 Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-                File.WriteAllText(dest, MinifyModule(file.Text, file.Rel), utf8);
+                File.WriteAllText(dest, minified[i]!, utf8);
                 written.Add(Path.GetFullPath(dest));
                 modulesWritten.Add((file.Rel, file.Text));
             }
@@ -473,6 +482,22 @@ internal static class OutputBuilder
         var items = new List<EmbeddedItem>();
         var utf8 = new UTF8Encoding(false);
 
+        // Every minification below is independent of the others, and NUglify is by far the most
+        // expensive thing this method does (it was the whole of a ~1.2 s phase that kept two of four
+        // cores busy, because the chunks, the entry and both bundles were minified one after another).
+        // The three big inputs start first so the longest one is already running while the chunks —
+        // many small files — fan out across what is left. Results are consumed in the original order
+        // below, so the items (and therefore the DLL) are byte-identical to the sequential version.
+        var minifiedBundle = Task.Run(() => JsMinifier.Minify(javascript, mainJsName, minifyLocalVariables));
+        var minifiedEntry  = modules is null ? null
+            : Task.Run(() => MinifyModule(modules.EntryJs, Path.GetFileNameWithoutExtension(mainJsName) + ".mjs", minifyLocalVariables));
+        var minifiedMeta   = metadataJavascript is null ? null
+            : Task.Run(() => JsMinifier.Minify(metadataJavascript, Path.GetFileNameWithoutExtension(mainJsName) + ".meta.js", minifyLocalVariables));
+        var minifiedChunks = new string[modules?.Chunks.Count ?? 0];
+        if (modules is not null)
+            Parallel.For(0, minifiedChunks.Length, i =>
+                minifiedChunks[i] = MinifyModule(modules.Chunks[i].js, modules.Chunks[i].relPath, minifyLocalVariables));
+
         // outputBy: Module — the chunk files travel alongside the entry. They are Load=false (never
         // scripted; the entry imports the ones it needs and Transpose.Modules fetches the rest) and
         // .mjs, so the consumer copies them through verbatim rather than routing them as bundles.
@@ -481,12 +506,13 @@ internal static class OutputBuilder
         // package's readable bundle instead - so the readable form of a chunk would never be served.
         if (modules is not null)
         {
-            foreach (var (rel, chunkJs) in modules.Chunks)
+            for (var i = 0; i < modules.Chunks.Count; i++)
             {
+                var rel = modules.Chunks[i].relPath;
                 var slash = rel.LastIndexOf('/');
                 items.Add(new EmbeddedItem(
                     Name: rel.Substring(slash + 1),
-                    Content: utf8.GetBytes(MinifyModule(chunkJs, rel, minifyLocalVariables)),
+                    Content: utf8.GetBytes(minifiedChunks[i]),
                     Output: slash < 0 ? null : rel.Substring(0, slash),
                     Load: false,
                     Variant: JsVariant.ModuleChunk));
@@ -610,13 +636,13 @@ internal static class OutputBuilder
         // a chunked Release site loads that. There is no minified sibling of it to choose between.
         if (modules is not null)
             defaults.Add(new EmbeddedItem(moduleEntryName,
-                utf8.GetBytes(MinifyModule(modules.EntryJs, moduleEntryName, minifyLocalVariables)), null,
+                utf8.GetBytes(minifiedEntry!.GetAwaiter().GetResult()), null,
                 Load: mainLoad, Module: true, Variant: JsVariant.ModuleEntry, SiteName: mainJsName));
 
         defaults.Add(new EmbeddedItem(mainJsName, utf8.GetBytes(javascript), null,
             Load: mainLoad, Variant: JsVariant.Formatted));
         defaults.Add(new EmbeddedItem(ToMinName(mainJsName),
-            utf8.GetBytes(JsMinifier.Minify(javascript, mainJsName, minifyLocalVariables)), null,
+            utf8.GetBytes(minifiedBundle.GetAwaiter().GetResult()), null,
             Load: mainLoad, Variant: JsVariant.Minified));
 
         if (metaName is not null)
@@ -624,7 +650,7 @@ internal static class OutputBuilder
             defaults.Add(new EmbeddedItem(metaName, utf8.GetBytes(metadataJavascript!), null,
                 Load: metaLoad, Variant: JsVariant.Formatted));
             defaults.Add(new EmbeddedItem(ToMinName(metaName),
-                utf8.GetBytes(JsMinifier.Minify(metadataJavascript!, metaName, minifyLocalVariables)), null,
+                utf8.GetBytes(minifiedMeta!.GetAwaiter().GetResult()), null,
                 Load: metaLoad, Variant: JsVariant.Minified));
         }
 

@@ -34,6 +34,7 @@ public static class PhaseTimings
     {
         public long Ms;
         public long Bytes;
+        public long CpuMs;
         public int Count;
     }
 
@@ -50,6 +51,7 @@ public static class PhaseTimings
         if (!Enabled) return action();
         var outermost = Interlocked.Increment(ref _depth) == 1;
         var bytes0 = outermost ? GC.GetTotalAllocatedBytes(precise: false) : 0;
+        var cpu0 = outermost ? Process.GetCurrentProcess().TotalProcessorTime.Ticks : 0;
         var sw = Stopwatch.StartNew();
         try { return action(); }
         finally
@@ -57,7 +59,8 @@ public static class PhaseTimings
             sw.Stop();
             var bytes = outermost ? GC.GetTotalAllocatedBytes(precise: false) - bytes0 : 0;
             Interlocked.Decrement(ref _depth);
-            Record(phase, sw.ElapsedMilliseconds, bytes);
+            var cpuMs = outermost ? (Process.GetCurrentProcess().TotalProcessorTime.Ticks - cpu0) / TimeSpan.TicksPerMillisecond : 0;
+            Record(phase, sw.ElapsedMilliseconds, bytes, cpuMs);
         }
     }
 
@@ -67,14 +70,14 @@ public static class PhaseTimings
 
     /// <summary>Adds <paramref name="ms"/> (and <paramref name="bytes"/> allocated) to the named
     /// phase's running total.</summary>
-    public static void Record(string phase, long ms, long bytes = 0)
+    public static void Record(string phase, long ms, long bytes = 0, long cpuMs = 0)
     {
         if (!Enabled) return;
         lock (_gate)
         {
             if (_phases.TryGetValue(phase, out var cur))
-                _phases[phase] = new Entry { Ms = cur.Ms + ms, Bytes = cur.Bytes + bytes, Count = cur.Count + 1 };
-            else { _phases[phase] = new Entry { Ms = ms, Bytes = bytes, Count = 1 }; _order.Add(phase); }
+                _phases[phase] = new Entry { Ms = cur.Ms + ms, Bytes = cur.Bytes + bytes, CpuMs = cur.CpuMs + cpuMs, Count = cur.Count + 1 };
+            else { _phases[phase] = new Entry { Ms = ms, Bytes = bytes, CpuMs = cpuMs, Count = 1 }; _order.Add(phase); }
         }
     }
 
@@ -87,6 +90,18 @@ public static class PhaseTimings
             var list = new List<(string, long, long, int)>(_order.Count);
             foreach (var p in _order) { var v = _phases[p]; list.Add((p, v.Ms, v.Bytes, v.Count)); }
             return list;
+        }
+    }
+
+    /// <summary>Process CPU milliseconds (all threads) spent inside each outermost phase, so a caller
+    /// can show how many cores a phase kept busy: CPU time divided by its wall time.</summary>
+    public static IReadOnlyDictionary<string, long> SnapshotCpu()
+    {
+        lock (_gate)
+        {
+            var d = new Dictionary<string, long>(_order.Count);
+            foreach (var p in _order) d[p] = _phases[p].CpuMs;
+            return d;
         }
     }
 

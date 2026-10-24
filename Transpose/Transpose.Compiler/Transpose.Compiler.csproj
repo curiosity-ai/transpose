@@ -109,6 +109,16 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
+  <!-- Opt-in self-profiling (Introspection.cs): `dotnet build -p:TransposeIntrospect=true`, then run
+       with TPS_INTROSPECT=cpu|alloc|alloc-stacks|gcdump. Memory.Introspect is referenced as a sibling
+       checkout, and none of it is compiled into the tool that ships. -->
+  <PropertyGroup Condition="'$(TransposeIntrospect)' == 'true'">
+    <DefineConstants>$(DefineConstants);TRANSPOSE_INTROSPECT</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(TransposeIntrospect)' == 'true'">
+    <ProjectReference Include="..\..\..\memory-introspect\Memory.Introspect\Memory.Introspect.csproj" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Transpose.Translator\Transpose.Translator.csproj" />
     <!-- Project/package resolution, tps.json, site/package assembly (OutputBuilder, ResourceEmbedder,

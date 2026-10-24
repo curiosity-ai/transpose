@@ -113,6 +113,8 @@ public sealed partial class Emitter
             throw te;
         }
 
+        EmittedTypeBodies = bodies;
+
         var skipDeps = PublishedSkipClusterDeps();
 
         var chunks = PhaseTimings.Measure("  ├ chunk (strongly-connected components)",

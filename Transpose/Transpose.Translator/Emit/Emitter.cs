@@ -93,6 +93,25 @@ public sealed partial class Emitter
     /// type whose module has not been fetched (Emitter.Reflection.cs, MetaTypeName).</summary>
     private bool _moduleMetadata;
 
+    /// <summary>
+    /// The JavaScript of every type, as <see cref="EmitModules"/> emitted it. A package ships its code
+    /// as chunks <em>and</em> as one bundle, and the two are walks of the same compilation that produce
+    /// the same text for a type — the chunker only slices it differently — so the bundle's emitter is
+    /// handed these instead of walking all the types again (see <see cref="ReusableTypeBodies"/>).
+    /// </summary>
+    internal IReadOnlyDictionary<INamedTypeSymbol, string>? EmittedTypeBodies { get; private set; }
+
+    /// <summary>
+    /// Type bodies another emitter over this same compilation already produced. <see cref="Emit"/> takes a
+    /// type's text from here when it has it and walks only the types it does not. Setting
+    /// <c>TRANSPOSE_VERIFY_REUSE=1</c> emits every type the long way as well and fails on any difference,
+    /// which is how this was shown to be sound; leave it off, since it forfeits the saving.
+    /// </summary>
+    internal IReadOnlyDictionary<INamedTypeSymbol, string>? ReusableTypeBodies { get; set; }
+
+    private static readonly bool VerifyReuse =
+        string.Equals(Environment.GetEnvironmentVariable("TRANSPOSE_VERIFY_REUSE"), "1", StringComparison.Ordinal);
+
     /// <param name="models">A semantic-model cache to reuse. Passing the one the
     /// unsupported-feature scan already populated means every member that scan bound is bound
     /// once for the whole build instead of twice.</param>
@@ -180,6 +199,13 @@ public sealed partial class Emitter
                         {
                             results[type] = cached;
                             _plan.RecordReused();
+                        }
+                        else if (ReusableTypeBodies is not null && ReusableTypeBodies.TryGetValue(type, out var reused))
+                        {
+                            results[type] = reused;
+                            if (VerifyReuse && EmitOnlyType(this, type).ToString() != reused)
+                                throw new InvalidOperationException(
+                                    $"Reused JavaScript for {type.ToDisplayString()} differs from a fresh emit.");
                         }
                         else
                         {
