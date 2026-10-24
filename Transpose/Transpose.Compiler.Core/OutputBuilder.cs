@@ -477,7 +477,8 @@ internal static class OutputBuilder
     /// </summary>
     public static List<EmbeddedItem> CollectEmbeddableItems(
         string projectDir, TransposeJson config, string mainJsName, string javascript, string? metadataJavascript,
-        bool minifyLocalVariables = false, Translator.Emitter.ModuleOutput? modules = null)
+        bool minifyLocalVariables = false, Translator.Emitter.ModuleOutput? modules = null,
+        PrestartedMinification? prestartedBundle = null)
     {
         var items = new List<EmbeddedItem>();
         var utf8 = new UTF8Encoding(false);
@@ -488,15 +489,21 @@ internal static class OutputBuilder
         // The three big inputs start first so the longest one is already running while the chunks —
         // many small files — fan out across what is left. Results are consumed in the original order
         // below, so the items (and therefore the DLL) are byte-identical to the sequential version.
-        var minifiedBundle = Task.Run(() => JsMinifier.Minify(javascript, mainJsName, minifyLocalVariables));
+        // The bundle is the longest single job (it is one file, so it cannot be split across cores) and
+        // used to be the whole of this phase. When the build already started it, alongside the method-body
+        // check, take that result — but only if it is for exactly this text, name and setting.
+        var minifiedBundle = prestartedBundle is not null && prestartedBundle.IsFor(javascript, mainJsName, minifyLocalVariables)
+            ? prestartedBundle.Result
+            : Task.Run(() => PhaseTimings.Measure("  ├ minify bundle", () => JsMinifier.Minify(javascript, mainJsName, minifyLocalVariables)));
         var minifiedEntry  = modules is null ? null
             : Task.Run(() => MinifyModule(modules.EntryJs, Path.GetFileNameWithoutExtension(mainJsName) + ".mjs", minifyLocalVariables));
         var minifiedMeta   = metadataJavascript is null ? null
             : Task.Run(() => JsMinifier.Minify(metadataJavascript, Path.GetFileNameWithoutExtension(mainJsName) + ".meta.js", minifyLocalVariables));
         var minifiedChunks = new string[modules?.Chunks.Count ?? 0];
         if (modules is not null)
-            Parallel.For(0, minifiedChunks.Length, i =>
-                minifiedChunks[i] = MinifyModule(modules.Chunks[i].js, modules.Chunks[i].relPath, minifyLocalVariables));
+            PhaseTimings.Measure("  ├ minify chunks", () =>
+                Parallel.For(0, minifiedChunks.Length, i =>
+                    minifiedChunks[i] = MinifyModule(modules.Chunks[i].js, modules.Chunks[i].relPath, minifyLocalVariables)));
 
         // outputBy: Module — the chunk files travel alongside the entry. They are Load=false (never
         // scripted; the entry imports the ones it needs and Transpose.Modules fetches the rest) and

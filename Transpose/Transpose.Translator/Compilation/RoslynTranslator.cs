@@ -92,7 +92,8 @@ public sealed class RoslynTranslator
         int minChunkBytes = Emitter.DefaultMinChunkBytes,
         int maxChunkBytes = Emitter.DefaultMaxChunkBytes,
         bool alsoEmitBundle = false,
-        ChunkOracle? chunkOracle = null)
+        ChunkOracle? chunkOracle = null,
+        Action<string, string?>? javaScriptReady = null)
     {
         CompileProgress.Report("parsing sources + resolving references");
         var compilation = PhaseTimings.Measure("build compilation (parse + references)", () =>
@@ -262,6 +263,12 @@ public sealed class RoslynTranslator
         {
             emitterFailure = ex;
         }
+
+        // The JavaScript is final here, but the build is not: a metadata-only build still has to check
+        // the method bodies, which is a full parallel pass of its own. A caller with work that needs only
+        // the finished text (minifying the bundle is the one that matters) can start it now and have it
+        // run alongside that pass instead of after it.
+        if (emitterFailure is null && js is not null) javaScriptReady?.Invoke(js, metadataJs);
 
         // A metadata-only assembly emit never compiled the method bodies, so their diagnostics have
         // to come from somewhere else. They come from the semantic models — which the scan and the JS

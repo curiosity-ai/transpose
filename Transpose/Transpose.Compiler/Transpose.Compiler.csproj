@@ -32,6 +32,17 @@
     <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
     <TieredPGO>false</TieredPGO>
 
+    <!-- ReadyToRun cross-module optimisation. By default R2R code cannot inline across assembly
+         boundaries (ImmutableArray<T>, List<T>, Dictionary<,> and the rest of the framework into
+         Roslyn) and cannot pre-generate the framework generics Roslyn instantiates over its own
+         structs, so ~5,000 methods were JIT-compiled at start-up and the precompiled code ran slower
+         than it had to. The opt-cross-module option lets crossgen2 inline across the boundary and
+         the non-local-generics-module option lets it emit those instantiations. The runtime checks each
+         cross-module inlinee's IL against what it was compiled from and rejects the method (falling
+         back to the JIT) if the framework it runs on differs, so a different patch release is safe.
+         Measured on Tesserae: ~5% off a cold build and ~5,000 fewer JIT-compiled methods. -->
+    <PublishReadyToRunCrossgen2ExtraArgs>--opt-cross-module:*%3B--non-local-generics-module:*</PublishReadyToRunCrossgen2ExtraArgs>
+
 
     <!-- Packable as a dotnet global/local tool: `tps` is the compiler command the
          Transpose.Build.Target SDK invokes. -->

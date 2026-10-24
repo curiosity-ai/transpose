@@ -287,6 +287,68 @@ Things that cost time to work out, recorded so they do not have to be again:
 
 ---
 
+### 14. Package writer: minify concurrently, and start the bundle early
+
+`OutputBuilder.CollectEmbeddableItems` minified the module chunks, the entry, the single-file bundle and the
+metadata script one after another, so the phase kept ~2 of 4 cores busy. They are independent: the chunks now
+fan out with `Parallel.For`, and the site build's chunk loop does the same (minify in parallel, write in order).
+Items keep their order, so the DLL is byte-identical.
+
+What is left is one file: the ~4 MB bundle is a single NUglify job (~0.9 s on one core) and is the whole of the
+phase. A build that checks method bodies afterwards (every metadata-only Debug build) has a ~1 s parallel pass
+it can hide behind, so `BuildAssembly` takes a `javaScriptReady` callback, called once the JavaScript is final,
+and `ProjectBuild` starts the bundle's minification from it (`PrestartedMinification`). The package writer uses
+that task only when it is for the same string (by reference), the same file name and the same
+`MinifyLocalVariables` setting, so using it can never change what is written. Release gets nothing from it
+(its assembly emit is *before* the JS emit and there is no body pass after).
+
+### 15. The bundle reuses the module pass's type bodies
+
+A package built with `outputBy: Module` emits its JavaScript twice: as chunks, and again as the single-file
+bundle (a consumer picks the variant). Both are walks of the same compilation through cloned emitters configured
+identically, so a type's text is the same either way; only the slicing differs. `EmitModules` now publishes the
+bodies it produced (`EmittedTypeBodies`) and the bundle's emitter takes them (`ReusableTypeBodies`) instead of
+walking all 630 types again. `TRANSPOSE_VERIFY_REUSE=1` re-emits each type the long way as well and throws on
+any difference; it passed for Tesserae in Debug and Release, and the DLL is byte-identical to the previous
+compiler's.
+
+### 16. ReadyToRun cross-module optimisation — ~5%, ~5,000 fewer JIT-compiled methods
+
+Profiling the JIT (`TPS_INTROSPECT=jit`) showed what ReadyToRun was *not* covering: ~5,000 methods compiled at
+tier 0 at start-up, 2,850 of them `System.Collections` and 1,360 `Microsoft.CodeAnalysis` — framework generics
+instantiated over Roslyn's structs, which R2R cannot pre-generate across an assembly boundary — plus ~7,400
+tier-1 re-compiles of hot R2R code. `PublishReadyToRunCrossgen2ExtraArgs` with crossgen2's cross-module
+inlining and non-local-generics options (set in `Transpose.Compiler.csproj`) cut the JIT'd methods from ~16,000
+to ~11,000 and the cold build by ~5%. The runtime validates each cross-module inlinee's IL against what it was
+compiled from and falls back to the JIT when the framework differs, so a different patch release is safe.
+
+**Measurement trap, found the hard way:** the SDK reuses `obj/<cfg>/<tfm>/<rid>/R2R` between publishes whatever
+the crossgen arguments, so a second publish "without" the flag silently kept the flagged Roslyn images, and
+an A/B of two builds that both had it showed nothing. Delete that folder between publishes, and check
+`Microsoft.CodeAnalysis.CSharp.dll`'s size (19.5 MB default, 23.2 MB cross-module) before believing a result.
+
+### 17. Tiering: `TieredCompilation.CallCountThreshold=4096` — ~6%
+
+Hot R2R methods are re-compiled at tier 1 after 30 calls. On a 4-core box the background JIT competes with the
+Parallel workers (it was ~7 s of summed JIT time in a ~7 s build), and R2R code is already optimised. Raising
+the threshold lets fewer methods through: 4096 measured -6% (and a smaller cold-start cost on a one-file project:
+no regression). 1000 gave less, 30000 was *worse* (7.8 s vs 7.35 s) — the knob has a sweet spot. Note that
+`DOTNET_TC_CallCountThreshold` takes **hex** where the runtimeconfig value is decimal, so `=1000` in the
+environment is 4096.
+
+### Instrumentation added
+
+- `--timing` prints average cores kept busy per phase (`PhaseTimings.SnapshotCpu`), total GC pause, and the
+  number of JIT-compiled methods and their summed compile time. Parallel phases here run at 3.3–3.6 of 4 cores,
+  which is why the lever is total CPU, not scheduling.
+- `Introspection.cs`, built only with `-p:TransposeIntrospect=true`: `TPS_INTROSPECT=cpu|alloc|alloc-stacks|jit|gcdump`
+  runs a Memory.Introspect self-trace of the build and writes the raw `.nettrace`/`.gcdump` plus a text report to
+  `TPS_INTROSPECT_DIR`. Profile with `DOTNET_ReadyToRun=0` for a CPU report that names every method (R2R frames
+  are otherwise unresolved), and read a hot runtime frame's callers from the `.nettrace` with TraceEvent
+  (`RuntimeHelpers.GetHashCode` slow path and `Monitor.Enter` both turned out to be Roslyn-internal).
+
+---
+
 ## What did not work
 
 ### Overlapping two already-parallel phases — **rejected, twice**
@@ -326,6 +388,27 @@ Reverted rather than carry an unbounded per-symbol dictionary for no measured be
 
 Fastest single setting for a big project (9.7 s) but 2.3× slower on a one-file project (4.85 s vs
 2.11 s). A compiler must not punish small projects to reward large ones.
+
+### Largest-first scheduling of the parallel loops — **rejected (no effect)**
+
+Sorting the scan's trees, the body-diagnostics trees and the emit types by source length, descending, so a
+giant file does not run alone at the end: 7.26 s vs 7.20 s against a correctly-built control. (An earlier
+reading of +5% was an artefact of the stale-R2R-cache trap in §16.) Reverted.
+
+### GC knobs — **rejected (all within noise)**
+
+`GCgen0size` (256 MB: *slower*, 8.6–9.0 s vs 7.5 s — fresh pages cost sys time), `GCgen0MaxBudget` (32/96 MB),
+`GCHeapCount=2`, `GCgen1size`, `GCRetainVM`, `GCNoAffinitize`, `gcConcurrent=0`. GC pauses total ~0.5–0.65 s of a
+~7 s build; the 29% "PollGC" in a CPU sample profile is threads parked at a safepoint, not GC cost.
+
+### `MetadataImportOptions.Public` instead of `All` — **rejected**
+
+Not faster (8.0–8.4 s vs 7.2–7.5 s), and it would break overload numbering anyway.
+
+### Reading the `outputBy: Module` cost off a build with it switched off — not a lever
+
+A Tesserae build with module output off is within noise of one with it on (~7.1 s vs ~7.35 s): the work is spread
+evenly, no phase dominates.
 
 ---
 

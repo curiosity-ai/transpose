@@ -376,6 +376,8 @@ internal static class ProjectBuild
 
         var translator = new RoslynTranslator();
         AssemblyBuildResult result;
+        PrestartedMinification? prestartedBundle = null;
+        var bundleFileName = tpscfg?.ExplicitFileName ?? project.AssemblyName + ".js";
         try
         {
             result = replayed ?? translator.BuildAssembly(
@@ -401,7 +403,12 @@ internal static class ProjectBuild
                 minChunkBytes: MinChunkBytes(options, tpscfg),
                 maxChunkBytes: tpscfg?.ModuleMaxChunkBytes ?? Emitter.DefaultMaxChunkBytes,
                 alsoEmitBundle: alsoEmitBundle,
-                chunkOracle: chunkOracle);
+                chunkOracle: chunkOracle,
+                // A package minifies its bundle when it is written; starting that as soon as the
+                // JavaScript exists lets it run beside the method-body check instead of after it.
+                javaScriptReady: options.EmitPackage && tpscfg is not null
+                    ? (js, _) => prestartedBundle = PrestartedMinification.Start(js, bundleFileName, project.MinifyLocalVariables)
+                    : null);
         }
         catch (Exception ex)
         {
@@ -427,7 +434,7 @@ internal static class ProjectBuild
         // embed its JS (+ tps.json resources) so another project can reference it and extract them.
         if (options.EmitPackage)
         {
-            var written = TryWritePackage(project, config, configuration, result, log);
+            var written = TryWritePackage(project, config, configuration, result, log, prestartedBundle);
             if (written is null) return BuildOutcome.NoSite(2, result.Diagnostics);
 
             var (dllPath, items, packageBytes) = written.Value;
@@ -453,7 +460,7 @@ internal static class ProjectBuild
             string? dllPath = null;
             if (result.AssemblyBytes is not null)
             {
-                var package = TryWritePackage(project, config, configuration, result, log);
+                var package = TryWritePackage(project, config, configuration, result, log, prestartedBundle);
                 if (package is null) return BuildOutcome.NoSite(2, result.Diagnostics);
                 dllPath = package.Value.dllPath;
             }
@@ -917,9 +924,10 @@ internal static class ProjectBuild
     /// assembly's metadata through Mono.Cecil, which resolves referenced assemblies as it goes — a
     /// step that can fail on its own, after a clean compile.</summary>
     private static (string dllPath, List<EmbeddedItem> items, long fileBytes)? TryWritePackage(
-        ResolvedProject project, TransposeJson? config, string configuration, AssemblyBuildResult result, BuildLog log)
+        ResolvedProject project, TransposeJson? config, string configuration, AssemblyBuildResult result, BuildLog log,
+        PrestartedMinification? prestartedBundle = null)
     {
-        try { return WritePackage(project, config, configuration, result); }
+        try { return WritePackage(project, config, configuration, result, prestartedBundle); }
         catch (Exception ex)
         {
             ReportCrash($"Writing the package for '{Path.GetFileName(project.CsprojPath)}'", ex, log);
@@ -938,14 +946,15 @@ internal static class ProjectBuild
     /// Tesserae's package as 1.8 MB when the file is 17.1 MB.
     /// </para></summary>
     private static (string dllPath, List<EmbeddedItem> items, long fileBytes) WritePackage(
-        ResolvedProject project, TransposeJson? config, string configuration, AssemblyBuildResult result)
+        ResolvedProject project, TransposeJson? config, string configuration, AssemblyBuildResult result,
+        PrestartedMinification? prestartedBundle = null)
     {
         var mainJsName = config?.ExplicitFileName ?? project.AssemblyName + ".js";
         var dllPath = ProjectResolver.OutputDll(project.CsprojPath, configuration)!;
         Directory.CreateDirectory(Path.GetDirectoryName(dllPath)!);
 
         var items = PhaseTimings.Measure("collect package resources (minify + read files)", () => config is not null
-            ? OutputBuilder.CollectEmbeddableItems(project.ProjectDir, config, mainJsName, result.Javascript!, result.MetadataJavascript, project.MinifyLocalVariables, result.Modules)
+            ? OutputBuilder.CollectEmbeddableItems(project.ProjectDir, config, mainJsName, result.Javascript!, result.MetadataJavascript, project.MinifyLocalVariables, result.Modules, prestartedBundle)
             : new List<EmbeddedItem> { new(mainJsName, System.Text.Encoding.UTF8.GetBytes(result.Javascript!), null) });
 
         // Cecil re-serializes the assembly's metadata when embedding the resources; encoding a
