@@ -2,7 +2,12 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net11.0</TargetFramework>
+    <!-- Both, deliberately: the tps tool: `dotnet tool install` picks tools/<tfm> per the runtime the machine has.
+         The host TFM decides only which runtime has to be installed, never which frameworks
+         can be compiled - the Transpose SDK overrides a transpiled project to netstandard2.0
+         and NuGetFrameworks reads any moniker. Roll-forward only goes up, so a net11.0-only
+         build simply cannot run on .NET 10. Drop net10.0 once that is the intended floor. -->
+    <TargetFrameworks>net10.0;net11.0</TargetFrameworks>
     <LangVersion>latest</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
