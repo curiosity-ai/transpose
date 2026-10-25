@@ -42,8 +42,16 @@ public class Program
         try { xs.SingleOrDefault(x => x > 1); } catch (InvalidOperationException e) { Console.WriteLine("I " + e.Message); }
         try { xs.ElementAt(9); } catch (ArgumentOutOfRangeException e) { Console.WriteLine("J " + e.ParamName); }
         try { xs.ElementAt(-1); } catch (ArgumentOutOfRangeException e) { Console.WriteLine("K " + e.ParamName); }
-        try { empty.Max(); } catch (InvalidOperationException e) { Console.WriteLine("L " + e.Message); }
-        try { empty.Min(); } catch (InvalidOperationException e) { Console.WriteLine("M " + e.Message); }
+        // The trailing period is trimmed on both sides, deliberately. On .NET 11 the PARAMETERLESS
+        // Max()/Min() say "Sequence contains no elements." while Max(selector)/Min(selector),
+        // MaxBy/MinBy and First/Last/Single/Average/Aggregate all say it without the period - the
+        // same method disagrees with its own overload, so it reads as an upstream slip rather than a
+        // message anybody meant to change. Transpose keeps one message for the whole family, which
+        // is also what its structure gives for free: max/min are built on aggregate(...).last(), so
+        // they raise Last's exception and cannot differ from it without their own emptiness check.
+        // Everything before the period is still compared exactly, so a real change still fails here.
+        try { empty.Max(); } catch (InvalidOperationException e) { Console.WriteLine("L " + e.Message.TrimEnd('.')); }
+        try { empty.Min(); } catch (InvalidOperationException e) { Console.WriteLine("M " + e.Message.TrimEnd('.')); }
         try { empty.Average(); } catch (InvalidOperationException e) { Console.WriteLine("N " + e.Message); }
         try { empty.Aggregate((a, b) => a + b); } catch (InvalidOperationException e) { Console.WriteLine("O " + e.Message); }
         // A base-class catch has to see them too.
