@@ -66,6 +66,16 @@ internal static class Diagnostics
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true);
 
+    public static readonly DiagnosticDescriptor ScriptWriteStatementsAsValue = new(
+        id: "TransposeR0006",
+        title: "Multi-statement Script.Write template used as a value",
+        messageFormat: "This Script.Write<T> template is several JavaScript statements, but its value is used, so it is emitted where "
+                     + "one expression belongs ('return a; b;') and the statements after the first are dropped or unreachable. "
+                     + "Write it as one expression, as an IIFE ({0}), or as a statement in a block body.",
+        category: "Transpose.Translator",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
     public static Diagnostic Create(DiagnosticDescriptor descriptor, Location? location, params object[] args) =>
         Diagnostic.Create(descriptor, location ?? Location.None, args);
 }

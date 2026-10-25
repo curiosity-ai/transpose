@@ -807,6 +807,17 @@ The short version:
   The one sound test is kept: when the value's static type already converts to the target
   (`Lit x; x is Lit`, or a literal derived from it) the test can only be asking whether the value is
   null, and `Transpose.is(null, …)` answers false. Covered by `ObjectLiteralTypeTestTests`.
+- **A `Script.Write` template is statements only where its value is discarded.** An expression-bodied
+  lambda converted to a **void** delegate emits its body as a statement, like an expression-bodied
+  void member already did (`IsVoidLambdaBody`, `Emitter.Expressions2.cs`); it used to be
+  `return <body>;` always, so `viz => Script.Write("var g = {0}; g.f(); …", viz)` came out as
+  `return var g = viz; …` — a syntax error that NUglify's recovery minified to `return;var g=…`,
+  which runs nothing and throws nothing (curiosity-ai/graph-kit#53). Where the value **is** used —
+  a returned lambda/member body, `return`, `let x =`, an argument or operand — the template stands
+  where one expression belongs, so a `Script.Write<T>` whose template has code after a top-level
+  `;` is rejected with **TransposeR0006** (`ScriptWriteValueScanner`); a trailing `;` is not a
+  second statement. Write such a template as an IIFE or call it from a block body. Covered by
+  `ScriptWriteBodyTests` and `JsMinifierTests.VoidLambdaScriptWriteTemplateRunsWholeWhenMinified`.
 - **`dynamic` has no runtime overload resolver.** A generic call with a `dynamic` argument works when
   the method has one candidate (`Enumerable.Count(dyn)`); with numeric overloads to choose between
   (`Enumerable.Sum(dyn)`) there is no single binding and the emitted call does not exist.

@@ -223,4 +223,34 @@ Transpose.define(""App.Widget"", { statics: { methods: {
         Assert.IsTrue(min.Length < source.Length, $"it should actually shrink (got {min.Length} from {source.Length})");
         Assert.IsFalse(min.Contains("\n\n"), "and be minified rather than merely reprinted");
     }
+    /// <summary>
+    /// The curiosity-ai/graph-kit#53 shape through minification: a void lambda whose body is a
+    /// multi-statement <c>Script.Write</c>. Emitted as <c>return var gk = …; …</c> it was not valid
+    /// JavaScript, and minified it read as <c>return; var gk = …</c>, which runs nothing. The emitted
+    /// statements must stay statements, and every one of them must still run, after minification.
+    /// </summary>
+    [TestMethod]
+    public async Task VoidLambdaScriptWriteTemplateRunsWholeWhenMinified()
+    {
+        var result = new RoslynTranslator().Translate("""
+            using System;
+            using Transpose;
+            public class Program
+            {
+                static void Deferred(Action<object> call) { call(new object()); }
+                public static void Main()
+                {
+                    string name = "grid";
+                    Deferred(viz => Script.Write("var gk = {0}; console.log('first', typeof gk); console.log('second', {1})", viz, name));
+                }
+            }
+            """);
+        Assert.IsTrue(result.Success, string.Join("\n", result.Errors));
+
+        var min = JsMinifier.Minify(result.Javascript!, "app.js");
+        var output = await NodeJsRunner.RunAsync(RoslynTranslator.LoadRuntime() + "\n" + min);
+
+        Assert.IsFalse(min.Contains("return;var gk"), $"the template was cut off behind a return: {min}");
+        StringAssert.Contains(output.Replace("\r", ""), "first object\nsecond grid", output);
+    }
 }

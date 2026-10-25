@@ -4020,6 +4020,14 @@ public sealed partial class Emitter
         => _model.GetTypeInfo(lambda).ConvertedType
             is INamedTypeSymbol { TypeKind: TypeKind.Delegate, DelegateInvokeMethod.ReturnsVoid: true };
 
+    /// <summary>
+    /// True when an expression-bodied lambda's value is discarded: it converts to a void-returning
+    /// delegate, or its body has no value at all (a void call with no delegate target to ask).
+    /// </summary>
+    private bool IsVoidLambdaBody(ExpressionSyntax body)
+        => body.Parent is ExpressionSyntax lambda && ConvertsToVoidDelegate(lambda)
+           || _model.GetTypeInfo(body).Type?.SpecialType == SpecialType.System_Void;
+
     private void EmitLambda(IEnumerable<string> parameters, CSharpSyntaxNode body, bool isAsync,
         SeparatedSyntaxList<ParameterSyntax>? paramSyntax = null, bool restLastParam = false,
         bool asyncVoid = false)
@@ -4065,10 +4073,11 @@ public sealed partial class Emitter
                     // Hoist out-var / is-pattern variables the body introduces (e.g.
                     // `p => dict.TryGetValue(p, out var i) ? i : 0`) before returning it.
                     PredeclareInlineVars(exprBody);
-                    // If the lambda's body has a value, return it.
-                    _w.Write("return ");
-                    EmitExpression(exprBody);
-                    _w.WriteLine(";");
+                    // A void lambda's body is a statement, as for an expression-bodied void member
+                    // (EmitMethodBody): `return <body>;` would put a multi-statement Script.Write
+                    // template after the `return`, leaving all but its first statement unreachable.
+                    if (IsVoidLambdaBody(exprBody)) EmitExpressionStatement(exprBody);
+                    else { _w.Write("return "); EmitExpression(exprBody); _w.WriteLine(";"); }
                 }
             }, asyncVoid: asyncVoid);
         });

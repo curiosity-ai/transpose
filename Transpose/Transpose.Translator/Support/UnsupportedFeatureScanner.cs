@@ -537,6 +537,14 @@ internal sealed class UnsupportedFeatureScanner : CSharpSyntaxWalker
         base.VisitIdentifierName(node);
     }
 
+    // A Script.Write<T> template of several statements where its value is used: see ScriptWriteValueScanner.
+    public override void VisitInvocationExpression(InvocationExpressionSyntax node)
+    {
+        if (ScriptWriteValueScanner.Check(_model, node) is { } diagnostic)
+            _diagnostics.Add(diagnostic);
+        base.VisitInvocationExpression(node);
+    }
+
     // ref/out/in modifiers on a lambda parameter (C# 14) — the runtime models a lambda as a plain
     // JS closure with no by-ref parameter passing.
     public override void VisitParenthesizedLambdaExpression(ParenthesizedLambdaExpressionSyntax node)
