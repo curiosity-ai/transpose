@@ -418,6 +418,12 @@ public sealed class PackageRestoreTests
         Assert.AreEqual(0, NuGetFrameworks.BestGroup("netstandard2.0", new[] { "netstandard1.6", "net8.0" }));
         Assert.AreEqual(1, NuGetFrameworks.BestGroup("net10.0",        new[] { "netstandard2.0", "net8.0" }));
         Assert.AreEqual(0, NuGetFrameworks.BestGroup("net10.0",        new[] { "netstandard2.0", "net472" }));
+        // A framework newer than any the matcher was written against needs no change here: the family
+        // and version are parsed out of the moniker and netstandard 2.1 is the ceiling for everything
+        // past netcoreapp 3.0, so net11.0 chooses exactly as net10.0 does.
+        Assert.AreEqual(1, NuGetFrameworks.BestGroup("net11.0",        new[] { "netstandard2.0", "net8.0" }));
+        Assert.AreEqual(0, NuGetFrameworks.BestGroup("net11.0",        new[] { "netstandard2.0", "net472" }));
+        Assert.AreEqual(1, NuGetFrameworks.BestGroup("net11.0",        new[] { "netstandard2.0", "netstandard2.1" }));
         Assert.AreEqual(1, NuGetFrameworks.BestGroup("net472",         new[] { "netstandard2.0", "net462" }));
         Assert.AreEqual(0, NuGetFrameworks.BestGroup("netstandard2.0", new string?[] { null, "net8.0" }), "the catch-all group is usable");
         Assert.AreEqual(-1, NuGetFrameworks.BestGroup("netstandard2.0", new[] { "netstandard2.1", "net8.0" }), "and nothing else is");

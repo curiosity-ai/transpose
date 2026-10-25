@@ -16,7 +16,7 @@
 set -euo pipefail
 
 REPO="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
-TR_REL_DLL="$REPO/Transpose/Transpose.Translator/bin/Release/net10.0/Transpose.Translator.dll"
+TR_REL_DLL="$REPO/Transpose/Transpose.Translator/bin/Release/net11.0/Transpose.Translator.dll"
 RUNTIME_DLL="$REPO/BCL/Transpose.BCL/bin/Debug/netstandard2.0/Transpose.dll"
 
 echo "repo: $REPO"
@@ -43,7 +43,7 @@ cat > /tmp/jsdumper/jsdumper.csproj <<'EOF'
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <Nullable>disable</Nullable>
     <AssemblyName>jsdumper</AssemblyName>
   </PropertyGroup>
@@ -76,7 +76,7 @@ cat > /tmp/emitrunner/emitrunner.csproj <<EOF
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <AssemblyName>emitrunner</AssemblyName>
@@ -114,7 +114,7 @@ cat > /tmp/jsonrunner/jsonrunner.csproj <<EOF
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <AssemblyName>jsonrunner</AssemblyName>
@@ -164,7 +164,7 @@ done
 
 if [ ! -f "$RUNTIME_DLL" ]; then
   echo "==> runtime Transpose.dll missing — building it (~25s)"
-  dotnet "$REPO/Transpose/Transpose.Compiler/bin/Debug/net10.0/tps.dll" \
+  dotnet "$REPO/Transpose/Transpose.Compiler/bin/Debug/net11.0/tps.dll" \
     --project "$REPO/BCL/Transpose.BCL/Transpose.BCL.csproj" --build-runtime -c Debug \
     -o "$RUNTIME_DLL" | tail -3
 fi
@@ -176,9 +176,9 @@ Toolkit ready. Before invoking any runner, export the runtime path:
 
   export TRANSPOSE_DLL_PATH=$RUNTIME_DLL
 
-Inspect emitted JS:   dotnet /tmp/emitrunner/bin/Debug/net10.0/emitrunner.dll /tmp/snippet.cs
-Run in Node:          dotnet /tmp/emitrunner/bin/Debug/net10.0/emitrunner.dll /tmp/snippet.cs --run 2>&1 | node
-Dump JS from a DLL:   dotnet /tmp/jsdumper/bin/Debug/net10.0/jsdumper.dll <path-to.dll> <outdir>
+Inspect emitted JS:   dotnet /tmp/emitrunner/bin/Debug/net11.0/emitrunner.dll /tmp/snippet.cs
+Run in Node:          dotnet /tmp/emitrunner/bin/Debug/net11.0/emitrunner.dll /tmp/snippet.cs --run 2>&1 | node
+Dump JS from a DLL:   dotnet /tmp/jsdumper/bin/Debug/net11.0/jsdumper.dll <path-to.dll> <outdir>
 
 Snippets must be a full program: class Program { public static void Main() { ... } }
 Keep snippets in /tmp (NOT in a runner dir — a stray .cs there breaks the build).

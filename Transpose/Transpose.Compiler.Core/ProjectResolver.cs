@@ -758,13 +758,14 @@ internal static class ProjectResolver
     }
 
     // Version ladders per framework family, in ascending order — used to generate the SDK's
-    // "<MONIKER>x_y_OR_GREATER" chains (every version up to and including the target's).
+    // "<MONIKER>x_y_OR_GREATER" chains (every version up to and including the target's). Only the
+    // two closed families are listed: their ladders are irregular (netstandard has 1.0-1.6 then
+    // 2.0/2.1, netcoreapp has a 2.2 and no 2.3) and neither will gain another version. The net5.0+
+    // ladder is derived instead — see FrameworkDefines.
     private static readonly string[] NetStandardVersions =
         { "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "2.0", "2.1" };
     private static readonly string[] NetCoreAppLegacyVersions =
         { "1.0", "1.1", "2.0", "2.1", "2.2", "3.0", "3.1" };
-    private static readonly string[] NetVersions =
-        { "5.0", "6.0", "7.0", "8.0", "9.0", "10.0" };
 
     /// <summary>
     /// The preprocessor symbols the .NET SDK defines implicitly from a target framework moniker,
@@ -821,10 +822,14 @@ internal static class ProjectResolver
             // The whole legacy netcoreapp chain is implied.
             foreach (var v in NetCoreAppLegacyVersions)
                 result.Add(Sym("NETCOREAPP", v) + "_OR_GREATER");
-            foreach (var v in NetVersions)
+            // Every major from 5 up to the target's, and each is always "<major>.0", so the chain
+            // is computed rather than listed. A list goes stale the moment .NET ships a new major,
+            // and silently: the loop that walked it simply never matched the target and stopped one
+            // release short, so net11.0 got NET11_0 but no NET11_0_OR_GREATER.
+            if (int.TryParse(ver.Split('.')[0], out var major))
             {
-                result.Add(Sym("NET", v) + "_OR_GREATER");
-                if (v == ver) break;
+                for (var m = 5; m <= major; m++)
+                    result.Add($"NET{m}_0_OR_GREATER");
             }
         }
         else if (tfm.StartsWith("net", StringComparison.Ordinal) && tfm.Length > 3)

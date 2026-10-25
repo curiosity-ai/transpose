@@ -48,10 +48,10 @@ Then:
 
 ```bash
 # 1. See the emitted JS (no execution) — read it to spot the wrong construct
-dotnet /tmp/emitrunner/bin/Debug/net10.0/emitrunner.dll /tmp/snippet.cs
+dotnet /tmp/emitrunner/bin/Debug/net11.0/emitrunner.dll /tmp/snippet.cs
 
 # 2. Run it in Node — the runtime auto-runs Main()
-dotnet /tmp/emitrunner/bin/Debug/net10.0/emitrunner.dll /tmp/snippet.cs --run 2>&1 | node
+dotnet /tmp/emitrunner/bin/Debug/net11.0/emitrunner.dll /tmp/snippet.cs --run 2>&1 | node
 
 # 3. Compare against native .NET. Usually you can reason out native behaviour; when unsure, run it:
 #    (cd /tmp && rm -rf nat && mkdir nat && cd nat && dotnet new console -o . >/dev/null \

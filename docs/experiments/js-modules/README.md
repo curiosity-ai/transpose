@@ -15,7 +15,7 @@ A built Tesserae sample site, and Playwright's Chromium:
 
 ```bash
 cd /path/to/transpose && dotnet build Transpose.slnx -c Release
-export PATH="$PWD/Transpose/Transpose.Compiler/bin/Release/net10.0:$PATH"
+export PATH="$PWD/Transpose/Transpose.Compiler/bin/Release/net11.0:$PATH"
 cd /path/to/tesserae && dotnet build Tesserae.sln -c Debug
 SITE=/path/to/tesserae/Tesserae.Tests/bin/Debug/netstandard2.0/tps
 ```
