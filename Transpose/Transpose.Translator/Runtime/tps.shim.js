@@ -119,8 +119,8 @@
 
     // Saturating float → integer conversions (C#'s `(int)`/`(uint)`/`(long)`/`(ulong)` of a
     // float/double). The CLR saturates out-of-range values to the target's Min/Max and maps NaN
-    // to 0 (unlike an integer→integer cast, which wraps). A narrower target (byte/short/…) first
-    // saturates to int32 here, then the emitter masks the result to width with Transpose.Int.clip*.
+    // to 0 (unlike an integer→integer cast, which wraps). A narrower target (sbyte/byte/short/
+    // ushort/char) saturates to its own range through fclipRange below, not to int32 — see there.
     TransposeR.fclip32 = function (x) {
         if (isNaN(x)) { return 0; }
         if (x <= -2147483648) { return -2147483648; }
@@ -131,6 +131,18 @@
         if (isNaN(x) || x <= 0) { return 0; }
         if (x >= 4294967295) { return 4294967295; }
         return Math.floor(x);
+    };
+    // Saturating float → narrow integer: `(sbyte)`/`(byte)`/`(short)`/`(ushort)`/`(char)` of a
+    // float/double, which saturates to *that type's* Min/Max rather than to int32's. Up to .NET 10
+    // the narrow conversion went through fclip32 and the result was then masked to width, so
+    // `(sbyte)300f` produced 44 and `(short)70000f` produced 4464; .NET 11 gives 127 and 32767.
+    // Only the float source changed — an integer→integer narrowing still wraps, and still goes
+    // through Transpose.Int.clip*.
+    TransposeR.fclipRange = function (x, min, max) {
+        if (isNaN(x)) { return 0; }
+        if (x <= min) { return min; }
+        if (x >= max) { return max; }
+        return x < 0 ? Math.ceil(x) : Math.floor(x);
     };
     TransposeR.fclip64 = function (x) {
         if (isNaN(x)) { return System.Int64.Zero; }

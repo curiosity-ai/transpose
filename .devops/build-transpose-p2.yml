@@ -24,11 +24,13 @@ steps:
     echo "Commit message: $(Build.SourceVersionMessage)"
 
 - task: UseDotNet@2
-  displayName: 'Use .NET 10.0 SDK'
+  displayName: 'Use .NET 11.0 SDK'
   inputs:
     packageType: sdk
-    version: 10.x
-    includePreviewVersions: false
+    version: 11.x
+    # .NET 11's latest release is still an rc, so with previews excluded the task resolves no 11.x
+    # SDK at all and the build fails with the SDK missing. Drop this once 11.0 goes stable.
+    includePreviewVersions: true
     installationPath: $(Agent.ToolsDirectory)/dotnet
 
 - task: PowerShell@2

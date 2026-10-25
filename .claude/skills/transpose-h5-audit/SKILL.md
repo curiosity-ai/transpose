@@ -43,7 +43,7 @@ for p in curiosity.frontend curiosity.frontend.admin curiosity.frontend.api curi
   curl -sSL -o "$p.$V.nupkg" "https://api.nuget.org/v3-flatcontainer/$p/$V/$p.$V.nupkg"
   mkdir -p "${p}_x" && (cd "${p}_x" && unzip -oq "../$p.$V.nupkg")
   dll=$(find "${p}_x/lib" -name "*.dll"); short="${p##*.}"
-  dotnet /tmp/jsdumper/bin/Debug/net10.0/jsdumper.dll "$dll" "/tmp/h5js/$short"
+  dotnet /tmp/jsdumper/bin/Debug/net11.0/jsdumper.dll "$dll" "/tmp/h5js/$short"
 done
 ```
 
@@ -102,15 +102,15 @@ as a `--reference` so `tps` doesn't misclassify the ClassPath-outputBy package a
 
 ```bash
 CORE=$(find artifacts/bootstrap/refs -name Transpose.Core.dll)
-dotnet Transpose/Transpose.Compiler/bin/Debug/net10.0/tps.dll \
+dotnet Transpose/Transpose.Compiler/bin/Debug/net11.0/tps.dll \
   --project Packages/Transpose.Newtonsoft.Json/Transpose.Newtonsoft.Json.csproj -c Debug --emit-package \
   -o Packages/Transpose.Newtonsoft.Json/bin/Debug/netstandard2.0/Transpose.Newtonsoft.Json.dll \
   --reference "$TRANSPOSE_DLL_PATH" --reference "$CORE"
-dotnet /tmp/jsdumper/bin/Debug/net10.0/jsdumper.dll \
+dotnet /tmp/jsdumper/bin/Debug/net11.0/jsdumper.dll \
   Packages/Transpose.Newtonsoft.Json/bin/Debug/netstandard2.0/Transpose.Newtonsoft.Json.dll /tmp/nsjjs
 ```
 
-Then `dotnet /tmp/jsonrunner/bin/Debug/net10.0/jsonrunner.dll /tmp/snippet.cs --run 2>&1 | node`
+Then `dotnet /tmp/jsonrunner/bin/Debug/net11.0/jsonrunner.dll /tmp/snippet.cs --run 2>&1 | node`
 (the runner prepends `/tmp/nsjjs/newtonsoft.json.js` + `generated.meta.js`).
 
 For a finding worth keeping, the same loop exists as a test suite:

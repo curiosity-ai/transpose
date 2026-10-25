@@ -32,7 +32,7 @@ description: >-
 After changing BCL C# or `Resources/*.js`, rebuild `Transpose.dll` (~25s):
 
 ```bash
-dotnet Transpose/Transpose.Compiler/bin/Debug/net10.0/tps.dll \
+dotnet Transpose/Transpose.Compiler/bin/Debug/net11.0/tps.dll \
   --project BCL/Transpose.BCL/Transpose.BCL.csproj --build-runtime -c Debug \
   -o BCL/Transpose.BCL/bin/Debug/netstandard2.0/Transpose.dll
 ```

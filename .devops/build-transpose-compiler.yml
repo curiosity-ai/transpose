@@ -60,11 +60,13 @@ steps:
     echo "Commit message: $(Build.SourceVersionMessage)"
 
 - task: UseDotNet@2
-  displayName: 'Use .NET 10.0 SDK'
+  displayName: 'Use .NET 11.0 SDK'
   inputs:
     packageType: sdk
-    version: 10.x
-    includePreviewVersions: false
+    version: 11.x
+    # .NET 11's latest release is still an rc, so with previews excluded the task resolves no 11.x
+    # SDK at all and the build fails with the SDK missing. Drop this once 11.0 goes stable.
+    includePreviewVersions: true
     installationPath: $(Agent.ToolsDirectory)/dotnet
 
 - task: PowerShell@2
@@ -132,7 +134,7 @@ steps:
 # BCL and runtime rather than whatever was last released.
 - script: |
     set -euo pipefail
-    dotnet "$(Build.SourcesDirectory)/Transpose/Transpose.Compiler/bin/$(buildConfiguration)/net10.0/tps.dll" \
+    dotnet "$(Build.SourcesDirectory)/Transpose/Transpose.Compiler/bin/$(buildConfiguration)/net11.0/tps.dll" \
       --project "$(bcl)" --build-runtime -c $(buildConfiguration) -o "$(bclRuntimeDll)"
     test -f "$(bclRuntimeDll)"
     echo "##vso[task.setvariable variable=TRANSPOSE_DLL_PATH;]$(bclRuntimeDll)"
@@ -164,7 +166,7 @@ steps:
 #   inputs:
 #     targetType: 'filePath'
 #     pwsh: true
-#     filePath: '$(Build.SourcesDirectory)/Transpose/Transpose.WatchMode.Tests/bin/$(buildConfiguration)/net10.0/playwright.ps1'
+#     filePath: '$(Build.SourcesDirectory)/Transpose/Transpose.WatchMode.Tests/bin/$(buildConfiguration)/net11.0/playwright.ps1'
 #     arguments: 'install chromium --with-deps'
 
 # - task: DotNetCoreCLI@2
@@ -206,7 +208,7 @@ steps:
 # Exit 2 = a package is IL-only; exit 1 = nothing verified.
 - script: |
     set -euo pipefail
-    dotnet "$(Build.SourcesDirectory)/Transpose/Transpose.Bench/bin/$(buildConfiguration)/net10.0/tps-bench.dll" \
+    dotnet "$(Build.SourcesDirectory)/Transpose/Transpose.Bench/bin/$(buildConfiguration)/net11.0/tps-bench.dll" \
       --verify-r2r "$(Build.ArtifactStagingDirectory)"
   displayName: 'verify the packed tool is ReadyToRun'
 

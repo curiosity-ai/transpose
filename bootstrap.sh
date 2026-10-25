@@ -23,7 +23,7 @@ mkdir -p "$OUT" "$REFS"
 
 echo "==> Building the tps compiler"
 dotnet build Transpose/Transpose.Compiler/Transpose.Compiler.csproj -c Debug -v q >/dev/null
-TPS="$ROOT/Transpose/Transpose.Compiler/bin/Debug/net10.0/tps.dll"
+TPS="$ROOT/Transpose/Transpose.Compiler/bin/Debug/net11.0/tps.dll"
 
 # The one language version the compiler supports, read from where the SDK injects it into every
 # Transpose project (Sdk.targets) rather than written again here. build_ref below compiles the SAME

@@ -3332,9 +3332,13 @@ public sealed partial class Emitter
         // --- to a ≤32-bit integer / char target. ---
         // From an integer source (int/long/char/enum): truncate to the target's bit width, wrapping
         // (`(short)70000` → 4464, `(uint)-1` → 4294967295, `(sbyte)200` → -56, `(int)(a+b)` re-wraps
-        // an overflow). From a float/double source: saturate to int32 first (CLR maps out-of-range
-        // to Min/Max and NaN → 0, NOT wrap — `(byte)5e9` → 255, `(int)1e20` → int.MaxValue), then
-        // mask to width. Runtime Transpose.Int.clip* do the final mask + sign-extend.
+        // an overflow). Runtime Transpose.Int.clip* do that mask + sign-extend.
+        //
+        // From a float/double source the CLR saturates instead, to the *target's* Min/Max, mapping
+        // NaN to 0 (`(int)1e20` → int.MaxValue, `(sbyte)300f` → 127, `(short)70000f` → 32767).
+        // Before .NET 11 a narrow target saturated to int32 and the result was then masked to width,
+        // which gave 44 and 4464 for those two; .NET 11 saturates at the target's own width, so a
+        // sub-word float conversion goes through fclipRange and takes no outer mask.
         if (IsNarrowIntegerTarget(targetType) && IsNumericSource(sourceType))
         {
             var t = targetType!.SpecialType;
@@ -3346,6 +3350,13 @@ public sealed partial class Emitter
             if (IsFloatingType(sourceType) && t == SpecialType.System_UInt32)
             {
                 _w.Write("TransposeR.fclipu32("); EmitExpression(expr); _w.Write(")");
+                return;
+            }
+            if (IsFloatingType(sourceType) && FloatSaturationRange(t) is { } range)
+            {
+                _w.Write("TransposeR.fclipRange(");
+                EmitExpression(expr);
+                _w.Write($", {range.Min}, {range.Max})");
                 return;
             }
             _w.Write(NarrowIntegerClip(t));
@@ -3364,7 +3375,7 @@ public sealed partial class Emitter
             }
             else if (IsFloatingType(sourceType))
             {
-                // Sub-word float target: saturate to int32, then the outer clip masks to width.
+                // Only int32/uint32 reach here; every narrower float target returned above.
                 _w.Write("TransposeR.fclip32("); EmitExpression(expr); _w.Write(")");
             }
             else
@@ -3500,6 +3511,21 @@ public sealed partial class Emitter
 
     /// <summary>The runtime clip helper that truncates + wraps a JS number to the given integer
     /// width (mask + sign-extend), matching the CLR's unchecked conversion.</summary>
+    /// <summary>
+    /// The range a float/double saturates to when cast to a sub-word integer, or null for a target
+    /// that saturates at 32 bits (int/uint, handled by fclip32/fclipu32) or is not one of these.
+    /// char is 16-bit unsigned and behaves as ushort.
+    /// </summary>
+    private static (long Min, long Max)? FloatSaturationRange(SpecialType target) => target switch
+    {
+        SpecialType.System_SByte  => (-128, 127),
+        SpecialType.System_Byte   => (0, 255),
+        SpecialType.System_Int16  => (-32768, 32767),
+        SpecialType.System_UInt16 => (0, 65535),
+        SpecialType.System_Char   => (0, 65535),
+        _ => null,
+    };
+
     private static string NarrowIntegerClip(SpecialType target) => target switch
     {
         SpecialType.System_SByte => "Transpose.Int.clip8",

@@ -52,8 +52,8 @@ binary on the same input measured 14.1 s and 20.3 s within one session. So:
 cd <transpose>
 dotnet build Transpose/Transpose.Compiler/Transpose.Compiler.csproj -c Release
 dotnet build Transpose/Transpose.Bench/Transpose.Bench.csproj      -c Release
-TPS=./Transpose/Transpose.Compiler/bin/Release/net10.0/tps
-BENCH=./Transpose/Transpose.Bench/bin/Release/net10.0/tps-bench
+TPS=./Transpose/Transpose.Compiler/bin/Release/net11.0/tps
+BENCH=./Transpose/Transpose.Bench/bin/Release/net11.0/tps-bench
 ```
 
 A baseline compiler to compare against, built from the commit you are improving on:
@@ -61,7 +61,7 @@ A baseline compiler to compare against, built from the commit you are improving 
 ```bash
 git worktree add /tmp/tps-base <base-commit>
 (cd /tmp/tps-base && dotnet build Transpose/Transpose.Compiler/Transpose.Compiler.csproj -c Release)
-BASE=/tmp/tps-base/Transpose/Transpose.Compiler/bin/Release/net10.0/tps
+BASE=/tmp/tps-base/Transpose/Transpose.Compiler/bin/Release/net11.0/tps
 ```
 
 The corpus is the **tesserae** repo, checked in as a submodule at `benchmarks/tesserae` so CI and a
