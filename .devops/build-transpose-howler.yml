@@ -20,8 +20,10 @@ pr: none
 steps:
 - checkout: self
 
-- script: |
-    echo "Commit message: $(Build.SourceVersionMessage)"
+- pwsh: |
+    Write-Host "Commit message: $env:COMMIT_MESSAGE"
+  env:
+    COMMIT_MESSAGE: $(Build.SourceVersionMessage)
 
 - task: UseDotNet@2
   displayName: 'Use .NET 11.0 SDK'
