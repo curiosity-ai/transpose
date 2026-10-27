@@ -3,7 +3,11 @@ namespace System.ComponentModel.DataAnnotations
     /// <summary>
     /// Enumeration of logical data types that may appear in <see cref="DataTypeAttribute" />
     /// </summary>
+    // [External] with no JavaScript counterpart: there is no DataType object at
+    // System.ComponentModel.DataAnnotations.DataType, so a Name mode would emit a reference to
+    // something that does not exist. Emit.Value inlines the ordinal instead.
     [Transpose.External]
+    [Transpose.Enum(Transpose.Emit.Value)]
     public enum DataType
     {
         /// <summary>
