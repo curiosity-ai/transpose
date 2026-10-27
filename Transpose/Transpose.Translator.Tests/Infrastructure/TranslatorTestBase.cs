@@ -21,12 +21,17 @@ public abstract class TranslatorTestBase
     /// <param name="skipRoslyn">Skip native execution / comparison (Transpose-only behavior check).</param>
     /// <param name="overrideRoslynCode">Alternate source to run natively (when it must differ).</param>
     /// <param name="includeCorePackages">Ignored (the clean-room runtime models no tps.core bindings).</param>
+    /// <param name="timeZone">An IANA zone to run the JS in. The native side keeps the host's zone, so
+    /// only use it for programs whose output does not depend on the zone in .NET.</param>
+    /// <param name="clock">The instant the JS clock starts at. Same caveat: native keeps the real clock.</param>
     protected async Task<string> RunTest(
         string csharpCode,
         string? waitForOutput = null,
         bool skipRoslyn = false,
         string? overrideRoslynCode = null,
-        bool includeCorePackages = false)
+        bool includeCorePackages = false,
+        string? timeZone = null,
+        DateTimeOffset? clock = null)
     {
         var translator = new RoslynTranslator();
         // Match a real `tps -c Debug` build: the CLI (ProjectResolver) implicitly defines DEBUG and
@@ -48,7 +53,7 @@ public abstract class TranslatorTestBase
         {
             // Prepend the real tps.js runtime + shim; tps.js auto-runs the entry point.
             var full = RoslynTranslator.LoadRuntime() + "\n" + result.Javascript!;
-            jsOutput = await NodeJsRunner.RunAsync(full);
+            jsOutput = await NodeJsRunner.RunAsync(full, timeZone, clock);
         }
         catch (Exception ex)
         {

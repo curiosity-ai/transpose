@@ -262,12 +262,11 @@
                 return d.kind;
             },
 
+            // The ticks (clock time) are kept, as in .NET; the JS instant is not. A Utc date holds its
+            // clock time in the Date's UTC fields and a Local/Unspecified one in its local fields, so
+            // copying the instant across kinds shifted the clock time by the local offset.
             specifyKind: function (d, kind) {
-                var dt = new Date(d.getTime());
-                dt.kind = kind;
-                dt.ticks = d.ticks !== undefined ? d.ticks : this.getTicks(dt);
-
-                return dt;
+                return this.create$2(this.getTicks(d), kind);
             },
 
             $FileTimeOffset: System.Int64("584388").mul(System.Int64(864e9)),
