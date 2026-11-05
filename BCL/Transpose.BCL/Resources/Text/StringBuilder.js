@@ -3,6 +3,9 @@
             this.$initialize();
             this.buffer = [],
             this.capacity = 16;
+            // The length of what the buffer holds, kept as pieces are added and taken out so that reading
+            // Length never has to join them: a parser appends and asks for the length on every step.
+            this.$len = 0;
 
             if (arguments.length === 1) {
                 this.append(arguments[0]);
@@ -18,13 +21,7 @@
         },
 
         getLength: function () {
-            if (this.buffer.length < 2) {
-                return this.buffer[0] ? this.buffer[0].length : 0;
-            }
-
-            var s = this.getString();
-
-            return s.length;
+            return this.$len;
         },
 
         setLength: function (value) {
@@ -107,7 +104,12 @@
                 value = value.substr(startIndex, count);
             }
 
+            if (typeof value !== "string") {
+                value = String(value);
+            }
+
             this.buffer[this.buffer.length] = value;
+            this.$len += value.length;
             this.clearString();
 
             return this;
@@ -119,6 +121,7 @@
 
         clear: function () {
             this.buffer = [];
+            this.$len = 0;
             this.clearString();
 
             return this;
@@ -158,6 +161,7 @@
                 this.buffer = [];
                 this.buffer[0] = s.substring(0, startIndex);
                 this.buffer[1] = s.substring(startIndex + length, s.length);
+                this.$len -= length;
                 this.clearString();
             }
 
@@ -182,9 +186,14 @@
                 value = Array(count + 1).join(value).toString();
             }
 
+            if (typeof value !== "string") {
+                value = String(value);
+            }
+
             var s = this.getString();
 
             this.buffer = [];
+            this.$len = s.length + value.length;
 
             if (index < 1) {
                 this.buffer[0] = value;
@@ -221,6 +230,12 @@
                 this.buffer[2] = s.substring(startIndex + count, s.length);
             } else {
                 this.buffer[0] = s.replace(r, newValue);
+            }
+
+            this.$len = 0;
+
+            for (var i = 0; i < this.buffer.length; i++) {
+                this.$len += this.buffer[i].length;
             }
 
             this.clearString();
