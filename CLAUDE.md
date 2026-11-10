@@ -868,6 +868,26 @@ The short version:
   package, which does not pack `None` items. Curiosity.FrontEnd did exactly that, so every application
   built against the package was missing 243 icons/illustrations, both variable-font families and the
   favicon.
+- **A package's own "copy my folder into the site" MSBuild target is performed too
+  (`PackageBuildAssets`).** Tesserae.Monaco, Tesserae.Lauschwerk and Tesserae.ThreeD ship a folder in the
+  package root and an `AfterTargets="Build"` target in `buildTransitive/` that copies it to
+  `$(OutDir)/tps/assets/js/<name>` - deliberately not a `resources` group, because the bundle must be
+  fetched on demand under the names it was authored with. MSBuild runs that target after `tps`; the
+  in-process `Transpose.Compiler.Library` never runs MSBuild, so a workspace compiling its own front-end
+  shipped a site with no `assets/js/monaco` (101 files), `lauschwerk` (16) or `threed` (2), and every code
+  editor 404'd on `monaco.js`. The site build now reads each referenced package's `build/` and
+  `buildTransitive/` `.targets` and performs the targets that have that one shape: after `Build`, an
+  `ItemGroup` globbing a folder, and a `Copy` of `<dir>%(RecursiveDir)%(Filename)%(Extension)` into the
+  site's `tps` folder. It evaluates only what those targets are written in (`$(Prop)`,
+  `$([MSBuild]::NormalizeDirectory(...))`, `Exists()` and `==`/`!=` joined by `and`, `Include`/`Exclude`
+  globs). **This is not an MSBuild engine, and it must not become one:** a target that uses anything else,
+  or that writes anywhere but the site (a skill install into `.claude/`), is skipped whole and listed in the
+  build log as `package assets skipped`, never half-applied. An `Error` guard (payload missing) means "nothing
+  to copy", not a failed build. Files are recorded in the project's manifest, so dropping the reference
+  prunes them, and an unchanged file is left alone (these are tens of megabytes). Under MSBuild the target
+  then runs a second time over the same files, which `SkipUnchangedFiles` makes free. Covered by
+  `PackageBuildAssetsTests`, and checked against the real packages: the same 119 files as the MSBuild-driven
+  Release build of the Curiosity front-end.
 - **Lazily-loaded modules (done).** `outputBy: "Module"` in a project's `tps.json` makes a site build
   emit one ES module per chunk (`chunks/c<hash>.mjs`) plus an entry module, and index.html carries a single
   `<script type="module">`. A **chunk is a strongly-connected component of the reference graph**

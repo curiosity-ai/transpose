@@ -490,6 +490,10 @@ internal static class ProjectBuild
             // that chunk, and nothing says so at build time. The usual cause is a package built by a
             // compiler that wrote its dependency's chunk file names instead of type placeholders, and
             // whose dependency has since been updated — rebuilding that package fixes it.
+            foreach (var assets in siteResult.PackageAssets)
+                log.Info($"  package assets: {assets}");
+            foreach (var skippedAssets in siteResult.SkippedPackageAssets)
+                log.Info($"  package assets skipped: {skippedAssets}");
             foreach (var dangling in siteResult.DanglingModuleImports)
                 MsBuildDiagnostic.WriteWarning(MsBuildDiagnostic.CodeDanglingModuleImport, dangling + ".");
             if (siteResult.RemovedStaleFiles.Count > 0)

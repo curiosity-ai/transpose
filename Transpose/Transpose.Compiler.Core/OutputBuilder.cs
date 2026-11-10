@@ -103,13 +103,19 @@ internal static class OutputBuilder
     /// target is not in the site — a 404 at run time, on whichever screen first needs the chunk. A
     /// current package cannot produce one (its cross-assembly imports are type placeholders resolved
     /// against this build), but a package built before that could, and the failure is otherwise
-    /// completely silent until someone clicks the wrong thing.</summary>
+    /// completely silent until someone clicks the wrong thing.
+    ///
+    /// <see cref="PackageAssets"/> says what was copied from referenced packages' MSBuild targets (see
+    /// <see cref="PackageBuildAssets"/>), and <see cref="SkippedPackageAssets"/> the package targets that
+    /// copy into the site but use something the compiler does not evaluate, so were not applied.</summary>
     public readonly record struct SiteBuildResult(
         string OutputDir,
         IReadOnlyList<string> RemovedStaleFiles,
         IReadOnlyList<string> UnscriptedReferences,
         IReadOnlyList<string> UnmatchedDontLoadReferences,
-        IReadOnlyList<string> DanglingModuleImports);
+        IReadOnlyList<string> DanglingModuleImports,
+        IReadOnlyList<string> PackageAssets,
+        IReadOnlyList<string> SkippedPackageAssets);
 
     /// <summary>
     /// One stylesheet a site build produces <em>from files on disk</em> — a <c>tps.json</c> resource
@@ -352,6 +358,12 @@ internal static class OutputBuilder
                 EmitCompilerJs("tps.shim.js", RoslynTranslator.RuntimeShim);
         }
 
+        // 1b. What a package's own MSBuild targets copy into the site (Monaco, Lauschwerk, ThreeD). Under
+        //     MSBuild those targets run after this compiler, so a build that never runs MSBuild — the
+        //     in-process library — used to ship a site without them. Done here, before the project's own
+        //     resources, so anything the application declares for the same path still wins.
+        var packageAssets = PackageBuildAssets.CopyInto(project.ReferencePaths, outputDir, written);
+
         // 2. tps.json resource files from every project in the closure — referenced projects
         //    first (a library's JS deps load before the app that uses them). A resource group
         //    whose name is a .js/.css file concatenates its files into that one bundle; other
@@ -459,7 +471,7 @@ internal static class OutputBuilder
 
         WriteManifest(manifestPath, outputDir, written, utf8);
 
-        return new SiteBuildResult(outputDir, removed, dontLoad.Matched, dontLoad.Unmatched, dangling);
+        return new SiteBuildResult(outputDir, removed, dontLoad.Matched, dontLoad.Unmatched, dangling, packageAssets.Copied, packageAssets.Skipped);
     }
 
     /// <summary>
