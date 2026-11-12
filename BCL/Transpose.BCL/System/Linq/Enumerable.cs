@@ -1109,7 +1109,7 @@ namespace System.Linq
         /// An empty System.Collections.Generic.IEnumerable&lt;T&gt; whose type argument is
         /// TResult.
         /// </returns>
-        public static extern EnumerableInstance<TResult> Empty<TResult>();
+        public static extern IEnumerable<TResult> Empty<TResult>();
 
         /// <summary>
         /// Produces the set difference of two sequences by using the default equality
@@ -3374,7 +3374,7 @@ namespace System.Linq
         /// <exception cref="System.ArgumentOutOfRangeException">
         /// count is less than 0.-or-start + count -1 is larger than System.Int32.MaxValue.
         /// </exception>
-        public static extern EnumerableInstance<int> Range(int start, int count);
+        public static extern IEnumerable<int> Range(int start, int count);
 
         /// <summary>
         /// Generates a sequence that contains one repeated value.
@@ -3394,7 +3394,7 @@ namespace System.Linq
         /// <exception cref="System.ArgumentOutOfRangeException">
         /// count is less than 0.
         /// </exception>
-        public static extern EnumerableInstance<TResult> Repeat<TResult>(TResult element, int count);
+        public static extern IEnumerable<TResult> Repeat<TResult>(TResult element, int count);
 
         /// <summary>
         /// Inverts the order of the elements in a sequence.
