@@ -7,7 +7,7 @@ namespace System.Linq
     [Transpose.External]
     [Transpose.IgnoreGeneric]
     [Transpose.Convention(Target = Transpose.ConventionTarget.Member, Member = Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
-    public interface ILookup<TKey, TElement> : IEnumerable<Grouping<TKey, TElement>>
+    public interface ILookup<TKey, TElement> : IEnumerable<IGrouping<TKey, TElement>>
     {
         int Count
         {
@@ -49,7 +49,7 @@ namespace System.Linq
         public extern bool Contains(TKey key);
 
         [Transpose.Convention(Transpose.Notation.None)]
-        public extern IEnumerator<Grouping<TKey, TElement>> GetEnumerator();
+        public extern IEnumerator<IGrouping<TKey, TElement>> GetEnumerator();
 
         [Transpose.Convention(Transpose.Notation.None)]
         extern IEnumerator IEnumerable.GetEnumerator();

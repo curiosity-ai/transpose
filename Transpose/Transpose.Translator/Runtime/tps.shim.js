@@ -111,6 +111,17 @@
         for (var j = 0; j < n; j++) { values.push(h[j].v); }
         return test(values);
     };
+    // Records the element type of a linq.js sequence, which one constructor serves for every T, so
+    // `is IEnumerable<T>` / `as IEnumerable<T>` can answer it later (Enumerable.$isEnumerableOf).
+    // The emitter wraps the outermost LINQ call of a chain (Emitter.SequenceStamp.cs). The first stamp
+    // wins: an operator that hands back its own receiver (AsEnumerable) must not overwrite the more
+    // precise type it was created with. Anything that is not a linq.js sequence passes through.
+    TransposeR.seqOf = function (s, T) {
+        if (s != null && T && Transpose.Linq && s instanceof Transpose.Linq.Enumerable && !s.$elementType) {
+            s.$elementType = T;
+        }
+        return s;
+    };
     TransposeR.is = function (v, t) { return Transpose.is(v, t); };
     TransposeR.as = function (v, t) { return Transpose.as ? Transpose.as(v, t) : (Transpose.is(v, t) ? v : null); };
     TransposeR.equals = function (a, b) { return Transpose.equals ? Transpose.equals(a, b) : a === b; };

@@ -1109,7 +1109,7 @@ namespace System.Linq
         /// An empty System.Collections.Generic.IEnumerable&lt;T&gt; whose type argument is
         /// TResult.
         /// </returns>
-        public static extern EnumerableInstance<TResult> Empty<TResult>();
+        public static extern IEnumerable<TResult> Empty<TResult>();
 
         /// <summary>
         /// Produces the set difference of two sequences by using the default equality
@@ -1284,7 +1284,7 @@ namespace System.Linq
         /// source or keySelector is null.
         /// </exception>
         [Transpose.Template("System.Linq.Enumerable.from({source}, {TSource}).groupBy({keySelector})")]
-        public static extern EnumerableInstance<Grouping<TKey, TSource>> GroupBy<TSource, TKey>(this IEnumerable<TSource> source,
+        public static extern EnumerableInstance<IGrouping<TKey, TSource>> GroupBy<TSource, TKey>(this IEnumerable<TSource> source,
             Func<TSource, TKey> keySelector);
 
         /// <summary>
@@ -1348,7 +1348,7 @@ namespace System.Linq
         /// source or keySelector or elementSelector is null.
         /// </exception>
         [Transpose.Template("System.Linq.Enumerable.from({source}, {TSource}).groupBy({keySelector}, {elementSelector})")]
-        public static extern EnumerableInstance<Grouping<TKey, TElement>> GroupBy<TSource, TKey, TElement>(
+        public static extern EnumerableInstance<IGrouping<TKey, TElement>> GroupBy<TSource, TKey, TElement>(
             this IEnumerable<TSource> source, Func<TSource, TKey> keySelector, Func<TSource, TElement> elementSelector);
 
         /// <summary>
@@ -1379,7 +1379,7 @@ namespace System.Linq
         /// source or keySelector is null.
         /// </exception>
         [Transpose.Template("System.Linq.Enumerable.from({source}, {TSource}).groupBy({keySelector}, null, null, {comparer})")]
-        public static extern EnumerableInstance<Grouping<TKey, TSource>> GroupBy<TSource, TKey>(this IEnumerable<TSource> source,
+        public static extern EnumerableInstance<IGrouping<TKey, TSource>> GroupBy<TSource, TKey>(this IEnumerable<TSource> source,
             Func<TSource, TKey> keySelector, IEqualityComparer<TKey> comparer);
 
         /// <summary>
@@ -1490,7 +1490,7 @@ namespace System.Linq
         /// source or keySelector or elementSelector is null.
         /// </exception>
         [Transpose.Template("System.Linq.Enumerable.from({source}, {TSource}).groupBy({keySelector}, {elementSelector}, null, {comparer})")]
-        public static extern EnumerableInstance<Grouping<TKey, TElement>> GroupBy<TSource, TKey, TElement>(
+        public static extern EnumerableInstance<IGrouping<TKey, TElement>> GroupBy<TSource, TKey, TElement>(
             this IEnumerable<TSource> source, Func<TSource, TKey> keySelector, Func<TSource, TElement> elementSelector,
             IEqualityComparer<TKey> comparer);
 
@@ -3374,7 +3374,7 @@ namespace System.Linq
         /// <exception cref="System.ArgumentOutOfRangeException">
         /// count is less than 0.-or-start + count -1 is larger than System.Int32.MaxValue.
         /// </exception>
-        public static extern EnumerableInstance<int> Range(int start, int count);
+        public static extern IEnumerable<int> Range(int start, int count);
 
         /// <summary>
         /// Generates a sequence that contains one repeated value.
@@ -3394,7 +3394,7 @@ namespace System.Linq
         /// <exception cref="System.ArgumentOutOfRangeException">
         /// count is less than 0.
         /// </exception>
-        public static extern EnumerableInstance<TResult> Repeat<TResult>(TResult element, int count);
+        public static extern IEnumerable<TResult> Repeat<TResult>(TResult element, int count);
 
         /// <summary>
         /// Inverts the order of the elements in a sequence.

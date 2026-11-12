@@ -59,7 +59,12 @@ public sealed partial class Emitter
             catch { continue; } // never let one type's metadata abort the whole build
             if (json is null) continue;
 
-            var typeArgs = type.IsGenericType && !IsIgnoreGeneric(type)
+            // The metadata function takes the same type parameters as the type's define. That is
+            // generic even for a source type marked [IgnoreGeneric] (only an [External] binding is
+            // really non-generic at runtime, and an external type has no metadata emitted here), so
+            // dropping the parameters for one left its metadata naming an unbound `T` and every
+            // reflection read of it threw "ReferenceError: T is not defined".
+            var typeArgs = type.IsGenericType
                 ? string.Join(", ", type.TypeParameters.Select(tp => tp.Name))
                 : "";
             entries.Add($"$m(\"{MetaTypeDefName(type)}\", function ({typeArgs}) {{ return {json}; }}, $n);");

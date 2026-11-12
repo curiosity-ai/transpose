@@ -1129,6 +1129,21 @@
                             return System.Array.is(obj, type);
                         }
 
+                        // A linq.js sequence (or lookup) is one constructor for every element type,
+                        // so a constructed IEnumerable<T> is answered from the element type the
+                        // emitter recorded on it (linq.js, Enumerable.$isEnumerableOf).
+                        if (type.$genericTypeDefinition && Transpose.Linq) {
+                            var linqAnswer = obj instanceof Transpose.Linq.Enumerable
+                                ? Transpose.Linq.Enumerable.$isEnumerableOf(obj, type)
+                                : obj instanceof System.Linq.Lookup$2
+                                    ? Transpose.Linq.Enumerable.$isEnumerableOf(obj, type, System.Linq.IGrouping$2)
+                                    : null;
+
+                            if (linqAnswer !== null) {
+                                return linqAnswer;
+                            }
+                        }
+
                         return type.isAssignableFrom ? type.isAssignableFrom(ctor) : Transpose.Reflection.getInterfaces(ctor).indexOf(type) >= 0;
                     }
 

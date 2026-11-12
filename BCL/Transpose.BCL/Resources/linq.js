@@ -233,6 +233,34 @@
     Enumerable.$$inherits = [];
     Transpose.Class.addExtend(Enumerable, [System.Collections.IEnumerable]);
 
+    // `seq is IEnumerable<T>` for a linq.js sequence. A sequence only registers the non-generic
+    // IEnumerable — one constructor serves every element type — so the generic interface used to
+    // answer false for every LINQ result, and `as IEnumerable<T>` handed back null. The element type
+    // is recorded where the emitter knows it (TransposeR.seqOf, on the outermost LINQ call of a
+    // chain); it is compared with .NET's rules: an exact match for a value type, covariance for a
+    // reference type (IEnumerable<string> is an IEnumerable<object>, IEnumerable<int> is not). A
+    // sequence nothing stamped (built by hand-written JavaScript) answers true, as an untyped array
+    // does for IEnumerable<T> — the elements of a lazy sequence cannot be read to find out without
+    // running it. Answers null for any other type, leaving it to the caller.
+    Enumerable.$isEnumerableOf = function (obj, type, elementType) {
+        if (type.$genericTypeDefinition !== System.Collections.Generic.IEnumerable$1 || !type.$typeArguments) {
+            return null;
+        }
+
+        var target = type.$typeArguments[0],
+            et = elementType || obj.$elementType;
+
+        if (!et || target === System.Object && !Transpose.Reflection.isValueType(et)) {
+            return true;
+        }
+
+        if (Transpose.Reflection.isValueType(et) || Transpose.Reflection.isValueType(target)) {
+            return et === target;
+        }
+
+        return Transpose.Reflection.isAssignableFrom(target, et);
+    };
+
     // Utility
 
     Enumerable.Utils = {}; // container

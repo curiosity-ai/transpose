@@ -142,7 +142,7 @@ public sealed partial class Emitter
                 }
                 else
                 {
-                    EmitInvocation(invocation);
+                    EmitStampingSequence(invocation, () => EmitInvocation(invocation));
                 }
                 break;
             case ObjectCreationExpressionSyntax creation:
@@ -316,7 +316,7 @@ public sealed partial class Emitter
                 EmitAnonymousObject(anon);
                 break;
             case QueryExpressionSyntax query:
-                EmitQuery(query);
+                EmitStampingSequence(query, () => EmitQuery(query));
                 break;
             case WithExpressionSyntax with:
                 // Arrow so a `this`-qualified initializer value (record `with { X = this.Y }`)
@@ -1474,7 +1474,11 @@ public sealed partial class Emitter
         if (sym is IPropertySymbol { GetMethod: { } getM } prop
             && TransposeNaming.GetTemplate(getM.OriginalDefinition) is { } propTpl)
         {
-            _w.Write(SubstituteTemplate(propTpl, recv, new(), new(), TemplateTypeArgs(prop)));
+            // Through WriteTemplate, like a plain `a.P`: a template that does not mention {this}
+            // ("key()" — IGrouping.Key) is relative to the receiver. Substituting it bare emitted
+            // `$nc == null ? null : key()` for `g?.Key`, a ReferenceError on every non-null g.
+            WriteTemplate(propTpl, isStatic: prop.IsStatic, isExtension: false,
+                prop.IsStatic ? TypeRef(prop.ContainingType) : recv, new(), new(), TemplateTypeArgs(prop));
             return;
         }
         _w.Write($"{recv}.{(sym is not null ? TransposeNaming.MemberJsName(sym) : NameMangler.JsIdentifier(binding.Name.Identifier.Text))}");
@@ -1500,9 +1504,26 @@ public sealed partial class Emitter
     private void EmitElementBinding(ElementBindingExpressionSyntax elemBind)
     {
         var recv = _condReceiver ?? "this";
-        if (_model.GetSymbolInfo(elemBind).Symbol is IPropertySymbol { IsIndexer: true } idx
-            && idx.ContainingType.SpecialType != SpecialType.System_String
-            && !TransposeNaming.IsNativeIndexer(idx))
+        var idxSym = _model.GetSymbolInfo(elemBind).Symbol as IPropertySymbol;
+
+        // The same cases, in the same order, as a plain `a[i]` (EmitElementAccess). A string
+        // indexer yields a char, i.e. a code point — `$nc[0]` would be a one-character string.
+        if (idxSym is { IsIndexer: true } && idxSym.ContainingType.SpecialType == SpecialType.System_String)
+        {
+            _w.Write($"{recv}.charCodeAt(");
+            EmitArgumentList(elemBind.ArgumentList);
+            _w.Write(")");
+            return;
+        }
+        // An indexer getter [Template] (ILookup's `get({0})`): the accessor below does not exist.
+        if (idxSym is { IsIndexer: true, GetMethod: { } getM }
+            && TransposeNaming.GetTemplate(getM.OriginalDefinition) is { } getTpl)
+        {
+            var args = elemBind.ArgumentList.Arguments.Select(a => Capture(() => EmitExpression(a.Expression))).ToList();
+            WriteTemplate(getTpl, idxSym.IsStatic, isExtension: false, recv, new(), args);
+            return;
+        }
+        if (idxSym is { IsIndexer: true } idx && !TransposeNaming.IsNativeIndexer(idx))
         {
             _w.Write($"{recv}.{TransposeNaming.IndexerAccessorName(idx, isGet: true)}(");
             EmitArgumentList(elemBind.ArgumentList);
