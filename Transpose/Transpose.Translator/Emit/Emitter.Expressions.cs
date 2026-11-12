@@ -142,7 +142,7 @@ public sealed partial class Emitter
                 }
                 else
                 {
-                    EmitInvocation(invocation);
+                    EmitStampingSequence(invocation, () => EmitInvocation(invocation));
                 }
                 break;
             case ObjectCreationExpressionSyntax creation:
@@ -316,7 +316,7 @@ public sealed partial class Emitter
                 EmitAnonymousObject(anon);
                 break;
             case QueryExpressionSyntax query:
-                EmitQuery(query);
+                EmitStampingSequence(query, () => EmitQuery(query));
                 break;
             case WithExpressionSyntax with:
                 // Arrow so a `this`-qualified initializer value (record `with { X = this.Y }`)

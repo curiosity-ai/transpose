@@ -742,6 +742,17 @@ The short version:
   to the numeric types JavaScript cannot tell apart, and it is the ambiguity the next bullet already
   carries. A real C# array never reaches any of this — it answers from its own `$type` — so this costs
   a normal program nothing. Covered by `JsArrayTypeIdentityTests`.
+- **A LINQ result answers `is IEnumerable<T>` from a recorded element type (`TransposeR.seqOf`).**
+  The LINQ surface binds to linq.js, where one `Enumerable` constructor serves every element type, so a
+  sequence registered only the non-generic `IEnumerable`: every `is IEnumerable<T>` of a LINQ result was
+  false and `as IEnumerable<T>` was null. The emitter knows the element type statically, so the
+  **outermost** call of a chain to an external `System.Linq` binding (and a query expression) is emitted
+  as `TransposeR.seqOf(call, T)`, which records it on the sequence; an intermediate result is never a
+  value, so it is not stamped (`Emitter.SequenceStamp.cs`). `Transpose.is` then compares it with .NET's
+  rules — exact for a value type, covariant for a reference type (`Enumerable.$isEnumerableOf` in
+  linq.js; a lookup enumerates `IGrouping`). A sequence nothing stamped — built by hand-written
+  JavaScript, or a single group out of `GroupBy` — answers true for every `IEnumerable<T>`, as an untyped
+  array does, because a lazy sequence cannot be run to look. `LinqSequenceTypeTestTests`.
 - **A boxed numeric loses its exact type.** Every JS number is a double, so `(object)1 is double` is
   true and `objects.OfType<double>()` also matches the boxed `int`s. `long`/`ulong`/`decimal` are
   real runtime objects and are unaffected, as are reference types and structs.
