@@ -210,7 +210,17 @@ public sealed partial class Emitter
                 if (named.IsGenericType && named.TypeArguments.Length > 0)
                 {
                     var baseName = (string.IsNullOrEmpty(ns) ? "" : ns + ".") + StripArity(named.Name) + "$" + named.Arity;
-                    if (unbound) return baseName;
+                    // An [IgnoreGeneric] binding is NOT a generic definition at runtime: linq.js
+                    // defines System.Linq.IGrouping$2 / Grouping$2 / IOrderedEnumerable$1 / … as
+                    // plain constructors (or Transpose.definei interfaces). Applying one to type
+                    // arguments CALLS it without `new` — for a definei interface that runs the
+                    // default ctor and throws "this.$initialize is not a function", e.g. from the
+                    // metadata of a method returning IEnumerable<IGrouping<string, object>>; for
+                    // Grouping$2 it silently writes `key`/`getSource` onto System.Linq and yields
+                    // undefined (the ToArray type argument of GroupBy(…).ToArray()). The
+                    // arity-suffixed name alone is the runtime type.
+                    if (unbound || named.OriginalDefinition.GetAttributes().Any(a => TransposeNaming.AttrIs(a, "Transpose.IgnoreGenericAttribute")))
+                        return baseName;
                     var args = string.Join(", ", named.TypeArguments.Select(TypeRef));
                     return $"{baseName}({args})";
                 }
