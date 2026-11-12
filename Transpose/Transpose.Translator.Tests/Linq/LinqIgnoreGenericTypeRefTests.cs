@@ -13,7 +13,7 @@ namespace Transpose.Translator.Tests.Linq
     /// reflection metadata of a method returning <c>IEnumerable&lt;IGrouping&lt;string, object&gt;&gt;</c>
     /// was read, and <c>GroupBy(…).ToArray()</c> passed <c>Grouping$2(…)</c> — which wrote
     /// <c>key</c>/<c>getSource</c> onto <c>System.Linq</c> and returned undefined — as the array's
-    /// element type.
+    /// element type. (GroupBy now yields IGrouping, as in .NET, so that is the element type written.)
     /// </summary>
     [TestClass]
     public class LinqIgnoreGenericTypeRefTests : TranslatorTestBase
@@ -76,7 +76,7 @@ public class Program
             foreach (var t in new[] { "IGrouping$2(", "Grouping$2(", "ILookup$2(", "IOrderedEnumerable$1(" })
                 Assert.IsFalse(js.Contains("System.Linq." + t) || js.Contains("Linq." + t),
                     $"an [IgnoreGeneric] type must be referenced by its bare name, never applied: found {t}\n" + js);
-            Assert.IsTrue(js.Contains(".ToArray(System.Linq.Grouping$2)"), js);
+            Assert.IsTrue(js.Contains(".ToArray(System.Linq.IGrouping$2)"), js);
         }
     }
 }

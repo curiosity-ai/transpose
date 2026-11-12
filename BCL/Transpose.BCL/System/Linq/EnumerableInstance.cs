@@ -129,13 +129,13 @@ namespace System.Linq
 
         public extern void ForEach(Func<TElement, int, bool> action);
 
-        public extern EnumerableInstance<Grouping<TKey, TElement>> GroupBy<TKey>(Func<TElement, TKey> keySelector);
+        public extern EnumerableInstance<IGrouping<TKey, TElement>> GroupBy<TKey>(Func<TElement, TKey> keySelector);
 
         [Transpose.Template("{this}.groupBy({keySelector}, null, null, {comparer})")]
-        public extern EnumerableInstance<Grouping<TKey, TElement>> GroupBy<TKey>(Func<TElement, TKey> keySelector,
+        public extern EnumerableInstance<IGrouping<TKey, TElement>> GroupBy<TKey>(Func<TElement, TKey> keySelector,
             IEqualityComparer<TKey> comparer);
 
-        public extern EnumerableInstance<Grouping<TKey, TSource>> GroupBy<TKey, TSource>(Func<TSource, TKey> keySelector,
+        public extern EnumerableInstance<IGrouping<TKey, TSource>> GroupBy<TKey, TSource>(Func<TSource, TKey> keySelector,
             Func<TSource, TSource> elementSelector);
 
         [Transpose.Template("{this}.groupBy({keySelector}, null, {resultSelector})")]
@@ -143,7 +143,7 @@ namespace System.Linq
             Func<TKey, IEnumerable<TElement>, TResult> resultSelector);
 
         [Transpose.Template("{this}.groupBy({keySelector}, {elementSelector}, null, {comparer})")]
-        public extern EnumerableInstance<Grouping<TKey, TSource>> GroupBy<TKey, TSource>(Func<TSource, TKey> keySelector,
+        public extern EnumerableInstance<IGrouping<TKey, TSource>> GroupBy<TKey, TSource>(Func<TSource, TKey> keySelector,
             Func<TSource, TSource> elementSelector, IEqualityComparer<TKey> comparer);
 
         public extern EnumerableInstance<TResult> GroupBy<TKey, TSource, TResult>(Func<TSource, TKey> keySelector,
@@ -279,13 +279,13 @@ namespace System.Linq
 
         public extern EnumerableInstance<TResult> Pairwise<TResult>(Func<TElement, TElement, TResult> selector);
 
-        public extern EnumerableInstance<Grouping<TKey, TElement>> PartitionBy<TKey>(Func<TElement, TKey> keySelector);
+        public extern EnumerableInstance<IGrouping<TKey, TElement>> PartitionBy<TKey>(Func<TElement, TKey> keySelector);
 
         [Transpose.Template("{this}.partitionBy({keySelector}, null, null, {comparer})")]
-        public extern EnumerableInstance<Grouping<TKey, TElement>> PartitionBy<TKey>(Func<TElement, TKey> keySelector,
+        public extern EnumerableInstance<IGrouping<TKey, TElement>> PartitionBy<TKey>(Func<TElement, TKey> keySelector,
             IEqualityComparer<TKey> comparer);
 
-        public extern EnumerableInstance<Grouping<TKey, TSource>> PartitionBy<TKey, TSource>(
+        public extern EnumerableInstance<IGrouping<TKey, TSource>> PartitionBy<TKey, TSource>(
             Func<TSource, TKey> keySelector, Func<TSource, TSource> elementSelector);
 
         [Transpose.Template("{this}.partitionBy({keySelector}, null, {resultSelector})")]
@@ -293,7 +293,7 @@ namespace System.Linq
             Func<TKey, IEnumerable<TElement>, TResult> resultSelector);
 
         [Transpose.Template("{this}.partitionBy({keySelector}, {elementSelector}, null, {comparer})")]
-        public extern EnumerableInstance<Grouping<TKey, TSource>> PartitionBy<TKey, TSource>(
+        public extern EnumerableInstance<IGrouping<TKey, TSource>> PartitionBy<TKey, TSource>(
             Func<TSource, TKey> keySelector, Func<TSource, TSource> elementSelector, IEqualityComparer<TKey> comparer);
 
         public extern EnumerableInstance<TResult> PartitionBy<TKey, TSource, TResult>(Func<TSource, TKey> keySelector,
