@@ -117,7 +117,7 @@ public static class CompilationBuilder
     /// </summary>
     /// <summary>Assembly name of the base library. Its package id is Transpose.BCL, but the assembly
     /// it ships stays <c>Transpose</c> — that is what a reference has to be matched on.</summary>
-    private const string BaseLibraryAssemblyName = "Transpose";
+    private const string BaseLibraryAssemblyName = TransposeAssemblies.BaseLibraryAssemblyName;
 
     private static IReadOnlyList<MetadataReference> GetReferenceAssemblies(IEnumerable<string>? extraReferencePaths)
     {
@@ -130,10 +130,10 @@ public static class CompilationBuilder
                 if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) continue;
                 if (string.Equals(Path.GetFullPath(path), tpsDll, StringComparison.OrdinalIgnoreCase)) continue;
 
-                // …and a SECOND copy of the base library at a different path, which is what a project
-                // whose Transpose.BCL PackageReference is not the version TransposeAssemblies
-                // discovered resolves to (a newer one in the NuGet cache, or a TRANSPOSE_DLL_PATH
-                // pointing at a locally built runtime). Both would bind, and the damage is silent:
+                // …and a SECOND copy of the base library at a different path. A project build points
+                // TransposeAssemblies at the copy its references resolved (UseBaseLibraryOf), so this
+                // is left for a TRANSPOSE_DLL_PATH pointing at a locally built runtime, and for a
+                // caller that passes references without choosing. Both would bind, and the damage is silent:
                 // overload numbering asks whether a method has an IL body by looking its metadata
                 // TOKEN up in a set read from TransposeDllPath (see TransposeNaming.HasNoBody), and a
                 // token from the other file names an unrelated method. Members are then misread as

@@ -20,18 +20,71 @@ public static class TransposeAssemblies
     private static string? _runtimeJs;
     private static HashSet<int>? _noBodyTokens;
 
-    /// <summary>Path to Transpose.dll, discovered from the NuGet global-packages cache (overridable).</summary>
+    /// <summary>
+    /// Path to Transpose.dll: <c>TRANSPOSE_DLL_PATH</c> when set, otherwise the newest base library in
+    /// the NuGet global-packages cache — unless a project build chose its own with
+    /// <see cref="UseBaseLibraryOf"/>. Setting it to a different file drops everything read from the
+    /// previous one (the runtime JS and the no-body method tokens), because both are only meaningful
+    /// for the file they were read from.
+    /// </summary>
     public static string TransposeDllPath
     {
         get => _tpsDllPath ??= Discover();
-        set => _tpsDllPath = value;
+        set => Select(value);
+    }
+
+    /// <summary>
+    /// Binds the next compilation to the base library its own references resolved to — the
+    /// <c>Transpose.BCL</c> version the project (or a package it depends on) asked for, found among
+    /// <paramref name="referencePaths"/> by assembly name. <c>TRANSPOSE_DLL_PATH</c> still wins, so a
+    /// dev tree can compile against a locally built runtime. With neither, the choice falls back to
+    /// the newest base library in the NuGet cache, as for a compilation with no project.
+    ///
+    /// Without this a project build bound the newest <c>Transpose.BCL</c> in the cache whatever it
+    /// pinned, while its site shipped the <c>tps.js</c> of the version it pinned (the site build
+    /// extracts the runtime from the project's own references). Whether a commit compiled then depended
+    /// on which other projects had filled the machine's cache, and a build that did compile bound its
+    /// C# against one BCL and ran on the runtime JavaScript of another.
+    ///
+    /// The choice is process-wide, like the rest of this class: a host that builds several projects
+    /// calls this before each compilation (the library serializes compilations, so they cannot race).
+    /// Returns the file chosen, or null when the choice is left to the lazy NuGet-cache discovery.
+    /// </summary>
+    public static string? UseBaseLibraryOf(IEnumerable<string> referencePaths)
+    {
+        var chosen = EnvironmentOverride()
+                     ?? referencePaths.FirstOrDefault(p => File.Exists(p)
+                                                           && AssemblySimpleName(p) == BaseLibraryAssemblyName);
+        Select(chosen);
+        return chosen;
+    }
+
+    /// <summary>Assembly name of the base library. Its package id is <c>Transpose.BCL</c>, but the
+    /// assembly it ships stays <c>Transpose</c>.</summary>
+    public const string BaseLibraryAssemblyName = "Transpose";
+
+    /// <summary>Points everything at <paramref name="path"/> (null: discover lazily), dropping what was
+    /// read from the previous file when it is a different one.</summary>
+    private static void Select(string? path)
+    {
+        var full = path is null ? null : Path.GetFullPath(path);
+        if (string.Equals(full, _tpsDllPath is null ? null : Path.GetFullPath(_tpsDllPath), StringComparison.Ordinal))
+            return;
+        _tpsDllPath = full;
+        _runtimeJs = null;
+        _noBodyTokens = null;
+    }
+
+    private static string? EnvironmentOverride()
+    {
+        var env = Environment.GetEnvironmentVariable("TRANSPOSE_DLL_PATH");
+        return !string.IsNullOrEmpty(env) && File.Exists(env) ? env : null;
     }
 
     private static string Discover()
     {
         // Allow explicit override.
-        var env = Environment.GetEnvironmentVariable("TRANSPOSE_DLL_PATH");
-        if (!string.IsNullOrEmpty(env) && File.Exists(env)) return env;
+        if (EnvironmentOverride() is { } env) return env;
 
         // Resolve Transpose.dll from the NuGet global-packages cache using the same flow as h5
         // (Translator.GetPackagesCacheFolder): honour NUGET_PACKAGES first, then the per-platform

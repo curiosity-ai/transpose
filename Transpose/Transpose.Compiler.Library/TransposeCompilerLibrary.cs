@@ -217,6 +217,10 @@ public static class TransposeCompilerLibrary
         if (BuildStamp.CheckReferences(request.ReferencePaths) is { } outdated)
             return CompilationResult.Failed(new[] { outdated });
 
+        // A request that references a Transpose.BCL package binds that version; one that does not
+        // gets the newest in the NuGet cache, whatever a previous build in this process chose.
+        TransposeAssemblies.UseBaseLibraryOf(request.ReferencePaths);
+
         var translator = new RoslynTranslator();
         var result = translator.BuildAssembly(
             request.Sources,

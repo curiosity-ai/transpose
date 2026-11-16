@@ -185,9 +185,17 @@ and the feature-by-feature roadmap (naming there predates the rebrand).
 
 ### The base reference assembly (`Transpose.dll`) and the runtime (`tps.js`)
 
-`CompilationBuilder` always injects `Transpose.dll` as the sole BCL reference (`TransposeAssemblies`
-locates it in the NuGet cache under package `Transpose.BCL` — the historical `Transpose` id is still
-probed for older caches — or via the `TRANSPOSE_DLL_PATH` env var).
+`CompilationBuilder` always injects `Transpose.dll` as the sole BCL reference. Which file that is,
+in order: the `TRANSPOSE_DLL_PATH` env var; for a project build (`ProjectBuild`, and
+`TransposeCompilerLibrary.Compile` with a `Transpose.BCL` package reference), the `Transpose.dll` the
+project's own references resolved to, i.e. the `Transpose.BCL` version it pins
+(`TransposeAssemblies.UseBaseLibraryOf`, called before each compilation, and again for the root project
+after its referenced projects were built); otherwise the newest `Transpose.BCL` in the NuGet cache (the
+historical `Transpose` id is still probed for older caches). A project build used to take the newest in
+the cache whatever it pinned, while its site shipped the pinned version's `tps.js` (the site build
+extracts the runtime from the project's references): whether a commit compiled depended on what else
+had been restored on the machine. Changing the file drops what was read from the previous one (the
+runtime JS, the no-body method tokens).
 `Transpose.dll` redefines `System.*` with the codegen attributes that drive emission, and embeds the
 JS runtime `tps.js`. Generated code runs against that runtime.
 

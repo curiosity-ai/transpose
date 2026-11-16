@@ -237,6 +237,7 @@ internal static class ProjectBuild
         if (project.ReferencedProjectDlls.Count > 0)
             log.Info($"  projects:   {string.Join(", ", project.ReferencedProjectDlls.Select(Path.GetFileName))}");
         log.Info($"  defines:    {string.Join(";", project.DefineConstants)}");
+        UseProjectBaseLibrary(project, log);
         log.Info($"  config:     {configuration}");
         log.Info($"  lang:       {project.LanguageVersion}");
 
@@ -293,6 +294,12 @@ internal static class ProjectBuild
             log.Error("\nFAILED building referenced projects.");
             return BuildOutcome.NoSite(1);
         }
+
+        // Each referenced project above chose the base library its own references resolved to; this
+        // project's choice has to be put back before anything below reads it (the cache fingerprint,
+        // the compilation, the site's runtime).
+        if (options.SeparateAssemblies && !options.SkipReferenceBuilds)
+            TransposeAssemblies.UseBaseLibraryOf(project.ReferencePaths);
 
         // A site build still emits the .NET assembly: the Transpose.Build.Target SDK declares the
         // project's <Assembly>.dll as its build output, and MSBuild copies it for any project that
@@ -527,6 +534,17 @@ internal static class ProjectBuild
     /// tps.json's <c>output</c> resolves to.</summary>
     private static string SiteDirectory(BuildOptions options, TransposeJson config, ResolvedProject project)
         => options.SiteDir ?? ResolveOutputDir(config, project.ProjectDir, options.Configuration);
+
+    /// <summary>
+    /// Binds the compilation to the <c>Transpose.BCL</c> version the project's references resolved to
+    /// (see <see cref="TransposeAssemblies.UseBaseLibraryOf"/>) and logs which file that is, so "which
+    /// BCL did this build use?" is answerable from tps.log.
+    /// </summary>
+    private static void UseProjectBaseLibrary(ResolvedProject project, BuildLog log)
+    {
+        var chosen = TransposeAssemblies.UseBaseLibraryOf(project.ReferencePaths);
+        log.Info($"  bcl:        {chosen ?? "newest Transpose.BCL in the NuGet cache (the project references none)"}");
+    }
 
     /// <summary>
     /// Whether this compiler is new enough for everything the project binds against — every referenced
@@ -836,6 +854,10 @@ internal static class ProjectBuild
                 $"Failed to resolve project '{Path.GetFileName(csproj)}': {ex.Message}");
             return false;
         }
+
+        // A dependency binds the base library it pinned, which need not be the root project's. Chosen
+        // before the cache is consulted: its fingerprint includes the base library (`bcl=`).
+        TransposeAssemblies.UseBaseLibraryOf(project.ReferencePaths);
 
         // A dependency can reference a package the root project does not, so it gets its own check.
         if (!CompilerIsNewEnough(project.ReferencePaths, log)) return false;
