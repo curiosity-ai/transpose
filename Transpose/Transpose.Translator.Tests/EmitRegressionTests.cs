@@ -4229,5 +4229,31 @@ public class Program
     }
 }");
         }
+
+        /// <summary>
+        /// BitConverter's byte order follows IsLittleEndian. Its value used to come from a
+        /// /*@ ... */ inline block that the translator drops, so it was always false and the
+        /// 64-bit and floating-point paths wrote big-endian bytes.
+        /// </summary>
+        [TestMethod]
+        public async Task BitConverterWritesLittleEndianBytes()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        Console.WriteLine(string.Join("","", BitConverter.GetBytes(0x0102030405060708L)));
+        Console.WriteLine(BitConverter.ToInt64(BitConverter.GetBytes(0x0102030405060708L), 0));
+        Console.WriteLine(string.Join("","", BitConverter.GetBytes(1.5)));
+        Console.WriteLine(BitConverter.ToDouble(BitConverter.GetBytes(-2.25), 0));
+        Console.WriteLine(string.Join("","", BitConverter.GetBytes(1.5f)));
+        Console.WriteLine(BitConverter.DoubleToInt64Bits(1.0));
+        Console.WriteLine(BitConverter.ToInt32(BitConverter.GetBytes(258), 0));
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
     }
 }

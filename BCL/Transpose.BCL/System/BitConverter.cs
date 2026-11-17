@@ -11,7 +11,8 @@
         /// The value is set to true if the architecture is
         /// little endian; false if it is big endian.
         /// </summary>
-        public static readonly bool IsLittleEndian = GetIsLittleEndian();
+        // Every JavaScript host Transpose targets (browsers, Node on x86/ARM) is little-endian.
+        public static readonly bool IsLittleEndian = true;
 
         private static string Arg_ArrayPlusOffTooSmall = "Destination array is not long enough to copy all the items in the collection. Check array index and length.";
 
@@ -532,22 +533,6 @@
             }
 
             return view;
-        }
-
-        private static bool GetIsLittleEndian()
-        {
-            var view = View(2);
-
-            /*@
-            view.setUint8(0, 170);
-            view.setUint8(1, 187);
-
-            if (view.getUint16(0) === 43707) {
-                return true;
-            }
-            */
-
-            return false;
         }
 
         private static void CheckArguments(byte[] value, int startIndex, int size)
