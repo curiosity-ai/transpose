@@ -903,6 +903,12 @@ public sealed partial class Emitter
         {
             var ordered = new ExpressionSyntax?[method.Parameters.Length];
             var paramIndexOf = new int[args.Count]; // source-arg k → the parameter index it binds to
+            // The positional arguments at or past a trailing `params` parameter's slot are its expanded
+            // elements (`M(a, flag: false, x, y, z)`): all of them belong to that one parameter. Without
+            // collecting them, only the first landed in the slot and the rest fell off the end.
+            var paramsIdx = method.Parameters.Length > 0 && method.Parameters[^1].IsParams && ShouldWrapParams(method)
+                ? method.Parameters.Length - 1 : -1;
+            List<ExpressionSyntax>? paramsElements = null;
             for (var i = 0; i < args.Count; i++)
             {
                 var arg = args[i];
@@ -911,6 +917,12 @@ public sealed partial class Emitter
                     var idx = ParameterIndex(method, arg.NameColon.Name.Identifier.Text);
                     paramIndexOf[i] = idx;
                     if (idx >= 0) ordered[idx] = arg.Expression;
+                }
+                else if (paramsIdx >= 0 && i >= paramsIdx)
+                {
+                    (paramsElements ??= new()).Add(arg.Expression);
+                    ordered[paramsIdx] ??= arg.Expression;
+                    paramIndexOf[i] = paramsIdx;
                 }
                 else if (i < ordered.Length)
                 {
@@ -984,6 +996,22 @@ public sealed partial class Emitter
                     // its own default via `if (arg === undefined) arg = <default>`, matching the legacy
                     // compiler. Passing `null` would defeat that check when the default is non-null.
                     _w.Write("void 0");
+                }
+                else if (i == paramsIdx && paramsElements is { Count: > 1 })
+                {
+                    // Several expanded elements after a named argument: collect them all.
+                    var elems = paramsElements;
+                    var pElem = ParamsElementType(method.Parameters[i].Type);
+                    EmitCollectionOf(method.Parameters[i].Type, () =>
+                    {
+                        _w.Write("[");
+                        for (var e = 0; e < elems.Count; e++)
+                        {
+                            if (e > 0) _w.Write(", ");
+                            EmitExpressionConverted(elems[e], pElem, foreignCallee);
+                        }
+                        _w.Write("]");
+                    }, elems.ToArray());
                 }
                 else if (i == method.Parameters.Length - 1 && method.Parameters[i].IsParams && ShouldWrapParams(method))
                 {

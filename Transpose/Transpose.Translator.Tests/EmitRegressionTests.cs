@@ -51,6 +51,27 @@ public class Program
 }");
         }
 
+        // ---- a named argument followed by an expanded params list --------------
+
+        [TestMethod]
+        public async Task NamedArgumentFollowedByExpandedParamsKeepsEveryElement()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    static void Chart(string title, int n, bool zero, params string[] series)
+        => Console.WriteLine(title + "" "" + n + "" "" + zero + "" "" + series.Length + "" "" + string.Join("","", series));
+    public static void Main()
+    {
+        Chart(""a"", 1, zero: false, ""x"", ""y"", ""z"");
+        Chart(""a"", 1, zero: false, ""x"");
+        Chart(""a"", 1, zero: false);
+        Chart(""a"", 1, zero: false, new[] { ""p"", ""q"" });
+    }
+}");
+        }
+
         // ---- await inside an out/ref call --------------------------------------
 
         [TestMethod]
