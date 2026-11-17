@@ -623,9 +623,8 @@ internal static class TransposeNaming
             foreach (var m in t.GetMembers(name))
             {
                 if (SymbolEqualityComparer.Default.Equals(m, symbol)) continue;
-                if (m.IsStatic != symbol.IsStatic || m.IsImplicitlyDeclared) continue;
+                if (m.IsStatic != symbol.IsStatic) continue;
                 if (m is IMethodSymbol { MethodKind: not MethodKind.Ordinary }) continue;
-                if (m is INamedTypeSymbol) continue;
                 return true;
             }
         }

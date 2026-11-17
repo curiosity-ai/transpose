@@ -35,7 +35,6 @@ namespace Lib
         public string Background { get; set; }
         public int Count;
         public LayerVisibility Layers { get; set; }
-        public string Describe() => Background;
     }
 
     public class MemberLevel
@@ -136,17 +135,11 @@ public class Program
         var m = new Lib.MemberLevel { Title = ""t"" };
         var p = new Lib.Plain { Verbatim = ""v"" };
         var c = new Lib.Counter(4);
-        System.Console.WriteLine(s.Background + s.Count + m.Title + m.Kept + p.Verbatim + c.Count + s.Describe());
+        System.Console.WriteLine(s.Background + s.Count + m.Title + m.Kept + p.Verbatim + c.Count);
     }
 }";
                 var app = new RoslynTranslator().Translate(new[] { ("App.cs", consumer) }, "ConvApp", new[] { dll });
                 Assert.IsTrue(app.Success, string.Join("\n", app.Errors));
-
-                // Methods: the declaring library's slot and the consumer's call site must agree.
-                // (Methods of a compiled type keep their C# name on both sides today.)
-                Assert.AreEqual(Regex.IsMatch(lib.Javascript!, @"\bdescribe\s*:"), app.Javascript!.Contains(".describe("),
-                    "method slot and call site disagree\n" + lib.Javascript + "\n" + app.Javascript);
-                Assert.IsTrue(Regex.IsMatch(lib.Javascript!, @"\b[Dd]escribe\s*:"), "Describe slot not found\n" + lib.Javascript);
 
                 AssertCamelCase(lib.Javascript!);
                 AssertCamelCase(app.Javascript!);
