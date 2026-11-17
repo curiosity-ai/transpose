@@ -5,7 +5,9 @@ namespace System.ComponentModel
     /// <summary>
     /// Specifies whether a property or event should be displayed in a Properties window.
     /// </summary>
-    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    // Methods only: fields keep their C# name. The self-built runtime emits fields of this non-[External]
+    // type verbatim, so a field-covering convention would make user code read a name tps.js never defines.
+    [Transpose.Convention(Member = Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
     [AttributeUsage(AttributeTargets.All)]
     public sealed class BrowsableAttribute : Attribute
     {

@@ -4255,5 +4255,45 @@ public class Program
     }
 }", waitForOutput: "<<DONE>>");
         }
+
+        /// <summary>
+        /// A static field of a non-[External] BCL type under a field-covering [Convention]. The
+        /// runtime is self-built, where the field keeps its C# name; user code references
+        /// Transpose.dll, where the convention applies. Both sides must agree on the JS name.
+        /// </summary>
+        [TestMethod]
+        public async Task BitConverterIsLittleEndianIsReadableFromUserCode()
+        {
+            await RunTest(@"
+using System;
+public class Program
+{
+    public static void Main()
+    {
+        Console.WriteLine(BitConverter.IsLittleEndian);
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
+
+        /// <summary>Same shape as <see cref="BitConverterIsLittleEndianIsReadableFromUserCode"/>,
+        /// for the static readonly instances on BrowsableAttribute.</summary>
+        [TestMethod]
+        public async Task BrowsableAttributeStaticInstancesAreReadableFromUserCode()
+        {
+            await RunTest(@"
+using System;
+using System.ComponentModel;
+public class Program
+{
+    public static void Main()
+    {
+        Console.WriteLine(BrowsableAttribute.Yes.Browsable);
+        Console.WriteLine(BrowsableAttribute.No.Browsable);
+        Console.WriteLine(BrowsableAttribute.Default.Browsable);
+        Console.WriteLine(""<<DONE>>"");
+    }
+}", waitForOutput: "<<DONE>>");
+        }
     }
 }
