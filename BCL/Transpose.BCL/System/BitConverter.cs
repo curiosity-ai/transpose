@@ -3,7 +3,9 @@
     /// <summary>
     /// Converts base data types to an array of bytes, and an array of bytes to base data types.
     /// </summary>
-    [Transpose.Convention(Member = Transpose.ConventionMember.Field | Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
+    // Methods only: fields keep their C# name. The self-built runtime emits fields of this non-[External]
+    // type verbatim, so a field-covering convention would make user code read a name tps.js never defines.
+    [Transpose.Convention(Member = Transpose.ConventionMember.Method, Notation = Transpose.Notation.CamelCase)]
     public static class BitConverter
     {
         /// <summary>
