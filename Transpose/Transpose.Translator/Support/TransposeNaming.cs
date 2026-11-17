@@ -568,15 +568,27 @@ internal static class TransposeNaming
         if (symbol is IFieldSymbol { ContainingType.TypeKind: TypeKind.Enum } enumMember)
             return EnumNameCasing(enumMember.Name, EnumEmitMode(enumMember.ContainingType));
 
-        // A compiled type's member keeps its verbatim C# name. An [External] type's member does
-        // NOT short-circuit here even when in source (self-building the BCL): its members bind to
-        // native JS names via [Convention]/casing — e.g. String.Length ([External] +
-        // [Convention(CamelCase)]) must emit `length` to hit the native JS string property.
-        if (AnyInSource(symbol.Locations) && !IsExternalType(symbol.ContainingType))
+        // Property / field / event: an explicit [Convention] (member-level, else type-level for that
+        // member kind) wins; else camelCase under an [External] type; else the verbatim C# name.
+        //
+        // This is the SAME rule whether the member is in this compilation's source or read from a
+        // referenced DLL. It must be: the declaring library and every project that references it
+        // have to agree on the slot name. A source-only shortcut that returned the verbatim name
+        // here ignored a compiled type's [Convention] inside its own assembly while consumers
+        // applied it, so `[Convention(CamelCase)] class T { string Background }` was written as
+        // `Background` by the library and as `background` by the app. An [External] type in source
+        // (self-building the BCL) takes the same path: String.Length ([External] +
+        // [Convention(CamelCase)]) emits `length` to hit the native JS string property.
+        //
+        // The one exception is a non-[External] type of a Transpose runtime assembly while it is
+        // self-built (--build-runtime): tps.js is generated with the verbatim names and the
+        // hand-written runtime depends on that layout. E.g. KeyValuePair's `Key` property carries
+        // [Convention(CamelCase)] next to a private field `key`; camelCasing the property in source
+        // would install a getter-only `key` accessor that the constructor's `this.key = ...` hits.
+        if (AnyInSource(symbol.Locations) && !IsExternalType(symbol.ContainingType)
+            && IsTransposeRuntimeAssembly(symbol.ContainingAssembly))
             return symbol.Name;
 
-        // Property / field / event: camelCase under an [External] type or a
-        // [Convention] covering that member kind; otherwise preserve.
         var kindFlag = symbol.Kind switch
         {
             SymbolKind.Property => ConvProperty,
@@ -587,7 +599,37 @@ internal static class TransposeNaming
         var notation = MemberConventionNotation(symbol)
                        ?? ResolveNotation(symbol.ContainingType, kindFlag)
                        ?? (IsExternalType(symbol.ContainingType) ? Notation.CamelCase : Notation.None);
-        return Apply(notation, symbol.Name);
+        var jsName = Apply(notation, symbol.Name);
+
+        // On a compiled type, a convention must not move a member onto a slot that another member
+        // already owns: `[Convention(CamelCase)] class C { int count; int Count => count; }` would
+        // emit a getter-only `count` accessor over the `count` field (the constructor's write then
+        // throws), and a reader of `Count` would get the field. Such a member keeps its C# name.
+        // Private members are imported from metadata too (MetadataImportOptions.All), so a
+        // referencing project makes the same decision as the declaring one.
+        if (jsName != symbol.Name && !IsExternalType(symbol.ContainingType)
+            && ConventionNameTaken(symbol, jsName))
+            return symbol.Name;
+        return jsName;
+    }
+
+    /// <summary>True when another member of <paramref name="symbol"/>'s type, or of one of its
+    /// compiled base types, already has the C# name <paramref name="name"/> on the same side
+    /// (static or instance).</summary>
+    private static bool ConventionNameTaken(ISymbol symbol, string name)
+    {
+        for (var t = symbol.ContainingType; t is not null && IsTransposeCompiledSource(t); t = t.BaseType)
+        {
+            foreach (var m in t.GetMembers(name))
+            {
+                if (SymbolEqualityComparer.Default.Equals(m, symbol)) continue;
+                if (m.IsStatic != symbol.IsStatic || m.IsImplicitlyDeclared) continue;
+                if (m is IMethodSymbol { MethodKind: not MethodKind.Ordinary }) continue;
+                if (m is INamedTypeSymbol) continue;
+                return true;
+            }
+        }
+        return false;
     }
 
     /// <summary>How many base-type members this member hides (share its slot name). Zero for an
